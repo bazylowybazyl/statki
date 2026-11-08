@@ -213,7 +213,7 @@ export function warpSWStarGain(k) {
  * (cały kadłub widoczny) i szwem szerszym niż kadłub (exp(−(x / szerokość)²) ≈ 1 na całej długości) w barwie HDR —
  * kadłub dostaje światło addytywnie (żar brzegu z rekordu zostaje). k — siła 0..1.
  */
-export function warpSWHullLight(hull, L, k) {
+export function warpSWHullLight(hull, L, k, rgb = null) {
   const len = Math.max(40, Number(L) || 0);
   const T = WARP_SW;
   hull.on = true;
@@ -222,7 +222,7 @@ export function warpSWHullLight(hull, L, k) {
   hull.seamLine = 0;
   hull.seamW = len * 60;
   hull.seam = clamp01(k);
-  const c = T.light;
+  const c = rgb || T.light;   // barwa frakcji (sparkRecipes.js: WARP_SPARK_STYLES.light) albo biel-błękit
   hull.seamRGB[0] = c[0] * T.hullHdr;
   hull.seamRGB[1] = c[1] * T.hullHdr;
   hull.seamRGB[2] = c[2] * T.hullHdr;
@@ -233,9 +233,9 @@ export function warpSWHullLight(hull, L, k) {
  * Smuga w klatce efektu (frame.addStreak — odcinanie do kadru): głowa (hx, hy) względem kamery (świat gry, y w dół),
  * kierunek (dx, dy) — smuga ciągnie się `len` [j.] WSTECZ od głowy; k — jasność 0..1 (× WARP_SW.streakHdr).
  */
-export function addWarpSWStreak(frame, hx, hy, dx, dy, len, width, k) {
+export function addWarpSWStreak(frame, hx, hy, dx, dy, len, width, k, rgb = null) {
   if (!frame || !(len > 0) || !(k > 0.001)) return false;
-  const c = WARP_SW.light;
+  const c = rgb || WARP_SW.light;   // barwa frakcji NPC (styl drobin) albo biel-błękit (gracz)
   const h = WARP_SW.streakHdr * k;
   return frame.addStreak(hx, hy, dx, dy, len, width, c[0] * h, c[1] * h, c[2] * h);
 }

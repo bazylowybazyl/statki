@@ -5,7 +5,7 @@
 // „niewrażliwe” — tor każdej drobiny ze wzoru, nic jej nie popycha; więcej drobin; każdy okręt ma swoje).
 //
 //   instancja i → rekord i / K, drobina j = i mod K (K — drobin na rekord z opcji grafiki: sparksPerRecord);
-//   rekordy pakowane co klatkę od zera (uniformArray, 9 vec4 na rekord) — liczba instancji = rekordy × K;
+//   rekordy pakowane co klatkę od zera (uniformArray, 10 vec4 na rekord) — liczba instancji = rekordy × K;
 //   drobina → kwad-smuga od położenia w chwili (wiek − migawka) do położenia w chwili wiek (oba ze wzoru), szerokość
 //   w świecie, nie mniej niż minPx na ekranie (widać ją też przy oddalonej kamerze), długość ≤ maxLenPx, energia
 //   rozłożona na długość jak w ośrodku (1 / √(1 + L / normPx)).
@@ -16,13 +16,13 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, int, uint, vec2, vec3, uniform, uniformArray, instanceIndex, hash, positionGeometry, varyingProperty,
-  exp, sqrt, pow, max, min, clamp, mix, smoothstep, fract, step, sin, cos, length, abs, vec4
+  exp, sqrt, pow, max, min, clamp, mix, smoothstep, fract, floor, step, sin, cos, length, abs, vec4
 } from 'three/tsl';
 
 /** Najwięcej rekordów emisji na klatkę (scena „Wojna”: ~45 okrętów, po 1–3 rekordy). */
 export const SPARK_CAP = 128;
 /** vec4 na rekord (układ — pack niżej). */
-export const SPARK_STRIDE = 9;
+export const SPARK_STRIDE = 10;
 /** Kolejność w liście przezroczystych passa ortho: przed błyskami warpa (sprites.js: GLOW_RENDER_ORDER 20). */
 export const SPARK_RENDER_ORDER = 19;
 /** Wysokość drobin: pod płaszczyzną kadłubów (skóry piszą głębię od z ≈ 0 w górę) — test głębi chowa je pod okrętem. */
@@ -39,12 +39,13 @@ export const SPARK_VIEW = Object.freeze({
 
 /**
  * Drobin na rekord z liczby drobin ośrodka w presecie grafiki (`warpParticles`: 400 tys. / 700 tys. / 1 mln — niski /
- * średni / wysoki i ultra): n / 256 w krokach 64, 1024…4096.
+ * średni / wysoki i ultra): n / 400 w krokach 64, 768…2560 (1024 / 1728 / 2496; user 2026-11-08 po pierwszej wersji
+ * n / 256: „trochę mniej cząsteczek, delikatniejsze — obecne są przegięte”).
  */
 export function sparksPerRecord(mediumCount) {
   const n = Number(mediumCount);
-  const k = Number.isFinite(n) && n > 0 ? Math.round(n / 256 / 64) * 64 : 3904;
-  return Math.max(1024, Math.min(4096, k));
+  const k = Number.isFinite(n) && n > 0 ? Math.round(n / 400 / 64) * 64 : 2496;
+  return Math.max(768, Math.min(2560, k));
 }
 
 export class WarpSparks {
@@ -111,7 +112,8 @@ export class WarpSparks {
       A[o + 5].set(r.life0, r.life1, r.frac, r.seed);
       A[o + 6].set(r.c0[0], r.c0[1], r.c0[2], r.gain);
       A[o + 7].set(r.c1[0], r.c1[1], r.c1[2], r.size);
-      A[o + 8].set(r.shape, r.R, r.swirl, 0);
+      A[o + 8].set(r.shape, r.R, r.swirl, r.flicker || 0);
+      A[o + 9].set(r.arcAmp || 0, Math.max(1, r.arcWave || 1), r.arcRate || 0, 0);
       n++;
     }
     this.count = n;
@@ -168,6 +170,7 @@ function buildSparkMaterial(S, U) {
     const s6 = S.element(b.add(6)).toVar();
     const s7 = S.element(b.add(7)).toVar();
     const s8 = S.element(b.add(8)).toVar();
+    const s9 = S.element(b.add(9)).toVar();
     const seed = uint(s5.w).toVar();
     const hb = j.mul(uint(8)).bitXor(seed.mul(uint(0x9E3779B1))).toVar();
     const h0 = hash(hb).toVar();
@@ -225,11 +228,21 @@ function buildSparkMaterial(S, U) {
     const sRing = vec2(cos(th2), sin(th2)).mul(rr);
     const sLine = dir.mul(dist.mul(h1).negate()).add(perp.mul(h3.sub(0.5).mul(2.0).mul(W)));
     const sRel = mix(sLine, sRing, inRing).toVar();
+    // łuk nici (styl piratów — sparkRecipes.js: arcOffset): fala trójkątna w poprzek nici, kształt przeskakuje arcRate
+    // razy na sekundę, amplituda gaśnie przy punkcie; drobiny koła bez łuku. arcAmp 0 — prosta nić (Terra Nova).
+    const arcW = max(s9.y, 1.0).toVar();
+    const arcPh0 = floor(age.mul(s9.z)).mul(0.618).toVar();
+    const tri = (x) => abs(fract(x).sub(0.5)).mul(4.0).sub(1.0);
     const inflowAt = (uu) => {
       const ang = s8.z.mul(uu).mul(TAU).mul(inRing);   // zawirowanie tylko koła — nić płynie prosto
       const c = cos(ang);
       const s = sin(ang);
-      return P.add(vec2(sRel.x.mul(c).sub(sRel.y.mul(s)), sRel.x.mul(s).add(sRel.y.mul(c))).mul(float(1.0).sub(uu)));
+      const dB = dist.mul(h1).mul(float(1.0).sub(uu));
+      const ph = dB.div(arcW).add(arcPh0);
+      const zig = tri(ph).mul(0.7).add(tri(ph.mul(2.3).add(0.37)).mul(0.3));
+      const arc = zig.mul(s9.x).mul(min(dB.div(arcW), 1.0)).mul(float(1.0).sub(inRing));
+      return P.add(vec2(sRel.x.mul(c).sub(sRel.y.mul(s)), sRel.x.mul(s).add(sRel.y.mul(c))).mul(float(1.0).sub(uu)))
+        .add(perp.mul(arc));
     };
     const headI = inflowAt(u).toVar();
     const tailI = inflowAt(uT).toVar();
@@ -239,7 +252,10 @@ function buildSparkMaterial(S, U) {
     const m = step(0.5, s1.x).toVar();
     const head = mix(headS, headI, m).toVar();
     const tail = mix(tailS, tailI, m).toVar();
-    const I = mix(iS, iI, m).mul(use).mul(s6.w).mul(U.kGain).toVar();
+    // migotanie drobin (styl piratów — sparkRecipes.js: flickerK): 1 − flicker · (1 − puls)
+    const pulse = smoothstep(0.15, 0.45, fract(age.mul(h6.mul(16.0).add(8.0)).add(h7))).mul(0.75).add(0.25);
+    const flick = float(1.0).sub(s8.w.mul(float(1.0).sub(pulse)));
+    const I = mix(iS, iI, m).mul(use).mul(s6.w).mul(U.kGain).mul(flick).toVar();
     const col = mix(mix(s6.xyz, s7.xyz, q), mix(s7.xyz, s6.xyz, u), m).toVar();
 
     // ── kwad-smuga ──

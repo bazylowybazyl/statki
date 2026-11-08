@@ -83,15 +83,25 @@ paths:
   „Nurtu” (wspólny milion drobin, które popychały wszystkie bańki, nici zwiastunów i przebudowa pudła przy zoomie — przy
   fali 13 piratów blady „deszcz” na pół kadru, przy oddaleniu niewidoczny). Każdy okręt ma swoje drobiny, a tor każdej
   liczy shader ze wzoru (hasz indeksu + rekord emisji + wiek osi rejestru ruchu warpa): bez compute i bez stanu, więc nic
-  ich nie popycha. Barwy ośrodka, wspólne dla palet (turkus nici i snopu, pomarańczowy warkocz śladu, biel świeżego
-  pchnięcia). Przylot: nić zwiastuna (prosty spływ wzdłuż kursu do miejsca zatrzymania, zbiega do osi; spirala tylko
-  w kole zbierania; siła = zwiastun osi), ślad wlotu (narodziny za rufą w chwili przejścia, rozchodzą się na boki), snop hamowania (stożek przed dziobem +
-  koło); odlot: punkt zbierania (spirala × build), ślad rozpędu (droga ∝ t³ → narodziny w accel · (s / D)^⅓), wystrzał
-  w punkcie skoku. Ośrodek przy przylotach NPC śpi. Dawny wygląd (przegródki ośrodka) — `?warpDrobiny=0` (A/B).
+  ich nie popycha. Przylot: nić zwiastuna (spływ wzdłuż kursu do miejsca zatrzymania, zbiega do osi; spirala tylko
+  w kole zbierania; siła = zwiastun osi), ślad wlotu (narodziny za rufą w chwili przejścia, rozchodzą się na boki), snop
+  hamowania (stożek przed dziobem + koło); odlot: punkt zbierania (spirala × build), ślad rozpędu (droga ∝ t³ → narodziny
+  w accel · (s / D)^⅓), wystrzał w punkcie skoku. Ośrodek przy przylotach NPC śpi. Dawny wygląd (przegródki ośrodka) —
+  `?warpDrobiny=0` (A/B). DELIKATNIE (user po pierwszej wersji: „trochę mniej cząsteczek, delikatniejsze — obecne są
+  przegięte”): mniej drobin (K niżej) i ciemniejsze emisje — nie podkręcaj gęstości ani jasności bez prośby.
+- STYL FRAKCJI (`WARP_SPARK_STYLES`, `warpSparkStyle(oś)`; user: „różne efekty dla różnych frakcji, piraci = czerwone, nie
+  mega inne, ale żeby było widać — prócz koloru — że to inna frakcja”): ten sam układ emisji, inny charakter. `clean`
+  (Terra Nova i reszta): turkus, pomarańczowy warkocz, prosta nić, równy wir, wąski snop. `pirate` (flaga `pirate` osi —
+  gra i migawka workera ją niosą, `warpBlock.js`): czerwień, nić jak trzeszczący łuk (fala trójkątna w poprzek nici,
+  kształt przeskakuje 14 razy na sekundę — `arcOffset`), migotanie drobin (`flickerK`), grubsze iskry, szersza nić, szerszy
+  i bardziej poszarpany snop i ślad. Kadłub ze światła i smuga wyglądu „jak w Gwiezdnych Wojnach” NPC też w barwie frakcji
+  (pole stylu `light` → parametr `rgb` w `warpSWHullLight` / `addWarpSWStreak`; gracz — biel-błękit bez zmian). Jasne
+  barwy piratów z małą zielenią — po ACES jaśniejsza czerwień przechodziła w łososiowy róż. Nowa frakcja z własnym
+  wyglądem — wpis w tabeli stylów + wybór w `warpSparkStyle` (pole osi, które dociera do workera), nie nowe receptury.
 - JEDNA SIATKA w passie gry (warstwa 0), POD KADŁUBAMI: z = `SPARK_Z` (−4) z testem głębi, bez zapisu głębi — okręt, który
   z pędem wyjścia wjeżdża w swój snop, przykrywa drobiny (jak dawny ośrodek w passie warstwy 8). Rekordy (≤ 128 — pula
-  `frame.sparks`, 9 vec4 w bloku `warpSparkSlots`) pakowane co klatkę od zera, instancje = rekordy × K; K z presetu grafiki
-  (`warpParticles` / 256 w krokach 64: 1536 / 2752 / 3904 — niski / średni / wysoki i ultra), jasność drobiny × √(2048 / K).
+  `frame.sparks`, 10 vec4 w bloku `warpSparkSlots`) pakowane co klatkę od zera, instancje = rekordy × K; K z presetu grafiki
+  (`warpParticles` / 400 w krokach 64: 1024 / 1728 / 2496 — niski / średni / wysoki i ultra), jasność drobiny × √(2048 / K).
   Smuga drobiny z dwóch położeń wzoru (wiek i wiek − 0,03 s), pół-szerokość ≥ 1,1 px — widać ją przy oddalonej kamerze
   (dawny ośrodek miał drobiny w świecie i przy zoomie 0,08 znikał). Rekord poza kadrem (zasięg `reach` od pudła osi świata
   obróconego kadru) nie zajmuje miejsca. Rozgrzewka: wpis `warp: drobiny przylotu` (warstwa 0, `WARIANT_INSTANCJI`).

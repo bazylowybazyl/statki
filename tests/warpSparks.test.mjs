@@ -10,12 +10,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
 import {
-  WARP_SPARKS, parseWarpSparks, setWarpSparks, warpSparksOn, sparkPositionCpu, sparksArrivalTrail
+  WARP_SPARKS, WARP_SPARK_STYLES, parseWarpSparks, setWarpSparks, warpSparksOn, sparkPositionCpu, sparksArrivalTrail,
+  warpSparkStyle, arcOffset, flickerK
 } from '../src/3d/warp/sparkRecipes.js';
 import { WarpSparks, SPARK_STRIDE, SPARK_CAP, SPARK_RENDER_ORDER, SPARK_Z, sparksPerRecord } from '../src/3d/warp/sparks.js';
 import { WarpFrame, WARP_FRAME_CAPS } from '../src/3d/warp/frame.js';
 import { GLOW_RENDER_ORDER } from '../src/3d/warp/sprites.js';
 import { planWarpArrivalFx, planWarpDepartureFx, warpArrivalFxState, warpDepartureFxState } from '../src/3d/warp/arrivals.js';
+import { WARP_SW } from '../src/3d/warp/warpSW.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const code = (p) => read(p).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
@@ -96,6 +98,68 @@ test('odlot z drobinami: punkt zbierania w ładowaniu, ślad rozpędu, wystrzał
   // drobiny odlotu gasną przed końcem osi (rekord rejestru znika w tEnd)
   const T = WARP_SPARKS;
   assert.ok(T.goneLife[1] + 0.04 <= d.tEnd - d.tGone, 'wystrzał przed końcem osi');
+});
+
+test('styl frakcji: piraci — czerwień, migotanie, łuk nici, szerszy snop, grubsze iskry; Terra Nova — czysto (z osi)', () => {
+  const pir = arrival({ pirate: true });
+  const tn = arrival({ pirate: false, palette: 'terran' });
+  assert.equal(warpSparkStyle(pir), WARP_SPARK_STYLES.pirate);
+  assert.equal(warpSparkStyle(tn), WARP_SPARK_STYLES.clean);
+  assert.equal(warpSparkStyle({ faction: 'pirate' }), WARP_SPARK_STYLES.pirate);
+  assert.equal(warpSparkStyle(null), WARP_SPARK_STYLES.clean);
+  const P = WARP_SPARK_STYLES.pirate;
+  assert.ok(P.front[0] > 0.9 && P.front[1] < 0.2 && P.front[2] < 0.2, 'piraci — czerwień');
+  const C = WARP_SPARK_STYLES.clean;
+  assert.ok(C.front[2] > C.front[0], 'Terra Nova — turkus');
+  // ta sama chwila, ten sam układ rekordów — inny charakter
+  const recs = (a, t) => {
+    const f = step(a, t, true);
+    return Array.from({ length: f.sparks.count }, (_, i) => ({ ...f.sparks.items[i], c0: [...f.sparks.items[i].c0], c1: [...f.sparks.items[i].c1] }));
+  };
+  const th = (pir.t0 + pir.tAppear) * 0.5;
+  const hp = recs(pir, th).find((r) => r.mode === 1);
+  const hc = recs(tn, th).find((r) => r.mode === 1);
+  assert.ok(hp && hc, 'nić zwiastuna w obu');
+  assert.ok(hp.arcAmp > 0 && hp.arcRate > 0 && hp.flicker > 0, 'piraci — łuk nici i migotanie');
+  assert.equal(hc.arcAmp, 0);
+  assert.equal(hc.flicker, 0, 'Terra Nova — bez migotania');
+  assert.ok(hp.W > hc.W && hp.size > hc.size, 'piraci — szersza nić, grubsze iskry');
+  assert.ok(hp.c1[0] > hp.c1[2] && hc.c1[2] > hc.c1[0], 'barwy nici');
+  const tb = pir.tBrake + 0.05;
+  const bp = recs(pir, tb).find((r) => r.mode === 0 && r.dist === 0);
+  const bc = recs(tn, tn.tBrake + 0.05).find((r) => r.mode === 0 && r.dist === 0);
+  assert.ok(bp && bc && bp.cone > bc.cone && bp.ring > bc.ring, 'piraci — szerszy, poszarpany snop');
+  // łuk: prosta nić bez przesunięcia; piraci — zygzak ograniczony amplitudą, gaśnie przy punkcie, przeskakuje w czasie
+  assert.equal(arcOffset(hc, 500, 0.3), 0);
+  let maxZ = 0;
+  for (let d = 0; d < hp.dist; d += hp.arcWave / 7) maxZ = Math.max(maxZ, Math.abs(arcOffset(hp, d, 0.3)));
+  assert.ok(maxZ > hp.arcAmp * 0.5 && maxZ <= hp.arcAmp + 1e-9, `amplituda łuku ${maxZ}`);
+  assert.ok(Math.abs(arcOffset(hp, 0, 0.3)) < 1e-9, 'w punkcie zbierania łuk zbiega do osi');
+  const d0 = hp.arcWave * 3.3;
+  assert.notEqual(arcOffset(hp, d0, 0.30), arcOffset(hp, d0, 0.30 + 1 / hp.arcRate), 'kształt przeskakuje');
+  assert.equal(arcOffset(hp, d0, 0.30), arcOffset(hp, d0, 0.30 + 0.2 / hp.arcRate * 0.1), 'między przeskokami stoi');
+  // migotanie: Terra Nova 1, piraci w [1 − flicker, 1]
+  const h = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+  assert.equal(flickerK(hc, h, 0.5), 1);
+  let lo = 1;
+  for (let t = 0; t < 1; t += 0.01) lo = Math.min(lo, flickerK(hp, h, t));
+  assert.ok(lo < 0.7 && lo >= 1 - hp.flicker - 1e-9, `migotanie ${lo}`);
+  // wygląd „jak w Gwiezdnych Wojnach”: smuga i kadłub ze światła w barwie frakcji
+  const swAt = (ax) => {
+    const f = new WarpFrame();
+    const t = ax.tAppear + ax.coast * 0.6;
+    warpArrivalFxState(ax, t, f, 0, 0, pose(ax, t), ax, WARP_SW, true);
+    return { s: f.streaks.items[0], hull: ax.hull, n: f.streaks.count };
+  };
+  const sp = swAt(pir);
+  const sc = swAt(tn);
+  assert.ok(sp.n === 1 && sc.n === 1, 'smuga za rufą');
+  assert.ok(sp.s.r > sp.s.b * 3, 'piraci — czerwona smuga');
+  assert.ok(sc.s.b > sc.s.r, 'Terra Nova — biało-błękitna smuga');
+  assert.ok(sp.hull.seamRGB[0] > sp.hull.seamRGB[2] * 3, 'piraci — kadłub ze światła czerwony');
+  // odlot piratów — ten sam styl
+  const d = planWarpDepartureFx({ x: 0, y: 0, angle: 0.3, hullLength: 360, hullWidth: 140, startTime: 0, palette: 'crimson', pirate: true });
+  assert.equal(warpSparkStyle(d), WARP_SPARK_STYLES.pirate);
 });
 
 test('mgła wojny: ukryta encja bez drobin, częściowo widoczna — jasność × widoczność', () => {
@@ -181,11 +245,11 @@ test('pula klatki i siatka: odcinanie do kadru, liczba instancji = rekordy × K,
   sp.commit(f, 0, 0, 0.2, 5000, 3000);
   assert.equal(sp.mesh.visible, false, 'bez rekordów — schowana');
   assert.equal(sp.geo.instanceCount, 0);
-  // preset: niski < średni < wysoki, 1024…4096
+  // preset: niski < średni < wysoki, 768…2560 (delikatniej — user 2026-11-08)
   const lo = sparksPerRecord(400000);
   const mid = sparksPerRecord(700000);
   const hi = sparksPerRecord(1000000);
-  assert.ok(lo >= 1024 && lo < mid && mid < hi && hi <= 4096, `${lo} ${mid} ${hi}`);
+  assert.ok(lo >= 768 && lo < mid && mid < hi && hi <= 2560, `${lo} ${mid} ${hi}`);
   sp.setPerRecord(4096);
   assert.ok(sp.U.kGain.value < 1, 'więcej drobin — każda ciemniejsza');
   // kolejność: przed błyskami warpa

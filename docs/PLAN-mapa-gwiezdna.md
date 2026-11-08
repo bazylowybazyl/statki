@@ -254,6 +254,27 @@ w grze LOKALNE ('earth'), globalny id na mapie = `globalBodyId(idUkładu, idLoka
 8. **Gospodarka**: konwój, który dotarł do układu, rozlicza się przy wejściu gracza do tego układu (ładunek → rynek
    `addMarket` / `stockDelta`); układy bez gracza — uproszczone (decyzja użytkownika).
 
+## Ekonomia wielu układów — decyzje użytkownika (ankieta 2026-11-08, projekt E18)
+
+Źródło: `docs/PROPOZYCJA-ekonomia-ukladow.md` § 10.2a (commit fa74e0d9). Wdrożą je zadania E19–E21 planu ekonomii
+(`docs/PLAN-ekonomia-rynki.md`); zmiany w `src/game/sector/` (zwłaszcza `sectorFleets.js`) idą przez sesję mapy
+gwiezdnej albo za jej zgodą. Do czasu wdrożenia kod sektora działa jak w § „Floty między układami”.
+
+- **D9 — cel konwoju:** przy odlocie konwój losuje 3 układy wagą handlu (dziś: Słońce 5, nazwani 2,5, reszta rdzenia 1)
+  i leci do tego z najlepszą łączną marżą; ładunek z różnic cen modeli gospodarek w tle (§ 5.2 projektu). Gdy żaden
+  cel nie daje marży — dzisiejsze losowanie wagą handlu.
+- **D10 — przewijanie flot po powrocie do strefy:** nieobecność do 10 min — krok 0,1 s jak dziś; powyżej 10 min — krok
+  1 s (10 h: ~0,4 s zamiast 3,8 s). Ta sama długość nieobecności zawsze tym samym krokiem (determinizm); handel liczy się
+  w zdarzeniach odlotu i przybycia, więc krok nie zmienia rozliczeń. Zastępuje „albo przewijanie rzadszym krokiem” z
+  punktu 6 § „Wpięcie w grę”.
+- **D11 — rynków granicznych NIE MA:** konwój wchodzi do układu rogiem świata (punkt skoku, § „Lot, punkty skoku,
+  eksploracja”) i leci prosto do rynków planet — ruch ma być przy planetach.
+- **D12 — banda piratów NIESIE łup do kryjówki:** rekord floty piratów ma ładunek, własny i zrabowany (dziś napadnięty
+  konwój ucieka bez ładunku, a pole `loot` znaczy tylko „jest co łupić”). Gracz, który zobaczy napad i pokona bandę
+  (scena walki w strefie — otwarta decyzja 8), może zabrać jedno i drugie (kontenery-łup, reguła `kontenery-lup`).
+- Kontekst z tej samej ankiety: **D5** — układy pogranicza bez gospodarki (pola wydobywcze dla gracza, opuszczone
+  placówki z łupem); **D7** — skala gospodarki ×60 wszędzie.
+
 ## Otwarte decyzje użytkownika (rekomendacja w nawiasie)
 
 1. Rozmiar: 160 układów w 160 × 100 ly, rdzeń ~27 (tak; więcej — przez `count`, gęstość zostaje).
@@ -265,7 +286,8 @@ w grze LOKALNE ('earth'), globalny id na mapie = `globalBodyId(idUkładu, idLoka
 7. Widoczność flot: rdzeń — wszystkie (przekaźniki), pogranicze — czujniki (tak).
 8. Przechwycenie przez piratów → scena walki w strefie (tak, osobny etap).
 9. Ukryte układy w gęstych mgławicach (~20% pogranicza) (tak).
-10. Konwoje niosą ładunek między gospodarkami układów (tak, etap po wpięciu strefy).
+10. Konwoje niosą ładunek między gospodarkami układów — ROZSTRZYGNIĘTE 2026-11-08 (D9, D11, D12 w § „Ekonomia wielu
+    układów”).
 11. Dok międzygwiezdny — tryby: sam statek / flota (zużycie = suma silników) / dok (wspólna pula paliwa, jeden silnik)
     (tak — model w § „Dok międzygwiezdny”; do decyzji prędkość i pojemność doku).
 12. Ośrodek międzygwiezdny w strefie — słabe chłodne włókna przypięte do mapy, jak chmury nadprzestrzeni Starsectora
