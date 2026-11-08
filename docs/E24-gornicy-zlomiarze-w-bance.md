@@ -60,3 +60,13 @@ reguła `wraki`. Tu rozpoznanie, decyzje i pomiary.
   odłamów); próg drobnicy 120 j. odcina odłamy, których cięcie się nie opłaca.
 - Narzędzie `snapshot.work` w pierwszej wersji ucinało listę na 80 kursach — przy ~63 górnikach kurs złomiarza po
   wrak gry był poza listą (przebieg „final”: „brak kursu złomiarza”); limit 600.
+
+## Dopiski orkiestratora (2026-11-08, wieczór)
+
+- Gracz ma pierwszeństwo: złomiarz nie leci po wrak gry wcześniej niż 300 s po zgłoszeniu (`gameWreckDelay`); wrak, przy
+  którym gracz pracuje (tnie, holuje, zbiera łup), idzie jako `wreck-hold` — złomiarze czekają, holownik w drodze wraca
+  pusty, wrak zostaje w rejestrze. Okręty fabuły (`__storyTag`, `__storyKey`, flagowy, wieże) i strażnicy misji
+  najemniczej — bez zgłoszeń. Hak `onWreckSpawned` — własne opakowanie w bloku E24.
+- Po scaleniu main (W5–W6): bramka 7 / 11 / 23 zaliczona z liczbami main (przechwyty 14,5 / 14,5 / 14,1%, kolejka
+  1,48 / 1,42 / 1,85); harness cięcia i holu z pierwszeństwem skróconym do 20 s (`--opoznienie`) — lina 19 s po
+  zgłoszeniu, odlot z wrakiem, 0 pipeline'ów synchronicznych, 0 błędów.
