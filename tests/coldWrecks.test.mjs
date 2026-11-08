@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { forEachTrafficSalvageWreck } from '../src/game/trafficSalvage.js';
 
 // Zimne wraki: warunki zamrożenia, budżety klatki, limit liczby zimnych, ten sam obiekt wraku po odmrożeniu
 // i wpięcie w index.html. Prawdziwe kadłuby na belkach (HullBodies); atrapą jest tylko obraz (płyta RGBA) i to,
@@ -246,7 +247,9 @@ test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, lin
   const w = () => ({ isWreck: true });
   const refs = {
     cutting: w(), towed: w(), locked: w(), locked2: w(), multi: w(), hover: w(), selected: w(),
-    menu: w(), attack: w(), playerCmd: w(), npcCmd: w(), npcForce: w(), cargo: w(), ropeA: w()
+    menu: w(), attack: w(), playerCmd: w(), npcCmd: w(), npcForce: w(), cargo: w(), ropeA: w(),
+    // E24: wrak pod palnikiem złomiarza NPC (lina holu idzie przez TowSystem — wyżej)
+    npcCut: w()
   };
   const idle = w();
   const deadNpcCmd = w();
@@ -265,7 +268,9 @@ test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, lin
       { command: { targetEntity: refs.npcCmd }, forceTarget: refs.npcForce },
       { dead: true, command: { targetEntity: deadNpcCmd }, _cargoWreck: refs.cargo }
     ],
-    TowSystem: { constraints: [{ bodyA: refs.ropeA, bodyB: { isWreck: false } }] }
+    TowSystem: { constraints: [{ bodyA: refs.ropeA, bodyB: { isWreck: false } }] },
+    trafficSalvage: { jobs: new Map([[5, { active: true, rope: null, wreck: refs.npcCut }], [6, { active: false, rope: null, wreck: idle }]]) },
+    forEachTrafficSalvageWreck
   });
   mark(7);
   for (const [name, ref] of Object.entries(refs)) assert.equal(ref._coldRefStamp, 7, name);

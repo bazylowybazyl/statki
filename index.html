@@ -1184,6 +1184,12 @@
       createLootContainers, spillLootCargo, stepLootContainers, nearestLootD2, fillLootRenderFrame
     } from "./src/game/lootContainers.js";
     import {
+      createTrafficSalvage, noteTrafficWreck, stepTrafficSalvage, onTrafficSalvageTaken, fillTrafficWorkFrame,
+      classifyGameWreck, forEachTrafficSalvageWreck, isTrafficSalvageWreck
+    } from "./src/game/trafficSalvage.js";
+    import { createTrafficWorkBlock } from "./src/render/blocks/trafficWorkBlock.js";
+    import { TrafficWork3D } from "./src/3d/trafficWork3D.js";
+    import {
       LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
     } from "./src/data/lootGear.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
@@ -17318,6 +17324,78 @@
       return out;
     }
 
+    // ============================================================
+    // GÓRNICY I ZŁOMIARZE NPC W BAŃCE (E24) — src/game/trafficSalvage.js. Worker ruchu mówi, kto pracuje (rekordy
+    // `TrafficV2.actorWorks`): górnik w etapie wydobycia, złomiarz tnie albo holuje wrak. Gra: nowy wrak w bańce gracza
+    // (hak `HullBodies.onWreckSpawned`) idzie do rejestru złomiarzy świata ruchu, złomiarz przy wraku zdejmuje węzły
+    // (`cutOuterNode`) albo ciągnie go liną `TowSystem` od rufy, wrak znika (`removeWreckFromWorld` — lista, zimne
+    // wraki, `recycleWreckEntity`) po końcu pracy. Obraz: blok `trafficWork` (worker) albo `TrafficWork3D` tutaj (off).
+    // Kontenery-łup zniszczonego statku ruchu zostają graczowi (osobne paczki — złomiarz bierze tylko kadłub).
+    // ============================================================
+    let trafficSalvage = null;
+    /** Wraki bliżej bazy piratów fabuły niż tyle [j.] — bez złomiarzy (pole misji 1–2). */
+    const TRAFFIC_SALVAGE_STORY_CLEAR = 400000;
+    const trafficSalvageHooks = {
+      alive: (w) => !w.dead,
+      remove: (w) => removeWreckFromWorld(w),
+      cut: (w) => HullBodies.cutOuterNode(w),
+      nodes: (w) => wreckStructureCount(w),
+      // Zimny wrak (migawka) przed cięciem i liną budzi się jawnie — najwyżej jeden na klatkę (kolejka odmrożeń).
+      thaw: (w) => { if (!w.isCold) return true; thawWreck(w, 'zlomiarz-npc'); return false; },
+      attachRope: (anchor, w, o) => TowSystem.attach(anchor, w, o),
+      detachRope: (h) => TowSystem.detach(h),
+      playerBusy: (w) => salvageState.towed === w || salvageState.cutting === w
+    };
+    function trafficSalvageStep(dt) {
+      if (!trafficSalvage || !trafficBubble) return;
+      const t0 = performance.now();
+      const px = ship ? ship.pos.x : 0;
+      const py = ship ? ship.pos.y : 0;
+      stepTrafficSalvage(trafficSalvage, trafficBubble, _trafficStepTime, dt, px, py);
+      _trafficGameMs += performance.now() - t0;
+    }
+    // Nowy wrak gry → klasa dla złomiarzy (okręt: klasa `WARSHIP_CLASSES` i hol; odłam i cywil — sam złom), źródło
+    // straty garnizonu (awansowany okręt ruchu), filtr: kadłuby graczy, budowle i odłamy bazy, wraki misji fabuły,
+    // wraki z ładunkiem w manifeście (łup gracza), drobnica.
+    {
+      const prevSpawned = HullBodies.onWreckSpawned;
+      HullBodies.onWreckSpawned = (wreck, parent, parentBody) => {
+        if (typeof prevSpawned === 'function') prevSpawned(wreck, parent, parentBody);
+        if (!trafficSalvage || !wreck || wreck.dead) return;
+        noteTrafficWreck(trafficSalvage, wreck, trafficWreckSpec(wreck, parent, parentBody), _trafficStepTime, parent);
+      };
+    }
+    function trafficWreckSpec(wreck, parent, parentBody) {
+      const hull = wreck.beamHull;
+      if (!hull || hull.world || wreck.isWorldPiece || wreck.worldDebris) return null;
+      // Wraki przy bazie piratów (misje 1–2: pole bitwy, okręty w stoczni) zostają dla fabuły i gracza.
+      const sc = StoryGame.site?.center;
+      if (sc && (wreck.x - sc.x) ** 2 + (wreck.y - sc.y) ** 2 < TRAFFIC_SALVAGE_STORY_CLEAR ** 2) return null;
+      if (!cargoBagIsEmpty(wreck._cargoManifest)) return null;
+      const radius = Number(wreck.radius) || 0;
+      if (radius < trafficSalvage.tune.minRadius) return null;
+      // Statek, z którego jest wrak: przy śmierci — sam rodzic; odłam wraku — właściciel wraku-rodzica.
+      const src = parent && !parent.isWreck ? parent : (wreck.owner || parent);
+      if (!src || src === ship || src === player2Ship || src.isPlayer || src.playerOwned) return null;
+      const spec = classifyGameWreck({
+        kind: getUnitKind(src), type: src.type, radius: Number(src.radius) || radius,
+        mass: wreck.mass, mass0: src.mass, piece: !!parentBody || !!parent?.isWreck
+      });
+      spec.factionId = src.faction || src.factionId || (src.isPirate ? FACTION.PIRATES : null);
+      // Awansowany okręt ruchu (garnizon, zapas floty): wrak gry = wrak jego straty w świecie ruchu.
+      if (src.trafficCourse != null && !parentBody && !parent?.isWreck) {
+        spec.source = `${src.trafficFree ? 'entity' : 'course'}:${src.trafficCourse}`;
+      }
+      return spec;
+    }
+    /** Ramka obrazu pracy w chwili klatki renderu (blok `trafficWork` / `TrafficWork3D` w off); w soczewce skoku — pusta. */
+    function trafficWorkRenderFrame(alpha) {
+      if (!trafficSalvage || !trafficV2 || !trafficBubble) return null;
+      if (_lensDotsActive || trafficBubble.hideRender) { trafficSalvage.frame.count = 0; return trafficSalvage.frame; }
+      const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
+      return fillTrafficWorkFrame(trafficSalvage, trafficBubble, t, trafficActorPoseAt);
+    }
+
     // AWANS DO PEŁNEGO NPC (E6, src/game/trafficPromotion.js): encja z kursem trafiona przez gracza (pocisk, taran)
     // staje się NPC gry — kadłub na belkach ze sprite'a kadłuba ruchu (buduje go drawNPCPretty jak kadłuby
     // DEV_HULL_SPAWNS), lot i rozkazy NPC, rany, wrak. Kurs przejmuje gra (`attach` — rekord stoi). Najwyżej jeden
@@ -17819,6 +17897,10 @@
       CICDisplay.setTradeSource(() => (trafficV2?.ready ? trafficV2.requestTradeSummary() : Promise.resolve(null)));
       trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed, onHit: onTrafficActorHit });
       window.TrafficBubble = trafficBubble;
+      // Górnicy i złomiarze NPC w bańce (E24): wraki gry do rejestru złomiarzy, cięcie, lina holu, ramka obrazu.
+      trafficSalvage = createTrafficSalvage(trafficV2, trafficSalvageHooks);
+      window.TrafficSalvage = trafficSalvage;
+      trafficV2.on('salvage-taken', (list) => onTrafficSalvageTaken(trafficSalvage, list));
       trafficPromotion = createTrafficPromotion();
       // Narzędzia: zmierzona budowa kadłubów NPC ruchu [ms] (próg taranu — trafficRamLead).
       trafficPromotion.hullBuildMs = _trafficHullBuildMs;
@@ -27093,6 +27175,7 @@
         const w = wrecks[i];
         if (!w?.beamHull) continue;
         if (salvageState.towed === w || salvageState.cutting === w) continue;
+        if (isTrafficSalvageWreck(trafficSalvage, w)) continue;
         if (!cargoBagIsEmpty(w._cargoManifest)) continue;
         const dx = w.x - px;
         const dy = w.y - py;
@@ -27144,6 +27227,8 @@
       _coldRefMarkStamp = stamp;
       markColdRef(salvageState.cutting);
       markColdRef(salvageState.towed);
+      // Wraki pod palnikiem i na linie złomiarzy NPC (E24) nie marzną pod ręką.
+      if (trafficSalvage) forEachTrafficSalvageWreck(trafficSalvage, markColdRef);
       markColdRef(lockedTarget);
       markColdRef(lockedTarget2);
       for (let i = 0; i < lockedTargets.length; i++) markColdRef(lockedTargets[i]);
@@ -27570,6 +27655,8 @@
       PerfHUD.markPhysicsStep();
       // Bańka ruchu v2 (E6): pozy statków ruchu w czasie tego kroku — przed pociskami i taranem.
       trafficBubbleStep(dt);
+      // Złomiarze NPC (E24): zgłoszenia wraków, cięcie, kotwice lin holu (przed TowSystem.update).
+      trafficSalvageStep(dt);
       // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
       ServiceTugGame.restorePose();
       let tPhysSection0 = performance.now();
@@ -30555,6 +30642,8 @@
       if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
       // kontenery-łup (K2): paczki, lampki i wiązka (src/3d/cargo/lootContainers3D.js w workerze)
       if (RW_WORKER) renderSnapshot.addBlock(createLootBlock());
+      // E24: górnicy i złomiarze NPC w pracy (src/3d/trafficWork3D.js w workerze; drony i lasery — MiningView pasa)
+      if (RW_WORKER) renderSnapshot.addBlock(createTrafficWorkBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -30749,6 +30838,7 @@
       f.portDocks = RW_WORKER ? _portDockRender : null;
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
       f.loot = RW_WORKER ? _lootRender : null;
+      f.trafficWork = RW_WORKER && trafficSalvage ? trafficSalvage.frame : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -31927,6 +32017,8 @@
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
       lootRenderFrame(alpha);
+      // Górnicy i złomiarze NPC (E24): praca w chwili klatki — blok `trafficWork` (worker) albo rysunek tutaj (off).
+      const trafficWorkFrame = trafficWorkRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -32019,6 +32111,8 @@
           if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           // Kontenery-łup (K2): paczki, lampki i wiązka (worker — z bloku `loot`).
           sharedLootContainers3D().update(_lootRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
+          // Górnicy i złomiarze NPC (E24): drony i lasery w pasie, palniki, iskry i wiązka holu (worker — z bloku trafficWork).
+          TrafficWork3D.update(trafficWorkFrame, asteroidBelt, Core3D.frameNowMs() * 0.001, PAUSED ? 0 : frameDt);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
           updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);

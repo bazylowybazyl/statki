@@ -291,6 +291,31 @@ export function workSiteNear(state, x, y) {
   return false;
 }
 
+/**
+ * Przegląd miejsc pracy do narzędzi (`snapshot.work`, na żądanie): wyprawy górnicze i złomiarze z etapem ('approach',
+ * 'work', 'haul'), punktem pracy, resztą postoju i wrakiem gry. Bez wpływu na świat.
+ */
+export function describeWorkSites(state, limit = 80) {
+  const out = [];
+  const active = state?.world?.registry?.active || [];
+  for (let i = 0; i < active.length && out.length < limit; i++) {
+    const c = active[i];
+    if (c.kind !== COURSE_KIND.MINE && c.kind !== COURSE_KIND.TUG) continue;
+    const w = workStageIndex(c);
+    const p = w >= 0 ? c.stages[w].pos : null;
+    if (!p) continue;
+    const phase = c.stageIndex < w ? 'approach' : c.stageIndex === w ? 'work' : c.stageIndex === w + 1 ? 'haul' : null;
+    if (!phase) continue;
+    const job = c.kind === COURSE_KIND.TUG ? scrapperJobFor(state.world.scrappers, c.id) : null;
+    out.push({
+      course: courseNumber(c.id), id: c.id, kind: c.kind === COURSE_KIND.MINE ? 'mine' : (job?.mode || 'tow'), phase,
+      x: p.x, y: p.y, left: phase === 'work' ? Math.max(0, (Number(c.stages[w].seconds) || 0) - (Number(c.stageElapsed) || 0)) : null,
+      gid: job?.gid ?? null, unitClass: c.unitClass || null
+    });
+  }
+  return out;
+}
+
 /** Bańka żyje: port, studnia planety albo miejsce pracy (E24). */
 export function bubbleAlive(state, x, y) {
   return bubblePortNear(state, x, y) || workSiteNear(state, x, y);

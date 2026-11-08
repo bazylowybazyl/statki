@@ -38,9 +38,18 @@ import { MINING_FX } from '../../game/asteroidMiningRig.js';
 
 /** Właściciel świateł dronów w siatce — materiał dronów je pomija (bez samooświetlenia). */
 export const DRONE_LIGHT_OWNER = 9217;
-const DRONE_CAP = 8;
+// Górnicy NPC w bańce (E24): najwyżej tylu naraz, po tyle dronów — w TYCH SAMYCH partiach co platforma gracza.
+const NPC_MINER_CAP = 8;
+const NPC_DRONES = 3;
+const DRONE_CAP = 8 + NPC_MINER_CAP * NPC_DRONES;
 const DRONE_FLOATS = 8;   // iPos (x, y, z, kurs), iParam (słońce, laser, ciąg, faza)
-const BEAM_CAP = 64;
+const BEAM_CAP = 64 + NPC_MINER_CAP * NPC_DRONES * 2;
+/** Rodzaj rekordu pracy górnika w ramce `trafficWork` (`TRAFFIC_WORK_KIND.MINE`). */
+const WORK_MINE = 1;
+/** Skały w zasięgu laserów górnika NPC [j. od statku] i odświeżanie celów [s]. */
+const NPC_ROCK_REACH = 2600;
+const NPC_ROCK_REFRESH = 2.5;
+const NPC_GRID_LIGHTS = 6;
 const BEAM_FLOATS = 12;   // A (x, y, z, szerokość), B (x, y, z, —), C (r, g, b, siła)
 const SHOCK_CAP = 8;
 const FLASH_CAP = 16;
@@ -231,10 +240,15 @@ class DroneMeshes {
 // Wiązki: pasek od A do B, szerokość w świecie, rdzeń HDR + poświata; addytywnie,
 // z testem głębi (skała zasłania wiązkę).
 
-class BeamLines {
-  constructor({ parent, layer }) {
+export class BeamLines {
+  /**
+   * `cap` i `name` — drugi egzemplarz poza pasem (palniki i wiązka złomiarzy NPC, `src/3d/trafficWork3D.js`): ten sam
+   * graf wiązki, własna siatka w scenie gry (pozycje względem początku przy kamerze).
+   */
+  constructor({ parent, layer, cap = BEAM_CAP, name = 'AsteroidBelt:miningBeams' }) {
+    this.cap = cap;
     const plane = new THREE.PlaneGeometry(1, 1);
-    const data = new Float32Array(BEAM_CAP * BEAM_FLOATS);
+    const data = new Float32Array(cap * BEAM_FLOATS);
     const buffer = new THREE.InstancedInterleavedBuffer(data, BEAM_FLOATS, 1);
     this.range = permanentUpdateRange(buffer);
     const ig = new THREE.InstancedBufferGeometry();
@@ -250,7 +264,7 @@ class BeamLines {
     this.buffer = buffer;
     this.geo = ig;
     const mat = new THREE.NodeMaterial();
-    mat.name = 'AsteroidBelt:miningBeams';
+    mat.name = name;
     mat.transparent = true;
     mat.depthWrite = false;
     mat.depthTest = true;
@@ -295,7 +309,7 @@ class BeamLines {
     const mesh = new THREE.Mesh(ig, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = RENDER_ORDER.beams;
-    mesh.name = 'AsteroidBelt:miningBeams';
+    mesh.name = name;
     mesh.visible = false;
     mesh.layers.set(layer);
     parent.add(mesh);
@@ -307,7 +321,7 @@ class BeamLines {
 
   /** Wiązka (lokalnie): A → B, szerokość [j.], barwa HDR, siła. */
   add(ax, ay, az, bx, by, bz, width, r, g, b, k) {
-    if (this.count >= BEAM_CAP || !(k > 0)) return;
+    if (this.count >= this.cap || !(k > 0)) return;
     const o = this.count++ * BEAM_FLOATS;
     const d = this.data;
     d[o] = ax; d[o + 1] = ay; d[o + 2] = az; d[o + 3] = width;
@@ -353,13 +367,144 @@ export class MiningView {
     this._blastHead = 0;
     this.time = 0;
     this.visible = false;
-    this.stats = { drones: 0, beams: 0, blasts: 0 };
+    // Górnicy NPC w bańce (E24): ramka pracy z bloku `trafficWork` (rekordy rodzaju MINE), pole skał obrazu do celów
+    // laserów i stan per kurs (cele, faza) — pula bez alokacji w klatce.
+    this.npc = null;
+    this._npcField = null;
+    this._npcBand = 0;
+    this._npcHidden = null;
+    this._npcStates = new Map();
+    this._npcLasers = [];
+    this._npcLaserCount = 0;
+    this._npcDrones = [];
+    this._npcDroneCount = 0;
+    for (let i = 0; i < NPC_MINER_CAP * NPC_DRONES; i++) {
+      this._npcLasers.push({ x: 0, y: 0, z: 0 });
+      this._npcDrones.push({ x: 0, y: 0, z: 0 });
+    }
+    this.stats = { drones: 0, beams: 0, blasts: 0, npcMiners: 0 };
   }
 
   /** Platforma do rysowania (src/game/asteroidMiningRig.js). */
   attach(rig) {
     this.rig = rig;
     this._fxRead = rig ? rig.fxWrite : 0;
+  }
+
+  /** Górnicy NPC (E24): ramka pracy statków ruchu `{ list, count }` (rekordy `trafficWork`; tu tylko rodzaj MINE). */
+  setNpcWork(frame) {
+    this.npc = frame || null;
+  }
+
+  /** Pole skał obrazu (`AsteroidBeltField`), pasmo gry i zbiór schowanych id — cele laserów górników NPC. */
+  setNpcField(field, band, hidden) {
+    this._npcField = field || null;
+    this._npcBand = band | 0;
+    this._npcHidden = hidden || null;
+  }
+
+  /** Stan górnika: cele (skały pola przy statku), faza; odświeżany co `NPC_ROCK_REFRESH` s albo po przesunięciu. */
+  _npcState(r, time) {
+    let st = this._npcStates.get(r.id);
+    if (!st) {
+      st = { rocks: [], n: 0, at: -1e9, x: NaN, y: NaN, seen: 0, phase: ((r.id * 0.6180339) % 1 + 1) % 1 };
+      for (let k = 0; k < NPC_DRONES; k++) st.rocks.push({ id: 0, x: 0, y: 0, z: 0, r: 0 });
+      this._npcStates.set(r.id, st);
+    }
+    st.seen = time;
+    const moved = !(Math.abs(r.x - st.x) < 400 && Math.abs(r.y - st.y) < 400);
+    if ((moved || time - st.at > NPC_ROCK_REFRESH) && this._npcField) {
+      st.at = time;
+      st.x = r.x;
+      st.y = r.y;
+      st.n = 0;
+      const R = NPC_ROCK_REACH;
+      const hidden = this._npcHidden;
+      const rocks = st.rocks;
+      // Największe skały w zasięgu — każdy dron na swojej (przy mniejszej liczbie skał drony dzielą cele).
+      this._npcField.forEachRockInRect(this._npcBand, r.x - R, r.y - R, r.x + R, r.y + R, 60, (rock) => {
+        if (hidden && hidden.has(rock.id)) return;
+        const dx = rock.x - r.x, dy = rock.y - r.y;
+        if (dx * dx + dy * dy > R * R) return;
+        let k = st.n;
+        if (k >= NPC_DRONES) {
+          k = 0;
+          for (let j = 1; j < NPC_DRONES; j++) if (rocks[j].r < rocks[k].r) k = j;
+          if (rocks[k].r >= rock.r) return;
+        } else st.n++;
+        const s = Math.max(rock.sx ?? 1, rock.sy ?? 1, rock.sz ?? 1);
+        const t = rocks[k];
+        t.id = rock.id; t.x = rock.x; t.y = rock.y; t.r = rock.r * s;
+        t.z = -1.45 * rock.r * s;
+      });
+    }
+    return st;
+  }
+
+  /**
+   * Drony i lasery górników NPC (E24) — w partiach platformy gracza: dron wisi nad skałą pola obok statku (lekki
+   * dryf), laser w cyklu pracy na powierzchni skały, iskry cięcia z puli pasa. Uszczuplenie pasa liczy worker
+   * ruchu — obraz go nie zmienia (skały zostają, wyrwy przychodzą z rejestru).
+   */
+  _npcMiners(f, ox, oy) {
+    this._npcLaserCount = 0;
+    this._npcDroneCount = 0;
+    const fr = this.npc;
+    let miners = 0;
+    if (fr && fr.count) {
+      const sp = this.sparks;
+      const dt = f.dt;
+      const time = f.time;
+      for (let i = 0; i < fr.count && miners < NPC_MINER_CAP; i++) {
+        const r = fr.list[i];
+        if (r.kind !== WORK_MINE) continue;
+        miners++;
+        const st = this._npcState(r, time);
+        for (let k = 0; k < NPC_DRONES; k++) {
+          const ph = st.phase * 6.283 + k * 2.094;
+          let rock = st.n ? st.rocks[k % st.n] : null;
+          let dx, dy, dz, hx = 0, hy = 0, hz = 0;
+          if (rock) {
+            // Dron nad skałą od strony statku, kąt dryfuje wolno; laser w punkt powierzchni pod nim.
+            const ax = r.x - rock.x, ay = r.y - rock.y;
+            const al = Math.sqrt(ax * ax + ay * ay) || 1;
+            const a = Math.atan2(ay / al, ax / al) + 0.6 * Math.sin(time * 0.21 + ph);
+            const c = Math.cos(a), s = Math.sin(a);
+            const ring = rock.r * 0.9 + 70;
+            dx = rock.x + c * ring;
+            dy = rock.y + s * ring;
+            dz = rock.z + rock.r * 0.95 + 90 + 25 * Math.sin(time * 0.9 + ph);
+            hx = rock.x + c * rock.r * 0.55;
+            hy = rock.y + s * rock.r * 0.55;
+            hz = rock.z + rock.r * 0.82;
+          } else {
+            const a = time * 0.35 + ph;
+            const ring = Math.max(180, r.length * 0.6);
+            dx = r.x + Math.cos(a) * ring;
+            dy = r.y + Math.sin(a) * ring;
+            dz = 80;
+          }
+          const laser = !!rock && Math.sin(time * 0.55 + ph * 1.7) > -0.35;
+          const lx = dx - ox, ly = -dy + oy;
+          const yaw = rock ? Math.atan2(-(hy - dy), hx - dx) : -(time * 0.35 + ph) - Math.PI / 2;
+          this.drones.add(lx, ly, dz, yaw, f.sunT ? f.sunT(dx, dy) : 1, laser ? 1 : 0, 0.15, st.phase + k * 0.31);
+          const D = this._npcDrones[this._npcDroneCount++];
+          D.x = dx; D.y = dy; D.z = dz;
+          if (!laser) continue;
+          const hlx = hx - ox, hly = -hy + oy;
+          this.beams.add(lx, ly, dz - 10, hlx, hly, hz, 16, 3.2, 1.35, 0.5, 1.4);
+          this.beams.add(lx, ly, dz - 10, hlx, hly, hz, 5, 6, 5, 4.2, 1.2);
+          const L = this._npcLasers[this._npcLaserCount++];
+          L.x = hx; L.y = hy; L.z = hz;
+          if (sp && dt > 0 && fxRandom.next() < dt * 25) sp.emit(hlx, hly, hz, 0, 0, 1, 5, SPARK_CUT);
+        }
+      }
+    }
+    this.stats.npcMiners = miners;
+    // Stany górników, których już nie ma (koniec wydobycia, poza bańką).
+    if (this._npcStates.size > miners) {
+      for (const [id, st] of this._npcStates) if (f.time - st.seen > 5) this._npcStates.delete(id);
+    }
   }
 
   /** Siatki do rozgrzewki pipeline'ów (asteroidBelt._prewarm → Core3D.warmup): drony i wiązki. */
@@ -392,6 +537,17 @@ export class MiningView {
       const range = (900 + 2800 * (1 - Math.exp(-a / 0.3))) * Math.sqrt(Math.max(0.2, k));
       const warm = Math.min(1, a / 0.5);
       grid.add(b.x - ox, b.y + oy, 80, range, I, I * (0.82 - 0.25 * warm), I * (0.62 - 0.4 * warm), 1.0);
+    }
+    // Górnicy NPC (E24): żar miejsc cięcia laserów i reflektory robocze dronów (stan z poprzedniej klatki update).
+    // Światło siatki kosztuje w każdym fragmencie skały — najwyżej NPC_GRID_LIGHTS żarów i tyle reflektorów.
+    for (let i = 0; i < this._npcLaserCount && i < NPC_GRID_LIGHTS; i++) {
+      const L = this._npcLasers[i];
+      const fl = 0.85 + 0.15 * Math.sin(time * 47 + i * 1.3);
+      grid.add(L.x - ox, -L.y + oy, L.z + 40, 620, 1.7 * fl, 0.8 * fl, 0.3 * fl, 0.18);
+    }
+    for (let i = 0; i < this._npcDroneCount && i < NPC_GRID_LIGHTS; i++) {
+      const D = this._npcDrones[i];
+      grid.add(D.x - ox, -D.y + oy, D.z - 20, 1400, 1.1, 1.2, 1.3, 0.06, 0, 0, -1, 0.766, 0.951, 0.3, 0, DRONE_LIGHT_OWNER);
     }
     const rig = this.rig;
     if (!rig || !rig.busy) return;
@@ -432,7 +588,12 @@ export class MiningView {
     const ox = f.originX, oy = f.originY;
     this.drones.begin();
     this.beams.begin();
-    if (!rig) { this.drones.commit(f.time); this.beams.commit(); return; }
+    if (!rig) {
+      this._npcMiners(f, ox, oy);
+      this.drones.commit(f.time); this.beams.commit();
+      this.visible = this.drones.count > 0 || this.beams.count > 0;
+      return;
+    }
     if (this._stale) { this._fxRead = rig.fxWrite; this._stale = false; }
     this._drainFx(f);
     const sp = this.sparks;
@@ -486,6 +647,7 @@ export class MiningView {
         this.beams.add(sx, sy, 20, t[0] - ox, t[1] + oy, t[2], 38, 0.25, 0.6, 1.6, 0.35 * pulse);
       }
     }
+    this._npcMiners(f, ox, oy);
     this.drones.commit(f.time);
     this.beams.commit();
     // Fale wybuchów (sama refrakcja, świat gry — zgłoszenie co klatkę).
@@ -570,6 +732,15 @@ export class MiningView {
       if (!(u >= 0 && u < 1)) continue;
       const a = (1 - u) * (1 - u);
       glow.add(fl.x, fl.y, fl.z, fl.size * (0.7 + 0.5 * u), fl.r * a, fl.g * a, fl.b * a, GLOW_ROUND);
+    }
+    // Górnicy NPC (E24): dysze dronów i żar miejsc cięcia.
+    for (let i = 0; i < this._npcDroneCount; i++) {
+      const D = this._npcDrones[i];
+      glow.add(D.x - ox, -D.y + oy, D.z + 12, 26, 0.7, 1.6, 2.6, GLOW_ROUND);
+    }
+    for (let i = 0; i < this._npcLaserCount; i++) {
+      const L = this._npcLasers[i];
+      glow.add(L.x - ox, -L.y + oy, L.z + 20, 55, 3.2, 1.7, 0.7, GLOW_ROUND);
     }
     if (!rig || !rig.busy) return;
     const D = rig.drones;

@@ -166,6 +166,10 @@ if (isWorker) {
     // kontenery-łup (K2): blok `loot` → paczki, lampki i wiązka (import rejestruje rozgrzewkę)
     st.lootMods = { blk: await import('./blocks/lootBlock.js'), shared: (await import('../3d/cargo/lootContainers3D.js')).sharedLootContainers3D };
     st.lootFrame = st.lootMods.blk.createLootFrame();
+    // górnicy i złomiarze NPC w bańce (E24): blok `trafficWork` → drony i lasery w pasie, palniki, iskry, wiązka holu
+    // (import rejestruje rozgrzewkę wiązek)
+    st.workMods = { blk: await import('./blocks/trafficWorkBlock.js'), view: (await import('../3d/trafficWork3D.js')).TrafficWork3D };
+    st.workFrame = st.workMods.blk.createTrafficWorkFrame();
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -1017,6 +1021,14 @@ if (isWorker) {
         st.lootMods.shared().update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
       }
     } catch (e) { modFail('kontenery-łup', e); }
+    // górnicy i złomiarze NPC (E24): przed Core3D.render — pas rysuje drony i lasery w swoim kroku efektów
+    try {
+      const wblk = v.blocks.trafficWork;
+      if (wblk && wblk.f64 && st.workMods) {
+        const fr = st.workMods.blk.applyTrafficWorkBlock(wblk, st.workFrame);
+        st.workMods.view.update(fr, st.belt || null, st.Core3D.frameNowMs() * 0.001, dt);
+      }
+    } catch (e) { modFail('praca statków ruchu', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {

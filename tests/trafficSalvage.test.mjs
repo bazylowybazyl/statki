@@ -199,3 +199,141 @@ test('rekordy pracy: złomiarz tnie, holuje (praca, hol), górnik kopie; tylko z
   out = collectWorkChanges(state, 600);
   assert.deepEqual(out.unworked, [Number(tug.id.split('-')[1])]);
 });
+
+// ------------------------------------------------------------
+// Strona gry: zgłoszenia, cięcie, lina holu, koniec pracy, ramka obrazu
+// ------------------------------------------------------------
+
+import {
+  createTrafficSalvage, noteTrafficWreck, stepTrafficSalvage, onTrafficSalvageTaken, fillTrafficWorkFrame,
+  classifyGameWreck, TRAFFIC_WORK_KIND
+} from '../src/game/trafficSalvage.js';
+
+function gameEnv() {
+  const sent = { reports: [], gone: [] };
+  const bridge = {
+    actorWorks: new Map(),
+    reportWrecks: (l) => sent.reports.push(...l),
+    wrecksGone: (g) => sent.gone.push(...g)
+  };
+  const removed = [];
+  const ropes = [];
+  const hooks = {
+    alive: (w) => !w.dead,
+    remove: (w) => { w.dead = true; removed.push(w); },
+    cut: (w) => { if (w.nodes <= 0) return false; w.nodes--; return true; },
+    nodes: (w) => w.nodes,
+    attachRope: (a, w, o) => { const r = { a, w, length: o.length }; ropes.push(r); return r; },
+    detachRope: (r) => { r.detached = true; },
+    playerBusy: (w) => !!w.playerTow
+  };
+  const ts = createTrafficSalvage(bridge, hooks);
+  const tb = { byId: new Map(), dead: new Map(), promoted: new Set() };
+  return { ts, tb, bridge, sent, removed, ropes };
+}
+
+function tugActor(id, x, y, phase = 'station') {
+  return { id, alive: true, cx: x, cy: y, ca: 0, vx: 0, vy: 0, length: 300, phase };
+}
+
+test('klasa wraku gry: okręt — klasa i hol, odłam i cywil — sam złom', () => {
+  assert.deepEqual(classifyGameWreck({ kind: 'destroyer', mass: 900, mass0: 1000 }), { classId: 'destroyer', scale: 0.9, towable: true });
+  assert.equal(classifyGameWreck({ kind: 'battleship', type: 'carrier' }).classId, 'carrier');
+  assert.equal(classifyGameWreck({ kind: 'battleship', type: 'battleship' }).classId, 'cruiser');
+  assert.equal(classifyGameWreck({ kind: 'frigate', piece: true }).towable, false);
+  const civ = classifyGameWreck({ kind: 'other', radius: 700, mass: 50, mass0: 100 });
+  assert.deepEqual(civ, { classId: 'cruiser', scale: 0.5, towable: false });
+});
+
+test('zgłoszenie po uspokojeniu, tylko w bańce gracza; zabrany przez gracza → wreck-gone', () => {
+  const { ts, tb, sent } = gameEnv();
+  const near = { x: 1000, y: 0, radius: 200, nodes: 50 };
+  const far = { x: 90000, y: 0, radius: 200, nodes: 50 };
+  noteTrafficWreck(ts, near, { classId: 'frigate', scale: 1, towable: true }, 10);
+  noteTrafficWreck(ts, far, { classId: 'frigate', scale: 1, towable: true }, 10);
+  stepTrafficSalvage(ts, tb, 11, 1 / 60, 0, 0);
+  assert.equal(sent.reports.length, 0, 'przed reportDelay');
+  stepTrafficSalvage(ts, tb, 12.5, 1 / 60, 0, 0);
+  assert.equal(sent.reports.length, 1);
+  assert.equal(sent.reports[0].classId, 'frigate');
+  near.playerTow = true;
+  stepTrafficSalvage(ts, tb, 13, 1 / 60, 0, 0);
+  assert.deepEqual(sent.gone, [sent.reports[0].gid]);
+});
+
+test('cięcie: węzły schodzą do końca postoju, po salvage-taken reszta wraku znika (z odłamami)', () => {
+  const { ts, tb, bridge, sent, removed } = gameEnv();
+  const w = { x: 500, y: 0, radius: 200, nodes: 120 };
+  noteTrafficWreck(ts, w, { classId: 'destroyer', scale: 1, towable: false }, 0);
+  stepTrafficSalvage(ts, tb, 3, 1 / 60, 0, 0);
+  const gid = sent.reports[0].gid;
+  tb.byId.set(5, tugActor(5, 0, 0));
+  bridge.actorWorks.set(5, { id: 5, kind: 'cut', phase: 'work', x: 500, y: 0, t0: 10, dur: 100, gid });
+  for (let t = 10; t <= 60; t += 1 / 60) stepTrafficSalvage(ts, tb, t, 1 / 60, 0, 0);
+  assert.ok(w.nodes < 70 && w.nodes > 50, `połowa czasu ≈ połowa węzłów (${w.nodes})`);
+  const piece = { x: 700, y: 0, radius: 40, nodes: 3 };
+  noteTrafficWreck(ts, piece, null, 60, w);
+  const frame = fillTrafficWorkFrame(ts, tb, 60, null);
+  assert.equal(frame.count, 1);
+  assert.equal(frame.list[0].kind, TRAFFIC_WORK_KIND.CUT);
+  onTrafficSalvageTaken(ts, [{ gid, mode: 'cut' }]);
+  stepTrafficSalvage(ts, tb, 101, 1 / 60, 0, 0);
+  assert.ok(removed.includes(w) && removed.includes(piece), 'wrak i odłam znikają');
+  assert.equal(sent.reports.length, 1, 'odłam ciętego wraku bez zgłoszenia');
+});
+
+test('hol: lina od rufy, skraca się; po końcu pracy wrak znika z holownikiem; zestrzelony holownik — wrak zostaje', () => {
+  const { ts, tb, bridge, sent, removed, ropes } = gameEnv();
+  const w = { x: 3000, y: 0, radius: 300, nodes: 200 };
+  noteTrafficWreck(ts, w, { classId: 'cruiser', scale: 1, towable: true }, 0);
+  stepTrafficSalvage(ts, tb, 3, 1 / 60, 0, 0);
+  const gid = sent.reports[0].gid;
+  const tug = tugActor(9, 0, 0);
+  tb.byId.set(9, tug);
+  bridge.actorWorks.set(9, { id: 9, kind: 'tow', phase: 'work', x: 3000, y: 0, t0: 3, dur: 420, gid });
+  stepTrafficSalvage(ts, tb, 4, 1 / 60, 0, 0);
+  assert.equal(ropes.length, 1);
+  assert.equal(ropes[0].a.towStatic, true, 'kotwica kinematyczna');
+  assert.equal(ropes[0].a.pos.x, -150, 'rufa holownika');
+  const l0 = ropes[0].length;
+  for (let i = 0; i < 120; i++) stepTrafficSalvage(ts, tb, 4 + i / 60, 1 / 60, 0, 0);
+  assert.ok(ropes[0].length < l0, 'lina się skraca');
+  // koniec pracy: hol — wrak jedzie, znika dopiero z holownikiem
+  onTrafficSalvageTaken(ts, [{ gid, mode: 'tow' }]);
+  bridge.actorWorks.set(9, { id: 9, kind: 'tow', phase: 'haul', x: 3000, y: 0, t0: 0, dur: 0, gid });
+  tug.phase = 'fly';
+  tug.cx = 5000;
+  stepTrafficSalvage(ts, tb, 10, 1 / 60, 0, 0);
+  assert.equal(removed.length, 0, 'na linie — jeszcze jest');
+  assert.equal(ropes[0].a.pos.x, 4850, 'kotwica za holownikiem');
+  tb.byId.delete(9);
+  stepTrafficSalvage(ts, tb, 11, 1 / 60, 0, 0);
+  assert.deepEqual(removed, [w], 'holownik wyszedł z bańki — wrak z nim');
+  // drugi wrak: holownik zestrzelony w trakcie holu
+  const w2 = { x: 3000, y: 0, radius: 300, nodes: 200 };
+  noteTrafficWreck(ts, w2, { classId: 'cruiser', scale: 1, towable: true }, 20);
+  stepTrafficSalvage(ts, tb, 23, 1 / 60, 0, 0);
+  const gid2 = sent.reports[1].gid;
+  tb.byId.set(10, tugActor(10, 0, 0));
+  bridge.actorWorks.set(10, { id: 10, kind: 'tow', phase: 'work', x: 3000, y: 0, t0: 23, dur: 420, gid: gid2 });
+  stepTrafficSalvage(ts, tb, 24, 1 / 60, 0, 0);
+  onTrafficSalvageTaken(ts, [{ gid: gid2, mode: 'tow' }]);
+  tb.byId.delete(10);
+  tb.dead.set(10, 99);
+  stepTrafficSalvage(ts, tb, 25, 1 / 60, 0, 0);
+  assert.ok(!removed.includes(w2), 'zestrzelony holownik — wrak zostaje');
+  assert.equal(ropes[1].detached, true);
+});
+
+test('ramka obrazu: górnik tylko w fazie station etapu wydobycia', () => {
+  const { ts, tb, bridge } = gameEnv();
+  const miner = tugActor(3, 100, 200, 'fly');
+  tb.byId.set(3, miner);
+  bridge.actorWorks.set(3, { id: 3, kind: 'mine', phase: 'work', x: 150, y: 250, t0: 0, dur: 600, gid: null });
+  assert.equal(fillTrafficWorkFrame(ts, tb, 10, null).count, 0);
+  miner.phase = 'station';
+  const f = fillTrafficWorkFrame(ts, tb, 300, null);
+  assert.equal(f.count, 1);
+  assert.equal(f.list[0].kind, TRAFFIC_WORK_KIND.MINE);
+  assert.ok(Math.abs(f.list[0].k - 0.5) < 1e-9);
+});

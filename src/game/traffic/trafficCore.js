@@ -52,7 +52,7 @@ import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
   collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity,
-  refreshWorkSites, collectWorkChanges
+  refreshWorkSites, collectWorkChanges, describeWorkSites
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -796,6 +796,12 @@ export function createTrafficCore(post, options = {}) {
     if (Number.isFinite(message.piracyPressure)) director.config.piracyPressure = message.piracyPressure;
     if (typeof message.piracyEnabled === 'boolean') director.config.piracyEnabled = message.piracyEnabled;
     if (typeof message.protectObserved === 'boolean') director.config.protectObserved = message.protectObserved;
+    // Narzędzia (E24, `zlomiarze-gra.mjs`): krótszy postój złomiarzy przy wraku — cięcie i zaczepienie w kadrze filmu.
+    const sc = message.scrappers;
+    const cfg = core.world?.scrappers?.config;
+    if (sc && cfg) {
+      for (const key of ['cutSeconds', 'hookSeconds', 'gameReserve']) if (Number.isFinite(sc[key]) && sc[key] >= 0) cfg[key] = sc[key];
+    }
   }
 
   function snapshot(message) {
@@ -813,6 +819,8 @@ export function createTrafficCore(post, options = {}) {
         scrappers: summarizeScrappers(world.scrappers),
         agents: summarizeAgents(world.agents),
         log: world.director.log.slice(-30),
+        // Górnicy i złomiarze przy pracy (E24) — narzędzia (`zlomiarze-gra.mjs`).
+        work: core.bubble ? describeWorkSites(core.bubble) : null,
         core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size },
         warmup: { ...warmupInfo(), steps: core.warmup.steps }
       } : null
