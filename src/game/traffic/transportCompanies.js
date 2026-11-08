@@ -70,6 +70,8 @@ export function createCompany(spec = {}) {
     ships: [],
     /** Ostatni nadany numer jednostki. Tylko rośnie — patrz `nextShipId`. */
     shipSeq: 0,
+    /** Straty do odkupu wg klasy (`loseShip` → `maintainFleet`). */
+    toReplace: {},
     ledger: { revenue: 0, fuel: 0, fees: 0, deadheads: 0, losses: 0, jobs: 0, waited: 0 }
   };
 }
@@ -260,13 +262,17 @@ export function releaseShipAt(ship, stationId, now = 0, options = {}) {
   return true;
 }
 
-/** Jednostka przepadła razem z ładunkiem. Firma traci majątek trwały. */
+/** Jednostka przepadła razem z ładunkiem. Firma traci majątek trwały i odkupi tę klasę (`maintainFleet`). */
 export function loseShip(registry, company, ship, value = 0) {
   if (!company || !ship) return false;
   const index = company.ships.indexOf(ship);
   if (index >= 0) company.ships.splice(index, 1);
   registry.shipsById.delete(ship.id);
   company.ledger.losses += Math.max(0, Number(value) || 0);
+  if (SHIP_PRICE[ship.vanClassId]) {
+    if (!company.toReplace) company.toReplace = {};
+    company.toReplace[ship.vanClassId] = (company.toReplace[ship.vanClassId] || 0) + 1;
+  }
   return true;
 }
 
@@ -299,8 +305,20 @@ export function billDeadhead(company, amount) {
 // Odtwarzanie floty
 // ============================================================
 
-/** Cennik jednostek. Firma bez kapitału nie odkupi tego, co straciła. */
-export const SHIP_PRICE = Object.freeze({ van: 4_000, hauler: 9_000, bulk: 18_000 });
+/**
+ * Cennik jednostek. Firma bez kapitału nie odkupi tego, co straciła. Klasy ciężkie
+ * kosztują tyle co te same kadłuby u kupców (`CARAVAN_SHIP_PRICE` w `agentFleets.js`).
+ */
+export const SHIP_PRICE = Object.freeze({ van: 4_000, hauler: 9_000, bulk: 18_000, heavy: 46_000, mega: 120_000 });
+
+/** Kolejność odkupu strat: najpierw największa ładownia. */
+const REPLACE_ORDER = Object.freeze(['mega', 'heavy', 'bulk', 'hauler', 'van']);
+
+/** Oczekiwana strata kadłuba na trasie o szansie przechwytu `interceptChance` — część frachtu. */
+export function hullRiskCost(vanClassId, interceptChance) {
+  const p = Math.max(0, Math.min(1, Number(interceptChance) || 0));
+  return p * (SHIP_PRICE[vanClassId] || 0);
+}
 
 /**
  * Firma dokupuje jednostkę, jeśli ma z czego i jeśli flota jej się skurczyła.
@@ -310,25 +328,46 @@ export const SHIP_PRICE = Object.freeze({ van: 4_000, hauler: 9_000, bulk: 18_00
  * przepadło, dyspozytor odmówił 593 razy z braku statku). Z odkupem powstaje
  * właściwa pętla — bogata firma odrabia straty, biedna wykrusza się z rynku.
  *
+ * Najpierw ODKUP STRAT: firma kupuje tę klasę, którą straciła (`loseShip` zapisuje ją
+ * w `toReplace`), od największej ładowni, i na droższą odkłada, zamiast brać tańszą.
+ * Dawniej każdą stratę zastępował najtańszy van: piraci najchętniej biorą duże ładunki,
+ * więc megafrachtowiec (2400 t) wracał jako van (60 t) — przy ×60 po 8 h gry ładowność
+ * floty spadła z 2,7 do 0,6 mln t, po 12 h zostały same vany, a z nimi zgasły promy
+ * z obsadą i produkcja (docs/POMIAR-zanik-gospodarki-2026-11-08.md). Dopiero bez strat do odkupu
+ * działa dawna reguła: flota poniżej celu `targetShips` dokupuje od najtańszej klasy.
+ *
  * `reserveRatio` pilnuje, żeby nie wydać ostatniego grosza: zakup musi zostawić
  * zapas na paliwo, inaczej firma kupuje statek, którym nie ma za co polecieć.
  */
 export function maintainFleet(company, options = {}) {
-  const target = Math.max(0, Number(options.targetShips) || 0);
-  if (company.ships.length >= target) return null;
-
   const reserveRatio = Number(options.reserveRatio) || 2.5;
-  // Od najtańszej klasy: lepiej mieć trzy szutle niż czekać na frachtowiec.
-  for (const vanClassId of ['van', 'hauler', 'bulk']) {
-    const price = SHIP_PRICE[vanClassId];
-    if (company.capital < price * reserveRatio) continue;
+  const buy = (vanClassId, price) => {
     company.capital -= price;
-    company.ledger.fuel += 0;
     return addShip(company, {
       vanClassId,
       stationId: options.stationId || company.homeStationId,
       idleSince: options.now || 0
     });
+  };
+
+  const pending = company.toReplace;
+  if (pending) {
+    for (const vanClassId of REPLACE_ORDER) {
+      if (!(pending[vanClassId] > 0)) continue;
+      const price = SHIP_PRICE[vanClassId];
+      if (company.capital < price * reserveRatio) return null;
+      pending[vanClassId]--;
+      return buy(vanClassId, price);
+    }
+  }
+
+  const target = Math.max(0, Number(options.targetShips) || 0);
+  if (company.ships.length >= target) return null;
+  // Od najtańszej klasy: lepiej mieć trzy szutle niż czekać na frachtowiec.
+  for (const vanClassId of ['van', 'hauler', 'bulk']) {
+    const price = SHIP_PRICE[vanClassId];
+    if (company.capital < price * reserveRatio) continue;
+    return buy(vanClassId, price);
   }
   return null;
 }
