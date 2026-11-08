@@ -47,7 +47,7 @@ import {
 import {
   SHIP_STATE, shouldDeadhead, expectedIdleSeconds,
   assignShipToCourse, releaseShipAt, loseShip, billFreight, billCost, billDeadhead,
-  getShip, getCompany, maintainFleet
+  getShip, getCompany, maintainFleet, hullRiskCost
 } from './transportCompanies.js';
 import { findBerth, reserveBerth, releaseBerth } from './dockLayout.js';
 import {
@@ -170,7 +170,18 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    */
   sellOffers: 'surplus',
   /** Marża ceny rezerwacji w modelu 'reservation' — przewoźnik frakcji bierze fracht, nie marżę. */
-  sellOfferMargin: 0
+  sellOfferMargin: 0,
+  /**
+   * Ile oczekiwanej straty kadłuba (`hullRiskCost`: szansa przechwytu trasy × cena klasy)
+   * wchodzi do frachtu. Przewoźnik odkupuje straconą klasę z kapitału, więc fracht ma to
+   * pokryć. Szansa trasy to rzut bez zainteresowania piratów ładunkiem, patroli i konwojów:
+   * prawdziwe straty kadłubów (z pustymi przelotami) to ~0,3–0,4 tej kwoty — przy 1 kapitał
+   * firm rósł 80 → 147 mln CR w 5 h, przy 0 spadał do 18 mln (ziarno 7, 2026-11-08).
+   * 0 = dawny fracht bez kadłuba (A/B: `--dyrektor '{"freightHullRisk":0}'`).
+   */
+  freightHullRisk: 0.4,
+  /** Ile statków firma może kupić w jednym cyklu gospodarczym (`maintainFleet`; dawniej 1). */
+  fleetPurchasesPerCycle: 4
 });
 
 // ============================================================
@@ -1311,8 +1322,12 @@ export function dispatchHaul(director, stations) {
       shipId: crew?.ship.id || null,
       companyId: crew?.company.id || null,
       // Fracht płacony przewoźnikowi. Marża nad kosztem trasy — to z niej firma
-      // odkłada kapitał, który później pozwala jej na pusty powrót.
-      freight: route.cost.total * 1.35,
+      // odkłada kapitał, który później pozwala jej na pusty powrót. Koszt trasy
+      // liczy ryzyko ŁADUNKU; ryzyko KADŁUBA (szansa przechwytu × cena klasy) dochodzi
+      // tu, bo stracony statek firma odkupuje (`maintainFleet`) — bez tego odkup
+      // ~15 mln CR/h przy ~1 mln CR/h zysku zjadał kapitał (docs/POMIAR-zanik-gospodarki-2026-11-08.md).
+      freight: (route.cost.total + config.freightHullRisk
+        * hullRiskCost(crew?.ship.vanClassId, route.interceptChance)) * 1.35,
       ...(passengers ? { passengers: true, vanClassId } : {})
     },
     now: registry.clock
@@ -2046,13 +2061,17 @@ export function tickDirector(director, dt, stations) {
       laneFaction: (fromId, toId) => stations.find(st => st.id === toId)?.factionId
         || stations.find(st => st.id === fromId)?.factionId || null
     });
+    // Do `fleetPurchasesPerCycle` zakupów na firmę: przy ×60 firma na groźnych trasach traci
+    // ~180 statków/h — tyle, ile wynosił dawny sufit jednego zakupu na cykl (20 s), więc
+    // mimo kapitału jej flota topniała (docs/POMIAR-zanik-gospodarki-2026-11-08.md).
     for (const company of director.companies.companies) {
-      const bought = maintainFleet(company, {
-        targetShips: config.targetFleetPerCompany,
-        stationId: company.homeStationId,
-        now: registry.clock
-      });
-      if (bought) {
+      for (let n = 0; n < config.fleetPurchasesPerCycle; n++) {
+        const bought = maintainFleet(company, {
+          targetShips: config.targetFleetPerCompany,
+          stationId: company.homeStationId,
+          now: registry.clock
+        });
+        if (!bought) break;
         director.companies.shipsById.set(bought.id, bought);
         note(director, `${company.name} kupuje jednostkę (${bought.vanClassId})`);
       }

@@ -20,7 +20,8 @@ import {
   STATION_INDUSTRY,
   STATION_UPKEEP,
   ECONOMY_CYCLE_SECONDS, lineWeight, upkeepScale,
-  INDUSTRY_ARCHETYPES, composeIndustry, buildIndustryMap, SYSTEM_INDUSTRY_SPEC } from '../../src/game/stationEconomy.js';
+  INDUSTRY_ARCHETYPES, composeIndustry, buildIndustryMap, SYSTEM_INDUSTRY_SPEC,
+  isPlannedSupplyLine } from '../../src/game/stationEconomy.js';
 import { RESOURCES, RESOURCE_KEYS, TIER, RECIPES, PLANET_YIELD } from '../../src/data/resources.js';
 import { getDefaultStationFaction } from '../../src/data/factions.js';
 import { createSuite, runIfMain } from './harness.mjs';
@@ -109,9 +110,12 @@ export function run() {
   // emitery tarcz w zakładach systemowych — Ziemia −3% Fe, +1% Si.
   // układy scalone z niklem (Ga, Ge) — Ziemia −22% krzemu, +2% Fe.
   // warp Mk I–III na taśmie nadprzewodzącej, fregata z warpem Mk I — Ziemia −3% Fe, −3% Si.
-  t.close('plan Ziemi wymaga 1031,138 rudy żelaza/h', earthNet.iron_ore * 3600, -1031.1380183740011, 1e-6);
-  t.close('plan Ziemi wymaga 509,769 rudy krzemu/h', earthNet.silicon_ore * 3600, -509.769265759327, 1e-6);
-  t.close('plan Merkurego eksportuje 1412,130 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1412.1304873239783, 1e-6);
+  // 2026-11-08 (przetop złomu poza podażą planu, `isPlannedSupplyLine`): stal z recyklingu na Marsie
+  // nie liczy się do planu (złom tylko z wraków), więc huty z rudy dostają brakującą stal —
+  // Ziemia +10% żelaza, −1,5% krzemu; Merkury topi więcej u siebie i eksportuje −1,7% żelaza.
+  t.close('plan Ziemi wymaga 1137,562 rudy żelaza/h', earthNet.iron_ore * 3600, -1137.5615195879257, 1e-6);
+  t.close('plan Ziemi wymaga 501,881 rudy krzemu/h', earthNet.silicon_ore * 3600, -501.88054007552745, 1e-6);
+  t.close('plan Merkurego eksportuje 1388,447 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1388.4471153228676, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
@@ -353,6 +357,8 @@ export function run() {
   // Liczone na cykl ekonomiczny, dla całego układu naraz.
   const supply = {};
   const demand = {};
+  /** Podaż bez linii na wsadzie bez stałego źródła (przetop złomu) — tak liczy plan solvera. */
+  const plannedSupply = {};
   const add = (map, id, amount) => { map[id] = (map[id] || 0) + amount; };
 
   for (const [id, industry] of Object.entries(STATION_INDUSTRY)) {
@@ -370,7 +376,10 @@ export function run() {
       const recipe = RECIPES[recipeId];
       const batches = lineWeight(industry, recipeId) * (ECONOMY_CYCLE_SECONDS / recipe.seconds);
       for (const [res, need] of Object.entries(recipe.in)) add(demand, res, need * batches);
-      for (const [res, out] of Object.entries(recipe.out)) add(supply, res, out * batches);
+      for (const [res, out] of Object.entries(recipe.out)) {
+        add(supply, res, out * batches);
+        if (isPlannedSupplyLine(recipe)) add(plannedSupply, res, out * batches);
+      }
     }
     for (const [res, perCycle] of Object.entries(STATION_UPKEEP)) {
       add(demand, res, perCycle * upkeepScale(industry));
@@ -392,6 +401,14 @@ export function run() {
   // z przemysłu: ruda uranu z pasa Kuipera, złom z wraków przywieziony przez
   // gracza. Ich deficyt jest celowy i stanowi treść, nie usterkę.
   
+  // Przetop złomu nie jest podażą planu (`isPlannedSupplyLine`): złom bierze się tylko z wraków.
+  // Dawniej plan liczył recykling Marsa jako największe źródło stali (pokrycie 1,06), a w biegu
+  // bez złomu stal miała 0,93 i schodziła o ~12 tys./h przy ×60 (docs/POMIAR-zanik-gospodarki-2026-11-08.md).
+  t.check('przetop złomu poza podażą planu, wytop z rudy w niej',
+    !isPlannedSupplyLine(RECIPES.recycle_scrap) && isPlannedSupplyLine(RECIPES.smelt_steel));
+  t.check('stal pokryta samymi hutami z rudy (bez złomu)', (plannedSupply.steel || 0) >= demand.steel,
+    `(${((plannedSupply.steel || 0) / demand.steel * 100).toFixed(1)}%)`);
+
   const realShortages = shortages.filter(s => !WORLD_SOURCED.has(s.id) && (supply[s.id] || 0) > 0);
   t.check('każdy surowiec z produkcją planetarną ma pokryty popyt',
     realShortages.length === 0,
