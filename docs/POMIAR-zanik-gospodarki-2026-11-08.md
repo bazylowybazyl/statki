@@ -188,10 +188,38 @@ Próg „długi bieg” zaliczony na 3 ziarnach: ziarno 7: kursy 141%, dostawy/h
 
 Testy po kroku 2: `npm test` 1919 OK (+2: strażnik stali w § 12); `node --test` 4016, 4009 OK, te same 2 znane porażki.
 
+## Krok 3: porty (commity 0f36de88, 4177e9a3; po scaleniu main 95f09f2e z W5–W6)
+
+Po scaleniu z W5–W6 sama poprawka floty dawała w bramce 4 h kolejkę Wenus 2,02 (ziarno 7, próg 2; pomiar orkiestratora).
+Z krokiem stali — 0,99 / 1,52 / 1,38. Odkup straconej klasy trzyma heavy i mega, a Wenus i Westa przy trzech kompletach
+mają po 6 stanowisk capital i mega. Sama Wenus ×4 przenosiła kolejkę na Westę (2,02 na ziarnie 7).
+
+Poprawka: `MARKET_DOCK_OVERRIDES` — Wenus i Westa `berthMultiplier` 4 (104 stanowiska, budowla koło jak Saturn ×4).
+
+| bramka 4 h (7 / 11 / 23) | flota + stal + main | + Wenus ×4 | + Wenus i Westa ×4 |
+|---|---|---|---|
+| najwyższa kolejka | 0,99 / 1,52 / 1,38 (Wenus) | 2,02 (Westa) / 0,97 / 1,29 | **0,81 / 0,73 / 0,87** (Io) |
+| przechwyty | 14,7 / 14,6 / 15,4% | 14,3 / 14,4 / 15,4% | 14,8 / 14,6 / 14,8% |
+| głód (najdłuższy) | 6,0 / 6,3 / 6,1 min | 6,1 / 6,3 / 6,3 min | 6,0 / 6,3 / 6,5 min |
+| tick | 10,9 / 10,7 / 10,9 ms | 10,4 / 10,2 / 10,7 ms | 10,4 / 10,6 / 10,5 ms |
+| obsada (najniższa średnia) | 1 / 1 / 1 | 1 / 1 / 1 | 1 / 1 / 0,999 |
+
+Wariant długi 12 h (Wenus i Westa ×4): „długi bieg” zaliczony — kursy 142 / 146 / 150%, dostawy 149 / 152 / 157%,
+stal 107 / 108 / 108%, obsada 100%, ładowność 97 / 100 / 98%. Kolejka do wglądu (średnia z 12 h): Ziemia 6,2 / 5,7 / 5,3,
+Wenus 2,1 / 1,7 / 2,2 (przed krokiem 3: Wenus 8,2–11). Łączna kolejka na redach co godzinę: 1–7 do 6. h, 10–45 w 7.–12. h.
+
+Reda Ziemi (ziarno 7, 10 h, `.tmp/dlugi/reda.mjs`): 224 stanowiska K-7 (s 80, m 64, l 48, capital 16, mega 16).
+Stanowiska capital to hale wojskowe (tylko kursy WAR i PATROL) — przez 10 h zajęte 0. Frachtowce heavy i mega dzielą
+16 stanowisk mega: w 8. h zajęte średnio 15,7 z 16, kolejka średnio 29,7, w tym heavy 14,5, mega 6,9, bulk 5,2.
+Do decyzji (osobne zadanie): heavy na wolnych halach capital K-7 albo więcej cywilnych stanowisk mega w zatokach Ziemi.
+
+Testy po kroku 3: `npm test` 1961 OK (main z W5–W6 + moje); `node --test` 4027, 4020 OK, 2 znane porażki;
+`tests/portDocks.test.mjs`, `scripts/tests/portPaths.test.mjs` (koło ×4), `workerBubble`, `warpLensAnchors` — OK.
+
 ## Co zostaje (osobne zadania)
 
-1. **Kolejki po 7. h**: ruch rośnie do ~11 tys. dostaw/h (+40% wobec 2–4 h), redy Wenus i Ziemi średnio 4–6 w biegu
-   10 h (szczyt 487 kursów na Wenus w 17. h). W bazie zanik od 8. h to ukrywał (Wenus 1,3–3,3).
+1. **Reda Ziemi po 7. h** (krok 3): ruch rośnie do ~11 tys. dostaw/h (+50% wobec 2–4 h); heavy i mega dzielą 16 stanowisk
+   mega K-7, średnia kolejka Ziemi w 12 h 5,3–6,2. W bazie zanik od 8. h to ukrywał.
 2. **Kryjówki bez tlenu**: Gniazdo Hildy i Złomowisko stoją na zerze O₂ od ~7,3 h (159,8 min do 10. h) — w bazie
    identycznie; bramka 10 h liczy je w progu głodu.
 3. **Skala ×1** (`?trafficV2=1`): baza i poprawka gasną (ładowność 39 tys. → 4 tys. / 19 t w 8 h) — flota i kapitał

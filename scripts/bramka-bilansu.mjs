@@ -49,7 +49,8 @@
  *                 żelaza i paliwa fuzyjnego na rynkach frakcji, średniej obsady
  *                 i ładowności floty przewoźników (t; sama liczba statków nie pokazuje,
  *                 że duże giną, a w ich miejsce wchodzą małe). Miara tylko do wglądu —
- *                 w `DLUGI_DO_WGLADU` (dziś pusty)
+ *                 w `DLUGI_DO_WGLADU` (dziś pusty). Kolejka na redzie w wariancie
+ *                 długim tylko do wglądu (średnie portów w opisie, łączna co godzinę)
  *                 Bramka 4 h tego nie widzi, a gracz gra dłużej
  */
 
@@ -222,7 +223,8 @@ async function jedenBieg(args) {
       for (const ship of company.ships) ladownosc += ship.capacity;
     }
     probki.push({ min: Math.round(registry.clock / 60), kursy, dostawy: director.stats.delivered, zapas,
-      obsada: obsady.length ? obsada / obsady.length : 1, ladownosc, kapital });
+      obsada: obsady.length ? obsada / obsady.length : 1, ladownosc, kapital,
+      kolejka: [...director.portQueue.values()].reduce((a, q) => a + (Number(q) || 0), 0) });
   };
   probka();
 
@@ -409,7 +411,8 @@ function podsumujDlugi(probki, minuty) {
       zapas: Object.fromEntries(DLUGI_TOWARY.map(id => [id, Math.round(srednia(lista, p => p.zapas[id]))])),
       obsada: Math.round(srednia(lista, p => p.obsada) * 1000) / 1000,
       ladownosc: Math.round(srednia(lista, p => p.ladownosc)),
-      kapital: Math.round(srednia(lista, p => p.kapital))
+      kapital: Math.round(srednia(lista, p => p.kapital)),
+      kolejka: Math.round(srednia(lista, p => p.kolejka || 0) * 10) / 10
     });
   }
   return { okno: DLUGI_OKNO, koniec: [minuty - 60, minuty], miary, godziny };
@@ -462,7 +465,16 @@ function ocen(bieg) {
         + bieg.dlugi.miary.map(m => `${m.id} ${Math.round(m.udzial * 100)}%${m.wglad ? ' (do wglądu)' : ''}`).join(', ')
         + ` (próg ${PROGI.dlugiUdzialMin * 100}%)` });
   }
-  for (const w of wyniki) w.ok = w.wartosc <= w.limit && !(w.wartosc < (w.minimum ?? -Infinity));
+  // Wariant długi: kolejka na redzie tylko do wglądu (decyzja orkiestratora 2026-11-08) — próg ≤ 2
+  // stroi bramkę 4 h, a ruch po 7. h rośnie o ~40%; liczby (średnie portów) zostają w opisie.
+  if (bieg.dlugi && bieg.dlugi.koniec[1] >= PROGI.dlugiOdMinut) {
+    const kolejka = wyniki.find(w => w.prog === 'kolejka');
+    if (kolejka) {
+      kolejka.wglad = true;
+      kolejka.opis = `do wglądu: ${bieg.kolejki.slice(0, 4).map(q => `${q.stacja} ${q.srednia}`).join(', ')}`;
+    }
+  }
+  for (const w of wyniki) w.ok = !!w.wglad || (w.wartosc <= w.limit && !(w.wartosc < (w.minimum ?? -Infinity)));
   return wyniki;
 }
 
@@ -511,7 +523,7 @@ async function main() {
       + `agenci ${bieg.agenci.kursy} kursów`);
     for (const w of bieg.ocena) {
       if (!w.ok) wszystko = false;
-      console.log(`    ${w.ok ? 'OK  ' : 'ŹLE '} ${w.prog.padEnd(11)} ${w.opis}`);
+      console.log(`    ${w.wglad ? 'WGL.' : w.ok ? 'OK  ' : 'ŹLE '} ${w.prog.padEnd(11)} ${w.opis}`);
     }
     const glodne = bieg.glod.filter(g => g.maxMin > PROGI.glodMinMax).slice(0, 8)
       .map(g => `${g.stacja} ${g.short} ${g.maxMin}m`).join(', ');
@@ -524,11 +536,12 @@ async function main() {
     if (kolejne) console.log(`         kolejki: ${kolejne}`);
     if (bieg.dlugi && bieg.dlugi.koniec[1] >= PROGI.dlugiOdMinut) {
       console.log('         godz.  kursy  dostawy/h  ' + DLUGI_TOWARY.map(id => id.padStart(11)).join('')
-        + '  obsada  ładowność t  kapitał mln CR');
+        + '  obsada  ładowność t  kapitał mln CR  kolejka (redy razem)');
       for (const g of bieg.dlugi.godziny) {
         console.log(`         ${String(g.h).padStart(5)} ${String(g.kursy).padStart(6)} ${String(g.dostawyH).padStart(10)}  `
           + DLUGI_TOWARY.map(id => String(g.zapas[id]).padStart(11)).join('') + `  ${g.obsada.toFixed(3)}`
-          + `  ${String(g.ladownosc).padStart(11)}  ${(g.kapital / 1e6).toFixed(1).padStart(14)}`);
+          + `  ${String(g.ladownosc).padStart(11)}  ${(g.kapital / 1e6).toFixed(1).padStart(14)}`
+          + `  ${String(g.kolejka).padStart(20)}`);
       }
     }
   }

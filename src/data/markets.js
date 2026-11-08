@@ -178,12 +178,19 @@ export function defineMarket(def = {}) {
  * megafrachtowcami, a księżyc z jednym kompletem ma tylko 2 stanowiska „mega”
  * (kolejka 2,7, ~1,5 z niej to megafrachtowce pod załadunkiem).
  *
+ * Wenus (2026-11-08, po poprawce floty przewoźników): odkup straconej klasy trzyma we flocie
+ * frachtowce heavy i mega, a Wenus z trzema kompletami ma po 6 stanowisk capital i mega —
+ * kolejka w bramce 4 h doszła do progu (2,02 na ziarnie 7), w biegu 12 h średnio 8–11.
+ * Cztery komplety = koło jak na Saturnie (docs/POMIAR-zanik-gospodarki-2026-11-08.md).
+ *
  * Klucz to id rynku — planety, stacje małych ciał i księżyce.
  */
 export const MARKET_DOCK_OVERRIDES = Object.freeze({
+  venus: Object.freeze({ berthMultiplier: 4 }),
   saturn: Object.freeze({ berthMultiplier: 4 }),
   uranus: Object.freeze({ berthMultiplier: 3 }),
   ceres: Object.freeze({ berthMultiplier: 5 }),
+  vesta: Object.freeze({ berthMultiplier: 4 }),
   oberon: Object.freeze({ berthMultiplier: 2 })
 });
 
