@@ -159,6 +159,22 @@ Z13 w wersji zwężonej:
 
 Awans do pełnego NPC przyjdzie później.
 
+### 3.6 Wiele układów gwiezdnych (od 2026-11-08)
+
+Podstawa: mapa gwiezdna (`src/game/sector/`, `docs/PLAN-mapa-gwiezdna.md`; demo, do gry niewpięta) i rejestr układów (`src/data/starSystems.js`, reguła `uklady-gwiezdne`). Decyzje użytkownika z 2026-11-07: układów będzie dużo (proceduralne), gospodarki układów są od siebie niezależne, a między układami ruszają się tylko floty kupieckie i wojsko. Dzięki temu koszt rośnie liniowo z liczbą układów. Jedna splątana sieć rynków rosłaby jak N^1,45: 10 kopii Układu Słonecznego w jednym świecie ruchu to 280–315 ms na krok, jeden układ — 8–10 ms.
+
+Kierunek (szczegóły zaprojektuje E18):
+- **Pełna ekonomia ruchu v2 tylko w układzie strony.** Gra ładuje jeden układ na stronę, więc worker ruchu liczy jeden układ, tak jak dziś Układ Słoneczny. Układ Słoneczny zostaje na ręcznych tabelach `src/data/markets.js`, a bramka bilansu (§ 5) pilnuje go jak dotąd.
+- **Rynki układu proceduralnego z jego opisu.** Opis to planety `{ id, type, seed, orbitAU, r }`, pasy i frakcja właściciela. Rodzaj planety wyznacza archetyp przemysłu (`INDUSTRY_ARCHETYPES` w `stationEconomy.js`), pas daje pola wydobywcze, a siedziba frakcji — stocznię. Generator korzysta z tych samych towarów (64), receptur (46) i API (`addMarket`) co Układ Słoneczny, więc nie powstaje druga ekonomia. Wynik jest deterministyczny z ziarna układu.
+- **Układ bez gracza liczy model zbiorczy.** Układ ma jeden wektor towarów: produkcję i zużycie z receptur swoich rynków, zapas i cenę z zapasu. Model liczy się rzadko (np. raz na minutę gry) dla wszystkich układów sektora; przy 160 układach to drobny koszt. Ten sam model nadrabia czas nieobecności gracza w układzie, bez przewijania pełnej symulacji.
+- **Wejście do układu i wyjście.** Przy wejściu pełny świat ruchu startuje z zapasów modelu zbiorczego albo z pełnego zapisu, jeśli gracz był tu niedawno, i przechodzi tę samą rozgrzewkę co dziś (E15) na ekranie ładowania. Przy wyjściu stan idzie do zapisu, a zapasy i ceny — do modelu zbiorczego.
+- **Zapis ekonomii na układ.** Dziś jest jeden klucz `economy`. Docelowo pełny zapis mają tylko ostatnio odwiedzone układy, a pozostałe — sam wektor modelu zbiorczego (zapasy, ceny, czas). Zapis dostaje pole `systemId`, a `ECONOMY_SAVE_VERSION` rośnie o 1.
+- **Handel między układami prowadzą konwoje sektora.** Konwój ładuje towar tam, gdzie model zbiorczy ma nadwyżkę i niską cenę, i wiezie go tam, gdzie jest niedobór i wysoka cena. Ładowność wynika z liczby frachtowców (`fleetComposition`). Dziś konwój nie niesie towarów, a cel losuje z wagi handlu. Napad piratów zabiera ładunek, a przybycie konwoju zmienia zapasy celu (w układzie strony przez `adjustStationStock` / `stockDelta`).
+- **Granica układu strony to rogi świata.** Import i eksport przechodzą przez punkty skoku (`JUMP_CORNERS`). Przewoźnicy ruchu v2 wożą towar na eksport do rynku granicznego przy rogu i rozwożą z niego import. Konwój sektora widać w bańce, kiedy wchodzi rogiem i rozładowuje się w porcie.
+- **Wojsko (później).** Patrole frakcji w sektorze uzupełniają straty z produkcji stoczni frakcji w modelu zbiorczym, a straty patroli tworzą popyt na okręty.
+- **Gracz.** Kredyty i ładownia należą do gracza, nie do układu (zapis gracza, `src/game/playerSave.js`). Gracz handluje między układami tak jak konwoje: kupuje tanio w jednym, sprzedaje drożej w innym. Ograniczają go ładownia i paliwo w strefie.
+- **Obsada (workforce)** działa tak samo w każdym układzie. Źródła to habitaty na planetach `terran` i `ocean`, stacje mieszkalne oraz ringi tam, gdzie są.
+
 ## 4. Zadania
 
 | ID | zadanie | fala | zależy od | pliki (właściciel) |
@@ -181,6 +197,10 @@ Awans do pełnego NPC przyjdzie później.
 | E15 | Widoczny ruch: rozgrzewka świata ruchu przy ładowaniu, reda i orbita postojowa w bańce, bańka w studni grawitacyjnej i większy promień przy portach | 5 | E6, E14 | `trafficCore.js`, `workerBubble.js`, `materializedFlight.js`, `portParking.js`, `src/game/trafficBubble.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html` |
 | E16 | Workforce — projekt bez kodu: X workforce na budynek, źródła (ringi, strefy zielone Marsa, w przyszłości bazy w asteroidach), promy rotacyjne, skutek niedoboru, bilans | 5 | — | `docs/PROPOZYCJA-workforce.md` |
 | E17 | Grafika statków ruchu: proxy bańki (ruch, zapas floty, reda) z lakierem, oświetleniem v2, oknami i światłami jak pełne kadłuby; bez „wybudzania” przy awansie | 6 | E6, E13, E15 | `src/3d/shipProxyBatch3D.js` / `.tsl.js`, `src/render/blocks/trafficBlock.js` |
+| E18 | Wiele układów — projekt bez kodu (§ 3.6): generator rynków z opisu układu, model zbiorczy układu bez gracza (kalibracja na Układzie Słonecznym: ceny i przepływy modelu kontra pełna symulacja), wejście i wyjście z układu, zapis ekonomii na układ (rozmiar, limit), handel konwojów sektora, granica układu (rogi świata), wojsko | 7 | — | `docs/PROPOZYCJA-ekonomia-ukladow.md` |
+| E19 | Rynki układu proceduralnego z danych układu: generator rynków, świat ruchu z rynków układu przy `?uklad=<id>`, bramka bilansu na 3 układach z ziarna; Układ Słoneczny bez zmian (bramka liczba w liczbę) | 7 | E18; pierwszy układ proceduralny w grze (sesja „Ograniczenie gracza w jednym układzie”, tam ekonomia wyłączona) | nowy moduł rynków układu w `src/game/traffic/`, budowa świata ruchu w `trafficWorld.js`; `starSystems.js` tylko do odczytu |
+| E20 | Model zbiorczy układu i zapis ekonomii na układ: nadrabianie nieobecności, pełny zapis ostatnich układów, start świata ruchu z modelu zbiorczego | 7 | E18 | `src/game/traffic/economySave.js`, nowy moduł modelu zbiorczego |
+| E21 | Handel między układami: ładunek konwojów z modeli zbiorczych, napad zabiera ładunek, rozliczenie przy wejściu do układu, import i eksport rogami świata w układzie strony | 8 | E19, E20, wpięcie strefy w grę (`docs/PLAN-mapa-gwiezdna.md`, „Wpięcie w grę”) | `src/game/sector/sectorFleets.js` (ładunek konwoju), rynek graniczny w ruchu v2 |
 
 Fala 1 (E1, E3, E4, E5, E8) rusza równolegle, każda sesja we własnym worktree. Pliki wspólne (`trafficWorld.js`, `travelNetwork.js`, `trafficProtocol.js`, `trafficBridge.js`, `agentFleets.js`, `trafficDirector.js`) dzielimy po FUNKCJACH, jak w tabeli. Konflikty przy scalaniu rozwiązuje orkiestrator.
 
@@ -231,7 +251,8 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
 - progi bramki bilansu (§ 5);
 - wygląd wyrw i ewentualna regeneracja pasa (domyślnie brak);
 - statki ruchu widoczne w grze między falą 2 a 3 (§ 3.2);
-- zapis stanu ekonomii i wyrw (E7).
+- zapis stanu ekonomii i wyrw (E7);
+- wiele układów (§ 3.6, rekomendacja w nawiasie): układ bez gracza liczony modelem zbiorczym w tle, czy zamrożony do następnej wizyty (w tle); ile układów trzyma pełny zapis ekonomii (3 ostatnio odwiedzone, reszta — wektor modelu zbiorczego); import i eksport w układzie gracza widoczne — konwoje wchodzą rogami świata i rozładowują się w portach — czy samo rozliczenie liczbowe przy wejściu (widoczne); ceny innych układów na mapie gwiezdnej (rdzeń na bieżąco przez sieć przekaźników, pogranicze — z ostatniej wizyty).
 
 ## 8. Stan
 
@@ -503,3 +524,8 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - E6 (3d4d0949): każdy wolny odcinek ścieżki bańki idzie przez router ringu — rajder Hilda → Mimas nie tnie już płyty ringu Ziemi (ukryty błąd znaleziony przez E16).
   - E17 w toku: kadłub proxy = pełny kadłub (lakier, oświetlenie v2, lampy), „wybudzanie” to był awans do NPC; dochodzą lampy cywilów, potem E17b — modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże, cień SDF) na proxy bliżej kamery.
 - 2026-10-28 E17 w `main` (4cd6c8dc): proxy statków ruchu rysuje fragmentem pełnego kadłuba (oświetlenie v2, mapa powierzchni, lakier, glow, lampy) — wcześniej klasyczny model z otoczeniem 0,24 × cień 0,4, w cieniu hal prawie czarny; „wybudzanie” to był awans do NPC. Lampy pozycyjne cywilów (`src/data/trafficHullLights.js`, proxy i NPC), lampy gasną pod zamkniętym dachem hali K-7, przejścia proxy ↔ NPC bez skoku. Koszt: CPU aktualizacji +0,1 ms w porcie, GPU w szumie; 0 sync, 0 błędów. Dalej E17b: modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże, cień SDF) na proxy bliżej kamery.
+- 2026-11-08 stan:
+  - E17b gotowe na gałęzi `claude/e17-grafika-ruchu-096962` (8 commitów, a6dcc868…a06d2905): na proxy statków ruchu dysze SIDE, obudowa rdzenia, mostek, wieże 11 okrętów w spoczynku, cień SDF i światła siatki efektów (lampy hali K-7); koszt CPU workera +0,03–0,09 ms w hali, GPU w szumie, 0 sync. Jeszcze nie w `main`: od 10-28 main przesunął się o ~160 commitów i wyszły 4 konflikty (reguły `mostki-reaktor` i `ruch-banka`, `src/3d/hexShips3D.js`, `src/3d/shipProxyBatch3D.tsl.js`). Sesja E17 scala main do swojej gałęzi, potem scalenie do main i weryfikacja.
+  - Workforce W5–W7 (karta „Kadry”, gracz i habitat, sprite'y promów) nie ruszone — czekają na decyzję użytkownika.
+  - „Wczytaj grę” rozwiązane poza tym planem: zapis gracza (18814aa9, `src/game/playerSave.js`, klucz `game`) z przyciskiem „Wczytaj” w menu.
+  - Mapa gwiezdna i rejestr układów w `main` (demo, do gry niewpięte). Nowy rozdział § 3.6 „Wiele układów gwiezdnych”, zadania E18–E21 (§ 4), decyzje w § 7.
