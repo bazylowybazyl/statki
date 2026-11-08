@@ -38,14 +38,14 @@ import {
 } from './markets.js';
 import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
-  COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
+  COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
 import { BELT_MSG, SALVAGE_MSG } from './trafficProtocol.js';
 import { reportGameWrecks, forgetGameWrecks, collectSalvageTaken } from './scrapperFleets.js';
 import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
-import { summarizeTrade, portOfferFromQuote } from './tradeSummary.js';
+import { summarizeTrade, portOfferFromQuote, crewContractOffer, passengerFlow, hostagesByNest } from './tradeSummary.js';
 import { inboundUnits } from './marketBook.js';
 import { isDerelict } from '../../data/factions.js';
 import {
@@ -145,7 +145,10 @@ export function createTrafficCore(post, options = {}) {
     warmup: { total: 0, seconds: 0, active: false, ms: 0, steps: 0, publishedAt: -Infinity, restores: [] },
     /** Bufory oferty portu w `buildMarket` — bez alokacji na stację × towar. */
     offerScratch: { sell: 0, buy: 0, wanted: false },
-    quoteScratch: { capacity: 0, stored: 0, room: 0, offerFloor: 0, wanted: false, demandRate: 0, restockFloor: 0 }
+    quoteScratch: { capacity: 0, stored: 0, room: 0, offerFloor: 0, wanted: false, demandRate: 0, restockFloor: 0 },
+    /** Bufory obsady w `buildCrew` (W5): kurs z ludźmi, zakładnicy po kryjówkach. */
+    flowScratch: { from: '', to: '', people: 0, returning: false },
+    hostageScratch: new Map()
   };
 
   /** Tabele bufora encji — te same co bufora kursów. */
@@ -834,6 +837,7 @@ export function createTrafficCore(post, options = {}) {
   function publishTick(steps, ms) {
     const world = core.world;
     const market = buildMarket();
+    const crew = buildCrew();
     const bubble = buildBubble();
     const director = world.director;
     const message = {
@@ -861,6 +865,7 @@ export function createTrafficCore(post, options = {}) {
         totalSteps: core.stats.steps
       },
       market,
+      crew,
       bubble,
       wrecks: collectWrecks(),
       warWrecks: collectWarWrecks(),
@@ -879,7 +884,7 @@ export function createTrafficCore(post, options = {}) {
       message.bubblePorts = bubblePortTable();
       message.bubbleDocks = bubbleDockTable();
     }
-    send(message, [market.buffer, bubble.data.buffer]);
+    send(message, [market.buffer, crew.buffer, bubble.data.buffer]);
   }
 
   /**
@@ -924,9 +929,46 @@ export function createTrafficCore(post, options = {}) {
         quoteFields.demandRate = q?.demandRate || 0;
         quoteFields.restockFloor = q?.restockFloor || 0;
         portOfferFromQuote(quoteFields, book ? inboundUnits(book, entry.id, key) : 0, offer);
+        // Kontrakty obsady (W5): ludzi wydaje tylko ośrodek ludności.
+        if (key === 'workforce') crewContractOffer(entry, offer);
         data[offset + MARKET_FIELD.SELL] = offer.sell;
         data[offset + MARKET_FIELD.BUY] = offer.wanted ? offer.buy : -1;
       }
+    });
+    return data;
+  }
+
+  /**
+   * Obsada portów (workforce, W5): stacje × `CREW_FIELD` w osobach świata — ludzie w drodze na kontraktach
+   * (do portu i z portu), powroty po kontrakcie, czekający na prom do domu, wydajność zakładów, zakładnicy
+   * w kryjówkach. Jeden przegląd aktywnych kursów na tick (odczyt — gospodarka bez zmian). Nowy bufor na krok,
+   * bo odchodzi jako transferable (~2 KB).
+   */
+  function buildCrew() {
+    const world = core.world;
+    const data = new Float64Array(world.stations.length * CREW_STRIDE);
+    // Indeks stacji z bieżącej tabeli; `indexMarkets` zostaje dla `tick` (ono wysyła nową tabelę `stations`).
+    const index = core.marketsVersion === world.marketsVersion && core.stationIndex
+      ? core.stationIndex : new Map(world.stations.map((entry, i) => [entry.id, i]));
+    const flow = core.flowScratch;
+    for (const course of world.registry.active) {
+      if (!course.payload?.passengers || !passengerFlow(course, flow)) continue;
+      const to = index.get(flow.to);
+      if (flow.returning) {
+        if (to !== undefined) data[to * CREW_STRIDE + CREW_FIELD.RETURNING] += flow.people;
+        continue;
+      }
+      const from = index.get(flow.from);
+      if (to !== undefined) data[to * CREW_STRIDE + CREW_FIELD.INBOUND] += flow.people;
+      if (from !== undefined) data[from * CREW_STRIDE + CREW_FIELD.OUTBOUND] += flow.people;
+    }
+    const hostages = hostagesByNest(world.piracy, core.hostageScratch);
+    world.stations.forEach((entry, stationIndex) => {
+      const econ = world.getEconomy(entry.id);
+      const offset = stationIndex * CREW_STRIDE;
+      data[offset + CREW_FIELD.LEAVING] = finite(econ?.workforceLeaving);
+      data[offset + CREW_FIELD.EFFICIENCY] = Number.isFinite(econ?.workforceEfficiency) ? econ.workforceEfficiency : 1;
+      data[offset + CREW_FIELD.HOSTAGES] = hostages.get(entry.id) || 0;
     });
     return data;
   }

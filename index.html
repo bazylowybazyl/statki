@@ -131,6 +131,7 @@
         </div>
         <div class="station-content" id="station-content-area">
           <div id="tab-trade" class="station-tab hidden"></div>
+          <div id="tab-crew" class="station-tab hidden"></div>
           <div id="tab-cantina" class="station-tab hidden"></div>
           <div id="tab-hangar" class="station-tab hidden"></div>
           <div id="tab-mechanic-html" class="station-tab hidden"></div>
@@ -1606,6 +1607,17 @@
       getResourceValue,
       getBagMass
     } from "./src/data/resources.js";
+    // Obsada (workforce, E16 W5): progi barw karty „Kadry” i etykiety źródeł; widok liczy most (`getWorkforce`).
+    import {
+      WORKFORCE_UI_WARN_RATIO, WORKFORCE_UI_ALERT_RATIO, WORKFORCE_MIN_RATIO, WORKFORCE_CONTRACT_SECONDS,
+      POPULATION_SOURCE_LABEL
+    } from "./src/data/workforce.js";
+    // Załoga i kabiny gracza (workforce W6): dane i czysta logika — klej w bloku „ZAŁOGA I KABINY GRACZA”.
+    import { PASSENGER_CABINS, PLAYER_CREW_MODE, PLAYER_CREW_STEP } from "./src/data/playerCrew.js";
+    import {
+      createPlayerCrew, crewComplement, crewOnBoard, crewEffects, cabinSlotCapacity, betrayCrew, recruitCheck,
+      recruitCrew, passengersAboard, cabinRoom, nextContractExpiry, boardContract, disembarkContracts, tickContracts
+    } from "./src/game/playerCrew.js";
     import {
       FIGHTER_LAUNCH,
       orderHangarTubes,
@@ -13665,6 +13677,8 @@
       { id: 'cantina', label: 'CANTINA', key: '3' },
       { id: 'mechanic', label: 'WYPOSAŻENIE', key: '4' },
       { id: 'infrastructure', label: 'INFRASTRUCTURE', key: '5' },
+      // Kadry (workforce, E16 W5): obsada portu i kontrakty rotacyjne — osobno od towarów karty „Handel”.
+      { id: 'crew', label: 'KADRY', key: '6' },
     ];
     const STATION_TERMINAL_TAB_IDS = STATION_TERMINAL_TABS.map(tab => tab.id);
     const STATION_TERMINAL_TAB_SET = new Set(STATION_TERMINAL_TAB_IDS);
@@ -14276,7 +14290,8 @@
       return Math.max(1, Math.round(quote.sell));
     }
     function fitPartPrice(id) {
-      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? LOOT_GEAR[id]?.price ?? 0) || 0;
+      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? LOOT_GEAR[id]?.price
+        ?? (id === PASSENGER_CABINS.id ? PASSENGER_CABINS.price : 0)) || 0;
     }
     // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — most do workera ruchu),
     // wycena weaponPriceAt. false — port jej tu nie złoży.
@@ -14416,6 +14431,8 @@
         hullSystems: { ...(PLAYER.hullSystems || {}) },
         // Gniazdo ZBIÓRKA (kontenery-łup): kadłub → id sprzętu albo null (puste); brak klucza = domyślny kadłuba.
         hullLootGear: { ...(PLAYER.hullLootGear || {}) },
+        // Gniazdo KABINY (workforce W6): kadłub → 'passenger_cabins' albo null.
+        hullCabins: { ...(PLAYER.hullCabins || {}) },
         partStock: counts,
         hullPresets: { ...(PLAYER.hullPresets || {}) },
         fitCustoms: Array.isArray(PLAYER.fitCustoms) ? PLAYER.fitCustoms : [],
@@ -14428,7 +14445,8 @@
       PLAYER.hullModules = modules;
       const parts = {};
       for (const [id, n] of Object.entries(data?.partStock || {})) {
-        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null || LOOT_GEAR[id]) && Number(n) > 0) parts[id] = Math.floor(Number(n));
+        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null || LOOT_GEAR[id] || id === PASSENGER_CABINS.id)
+          && Number(n) > 0) parts[id] = Math.floor(Number(n));
       }
       PLAYER.partStock = parts;
       const presets = {};
@@ -14447,6 +14465,11 @@
         if (PLAYER_HULL_CATALOG[hull] && (id === null || LOOT_GEAR[id])) lootGear[hull] = id;
       }
       PLAYER.hullLootGear = lootGear;
+      const cabins = {};
+      for (const [hull, id] of Object.entries(data?.hullCabins || {})) {
+        if (PLAYER_HULL_CATALOG[hull] && (id === null || id === PASSENGER_CABINS.id)) cabins[hull] = id;
+      }
+      PLAYER.hullCabins = cabins;
     }
 
     // ---- Refit ręczny (ekran) ----------------------------------------------------------------------------------
@@ -14704,7 +14727,16 @@
         }),
         currentLootGearLabel: () => LOOT_GEAR[playerLootGearId()]?.short || '—',
         setLootGear: fitUiSetLootGear,
-        partLabel: (id) => SHIP_MODULES[id]?.label || LOOT_GEAR[id]?.label || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
+        // Gniazdo KABINY (workforce W6): kabiny pasażerskie — jedna część, pojemność z kadłuba (Atlas 300 osób).
+        cabins: () => (cabinSlotCapacity(PLAYER.activeHullId) > 0 ? [{
+          id: PASSENGER_CABINS.id, label: PASSENGER_CABINS.label, desc: PASSENGER_CABINS.desc,
+          capacity: cabinSlotCapacity(PLAYER.activeHullId), price: fitPartPrice(PASSENGER_CABINS.id),
+          installed: playerCabinsFitted(), owned: (Number(PLAYER.partStock?.[PASSENGER_CABINS.id]) || 0) > 0
+        }] : []),
+        currentCabinsLabel: () => (playerCabinsFitted() ? `${cabinSlotCapacity(PLAYER.activeHullId)} os.` : '—'),
+        setCabins: fitUiSetCabins,
+        partLabel: (id) => SHIP_MODULES[id]?.label || LOOT_GEAR[id]?.label
+          || (id === PASSENGER_CABINS.id ? PASSENGER_CABINS.label : null) || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
         partPrice: fitPartPrice,
         weaponPrice: (id) => fitWeaponPrice(id),
         fits: (id, slot) => playerFitFits(WEAPONS[id], slot),
@@ -14830,6 +14862,8 @@
       hullModules: {},
       // Gniazdo ZBIÓRKA (kontenery-łup): kadłub → sprzęt (`src/data/lootGear.js`) albo null; brak klucza = domyślny.
       hullLootGear: {},
+      // Gniazdo KABINY (workforce W6, src/data/playerCrew.js): kadłub → 'passenger_cabins' albo null (brak kabin).
+      hullCabins: {},
       partStock: {},
       hullPresets: {},
       fitCustoms: [],
@@ -14844,6 +14878,12 @@
     // przedmiot gracza poza masą ładowni (jak ładownia: bez zapisu w localStorage), zestaw
     // startowy z src/data/miningCharges.js, dokupowany w doku (rynek → Ładunki górnicze).
     PLAYER.miningCharges = createMiningChargeStock();
+    // Załoga okrętu i ludzie w kabinach na kontraktach rotacyjnych (workforce W6, src/game/playerCrew.js): na starcie
+    // przydział frakcji; zapis — zapis gracza (`crew`). Skutek (D11): naprawy roju R i przeładowanie wież.
+    PLAYER.crew = createPlayerCrew();
+    const _crewFx = { ratio: 1, repair: 1, reload: 1 };
+    const _crewMods = { fireRate: 1 };
+    let _crewReloadApplied = 1;
 
     // ── ROJ DRONÓW NAPRAWCZYCH GRACZA (src/game/repairRig.js, decyzje użytkownika 2026-10-08 w src/data/repairDrones.js) ──
     // Nosiciel i cel = statek gracza: R wypuszcza / odwołuje drony (nic z automatu), drony prostują wgniecenia, odbudowują
@@ -14860,7 +14900,9 @@
         sockets: playerRepairSockets,
         restoreSocket: restorePlayerRepairSocket,
         // Łata czyści lej i osmalenie komórki w mapie ran, przy krawędzi zostaje świeży spaw.
-        onCellRegrown: (e, ix, iy) => HullDamageEvents.patch(e, ix, iy)
+        onCellRegrown: (e, ix, iy) => HullDamageEvents.patch(e, ix, iy),
+        // Załoga okrętu (workforce W6, D11): niepełna załoga wolniej prostuje i spawa.
+        workRate: () => crewEffects(PLAYER.crew, PLAYER.activeHullId, _crewFx).repair
       }
     });
     playerRepairRig.onMessage = (text, kind) => {
@@ -15020,7 +15062,8 @@
       cantina: 'Kantyna',
       hangar: 'Hangar',
       mechanic: 'Wyposażenie',
-      infrastructure: 'Infrastruktura'
+      infrastructure: 'Infrastruktura',
+      crew: 'Kadry'
     };
     const STATION_TAB_CONFIG = STATION_TERMINAL_TABS.map(tab => ({
       id: tab.id,
@@ -15061,6 +15104,7 @@
       credits: document.getElementById('station-credits'),
       panels: {
         trade: document.getElementById('tab-trade'),
+        crew: document.getElementById('tab-crew'),
         cantina: document.getElementById('tab-cantina'),
         hangar: document.getElementById('tab-hangar'),
         mechanic: document.getElementById('tab-mechanic-html'),
@@ -15414,6 +15458,427 @@
       return card;
     }
 
+    // ============================================================
+    // KADRY (workforce, E16 W5 — docs/PROPOZYCJA-workforce.md § 6.3)
+    // Obsada portu z mostu (`TrafficV2.getWorkforce`: potrzeba N, ludzie na miejscu, wydajność, rotacja,
+    // ludzie w drodze, źródła) i oferta kontraktów rotacyjnych — ta sama oferta portu co towar (bufor rynku,
+    // towar `workforce`: źródło wystawia kontrakty, rynek pracy je przyjmuje; cena z reputacją gracza).
+    // Ludzie nie leżą na liście towarów karty „Handel”. UI mówi o kontraktach, nigdy o „kupnie ludzi”.
+    // ============================================================
+
+    function crewRatioClass(ratio) {
+      if (!(ratio < WORKFORCE_UI_WARN_RATIO)) return '';
+      return ratio < WORKFORCE_UI_ALERT_RATIO ? 'is-alert' : 'is-warn';
+    }
+
+    function formatCrewPercent(value) {
+      return `${Math.round(Math.max(0, Number(value) || 0) * 100)}%`;
+    }
+
+    function buildCrewRow(table, label, field) {
+      const row = document.createElement('tr');
+      const head = document.createElement('td');
+      head.className = 'crew-stat-label';
+      head.textContent = label;
+      const cell = document.createElement('td');
+      cell.className = 'crew-stat-value';
+      cell.dataset.field = field;
+      row.append(head, cell);
+      table.appendChild(row);
+      return row;
+    }
+
+    function buildCrewCardShell(title, badge, description, className) {
+      const card = document.createElement('div');
+      card.className = `station-card-aero ${className}`;
+      const header = document.createElement('div');
+      header.className = 'card-header';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'card-title';
+      titleEl.textContent = title;
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'card-badge';
+      badgeEl.textContent = badge;
+      header.append(titleEl, badgeEl);
+      card.appendChild(header);
+      const desc = document.createElement('p');
+      desc.className = 'card-desc';
+      desc.textContent = description;
+      card.appendChild(desc);
+      return card;
+    }
+
+    function buildCrewPanel() {
+      const pane = stationOverlayDom.panels.crew;
+      if (!pane) return;
+      pane.innerHTML = '';
+
+      const staff = buildCrewCardShell('Obsada portu', 'Kadry',
+        `Zakłady, kopalnie, port i magazyny obsadzają ludzie na kontraktach rotacyjnych `
+        + `(${Math.round(WORKFORCE_CONTRACT_SECONDS / 60)} min). Przy niepełnej obsadzie produkcja spada, `
+        + `poniżej ${Math.round(WORKFORCE_MIN_RATIO * 100)}% obsady zakłady stoją.`, 'crew-card');
+      const headline = document.createElement('div');
+      headline.className = 'crew-headline';
+      headline.dataset.field = 'headline';
+      staff.appendChild(headline);
+      const bar = document.createElement('div');
+      bar.className = 'crew-bar';
+      const fill = document.createElement('div');
+      fill.className = 'crew-bar-fill';
+      fill.dataset.field = 'bar';
+      bar.appendChild(fill);
+      staff.appendChild(bar);
+      const stats = document.createElement('table');
+      stats.className = 'crew-stats';
+      buildCrewRow(stats, 'Wydajność zakładów', 'efficiency');
+      buildCrewRow(stats, 'Rotacja kontraktów', 'rotation');
+      buildCrewRow(stats, 'Kwatery', 'quarters');
+      buildCrewRow(stats, 'W drodze do portu', 'inbound');
+      buildCrewRow(stats, 'Czekają na prom do domu', 'leaving').dataset.row = 'leaving';
+      buildCrewRow(stats, 'Ośrodek ludności', 'sources').dataset.row = 'source';
+      buildCrewRow(stats, 'Wysłani z portu, w drodze', 'outbound').dataset.row = 'source';
+      buildCrewRow(stats, 'Wracają po kontrakcie', 'returning').dataset.row = 'source';
+      buildCrewRow(stats, 'Zakładnicy', 'hostages').dataset.row = 'hostages';
+      staff.appendChild(stats);
+      pane.appendChild(staff);
+
+      const contracts = buildCrewCardShell('Kontrakty rotacyjne', 'Rynek',
+        'Ośrodek ludności wystawia kontrakty, port z brakami obsady je przyjmuje — ta sama oferta, '
+        + 'z której korzystają przewoźnicy. Cena za osobę: niedobór, frakcja, reputacja.', 'crew-contracts-card');
+      const table = document.createElement('table');
+      table.className = 'trade-market-table crew-offer-table';
+      const head = document.createElement('tr');
+      for (const label of ['Oferta', 'Osób', 'Cena za osobę']) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        head.appendChild(th);
+      }
+      table.appendChild(head);
+      for (const [side, label] of [['sell', 'Port wystawia kontrakty'], ['buy', 'Port przyjmuje kontrakty']]) {
+        const row = document.createElement('tr');
+        row.dataset.crewOffer = side;
+        const labelCell = document.createElement('td');
+        labelCell.className = 'trade-resource-label';
+        labelCell.textContent = label;
+        const units = document.createElement('td');
+        units.className = 'trade-market-stock';
+        units.dataset.field = 'units';
+        const price = document.createElement('td');
+        price.className = 'trade-market-price';
+        price.dataset.field = 'price';
+        row.append(labelCell, units, price);
+        table.appendChild(row);
+      }
+      contracts.appendChild(table);
+      const note = document.createElement('div');
+      note.className = 'card-desc crew-offer-note';
+      note.dataset.field = 'note';
+      contracts.appendChild(note);
+      pane.appendChild(contracts);
+      pane.appendChild(buildCrewShipCard());
+    }
+
+    function updateCrewCards(station) {
+      const pane = stationOverlayDom.panels.crew;
+      if (!pane) return;
+      const view = station ? (trafficV2?.getWorkforce?.(station.id) || null) : null;
+      const set = (field, text) => {
+        const el = pane.querySelector(`[data-field="${field}"]`);
+        if (el && el.textContent !== text) el.textContent = text;
+        return el;
+      };
+      const staffed = !!view && view.need > 0;
+      const headline = set('headline', !view ? 'Rynek stacji niedostępny'
+        : (staffed ? `Obsada ${formatCrewPercent(view.ratio)}: jest ${formatTradeUnits(view.staffed)} z ${formatTradeUnits(view.need)}`
+          : 'Port nie zatrudnia obsady'));
+      const tone = staffed ? crewRatioClass(view.ratio) : '';
+      if (headline) {
+        headline.classList.toggle('is-warn', tone === 'is-warn');
+        headline.classList.toggle('is-alert', tone === 'is-alert');
+      }
+      const bar = pane.querySelector('[data-field="bar"]');
+      if (bar) {
+        bar.style.width = `${Math.round((staffed ? view.ratio : 0) * 100)}%`;
+        bar.classList.toggle('is-warn', tone === 'is-warn');
+        bar.classList.toggle('is-alert', tone === 'is-alert');
+      }
+      const dash = '—';
+      set('efficiency', staffed ? formatCrewPercent(view.efficiency)
+        + (view.efficiency <= 0 ? ' — zakłady stoją' : (view.efficiency < 1 ? ' — produkcja dławiona' : '')) : dash);
+      set('rotation', staffed ? `${formatTradeUnits(view.rotationPerHour)} os./h` : dash);
+      set('quarters', view ? `${formatTradeUnits(view.stored)} / ${formatTradeUnits(view.capacity)}` : dash);
+      set('inbound', view ? `${formatTradeUnits(view.inbound)} os.` : dash);
+      set('leaving', view ? `${formatTradeUnits(view.leaving)} os.` : dash);
+      set('sources', view?.sources?.length
+        ? view.sources.map(src => `${POPULATION_SOURCE_LABEL[src.id] || src.id} ${formatTradeUnits(src.perHour)} os./h`).join(' · ')
+        : dash);
+      set('outbound', view ? `${formatTradeUnits(view.outbound)} os.` : dash);
+      set('returning', view ? `${formatTradeUnits(view.returning)} os.` : dash);
+      set('hostages', view ? `${formatTradeUnits(view.hostages)} os.` : dash);
+      pane.querySelectorAll('tr[data-row]').forEach(row => {
+        const kind = row.dataset.row;
+        const show = kind === 'source' ? !!view?.source
+          : (kind === 'hostages' ? view?.hostages > 0 : (kind === 'leaving' ? staffed && !view?.source : true));
+        row.classList.toggle('hidden', !show);
+      });
+
+      const offer = view ? getTradeOffer(station, 'workforce') : null;
+      pane.querySelectorAll('tr[data-crew-offer]').forEach(row => {
+        const side = row.dataset.crewOffer;
+        const units = row.querySelector('[data-field="units"]');
+        const price = row.querySelector('[data-field="price"]');
+        let unitsText = dash;
+        let priceText = dash;
+        if (offer && side === 'sell') {
+          unitsText = offer.sell > 0 ? formatTradeUnits(offer.sell) : (view.source ? 'brak wolnych' : 'nie wystawia');
+          if (offer.sell > 0) priceText = `${offer.ask} CR`;
+        } else if (offer) {
+          unitsText = offer.buy > 0 ? formatTradeUnits(offer.buy) : (offer.wants ? 'obsada pełna' : 'nie przyjmuje');
+          if (offer.buy > 0) priceText = `${offer.bid} CR`;
+        }
+        if (units && units.textContent !== unitsText) units.textContent = unitsText;
+        if (price && price.textContent !== priceText) price.textContent = priceText;
+        row.classList.toggle('is-idle', !offer || !(side === 'sell' ? offer.sell > 0 : offer.buy > 0));
+      });
+      set('note', !view ? 'Świat ruchu nie zna tej stacji.'
+        : (view.source ? 'Ośrodek ludności: kontrakty dla portów, którym brakuje ludzi.'
+          : 'Port nie jest ośrodkiem ludności — kontrakty bierze się w źródłach.'));
+      updateCrewShipCard(station, pane, offer);
+    }
+
+    // ============================================================
+    // ZAŁOGA I KABINY GRACZA (workforce, E16 W6 — docs/PROPOZYCJA-workforce.md § 6, D10, D11; src/game/playerCrew.js)
+    // Załoga: przydział frakcji (start, oficer Terra Novy — pełny skład, bez werbunku) albo własna (po zdradzie —
+    // `PlayerCrew.betray()`, fabuła później): garstka lojalnych + werbunek w NEUTRALNYCH ośrodkach ludności (nie u dawnej
+    // frakcji, nie u piratów) z zapasu `workforce` rynku po cenie kontraktu (ta sama oferta portu). Skutek (D11): tylko
+    // tempo napraw roju R (`workRate` rigu) i przeładowania wież (źródło 'crew' modyfikatorów, fireRate).
+    // Kabiny (D10): gniazdo KABINY w refit ręcznym (część jak sprzęt ZBIÓRKI); ludzie na kontraktach rotacyjnych:
+    // wzięci w źródle (`ask`), oddani w porcie, który ich przyjmuje (`bid`), kontrakt wygasa po 45 min gry.
+    // Stan w zapisie gracza (`crew`), kabiny — w zapisie wyposażenia (`hullCabins`).
+    // ============================================================
+
+    /** Skutek załogi aktywnego kadłuba (wspólny obiekt — bez alokacji). */
+    function playerCrewEffects() {
+      return crewEffects(PLAYER.crew, PLAYER.activeHullId, _crewFx);
+    }
+
+    /** Gniazdo KABINY aktywnego kadłuba: część założona (`PLAYER.hullCabins[kadłub]`) i kadłub ma gniazdo. */
+    function playerCabinsFitted(hullId = PLAYER.activeHullId) {
+      return PLAYER.hullCabins?.[hullId] === PASSENGER_CABINS.id && cabinSlotCapacity(hullId) > 0;
+    }
+
+    /** Pojemność kabin aktywnego kadłuba (osoby); 0 — brak kabin. */
+    function playerCabinCapacity(hullId = PLAYER.activeHullId) {
+      return playerCabinsFitted(hullId) ? cabinSlotCapacity(hullId) : 0;
+    }
+
+    function fitUiSetCabins(on) {
+      const hullId = PLAYER.activeHullId;
+      const want = !!on;
+      const cur = playerCabinsFitted(hullId);
+      if (want === cur) return null;
+      if (want && !(cabinSlotCapacity(hullId) > 0)) return { message: 'Ten kadłub nie ma miejsca na kabiny' };
+      if (!want && passengersAboard(PLAYER.crew) > 0) return { message: 'W kabinach są ludzie na kontraktach — najpierw ich oddaj' };
+      const id = PASSENGER_CABINS.id;
+      let bought = '';
+      if (want && !((Number(PLAYER.partStock?.[id]) || 0) > 0)) {
+        const price = fitPartPrice(id);
+        if (PLAYER.credits < price) return { message: 'Za mało kredytów' };
+        PLAYER.credits -= price;
+        PLAYER.partStock[id] = (Number(PLAYER.partStock[id]) || 0) + 1;
+        bought = `Kupiono: ${PASSENGER_CABINS.label} · ${price} CR`;
+      }
+      if (want) PLAYER.partStock[id] = Math.max(0, (Number(PLAYER.partStock[id]) || 0) - 1);
+      else PLAYER.partStock[id] = (Number(PLAYER.partStock[id]) || 0) + 1;
+      if (!PLAYER.hullCabins) PLAYER.hullCabins = {};
+      PLAYER.hullCabins[hullId] = want ? id : null;
+      finishPlayerFitChange(null);
+      return {
+        message: [bought, want ? `Kabiny: ${cabinSlotCapacity(hullId)} miejsc` : 'Kabiny zdjęte — wróciły do hangaru']
+          .filter(Boolean).join(' · ')
+      };
+    }
+
+    /** Przeładowanie wież z załogi: źródło 'crew' modyfikatorów okrętu (fireRate > 1 — wolniej). Raz na klatkę. */
+    function syncPlayerCrewModifiers() {
+      if (!ship) return;
+      const reload = playerCrewEffects().reload;
+      if (reload === _crewReloadApplied) return;
+      _crewReloadApplied = reload;
+      if (reload < 1) {
+        _crewMods.fireRate = 1 / reload;
+        setModifierSource(ship, 'crew', _crewMods);
+      } else {
+        clearModifierSource(ship, 'crew');
+      }
+    }
+
+    /** Czas gry (kroki fizyki — pauza stoi): kontrakty w kabinach wygasają, modyfikator załogi. */
+    function tickPlayerCrew(gameDt) {
+      syncPlayerCrewModifiers();
+      const expired = tickContracts(PLAYER.crew, gameDt);
+      if (expired > 0) {
+        pushZoneMessage(`KONTRAKTY WYGASŁY: ${formatTradeUnits(expired)} os. wraca do domu`, 2.6, { label: 'KADRY' });
+        if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
+      }
+    }
+
+    /** Port dla werbunku: frakcja, ośrodek ludności, piraci. */
+    function crewPortInfo(station) {
+      const view = station ? (trafficV2?.getWorkforce?.(station.id) || null) : null;
+      return {
+        factionId: station?.factionId || null,
+        source: !!view?.source,
+        pirate: station?.factionId === FACTION.PIRATES || !!station?.isPirate
+      };
+    }
+
+    /** Werbunek `units` osób w porcie (karta KADRY): z oferty kontraktów źródła, po cenie `ask`. */
+    function recruitPlayerCrew(station, units) {
+      const check = recruitCheck(PLAYER.crew, crewPortInfo(station), PLAYER.activeHullId);
+      if (!check.ok) { toast(check.reason); return 0; }
+      const offer = getTradeOffer(station, 'workforce');
+      if (!offer) { toast('Rynek stacji niedostępny'); return 0; }
+      const room = crewComplement(PLAYER.activeHullId) - crewOnBoard(PLAYER.crew, PLAYER.activeHullId);
+      const n = Math.min(Math.floor(units), room, offer.sell, Math.floor(PLAYER.credits / Math.max(1, offer.ask)));
+      if (!(n > 0)) { toast(offer.sell > 0 ? 'Za mało kredytów' : 'Port nie ma teraz wolnych ludzi'); return 0; }
+      PLAYER.credits -= offer.ask * n;
+      adjustStationStock(station, 'workforce', -n);
+      recruitCrew(PLAYER.crew, PLAYER.activeHullId, n);
+      pushZoneMessage(`ZWERBOWANO ${n} os. · ${offer.ask * n} CR`, 1.8, { label: 'KADRY' });
+      updateStationOverlay(stationUI.tab, stationUI.station);
+      return n;
+    }
+
+    /** Kontrakt rotacyjny: `units` osób do kabin w źródle (oferta kontraktów portu, cena `ask`). */
+    function takeCrewContracts(station, units) {
+      const offer = getTradeOffer(station, 'workforce');
+      if (!offer) { toast('Rynek stacji niedostępny'); return 0; }
+      const capacity = playerCabinCapacity();
+      if (!(capacity > 0)) { toast('Brak kabin pasażerskich (WYPOSAŻENIE → refit → KABINY)'); return 0; }
+      const n = Math.min(Math.floor(units), cabinRoom(PLAYER.crew, capacity), offer.sell,
+        Math.floor(PLAYER.credits / Math.max(1, offer.ask)));
+      if (!(n > 0)) {
+        toast(!(offer.sell > 0) ? 'Port nie wystawia kontraktów' : (cabinRoom(PLAYER.crew, capacity) > 0 ? 'Za mało kredytów' : 'Kabiny pełne'));
+        return 0;
+      }
+      PLAYER.credits -= offer.ask * n;
+      adjustStationStock(station, 'workforce', -n);
+      boardContract(PLAYER.crew, { fromId: station.id, units: n, paid: offer.ask });
+      updateStationOverlay(stationUI.tab, stationUI.station);
+      return n;
+    }
+
+    /** Oddanie ludzi z kabin w porcie, który przyjmuje kontrakty (skup, cena `bid`); reszta zostaje w kabinach. */
+    function deliverCrewContracts(station) {
+      const offer = getTradeOffer(station, 'workforce');
+      if (!offer) { toast('Rynek stacji niedostępny'); return 0; }
+      const aboard = passengersAboard(PLAYER.crew);
+      const n = Math.min(aboard, offer.buy);
+      if (!(n > 0)) { toast(aboard > 0 ? (offer.wants ? 'Port ma pełną obsadę' : 'Port nie przyjmuje kontraktów') : 'Kabiny puste'); return 0; }
+      const moved = disembarkContracts(PLAYER.crew, n);
+      adjustStationStock(station, 'workforce', moved);
+      PLAYER.credits += offer.bid * moved;
+      if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
+      pushZoneMessage(`KONTRAKTY ODDANE: ${moved} os. · ${offer.bid * moved} CR`, 1.8, { label: 'KADRY' });
+      updateStationOverlay(stationUI.tab, stationUI.station);
+      return moved;
+    }
+
+    function buildCrewShipCard() {
+      const card = buildCrewCardShell('Twój okręt', 'Załoga',
+        'Załoga przyspiesza naprawy roju dronów (R) i przeładowanie wież. Kabiny pasażerskie wożą ludzi na kontraktach '
+        + 'rotacyjnych: kontrakt bierze się w ośrodku ludności i oddaje w porcie, któremu brakuje obsady. '
+        + `Kontrakt wygasa po ${Math.round(WORKFORCE_CONTRACT_SECONDS / 60)} min.`, 'crew-ship-card');
+      const stats = document.createElement('table');
+      stats.className = 'crew-stats';
+      buildCrewRow(stats, 'Załoga', 'shipCrew');
+      buildCrewRow(stats, 'Naprawy · przeładowanie', 'shipEffects');
+      buildCrewRow(stats, 'Kabiny', 'shipCabins');
+      buildCrewRow(stats, 'Najbliższy kontrakt wygasa', 'shipExpiry');
+      card.appendChild(stats);
+      const actions = document.createElement('div');
+      actions.className = 'crew-actions';
+      const button = (act, label) => {
+        const btn = document.createElement('button');
+        btn.className = 'card-action';
+        btn.type = 'button';
+        btn.dataset.crewAct = act;
+        btn.textContent = label;
+        actions.appendChild(btn);
+        return btn;
+      };
+      button('take', `Weź kontrakty: ${PLAYER_CREW_STEP} os.`).addEventListener('click', () => takeCrewContracts(stationUI.station, PLAYER_CREW_STEP));
+      button('take-all', 'Weź do pełna').addEventListener('click', () => takeCrewContracts(stationUI.station, Infinity));
+      button('deliver', 'Oddaj kontrakty').addEventListener('click', () => deliverCrewContracts(stationUI.station));
+      button('recruit', `Zwerbuj ${PLAYER_CREW_STEP} os.`).addEventListener('click', () => recruitPlayerCrew(stationUI.station, PLAYER_CREW_STEP));
+      button('recruit-all', 'Zwerbuj do pełna').addEventListener('click', () => recruitPlayerCrew(stationUI.station, Infinity));
+      card.appendChild(actions);
+      const note = document.createElement('div');
+      note.className = 'card-desc crew-ship-note';
+      note.dataset.field = 'shipNote';
+      card.appendChild(note);
+      return card;
+    }
+
+    function updateCrewShipCard(station, pane, offer) {
+      const set = (field, text) => {
+        const el = pane.querySelector(`[data-field="${field}"]`);
+        if (el && el.textContent !== text) el.textContent = text;
+      };
+      const hullId = PLAYER.activeHullId;
+      const fx = playerCrewEffects();
+      const own = PLAYER.crew?.mode === PLAYER_CREW_MODE.OWN;
+      set('shipCrew', `${formatTradeUnits(crewOnBoard(PLAYER.crew, hullId))} / ${formatTradeUnits(crewComplement(hullId))}`
+        + (own ? ` (${formatCrewPercent(fx.ratio)})` : ' · przydział frakcji'));
+      set('shipEffects', `${formatCrewPercent(fx.repair)} · ${formatCrewPercent(fx.reload)}`);
+      const capacity = playerCabinCapacity(hullId);
+      const aboard = passengersAboard(PLAYER.crew);
+      set('shipCabins', capacity > 0 ? `${formatTradeUnits(aboard)} / ${formatTradeUnits(capacity)} os.`
+        : (aboard > 0 ? `${formatTradeUnits(aboard)} os. (kabiny zdjęte)` : 'brak — WYPOSAŻENIE → KABINY'));
+      const expiry = nextContractExpiry(PLAYER.crew);
+      set('shipExpiry', Number.isFinite(expiry) ? `za ${Math.max(1, Math.ceil(expiry / 60))} min` : '—');
+      const check = station ? recruitCheck(PLAYER.crew, crewPortInfo(station), hullId) : { ok: false, reason: '' };
+      const room = capacity > 0 ? cabinRoom(PLAYER.crew, capacity) : 0;
+      pane.querySelectorAll('button[data-crew-act]').forEach(btn => {
+        const act = btn.dataset.crewAct;
+        let enabled = false;
+        if (act === 'take' || act === 'take-all') enabled = !!offer && offer.sell > 0 && room > 0 && PLAYER.credits >= offer.ask;
+        else if (act === 'deliver') enabled = !!offer && aboard > 0 && offer.buy > 0;
+        else enabled = check.ok && !!offer && offer.sell > 0 && PLAYER.credits >= offer.ask;
+        btn.disabled = !enabled;
+        // Werbunek tylko dla własnej załogi — przy przydziale frakcji przyciski znikają.
+        if (act === 'recruit' || act === 'recruit-all') btn.classList.toggle('hidden', !own);
+      });
+      set('shipNote', own ? (check.ok ? 'Werbunek: ludzie z ośrodka ludności, cena jak kontrakt.' : check.reason)
+        : 'Załogę okrętu przydziela frakcja.');
+    }
+
+    // Konsola i narzędzia: stan załogi i kabin, zdrada (AGENT: fabuła woła to przy zdradzie Terra Novy — misja
+    // jeszcze nie istnieje), akcje karty KADRY na stacji otwartego terminalu.
+    window.PlayerCrew = {
+      state() {
+        const hullId = PLAYER.activeHullId;
+        const fx = crewEffects(PLAYER.crew, hullId, { ratio: 1, repair: 1, reload: 1 });
+        return {
+          mode: PLAYER.crew.mode, onBoard: crewOnBoard(PLAYER.crew, hullId), complement: crewComplement(hullId), ...fx,
+          cabins: playerCabinCapacity(hullId), aboard: passengersAboard(PLAYER.crew),
+          contracts: PLAYER.crew.contracts.map(c => ({ ...c })), fireRate: ship?.modifiers?.fireRate ?? 1
+        };
+      },
+      betray() {
+        betrayCrew(PLAYER.crew, PLAYER.activeHullId);
+        syncPlayerCrewModifiers();
+        if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
+        return this.state();
+      },
+      take: (units = PLAYER_CREW_STEP) => takeCrewContracts(stationUI.station, units),
+      deliver: () => deliverCrewContracts(stationUI.station),
+      recruit: (units = PLAYER_CREW_STEP) => recruitPlayerCrew(stationUI.station, units),
+      setCabins: (on = true) => fitUiSetCabins(on)
+    };
+
+
     function buildCantinaPanel() {
       const pane = stationOverlayDom.panels.cantina;
       if (!pane) return;
@@ -15766,6 +16231,7 @@
       if (!stationOverlayDom.root) return;
       initStationOverlayTabs();
       buildTradePanel();
+      buildCrewPanel();
       buildCantinaPanel();
       buildHangarPanel();
       buildMechanicPanel();
@@ -15938,6 +16404,7 @@
       }
       updateStationHeader(station);
       updateTradeCards(station);
+      if (tab === 'crew') updateCrewCards(station);
       updateMechanicCards();
       updateHangarCards();
     }
@@ -16398,6 +16865,13 @@
           updateStationOverlay(stationUI.tab, stationUI.station);
           return false;
         }
+        // Ludzie na kontraktach (workforce W6) zostają w kabinach starego kadłuba — przesiadka dopiero po oddaniu.
+        const aboard = passengersAboard(PLAYER.crew);
+        if (aboard > playerCabinCapacity(hullDef.id)) {
+          toast(`Oddaj kontrakty z kabin (${aboard} os.)`);
+          updateStationOverlay(stationUI.tab, stationUI.station);
+          return false;
+        }
       }
 
       let changed = false;
@@ -16814,7 +17288,8 @@
           miningCharges: PLAYER.miningCharges,
           reputation: PLAYER.reputation,
           progress: PLAYER.progress,
-          hullId: PLAYER.activeHullId
+          hullId: PLAYER.activeHullId,
+          crew: PLAYER.crew
         },
         campaign: story ? {
           active: !!StoryGame.active,
@@ -16909,6 +17384,8 @@
       PLAYER.progress.exp = p.progress.exp;
       PLAYER.progress.rank = rankIndexForExp(p.progress.exp);
       PLAYER.progress.missionsDone = [...p.progress.missionsDone];
+      // Załoga i kabiny (workforce W6): zapis bez pola — przydział frakcji, puste kabiny.
+      PLAYER.crew = p.crew || createPlayerCrew();
       refreshFactionHostility();
       if (place) {
         ship.pos.x = p.x; ship.pos.y = p.y;
@@ -30368,6 +30845,8 @@
       }
       // Zapis gracza (blok „ZAPIS GRACZA”): miejsce w zwykłym locie, czas gry, autozapis.
       tickPlayerSave(performance.now(), steps * PHYS_DT);
+      // Załoga i kabiny (workforce W6): kontrakty wygasają z czasem gry, przeładowanie wież z załogi.
+      tickPlayerCrew(steps * PHYS_DT);
 
       const mWorld = screenToWorld(mouse.x, mouse.y);
       // Okno „armed" trwa 5 s i gaśnie samo. Bez komunikatu przepalony ładunek
@@ -34835,6 +35314,13 @@
         return playerRepairRig.launched || playerRepairRig.launch();
       },
       repairActive: () => playerRepairRig.launched || !!RepairSwarm.rigRepairing(ship),
+      // Załoga Atlasa (workforce W6): zdrada w skrypcie misji (`api.crew.betray`) — ta sama droga co hak konsoli.
+      betrayCrew: () => {
+        const before = PLAYER.crew.mode;
+        window.PlayerCrew.betray();
+        return before !== PLAYER.crew.mode;
+      },
+      crewMode: () => PLAYER.crew.mode,
       // Holownik serwisowy (src/game/serviceTug.js) dla skryptu misji: przylot przy Atlasie, naprawa rojem holownika;
       // bez „paki” (carry: false — misja nie odlatuje do K-7 w środku akcji), chyba że skrypt poda carry: true.
       // Zwraca wynik wezwania ({ planned, eta } | { existing } | null). Aktywny = w drodze, przy Atlasie albo z nim.

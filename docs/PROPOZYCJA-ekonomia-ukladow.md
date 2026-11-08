@@ -416,6 +416,8 @@ Napad piratów (`resolveContact`, wygrana piratów) przenosi `cargo` konwoju do 
 
 ## 6. Granica układu strony
 
+> **Decyzja użytkownika D11 (2026-11-08): rynków granicznych NIE MA.** Konwój wchodzi rogiem świata i leci prosto do rynków planet: import do odbiorców, eksport od producentów. Dzięki temu ruch jest przy planetach, a nie w rogu. Dowóz stały sprzed E21 (§ 6.2) trafia wprost do rynków odbiorców. § 6.1 i rynek graniczny w § 1.4 zostają jako odrzucony wariant.
+
 ### 6.1 Rynek graniczny
 
 - Układ rdzenia dostaje JEDEN rynek graniczny `granica-<róg>` w rogu świata (`JUMP_CORNERS`: NE / NW / SW / SE), którym wchodzi najwięcej handlu (suma wag handlu sąsiadów ze szlaków przypisanych do rogu):
@@ -551,7 +553,24 @@ Sesja `workforce-w5-w7` wystawia kontrakty obsady przez API ofert rynku (skup `w
 | D17 | Rozgrzewka przy nowej grze | **60 min modelu na rynek (~5 ms) + 10 min świata** (~1,5–2 s zamiast 6–10 s), jeśli bramka E20 przejdzie | zostawić 60 min pełnego świata |
 | D18 | Pełny zapis po długiej nieobecności | **powyżej 2 h — tylko rozstawienie statków po portach** (kursy z zapisu pominięte, ładunek w modelu) | zawsze pełne odtworzenie kursów |
 
-Do tego jedno zgłoszenie spoza zakresu: pełna symulacja Układu Słonecznego po ~6–8 h traci połowę kursów i zapasu stali (§ 2.3, § 11). Propozycja: osobna sesja, która przedłuży bramkę bilansu do 8–10 h i znajdzie przyczynę (flota przewoźników, kapitał firm, wyczerpanie pól?).
+Do tego jedno zgłoszenie spoza zakresu: pełna symulacja Układu Słonecznego po ~6–8 h traci połowę kursów i zapasu stali (§ 2.3, § 11). Propozycja: osobna sesja, która przedłuży bramkę bilansu do 8–10 h i znajdzie przyczynę (flota przewoźników, kapitał firm, wyczerpanie pól?). Ta sesja pracuje już od 2026-11-08 („Zanik gospodarki Sol po 6–8 h gry”).
+
+### 10.2a Odpowiedzi użytkownika (ankieta 2026-11-08)
+
+- **D5** — pogranicze bez gospodarki (rekomendacja).
+- **D6** — wydobycie księżyców wliczone w olbrzyma (rekomendacja).
+- **D7** — skala ×60 wszędzie (rekomendacja).
+- **D8** — import przycięty do ≤ 30% (rekomendacja). Użytkownik rozumie import tak: tylko towary, których złoża albo producenta nie ma w układzie. Układ pełen niklu niklu nie importuje.
+- **D9** — cel konwoju: najlepsza marża z 3 celów (rekomendacja).
+- **D10** — przewijanie flot krokiem 1 s powyżej 10 min nieobecności (rekomendacja).
+- **D11** — **rynków granicznych NIE MA**: kupcy lecą prosto do rynków planet, żeby ruch był przy planetach (§ 6, uwaga na początku). E21 zmienia się odpowiednio.
+- **D12** — łup do kryjówki, ale **banda NIESIE go do kryjówki**. Flota piratów w strefie ma ładunek: własny i zrabowany. Gracz, który zobaczy napad i pokona bandę, może zabrać jedno i drugie (kontenery-łup w scenie walki w strefie).
+- **D13** — ceny układów rdzenia w komputerze na bieżąco przez przekaźniki (rekomendacja).
+- **D14** — opóźnienie przekaźników 0,3 s na skok, najwyżej 2 s; własny układ od razu (rekomendacja).
+- **D15** — ścisła tolerancja modelu w bramce E20 (rekomendacja).
+- **D16** — pełny zapis w plikach gzip w `Dokumenty\HULLFALL\zapisy`, w przeglądarce w IndexedDB (rekomendacja).
+- **D17** — **rozgrzewka przy nowej grze zostaje jak dziś: 60 min pełnego świata, 6–10 s.** Gracz ma widzieć status „Stabilizacja gospodarki” (z postępem) na ekranie ładowania, a jeśli rozgrzewka trwa po starcie — także w grze.
+- **D18** — po ponad 2 h nieobecności tylko rozstawienie statków po portach (rekomendacja).
 
 ### 10.3 Kroki wdrożenia
 

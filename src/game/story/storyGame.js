@@ -1605,6 +1605,15 @@ export const StoryGame = {
         repairing: () => !!d.repairActive?.()
       },
 
+      // Załoga Atlasa (workforce W6, D11): do zdrady przydział Terra Novy (pełny skład, bez werbunku). ZDRADA —
+      // przydział przepada, zostają lojalni (25% składu), resztę gracz werbuje w neutralnych ośrodkach ludności (karta
+      // KADRY); niepełna załoga wolniej naprawia (rój R) i przeładowuje wieże. AGENT: misja zdrady woła `crew.betray()`
+      // — skryptu misji jeszcze nie ma; stan załogi niesie zapis gracza (F5).
+      crew: {
+        betray: () => !!d.betrayCrew?.(),
+        mode: () => d.crewMode?.() || 'faction'
+      },
+
       rewards: {
         grant(r) {
           // Wznowienie z zapisu: nagrody pomijanych misji są już w zapisanych kredytach, reputacji i EXP.

@@ -62,10 +62,11 @@
  *                stations, resources, factions, kinds, berths, buildMs, warmup }
  *              `berths`: { stationId: [id stanowiska…] } — `BERTH` kursu to
  *              indeks w liście jego portu (`PORT`), id jak w układach gry.
- *   tick       { clock, steps, stepMs, stats, stockSeq, market, bubble,
+ *   tick       { clock, steps, stepMs, stats, stockSeq, market, crew, bubble,
  *                wrecks, warWrecks, stationFactions?, stations?, berths?, warmup }
  *              po każdym kroku świata; `stations` i `berths` (jak w `ready`)
  *              tylko po zmianie listy rynków — przed `market` z nowym układem.
+ *              `crew` — obsada portów (`CREW_FIELD`, W5), ten sam układ stacji co `market`.
  *              `warmup { total, seconds, active, ms }` (E15): rozgrzewka świata w tle —
  *              `seconds` już przeliczone; most dokłada je do swojego zegara (`time`), więc
  *              czas mostu = czas świata także po rozgrzewce (pułapka 4 reguły `ruch-v2`).
@@ -343,6 +344,28 @@ export const MARKET_FIELD = Object.freeze({
 export function marketOffset(stationIndex, resourceIndex, resourceCount) {
   return (stationIndex * resourceCount + resourceIndex) * MARKET_STRIDE;
 }
+
+/**
+ * OBSADA (workforce, E16 W5) — stacje × pola w kolejności tabeli `stations`, osoby świata, w `tick.crew`
+ * obok bufora rynku. Ludzi na miejscu, kwatery i ofertę kontraktów niesie bufor rynku (towar `workforce`:
+ * `STOCK`, `CAPACITY`, `SELL` — kontrakty, które port wystawia (tylko źródło), `BUY` — które przyjmie,
+ * `ASK` / `BID`); potrzebę N i podaż źródła — tabela `stations` (`workforce`). Tu to, czego rynek nie ma:
+ *   INBOUND     ludzie na kontraktach w drodze DO portu (kursy z ludźmi, łącznie z zaokrętowaniem)
+ *   OUTBOUND    …w drodze Z portu (źródło)
+ *   RETURNING   ludzie po kontrakcie w drodze do domu (powroty promów DO portu)
+ *   LEAVING     ludzie po kontrakcie czekający w porcie na prom do domu (`econ.workforceLeaving`)
+ *   EFFICIENCY  wydajność zakładów z ostatniego cyklu (`econ.workforceEfficiency`, 0…1)
+ *   HOSTAGES    zakładnicy w kryjówce (porwania W4), jeszcze bez zapłaconego okupu
+ */
+export const CREW_STRIDE = 6;
+export const CREW_FIELD = Object.freeze({
+  INBOUND: 0,
+  OUTBOUND: 1,
+  RETURNING: 2,
+  LEAVING: 3,
+  EFFICIENCY: 4,
+  HOSTAGES: 5
+});
 
 /** Numer kursu z jego id (`haul-00012` → 12); `NaN`, gdy id ma inny kształt. */
 export function courseNumber(courseId) {

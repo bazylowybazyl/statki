@@ -120,6 +120,8 @@ export function createFittingPanel(root, api) {
             <div class="fit-opts" data-ref="optSystem"></div>
             <div class="fit-m-sub">ZBIÓRKA</div>
             <div class="fit-opts" data-ref="optLoot"></div>
+            <div class="fit-m-sub">KABINY</div>
+            <div class="fit-opts" data-ref="optCabins"></div>
             <div class="fit-m-sub">CHIPY</div>
             <div class="fit-opts" data-ref="optChips"></div>
           </div>
@@ -345,6 +347,7 @@ export function createFittingPanel(root, api) {
       <span class="fit-kv">moduł <b>${moduleDef ? esc(moduleDef.label) : (api.moduleSlots() > 0 ? 'wolny' : 'brak gniazda')}</b></span>
       <span class="fit-kv">F <b>${esc(api.currentSystemLabel())}</b></span>
       <span class="fit-kv">zbiórka <b>${esc(api.currentLootGearLabel ? api.currentLootGearLabel() : '—')}</b></span>
+      <span class="fit-kv">kabiny <b>${esc(api.currentCabinsLabel ? api.currentCabinsLabel() : '—')}</b></span>
       <span class="fit-kv">tarcza <b>${fmt(s.shieldMax)}</b></span>
       <span class="fit-kv" data-ref-ammo>amunicja <b>${ammo.max > 0 ? `${ammo.have}/${ammo.max}` : '—'}</b></span>
       <span class="fit-grow"></span>
@@ -728,6 +731,28 @@ export function createFittingPanel(root, api) {
         b.disabled = !g.ready || (!g.installed && !g.owned && g.price > api.credits());
         b.onclick = () => { const r = api.setLootGear(g.id); if (r?.message) toast(r.message); render(); };
         ref.optLoot.appendChild(b);
+      }
+    }
+    // Gniazdo KABINY (workforce W6, src/data/playerCrew.js): kabiny pasażerskie na kontrakty rotacyjne (karta KADRY).
+    if (ref.optCabins && api.cabins) {
+      ref.optCabins.innerHTML = '';
+      const cabins = api.cabins();
+      if (!cabins.length) ref.optCabins.appendChild(el('div', 'fit-none', 'Ten kadłub nie ma miejsca na kabiny.'));
+      else {
+        const cur = cabins.some((c) => c.installed);
+        const none = el('button', `fit-opt${!cur ? ' on' : ''}`, 'PUSTE<small>bez kabin terminal nie wyda kontraktu rotacyjnego</small>');
+        none.type = 'button';
+        none.onclick = () => { const r = api.setCabins(false); if (r?.message) toast(r.message); render(); };
+        ref.optCabins.appendChild(none);
+        for (const c of cabins) {
+          const tag = c.installed ? 'założone' : (c.owned ? 'w hangarze' : cr(c.price));
+          const b = el('button', `fit-opt${c.installed ? ' on' : ''}`,
+            `${esc(c.label)} · ${c.capacity} os. <span class="tag">${tag}</span><small>${esc(c.desc || '')}</small>`);
+          b.type = 'button';
+          b.disabled = !c.installed && !c.owned && c.price > api.credits();
+          b.onclick = () => { const r = api.setCabins(true); if (r?.message) toast(r.message); render(); };
+          ref.optCabins.appendChild(b);
+        }
       }
     }
     ref.optChips.innerHTML = '';
