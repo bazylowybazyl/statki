@@ -638,6 +638,20 @@ export function settleGarrisonLosses(war, shipyards, rng = Math.random, events =
     if (!classId) continue;
     fleet[classId]--;
     const scrap = emitWrecks(war, { [classId]: 1 }, loss.factionId, loss.x, loss.y, rng);
+    // Strata z gry (E24): wrak rejestru = wrak gry tego okrętu (`wreck-report` ze źródłem — `scrapperFleets.js`),
+    // stoi w jego miejscu i znika z gry, gdy złomiarz skończy. Zgłoszenie, które przyjdzie później, wiąże się po źródle.
+    if (loss.source) {
+      const wreck = war.wrecks[war.wrecks.length - 1];
+      wreck.source = loss.source;
+      const link = war.gameWreckLinks?.get(loss.source);
+      if (link) {
+        war.gameWreckLinks.delete(loss.source);
+        wreck.game = link.gid;
+        wreck.x = link.x;
+        wreck.y = link.y;
+        war.gameWrecks.set(link.gid, wreck);
+      }
+    }
     war.garrison.stats.lost++;
     settled++;
     events?.push({

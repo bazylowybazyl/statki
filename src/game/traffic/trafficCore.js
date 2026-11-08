@@ -40,7 +40,8 @@ import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
-import { BELT_MSG } from './trafficProtocol.js';
+import { BELT_MSG, SALVAGE_MSG } from './trafficProtocol.js';
+import { reportGameWrecks, forgetGameWrecks, collectSalvageTaken } from './scrapperFleets.js';
 import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
@@ -50,7 +51,8 @@ import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
-  collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity
+  collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity,
+  refreshWorkSites, collectWorkChanges
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -115,6 +117,8 @@ export function createTrafficCore(post, options = {}) {
     berthIndex: new WeakMap(),
     /** Numer kursu → id, dla wiadomości z gry (`attach`, `destroyed`…). */
     courseIds: new Map(),
+    /** Numer kursu zniszczonego w grze → id (E24): zgłoszenie wraku gry przychodzi po `destroyed`, gdy `courseIds` już go nie zna. */
+    destroyedIds: new Map(),
     wreckCursor: 0,
     warWreckSeq: 0,
     stationFactionsDirty: false,
@@ -180,6 +184,8 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.ECONOMY_RESTORE: return economyRestore(message);
         case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
         case BELT_MSG.MINED: return beltMined(message);
+        case SALVAGE_MSG.WRECK_REPORT: return wreckReport(message);
+        case SALVAGE_MSG.WRECK_GONE: return wreckGone(message);
         default: return undefined;
       }
     } catch (error) {
@@ -285,8 +291,51 @@ export function createTrafficCore(post, options = {}) {
       // Zapas floty na padach K-7 i postój statków bez kursu (E15) — po kroku świata (stocznie, wojna, firmy
       // zmieniają liczby); statek z redy, który dostał w tym kroku kurs, oddaje mu pozę przed krokiem bańki.
       if (!core.warmup.active) refreshStanding();
+      // Miejsca pracy górników i złomiarzy (E24) — bańka żyje przy nich także z dala od portów.
+      if (core.bubble) refreshWorkSites(core.bubble);
     }
     stepBubble(dt);
+    publishSalvageTaken();
+  }
+
+  // ============================================================
+  // Złomiarze i wraki gry (E24) — `scrapperFleets.js`
+  // ============================================================
+
+  /** Źródło zgłoszenia z gry ('course:N' — numer kursu, 'entity:N') → klucz straty garnizonu ('course:<id>'). */
+  function lossSourceKey(source) {
+    const text = String(source || '');
+    if (!text.startsWith('course:')) return text || null;
+    const num = finite(Number(text.slice(7)), NaN);
+    const id = core.destroyedIds.get(num) || resolveCourse(num)?.id || null;
+    return id ? `course:${id}` : null;
+  }
+
+  /** Wraki gry w bańce gracza → rejestr złomiarzy (`war.wrecks`); okręt garnizonu — wrak jego straty. */
+  function wreckReport(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.wrecks)) return;
+    const visits = world.war.garrison?.visits || null;
+    const list = message.wrecks.map(w => ({ ...w, source: w?.source ? lossSourceKey(w.source) : null }));
+    reportGameWrecks(world.scrappers, world.war, list, {
+      now: world.registry.clock,
+      // Kurs garnizonu zniszczony w grze: stratę rozliczy `tickGarrison` w następnym kroku świata.
+      isLossSource: (key) => key.startsWith('course:') && !!visits?.some(v => `course:${v.courseId}` === key)
+    });
+  }
+
+  function wreckGone(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.gids)) return;
+    forgetGameWrecks(world.scrappers, world.war, message.gids);
+  }
+
+  /** Złomiarze, którzy skończyli pracę przy wraku gry — gra usuwa wrak (`salvage-taken`). */
+  function publishSalvageTaken() {
+    const world = core.world;
+    if (!world?.scrappers) return;
+    const taken = collectSalvageTaken(world.scrappers, world.registry);
+    if (taken) send({ type: SALVAGE_MSG.TAKEN, taken });
   }
 
   // ============================================================
@@ -420,6 +469,12 @@ export function createTrafficCore(post, options = {}) {
       if (manifests.manifests) message.manifests = manifests.manifests;
       if (manifests.unmanifested) message.unmanifested = manifests.unmanifested;
     }
+    // Praca górników i złomiarzy (E24) — tylko zmiany.
+    const works = collectWorkChanges(state, time);
+    if (works) {
+      if (works.works) message.works = works.works;
+      if (works.unworked) message.unworked = works.unworked;
+    }
     if (core.hulls.length !== core.actorHullsSent) {
       message.hulls = [...core.hulls];
       core.actorHullsSent = core.hulls.length;
@@ -552,6 +607,8 @@ export function createTrafficCore(post, options = {}) {
     const world = core.world;
     const course = resolveCourse(message.course);
     if (!world || !course) return;
+    core.destroyedIds.set(finite(message.course, NaN), course.id);
+    if (core.destroyedIds.size > 64) core.destroyedIds.delete(core.destroyedIds.keys().next().value);
     destroyCourse(world.director, course, {
       reason: message.reason || 'destroyed',
       byPirates: message.byPirates,

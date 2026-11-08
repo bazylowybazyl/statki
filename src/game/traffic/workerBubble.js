@@ -31,7 +31,8 @@ import {
   dropDepartedActor
 } from './materializedFlight.js';
 import { createRingObstaclesForNetwork } from './ringRouter.js';
-import { getCourse, COURSE_STATUS } from './courseRegistry.js';
+import { getCourse, COURSE_STATUS, COURSE_KIND, STAGE_KIND, DWELL_REASON, stageProgress } from './courseRegistry.js';
+import { scrapperJobFor } from './scrapperFleets.js';
 import {
   createParkingRegistry, placeFleetStock, syncParking, reserveParkingSpot, buildDockOrbitParking, renameParkedShip
 } from './portParking.js';
@@ -208,6 +209,149 @@ export function bubblePortNear(state, x, y) {
   return !!state.wells && planetZoneAt(state.wells, x, y) !== 1;
 }
 
+// ============================================================
+// Miejsca pracy (E24): górnicy przy polu, złomiarze przy wraku
+// ============================================================
+
+/**
+ * Fokus bliżej miejsca pracy niż tyle [j.] → bańka żyje także z dala od portów (pola pasa, wraki po bitwie gracza
+ * w głębi): górnika i złomiarza widać przy robocie. Promień fokusu zostaje promieniem gry (`bubbleFocusRadius`
+ * daje szerszy tylko przy porcie i w studni).
+ */
+export const WORK_SITE_RANGE = 120_000;
+
+const _site = { x: 0, y: 0 };
+
+/** Indeks etapu pracy kursu: postój wydobycia wyprawy MINE, postój przy wraku kursu TUG; −1, gdy brak. */
+export function workStageIndex(course) {
+  const stages = course?.stages;
+  if (!stages) return -1;
+  if (course.kind === COURSE_KIND.MINE) {
+    for (let i = 0; i < stages.length; i++) {
+      const s = stages[i];
+      if (s.kind === STAGE_KIND.DWELL && s.reason === DWELL_REASON.EXTRACT) return i;
+    }
+    return -1;
+  }
+  if (course.kind === COURSE_KIND.TUG) {
+    for (let i = 0; i < stages.length; i++) if (stages[i].kind === STAGE_KIND.DWELL) return i;
+  }
+  return -1;
+}
+
+/**
+ * Miejsce pracy kursu w rekordzie: do końca postoju — punkt pracy (wydobycie, wrak), w przelocie powrotnym — pozycja
+ * rekordu na odcinku (holownik z wrakiem odlatuje, a bańka nie gaśnie mu pod nosem). Zwraca false poza tymi etapami.
+ */
+function workSiteOf(course, out) {
+  const w = workStageIndex(course);
+  if (w < 0) return false;
+  const i = course.stageIndex;
+  if (i <= w) {
+    const p = course.stages[w].pos;
+    if (!p) return false;
+    out.x = p.x;
+    out.y = p.y;
+    return true;
+  }
+  if (i !== w + 1) return false;
+  const s = course.stages[i];
+  if (s.kind !== STAGE_KIND.TRAVEL || !s.fromPos || !s.toPos) return false;
+  const t = stageProgress(course);
+  out.x = s.fromPos.x + (s.toPos.x - s.fromPos.x) * t;
+  out.y = s.fromPos.y + (s.toPos.y - s.fromPos.y) * t;
+  return true;
+}
+
+/** Miejsca pracy wypraw górniczych i złomiarzy (`[x, y] × n`) — po każdym kroku świata (rdzeń). */
+export function refreshWorkSites(state) {
+  const sites = state.workSites || (state.workSites = []);
+  sites.length = 0;
+  const active = state.world.registry?.active;
+  if (!active) return 0;
+  for (let i = 0; i < active.length; i++) {
+    const c = active[i];
+    if (c.kind !== COURSE_KIND.MINE && c.kind !== COURSE_KIND.TUG) continue;
+    if (!workSiteOf(c, _site)) continue;
+    sites.push(_site.x, _site.y);
+  }
+  return sites.length / 2;
+}
+
+/** Czy fokus jest przy miejscu pracy (`WORK_SITE_RANGE`). */
+export function workSiteNear(state, x, y) {
+  const sites = state.workSites;
+  if (!sites?.length) return false;
+  const r2 = WORK_SITE_RANGE * WORK_SITE_RANGE;
+  for (let i = 0; i < sites.length; i += 2) {
+    const dx = sites[i] - x;
+    const dy = sites[i + 1] - y;
+    if (dx * dx + dy * dy <= r2) return true;
+  }
+  return false;
+}
+
+/** Bańka żyje: port, studnia planety albo miejsce pracy (E24). */
+export function bubbleAlive(state, x, y) {
+  return bubblePortNear(state, x, y) || workSiteNear(state, x, y);
+}
+
+/**
+ * Zmiany pracy encji (`WorkRecord`, `trafficProtocol.js`): górnik w etapie wydobycia, złomiarz przy wraku (cięcie,
+ * zaczepianie) i z wrakiem na linie (przelot powrotny po holu). Nowe albo zmienione → `works`, zakończone →
+ * `unworked`. Podpis zmienia też wejście encji w fazę `station` — wtedy koniec postoju liczy się z jej `dwell`
+ * (bańka nalicza postój od przylotu encji). `time` — czas mostu. Zwraca `null`, gdy nic się nie zmieniło.
+ */
+export function collectWorkChanges(state, time) {
+  const sent = state.worksSent || (state.worksSent = new Map());
+  const list = state.bubble.list;
+  const seen = state._workSeen || (state._workSeen = new Set());
+  seen.clear();
+  const registry = state.world.registry;
+  const scrappers = state.world.scrappers;
+  let works = null;
+  for (let k = 0; k < list.length; k++) {
+    const a = list[k];
+    if (a.departed || !a.courseId) continue;
+    const course = getCourse(registry, a.courseId);
+    if (!course || course.status !== COURSE_STATUS.ACTIVE) continue;
+    if (course.kind !== COURSE_KIND.MINE && course.kind !== COURSE_KIND.TUG) continue;
+    const w = workStageIndex(course);
+    if (w < 0) continue;
+    const job = course.kind === COURSE_KIND.TUG ? scrapperJobFor(scrappers, course.id) : null;
+    const kind = course.kind === COURSE_KIND.MINE ? 'mine' : (job?.mode === 'cut' ? 'cut' : 'tow');
+    let phase;
+    if (course.stageIndex === w) phase = 'work';
+    else if (kind === 'tow' && course.stageIndex === w + 1) phase = 'haul';
+    else continue;
+    const num = courseNumber(a.courseId);
+    if (!Number.isFinite(num)) continue;
+    seen.add(num);
+    const gid = job?.gid ?? null;
+    const atSpot = phase === 'work' && a.phase === ACTOR_PHASE.STATION ? 1 : 0;
+    const sig = `${kind}|${phase}|${course.stageIndex}|${gid}|${atSpot}`;
+    if (sent.get(num) === sig) continue;
+    sent.set(num, sig);
+    const stage = course.stages[w];
+    const p = stage.pos || { x: a.x, y: a.y };
+    let t0 = 0;
+    let dur = 0;
+    if (phase === 'work') {
+      dur = Math.max(0, Number(stage.seconds) || 0);
+      const tEnd = time + Math.max(0, dur - (Number(a.dwell) || 0));
+      t0 = tEnd - dur;
+    }
+    (works || (works = [])).push({ id: num, kind, phase, x: p.x, y: p.y, t0, dur, gid });
+  }
+  let unworked = null;
+  for (const num of sent.keys()) {
+    if (seen.has(num)) continue;
+    sent.delete(num);
+    (unworked || (unworked = [])).push(num);
+  }
+  return works || unworked ? { works, unworked } : null;
+}
+
 /**
  * Promień bańki dla fokusu gry (E15): przy porcie i w studni planety co najmniej `BUBBLE_PORT_FOCUS_RADIUS`,
  * gdzie indziej — promień gry.
@@ -247,7 +391,7 @@ export function setBubbleCandidates(state, courses, count = courses.length) {
 export function stepWorldBubble(state, focus, dt, now = null) {
   const world = state.world;
   const t0 = now ? now() : 0;
-  const near = !!focus?.active && focus.r > 0 && bubblePortNear(state, focus.x, focus.y);
+  const near = !!focus?.active && focus.r > 0 && bubbleAlive(state, focus.x, focus.y);
   let events = 0;
   if (!near) {
     if (state.bubble.list.length) clearBubble(state.bubble, world.network, state.view);
@@ -442,7 +586,9 @@ export function loseBubbleEntity(state, id, info = {}) {
     const garrison = war.garrison || (war.garrison = createGarrisonState());
     garrison.losses.push({
       factionId: ref.factionId, classId: ref.classId || null, stationId: ref.portId || null, x, y,
-      reason: info.reason || 'player'
+      reason: info.reason || 'player',
+      // Wrak gry tej encji (E24, `wreck-report` ze źródłem `entity:<id>`) staje się wrakiem tej straty.
+      source: `entity:${num}`
     });
     const events = [];
     settleGarrisonLosses(war, world.shipyards, world.rng, events);
