@@ -13,6 +13,7 @@
  *   node scripts/bramka-bilansu.mjs --ziarna 7 --minuty 120 szybki przebieg roboczy
  *   node scripts/bramka-bilansu.mjs --rownolegle            ziarna naraz (czas ticku traci sens)
  *   node scripts/bramka-bilansu.mjs --dyrektor '{"sellOffers":"reservation"}'   A/B opcji dyspozytora
+ *   node scripts/bramka-bilansu.mjs --godziny 10            wariant długi: 600 min z progiem „długi bieg”
  *
  * Każde ziarno idzie w OSOBNYM procesie: moduły ruchu trzymają liczniki na
  * poziomie modułu (np. id agentów), więc drugi świat w tym samym procesie nie
@@ -42,6 +43,13 @@
  *                 ≥ 0,95 i żaden nie stoi poniżej 0,8 dłużej niż 30 min. Powroty
  *                 promów z ludźmi po kontrakcie (bez zlecenia) liczą się jak puste
  *                 przeloty, nie jak kursy z ładunkiem
+ *   długi bieg  — tylko przy biegu od 8 h (`--godziny 10`): średnia z ostatniej godziny
+ *                 ≥ 80% średniej z godzin 2–4 dla kursów przewozowych i górniczych
+ *                 w powietrzu, dostaw na godzinę, zapasu stali, płyt kadłuba, rudy
+ *                 żelaza i paliwa fuzyjnego na rynkach frakcji, średniej obsady
+ *                 i ładowności floty przewoźników (t; sama liczba statków nie pokazuje,
+ *                 że duże giną, a w ich miejsce wchodzą małe).
+ *                 Bramka 4 h tego nie widzi, a gracz gra dłużej
  */
 
 import { spawn } from 'node:child_process';
@@ -72,8 +80,19 @@ export const PROGI = Object.freeze({
   obsadaSredniaMin: 0.95,
   /** …i najdłuższy ciągły czas poniżej `obsadaNiska`, minuty gry. */
   obsadaNiska: 0.8,
-  obsadaNiskaMinMax: 30
+  obsadaNiskaMinMax: 30,
+  /**
+   * Wariant długi (`--godziny N`, od `dlugiOdMinut`): kursy w powietrzu, dostawy na godzinę,
+   * zapas kluczowych towarów i obsada w ostatniej godzinie biegu ≥ tyle × średnia z godzin 2–4.
+   * Gra trwa dłużej niż 4 h bramki — tak widać gospodarkę, która gaśnie po 6–8 h.
+   */
+  dlugiUdzialMin: 0.8,
+  dlugiOdMinut: 480
 });
+
+/** Wariant długi: okno odniesienia (minuty gry) i towary, których zapas pilnuje. */
+const DLUGI_OKNO = Object.freeze([120, 240]);
+const DLUGI_TOWARY = Object.freeze(['steel', 'hull_plate', 'iron_ore', 'fusion_fuel']);
 
 /** Zapełnienie, poniżej którego surowiec liczy się jako „na zerze”… */
 const PUSTO = 0.01;
@@ -89,6 +108,8 @@ function parseArgs(argv) {
     const a = argv[i];
     const next = () => argv[++i];
     if (a === '--minuty') out.minuty = Number(next());
+    // Wariant długi: `--godziny 10` = 600 min z progiem `dlugiUdzialMin` (od `dlugiOdMinut`).
+    else if (a === '--godziny') out.minuty = Math.round(Number(next()) * 60);
     else if (a === '--presja') out.presja = Number(next());
     else if (a === '--magazyny') out.magazyny = Number(next());
     else if (a === '--skala') out.skala = Number(next());
@@ -166,6 +187,38 @@ async function jedenBieg(args) {
     .map(station => ({ station, econ: economies.get(station.id), suma: 0, min: 1, od: -1, max: 0 }));
   const bezLadunku = course => !!(course?.payload?.deadhead || (course?.payload?.passengers && !course.payload.orderId));
   const kolejki = new Map();
+  // Wariant długi: próbka co minutę gry — kursy przewozowe i górnicze w powietrzu, dostawy
+  // (narastająco), zapas kluczowych towarów na rynkach frakcji (bez kryjówek) i średnia obsada.
+  // Same odczyty: świat liczy się tak samo z próbkami i bez nich.
+  const rynkiFrakcji = stations
+    .filter(station => station.factionId && station.factionId !== 'pirates')
+    .map(station => economies.get(station.id)).filter(Boolean);
+  const probki = [];
+  const probka = () => {
+    let kursy = 0;
+    for (const course of registry.active) if (course.kind === 'haul' || course.kind === 'mine') kursy++;
+    const zapas = {};
+    for (const id of DLUGI_TOWARY) {
+      let suma = 0;
+      for (const econ of rynkiFrakcji) suma += Number(econ.resources?.[id]) || 0;
+      zapas[id] = suma;
+    }
+    let obsada = 0;
+    for (const o of obsady) {
+      obsada += Math.min(1, (Number(o.econ?.resources?.workforce) || 0) / (o.station.workforce.need * args.skala));
+    }
+    // Ładowność floty przewoźników (t) — sama liczba statków nie pokazuje, że duże giną,
+    // a w ich miejsce wchodzą małe; kapitał firm — do wglądu (z niego idzie odkup).
+    let ladownosc = 0;
+    let kapital = 0;
+    for (const company of world.companies.companies) {
+      kapital += company.capital;
+      for (const ship of company.ships) ladownosc += ship.capacity;
+    }
+    probki.push({ min: Math.round(registry.clock / 60), kursy, dostawy: director.stats.delivered, zapas,
+      obsada: obsady.length ? obsada / obsady.length : 1, ladownosc, kapital });
+  };
+  probka();
 
   const totalSeconds = args.minuty * 60;
   const tickMs = [];
@@ -228,6 +281,7 @@ async function jedenBieg(args) {
       const q = director.portQueue.get(String(stationId)) || 0;
       kolejki.set(stationId, (kolejki.get(stationId) || 0) + q);
     }
+    if ((elapsed + STEP) % 60 === 0) probka();
   }
 
   const snap = directorSnapshot(director);
@@ -251,6 +305,7 @@ async function jedenBieg(args) {
   const ag = summarizeAgents(world.agents);
   const pir = summarizePiracy(world.piracy);
   const wojna = summarizeWar(world.war);
+  const dlugi = podsumujDlugi(probki, args.minuty);
 
   return {
     ziarno: args.dziecko,
@@ -308,8 +363,50 @@ async function jedenBieg(args) {
       przemyt: pir.stats.smugglesRun, wpadlo: pir.stats.smugglesCaught,
       polowania: pir.stats.huntsLaunched, ubici: pir.stats.raidsKilled
     },
-    wojna: { wyprawy: wojna.stats.launched, bitwy: wojna.stats.battles, stracone: wojna.stats.shipsLost }
+    wojna: { wyprawy: wojna.stats.launched, bitwy: wojna.stats.battles, stracone: wojna.stats.shipsLost },
+    dlugi
   };
+}
+
+/**
+ * Wariant długi: średnie z okna odniesienia (godziny 2–4) i z ostatniej godziny biegu,
+ * udział koniec / odniesienie dla każdej miary, a do tabeli w notatce — przebieg co godzinę.
+ * `null`, gdy bieg nie sięga dalej niż okno odniesienia.
+ */
+function podsumujDlugi(probki, minuty) {
+  if (!(minuty > DLUGI_OKNO[1] + 60)) return null;
+  const okno = (od, doMin) => probki.filter(p => p.min > od && p.min <= doMin);
+  const srednia = (lista, f) => lista.reduce((s, p) => s + f(p), 0) / Math.max(1, lista.length);
+  // Dostawy na godzinę — przyrost licznika w oknie.
+  const tempo = lista => lista.length > 1
+    ? (lista.at(-1).dostawy - lista[0].dostawy) / ((lista.at(-1).min - lista[0].min) / 60) : 0;
+  const baza = okno(DLUGI_OKNO[0], DLUGI_OKNO[1]);
+  const koniec = okno(minuty - 60, minuty);
+  const miary = [
+    { id: 'kursy', f: p => p.kursy },
+    { id: 'dostawy/h', tempo: true },
+    ...DLUGI_TOWARY.map(id => ({ id, f: p => p.zapas[id] })),
+    { id: 'obsada', f: p => p.obsada },
+    { id: 'ładowność', f: p => p.ladownosc }
+  ].map(m => {
+    const b = m.tempo ? tempo(baza) : srednia(baza, m.f);
+    const k = m.tempo ? tempo(koniec) : srednia(koniec, m.f);
+    return { id: m.id, baza: Math.round(b * 1000) / 1000, koniec: Math.round(k * 1000) / 1000,
+      udzial: b > 0 ? Math.round(k / b * 1000) / 1000 : 1 };
+  });
+  const godziny = [];
+  for (let h = 1; h * 60 <= minuty; h++) {
+    const lista = okno((h - 1) * 60, h * 60);
+    if (!lista.length) continue;
+    godziny.push({
+      h, kursy: Math.round(srednia(lista, p => p.kursy)), dostawyH: Math.round(tempo([probki.find(p => p.min === (h - 1) * 60) || lista[0], ...lista])),
+      zapas: Object.fromEntries(DLUGI_TOWARY.map(id => [id, Math.round(srednia(lista, p => p.zapas[id]))])),
+      obsada: Math.round(srednia(lista, p => p.obsada) * 1000) / 1000,
+      ladownosc: Math.round(srednia(lista, p => p.ladownosc)),
+      kapital: Math.round(srednia(lista, p => p.kapital))
+    });
+  }
+  return { okno: DLUGI_OKNO, koniec: [minuty - 60, minuty], miary, godziny };
 }
 
 // ============================================================
@@ -350,6 +447,14 @@ function ocen(bieg) {
         + `${(bieg.porwania?.kryjowki || []).map(k => `${k.stacja} ${k.obsada}`).join(', ')})` });
     wyniki.push({ prog: 'obsada < 0,8', wartosc: niska.niskaMaxMin, limit: PROGI.obsadaNiskaMinMax,
       opis: `${niska.niskaMaxMin} min (${niska.stacja})` });
+  }
+  if (bieg.dlugi && bieg.dlugi.koniec[1] >= PROGI.dlugiOdMinut) {
+    // Próg „w górę” jak przy obsadzie: wartość = brak do udziału `dlugiUdzialMin` (≤ 0 zaliczone).
+    const najnizszy = [...bieg.dlugi.miary].sort((a, b) => a.udzial - b.udzial)[0];
+    wyniki.push({ prog: 'długi bieg', wartosc: Math.max(0, PROGI.dlugiUdzialMin - najnizszy.udzial), limit: 0,
+      opis: `godz. ${bieg.dlugi.koniec[1] / 60} wobec 2–4: `
+        + bieg.dlugi.miary.map(m => `${m.id} ${Math.round(m.udzial * 100)}%`).join(', ')
+        + ` (próg ${PROGI.dlugiUdzialMin * 100}%)` });
   }
   for (const w of wyniki) w.ok = w.wartosc <= w.limit && !(w.wartosc < (w.minimum ?? -Infinity));
   return wyniki;
@@ -411,6 +516,15 @@ async function main() {
     const kolejne = bieg.kolejki.filter(q => q.srednia > PROGI.kolejkaMax)
       .map(q => `${q.stacja} ${q.srednia}`).join(', ');
     if (kolejne) console.log(`         kolejki: ${kolejne}`);
+    if (bieg.dlugi && bieg.dlugi.koniec[1] >= PROGI.dlugiOdMinut) {
+      console.log('         godz.  kursy  dostawy/h  ' + DLUGI_TOWARY.map(id => id.padStart(11)).join('')
+        + '  obsada  ładowność t  kapitał mln CR');
+      for (const g of bieg.dlugi.godziny) {
+        console.log(`         ${String(g.h).padStart(5)} ${String(g.kursy).padStart(6)} ${String(g.dostawyH).padStart(10)}  `
+          + DLUGI_TOWARY.map(id => String(g.zapas[id]).padStart(11)).join('') + `  ${g.obsada.toFixed(3)}`
+          + `  ${String(g.ladownosc).padStart(11)}  ${(g.kapital / 1e6).toFixed(1).padStart(14)}`);
+      }
+    }
   }
 
   const stempel = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
