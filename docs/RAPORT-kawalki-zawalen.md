@@ -42,6 +42,22 @@ Ten sam przełącznik na wieżowcu S1 (`arkusz_s1_kruchosc_*.png`): wieża miaż
 
 W demie przełącznik „Beton: dziś / Kruchy / Bardzo kruchy” przeładowuje stronę (wypiek od nowa). Gra zostaje bez zmian, dopóki nie wybierzesz.
 
+### Przyczyna: za miękki beton (trzeci przegląd)
+
+Użytkownik: „szyja nie może się aż tak wygiąć”, „ciągnie klocek za klockiem, cała struktura nie leci w dół ani się nie przechyla”, „gdzieś jest bug”. Pomiar wiązań szyi z GPU (`--scenariusz szyja --analiza 1`): twardy limit rozrywania działa (żadne żywe wiązanie ponad 50 %), ale żywe wiązania mają 30–47 % rozciągnięcia, a ich długość spoczynkowa urosła do 1,22 długości z budowy.
+
+Przyczyna jest w materiale. Odkształcenie statyczne pod własnym ciężarem (z wypieku): szyja bazy do 23 %, wieżowce bazy i wieża S1 do 14 %, prawdziwy beton około 0,05 %. Na starcie tego nie widać, bo sprężenie trzyma kształt z budowy. Gdy szyja się przechyli, sprężenie zamienia się w dłuższą długość spoczynkową i zewnętrzna strona ma ponad 20 % luzu bez siły. Wzmocnienie szyi ×8 było obejściem właśnie tego (bez niego miękka szyja kruszyła się pod głową), a zrobiło z niej gumę. Użytkownik potwierdził: „to była sztywność”.
+
+Poprawka w demie: sztywność betonu `?sztywnosc=2|3` (sztywność ×4 albo ×9 przy tej samej wytrzymałości, solver robi 2 albo 3 razy więcej podkroków):
+
+| | Szyja po nacięciu (bez wzmocnienia ×8) | Wieżowiec S1 | Baza bez strzałów | Krok bazy (GPU) |
+|---|---|---|---|---|
+| ×1 (dziś, szyja ×8) | zwija się w rurę | miażdży się | stoi | 0,69 ms |
+| ×2 | pęka u podstawy, głowa wpada do bębna | miażdży się, zaczyna później | stoi, 0 zerwanych wiązań | 1,0 ms |
+| ×3 | pęka, prosta szyja z głową przechyla się w całości | miażdży się, górny blok zgniata piętra | stoi | 1,4 ms |
+
+Arkusze: `.tmp/woksele-demo/KAW/arkusz_szyja_sztywna_bez_wzmocnienia.png`, `arkusz_s1_sztywnosc_ukos.png`. Strona bazy ma teraz domyślnie ×2 i szyję bez wzmocnienia. Gra zostaje przy ×1 i szyi ×8, dopóki nie zdecydujesz. Druga opinia: osobna sesja „Silnik fizyki 3D Opus 5.5” analizuje model materiału (sprężenie, wytrzymałość na rozciąganie, zginanie, kotwice).
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

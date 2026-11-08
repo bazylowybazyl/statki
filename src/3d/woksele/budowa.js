@@ -397,9 +397,12 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
   const skalaBud = par.skalaBud ?? 1;
   const skala = (20 * skalaBud) / dx; // 1 przy dx = 20 i budynku jak wieża
   // AGENT: par.cZDx (metoda E planu LOD, docs/PLAN-zawalenia-lod-miasto.md): c ∝ dx, więc K i podkroki jak przy dx = 20. par.cFroude: c ∝ √s, podkroki ze stabilności przy c, dx. Bez nich c stałe, a podkroki rosną z 1/dx (§ 2.1).
-  const cEf = par.cFroude ? par.c * Math.sqrt(skalaBud) : par.cZDx ? (par.c * dx) / 20 : par.c;
+  // AGENT: par.sztywnosc (demo kawałków, zgłoszenie 2026-11-08 „szyja jak guma”): mnożnik prędkości fali, więc K × sztywność², podkroki × sztywność (stabilność),
+  // a wytrzymałości bez zmian (podłoga z K0 przy par.c, reszta z sił statyki). Przy c = 6000 i dx = 40 szyja bazy stoi ściśnięta o 23 % pod własnym ciężarem. Bez pola 1: bajt w bajt jak dotąd.
+  const sztyw = par.sztywnosc ?? 1;
+  const cEf = (par.cFroude ? par.c * Math.sqrt(skalaBud) : par.cZDx ? (par.c * dx) / 20 : par.c) * sztyw;
   const pkZStab = (par.podkroki * 20 * cEf) / par.c / dx; // h·√(12K) = 1,25, § 2.1
-  const podkrokiEf = par.cZDx ? par.podkroki : Math.max(1, par.cFroude ? Math.ceil(pkZStab - 0.1) : Math.round(pkZStab));
+  const podkrokiEf = par.cZDx ? Math.round(par.podkroki * sztyw) : Math.max(1, par.cFroude ? Math.ceil(pkZStab - 0.1) : Math.round(pkZStab));
   const sM = gProj > 0 ? gProj / 400 : 1; // skala materiału
   const K = (cEf / dx) ** 2 / 3 * sM;
   const K0 = (par.c * Math.sqrt(skalaBud) / dx) ** 2 / 3 * sM;

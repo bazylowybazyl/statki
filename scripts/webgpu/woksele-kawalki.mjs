@@ -93,6 +93,7 @@ try {
   if (args.kawOp) zap.set('kawOp', String(args.kawOp));
   if (args.zbrojenie) zap.set('zbrojenie', String(args.zbrojenie));
   if (args.kruchosc) zap.set('kruchosc', String(args.kruchosc)); // przełącznik kruchości betonu (kawalki.js, KRUCHOSC)
+  if (args.sztywnosc) zap.set('sztywnosc', String(args.sztywnosc)); // sztywność betonu (budowa.js, par.sztywnosc)
   const start = await otworz(zap.toString());
   console.log('adapter', JSON.stringify(raport.adapter));
   for (const sc of SCENY) {

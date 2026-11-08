@@ -44,7 +44,7 @@ const Z_GORY = { az: 0, el: 88, cel: [1200, 200, 0], odl: 9800 };
 
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc ? `&kruchosc=${args.kruchosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}`;
+  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}`;
   await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zap}` });
   await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
   if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.gotowe || window.__wok.blad))', 600000, 200)) throw new Error('strona nie wstała');
@@ -72,7 +72,17 @@ try {
     zapisz();
   };
   const N = 'window.__wok.pokaz.narzedzia';
-  if (args.scenariusz === 'szyja') {
+  if (args.scenariusz === 'stoi') {
+    // Baza bez strzałów: ile wiązań puszcza samo (stabilność przy innej sztywności, kruchości).
+    const ZERW = `(async () => { const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt(); let z = 0, zyw = 0, nan = 0; for (let i = 0; i < w.n; i++) { const a = r.poz[3 * i]; if (a !== a) nan++; const m0 = w.maska[i], m = r.maskaW[i]; for (let d = 0; d < 18; d++) if ((m0 >>> d) & 1) { if ((m >>> d) & 1) zyw++; else z++; } } return { zerwanych: z, zywych: zyw, nan }; })()`;
+    for (const t of [1, 3, 6]) {
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      const a = await ev(ZERW);
+      const st = await ev('window.__wok.pokaz.statKawalki()');
+      console.log(`stoi t = ${t}: zerwanych wiązań ${a.zerwanych} z ${a.zerwanych + a.zywych}, NaN ${a.nan}, pękło L0 ${st.peklo[0]}/${st.K0}`);
+      await kadr('stoi', t);
+    }
+  } else if (args.scenariusz === 'szyja') {
     // Kamera po skosie (+x, −y): wieżowce W-1 i W-2 stoją na osi x, więc z boku zasłaniały szyję.
     const BOK = { az: 45, el: 8, cel: [0, 0, 900], odl: 4800 };
     const kadrBok = async (nazwa, t) => {
@@ -91,7 +101,46 @@ try {
       await ev(`${N}.stan.rKratera = 130; ${N}.uzyj('krater', { o: [${x}, 4000, ${z}], dir: [0, -1, 0] }); true`);
       await ev(`window.__wok.pokaz.doChwili(window.__wok.pokaz.stan.krok / 60 + 2 / 60)`);
     }
-    for (const t of [2, 4, 6, 9]) { await ev(`window.__wok.pokaz.doChwili(${t})`); await kadrBok('s', t); }
+    // Analiza wiązań szyi z GPU: rozciągnięcie żywych wiązań względem długości z wypieku (R0), sprężenie (F0), uszkodzenie (D), wydłużenie plastyczne (L − R0).
+    const ANALIZA = `(async () => {
+      const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt();
+      const cz = window.__wok.pokaz.stan.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T');
+      const wy = { wezlow: 0, zywych: 0, zerwanych: 0, kosze: [0, 0, 0, 0, 0], ponad50: 0, ponad50Spr: 0, sciskPonad55: 0, maks: 0, maksPlast: 0, maksD: 0, przyklady: [] };
+      for (let i = cz.start; i < cz.start + cz.n; i++) {
+        const x = w.pos[3 * i], y = w.pos[3 * i + 1], z = w.pos[3 * i + 2];
+        if (x * x + y * y > 170 * 170 || z < 230 || z > 1400) continue;
+        wy.wezlow++;
+        for (let d = 0; d < 18; d++) {
+          const q = 18 * i + d, j = w.nbr[q];
+          if (j < 0 || !((w.maska[i] >>> d) & 1)) continue;
+          if (!((r.maskaW[i] >>> d) & 1)) { wy.zerwanych++; continue; }
+          wy.zywych++;
+          const ex = r.poz[3 * j] - r.poz[3 * i], ey = r.poz[3 * j + 1] - r.poz[3 * i + 1], ez = r.poz[3 * j + 2] - r.poz[3 * i + 2];
+          const e = Math.sqrt(ex * ex + ey * ey + ez * ez) / w.R0[q] - 1;
+          wy.kosze[e < 0.1 ? 0 : e < 0.2 ? 1 : e < 0.3 ? 2 : e < 0.5 ? 3 : 4]++;
+          if (e > 0.5) { wy.ponad50++; if (r.F0[q] !== 0) wy.ponad50Spr++; if (wy.przyklady.length < 6) wy.przyklady.push({ i, d, e: +e.toFixed(3), F0: r.F0[q], D: +r.D[q].toFixed(3), L: +(r.L[q] / w.R0[q]).toFixed(3), klasa: w.klasaW[q], Ft: w.Ft[q] }); }
+          if (e < -0.55) wy.sciskPonad55++;
+          wy.maks = Math.max(wy.maks, e);
+          wy.maksPlast = Math.max(wy.maksPlast, r.L[q] / w.R0[q] - 1);
+          wy.maksD = Math.max(wy.maksD, r.D[q]);
+        }
+      }
+      return wy;
+    })()`;
+    for (const t of [2, 4, 6, 9]) {
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrBok('s', t);
+      if (args.analiza) {
+        const a = await ev(ANALIZA);
+        (raport.analiza ??= []).push({ t, ...a });
+        console.log(`  wiązania szyi t = ${t}: węzłów ${a.wezlow}, żywych ${a.zywych}, zerwanych ${a.zerwanych}, rozciągnięcie <10 / 10–20 / 20–30 / 30–50 / >50 %: ${a.kosze.join(' / ')}, maks ${(100 * a.maks).toFixed(0)} %, >50 % ze sprężeniem ${a.ponad50Spr}, ściśnięte >55 % ${a.sciskPonad55}, maks plast. ${(100 * a.maksPlast).toFixed(1)} %, maks D ${a.maksD.toFixed(3)}`);
+        if (a.przyklady.length) console.log('  przykłady >50 %:', JSON.stringify(a.przyklady));
+      }
+    }
+    // Koszt kroku (solver z podkrokami tej sztywności + obraz) na tej chwili.
+    const k = await ev('window.__wok.pokaz.kosztKlatki(8, 9)');
+    raport.koszt = k;
+    console.log(`  koszt: krok + kernele ${k.computeGpuMs.toFixed(2)} ms GPU, rysunek ${k.renderGpuMs.toFixed(2)} ms, podkroki ${await ev('window.__wok.pokaz.solver.wypiek.podkrokiEf')}`);
   } else {
   await ev('window.__wok.pokaz.doChwili(1)');
   await kadr('01-przed', 1);

@@ -141,6 +141,19 @@ test('kruchość: poziom 0 to ta sama nakładka, wyższe poziomy zwężają gran
   assert.deepEqual(zbuduj(plan.scena).bMax2W, w.bMax2W);
 });
 
+test('sztywność: K × s², podkroki × s, wytrzymałości i sprężenie bez zmian, bez pola bajt w bajt (zgłoszenie 2026-11-08: szyja jak guma)', () => {
+  const plan = S1();
+  const w2 = zbuduj(plan.scena, parametry({ sztywnosc: 2 }));
+  assert.ok(Math.abs(w2.K / w.K - 4) < 1e-9, `K ${w2.K} wobec ${w.K}`);
+  assert.equal(w2.podkrokiEf, 2 * w.podkrokiEf);
+  assert.ok(Math.abs(w2.h * Math.sqrt(12 * w2.K) - w.h * Math.sqrt(12 * w.K)) < 1e-9, 'ta sama stabilność h·√(12K)');
+  assert.deepEqual(w2.Ft, w.Ft);
+  assert.deepEqual(w2.Fc, w.Fc);
+  assert.deepEqual(w2.F0, w.F0);
+  assert.deepEqual(w2.bMax2W, w.bMax2W);
+  assert.deepEqual(zbuduj(plan.scena, parametry({})).Ft, w.Ft);
+});
+
 // ── Obraz w WGSL z Node ──
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
 const renderer = new THREE.WebGPURenderer({ canvas });
