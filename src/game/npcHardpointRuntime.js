@@ -47,7 +47,9 @@ function normalizeHpEnum(hardpointEnum) {
 const FREIGHTER_EDITOR_FRAMES = new Set([
   'inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter',
   'heavy_harvester', 'belter', 'surveyor', 'refinery_tender', 'tanker', 'salvage_hauler', 'construction_tug',
-  'smuggler', 'pirate_raider', 'distress_beacon_ship', 'repair_drone', 'bounty_hunter', 'police_cutter', 'rescue_ship'
+  'smuggler', 'pirate_raider', 'distress_beacon_ship', 'repair_drone', 'bounty_hunter', 'police_cutter', 'rescue_ship',
+  // Promy z ludźmi (workforce W7).
+  'crew_shuttle', 'crew_liner', 'colony_liner'
 ]);
 export const TRAFFIC_EDITOR_FRAMES = FREIGHTER_EDITOR_FRAMES;
 const FREIGHTER_HULL_BY_TYPE = Object.freeze({

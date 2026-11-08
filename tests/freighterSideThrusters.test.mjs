@@ -44,7 +44,11 @@ const HULLS = [
   ...['heavy_harvester', 'belter', 'surveyor', 'refinery_tender', 'tanker', 'salvage_hauler', 'construction_tug',
     'distress_beacon_ship', 'rescue_ship'].map((id) => ({
     key: id, profile: id, sprite: TRAFFIC_HULLS[id].sprite, bays: null, bridge: id, npc: { type: id, shipFrame: id }
-  }))
+  })),
+  // Promy z ludźmi (workforce W7): kadłub frachtowca bazowego z pokładem pasażerskim w miejscu ładowni (ta sama alfa) —
+  // sponsony poza pokładem jak poza ładownią bazowego.
+  ...[['crew_shuttle', 'inter_station_shuttle'], ['crew_liner', 'container_ship'], ['colony_liner', 'long_haul_freighter']]
+    .map(([id, base]) => ({ key: id, profile: id, sprite: TRAFFIC_HULLS[id].sprite, bays: base, npc: { type: id, shipFrame: id } }))
 ];
 
 const spriteCache = new Map();

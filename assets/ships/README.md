@@ -72,6 +72,9 @@ przy 90% szerokości płótna.
 | 25 | `heavy_freighter_empty` | pusty pokład ciężkiego frachtowca (edycja #1) | 3000 × 550 → 1800 × 660 | jak #1 | jak #1 | P2 |
 | 26 | `megafreighter_empty` | pusty pokład megafrachtowca (edycja) | 4600 × 760 → 2760 × 912 | jak oryginał | jak oryginał | P2 |
 | 27 | `megafreighterwagon_empty` | pusty pokład wagonu megafrachtowca (edycja, płótno 1672 × 941) | stały prostokąt 2760 × 1554 | jak oryginał | jak oryginał | P2 |
+| 28 | `crew_shuttle` | prom rotacyjny — ludzie na kontraktach (edycja `inter_station_shuttle.png`, workforce W7) | 200 × 80 → 120 × 96 | jak oryginał | jak oryginał | P2 |
+| 29 | `crew_liner` | liniowiec kontraktowy (edycja `container_ship.png`, W7) | 520 × 180 → 312 × 216 | jak oryginał | jak oryginał | P2 |
+| 30 | `colony_liner` | liniowiec dalekiego zasięgu (edycja `long_haul_freighter.png`, W7) | 900 × 260 → 540 × 312 | jak oryginał | jak oryginał | P2 |
 
 \* Profile nowych ról — liczby ze zlecenia; w `HULL_RENDER_PROFILES` jeszcze ich nie ma.
 
@@ -86,6 +89,15 @@ przy 90% szerokości płótna.
   sprite'cie), krążowniki (#8, 12, 16, 20 — 13% kadłubów).
 - **P3.** Nowe role, których jeszcze nie ma w kodzie (#3–5), i nosiciele (#9, 13, 17, 21 — 3%
   kadłubów).
+
+## Promy z ludźmi (#28–30, workforce W7)
+
+Edycje oryginału jak puste pokłady: ładownię zastępuje pokład pasażerski (dachy kabin z rzędami okien, rękawy, pas
+cywilny), alfa jak w oryginale. Do czasu PNG z generatora kadłuby `crew_*` rysują się obecnymi sprite'ami frachtowców
+bazowych (decyzja użytkownika D14), a ich tabele E13 (`src/data/trafficHulls.js` i pokrewne) mają liczby kadłuba
+bazowego. Po PNG: podmienić `sprite`, ustawić markery na nowo i przeliczyć tabele obrazu proxy
+(`node scripts/rdzenie-auto-ruchu.mjs`, `node scripts/lampy-nawigacyjne.mjs --zapisz`, obrysy 3D) — notatki `AGENT:`
+przy wpisach.
 
 ## Puste pokłady (#22–27)
 

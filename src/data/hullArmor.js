@@ -35,6 +35,10 @@ export const HULL_COLLISION_ARMOR = Object.freeze({
   bounty_hunter: 1.1,
   police_cutter: 1,
   rescue_ship: 0.6,
+  // Promy z ludźmi (workforce W7): pancerz kadłuba bazowego.
+  crew_shuttle: 0.5,
+  crew_liner: 0.6,
+  colony_liner: 0.75,
   // Holownik serwisowy: ciężka rama pokładu-kołyski (nosi supercapital) — jak megafrachtowiec.
   service_tug: 2,
   fighter: 0.35,

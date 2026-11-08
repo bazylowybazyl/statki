@@ -255,6 +255,11 @@ export const HULL_RENDER_PROFILES = {
   bounty_hunter: { id: 'bounty_hunter', length: 440, radius: 150 },
   police_cutter: { id: 'police_cutter', length: 300, radius: 110 },
   rescue_ship: { id: 'rescue_ship', length: 400, radius: 150 },
+  // Promy z ludźmi (workforce W7): gabaryty frachtowca tej samej ładowni — te same stanowiska, obrys doku i kolizje
+  // (do PNG z generatora rysują się jego sprite'em, D14).
+  crew_shuttle: { id: 'crew_shuttle', length: 200, radius: 80 },
+  crew_liner: { id: 'crew_liner', length: 520, radius: 180 },
+  colony_liner: { id: 'colony_liner', length: 900, radius: 260 },
   // Holownik serwisowy (2026-10-08, src/game/serviceTug.js): naprawia rojem dronów i zabiera „na pakę” statek bez
   // napędu — pokład (ładownia sprite'a, 648 × 344 px płótna 1774) mieści Atlasa (1800 × ~600 j.): 8300 × 0,6 =
   // 4980 j. kadłuba, ~1820 × 970 j. pokładu. Za duży na stanowiska portu (berthClassForHull → null) — przy K-7 stoi

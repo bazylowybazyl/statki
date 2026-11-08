@@ -49,8 +49,8 @@ function scaleOf(id) {
   return { x: size.w / img.width, y: size.h / img.height, w: size.w, h: size.h };
 }
 
-test('18 kadłubów ruchu: wpis edytora, mostek z poziomem, rdzeń, zbiornik, rozmiar dysz', () => {
-  assert.equal(HULLS.length, 18, HULLS.join(', '));
+test('21 kadłubów ruchu: wpis edytora, mostek z poziomem, rdzeń, zbiornik, rozmiar dysz', () => {
+  assert.equal(HULLS.length, 21, HULLS.join(', '));
   for (const id of HULLS) {
     const cfg = SHIPS[id];
     assert.ok(cfg, `${id}: wpis edytora`);
@@ -76,10 +76,27 @@ test('18 kadłubów ruchu: wpis edytora, mostek z poziomem, rdzeń, zbiornik, ro
   assert.equal(TRAFFIC_UNIT_HULLS.hunter, 'bounty_hunter');
   assert.equal(TRAFFIC_UNIT_HULLS.police, 'police_cutter');
   assert.equal(TRAFFIC_UNIT_HULLS.rescue, 'rescue_ship');
+  // Promy z ludźmi (workforce W7): własne kadłuby pasażerskie.
+  assert.equal(TRAFFIC_UNIT_HULLS['crew-small'], 'crew_shuttle');
+  assert.equal(TRAFFIC_UNIT_HULLS['crew-medium'], 'crew_liner');
+  assert.equal(TRAFFIC_UNIT_HULLS['crew-large'], 'colony_liner');
+});
+
+test('promy z ludźmi (W7): do PNG z generatora sprite frachtowca bazowego (D14) — dane kadłuba jak u bazowego', () => {
+  const BASE = { crew_shuttle: 'inter_station_shuttle', crew_liner: 'container_ship', colony_liner: 'long_haul_freighter' };
+  for (const [id, base] of Object.entries(BASE)) {
+    // Inny sprite (PNG z generatora) = markery ustawione na nowo — wtedy ten test przepisać na nowy obraz.
+    assert.equal(TRAFFIC_HULLS[id].sprite, TRAFFIC_HULLS[base].sprite, `${id}: sprite jak ${base}`);
+    assert.deepEqual(HULL_RENDER_PROFILES[id].length, HULL_RENDER_PROFILES[base].length, `${id}: gabaryty jak ${base}`);
+    assert.deepEqual(HULL_RENDER_PROFILES[id].radius, HULL_RENDER_PROFILES[base].radius);
+    assert.deepEqual(TRAFFIC_HULLS[id].main, TRAFFIC_HULLS[base].main, `${id}: dysze MAIN`);
+    const z = zoneOf(id), zb = zoneOf(base);
+    assert.deepEqual([z.x, z.y, z.w, z.h, z.level], [zb.x, zb.y, zb.w, zb.h, zb.level], `${id}: mostek`);
+  }
 });
 
 test('poziom mostka = klasa z pola kadłuba; strefa = obrys poziomu / s (wahadłowiec i dron — pomniejszone)', () => {
-  const SHRUNK = { inter_station_shuttle: 0.93, repair_drone: 0.8 };
+  const SHRUNK = { inter_station_shuttle: 0.93, crew_shuttle: 0.93, repair_drone: 0.8 };
   for (const id of HULLS) {
     const img = png(id);
     const s = scaleOf(id);

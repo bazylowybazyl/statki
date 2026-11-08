@@ -41,7 +41,11 @@ export const FUEL_TANK_MARKERS = Object.freeze({
   repair_drone: tank({ id: 'repair_drone_fuel', x: -30, y: 150, r: 180 }),
   bounty_hunter: tank({ id: 'bounty_hunter_fuel', x: -165, y: -5, r: 90.7 }),
   police_cutter: tank({ id: 'police_cutter_fuel', x: -440, y: -150, r: 133.1 }),
-  rescue_ship: tank({ id: 'rescue_ship_fuel', x: -320, y: -180, r: 83.2 })
+  rescue_ship: tank({ id: 'rescue_ship_fuel', x: -320, y: -180, r: 83.2 }),
+  // Promy z ludźmi (workforce W7): zbiornik kadłuba bazowego (ten sam sprite do PNG z generatora — AGENT: potem ustawić na nowo).
+  crew_shuttle: tank({ id: 'crew_shuttle_fuel', x: -20, y: -10, r: 160.9 }),
+  crew_liner: tank({ id: 'crew_liner_fuel', x: -455, y: -10, r: 76.8 }),
+  colony_liner: tank({ id: 'colony_liner_fuel', x: -420, y: 15, r: 59.1 })
 });
 
 /**
