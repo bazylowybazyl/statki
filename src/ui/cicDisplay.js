@@ -730,6 +730,13 @@ if (typeof window !== 'undefined') window.CicBeltTune = CIC_BELT_TUNE;
 let cicBeltLayerFailed = false;
 // Komputer handlowy (E7, src/ui/cicTradeLayer.js) — warstwa „HANDEL”; dane z ruchu v2 przez `setTradeSource`.
 const cicTradeLayer = createCicTradeLayer();
+// Mgła wojny w warstwie handlu: port ukryty jak znacznik stacji (`SensorSystem.hides`, drawStationMarkers).
+cicTradeLayer.setHiddenTest(portId => {
+  const list = window.stations;
+  if (!Array.isArray(list) || !window.SensorSystem?.hides) return false;
+  for (const st of list) if (st && st.id === portId) return !!window.SensorSystem.hides(st);
+  return false;
+});
 let cicTradeLayerFailed = false;
 function cicTradeLayerFail(e) {
   if (!cicTradeLayerFailed) console.error('[CIC] warstwa handlu:', e);
