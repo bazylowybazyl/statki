@@ -27,6 +27,7 @@ import {
 } from './traffic/trafficProtocol.js';
 import { BELT_MSG } from './traffic/trafficProtocol.js';
 import { moveStock } from './traffic/marketStock.js';
+import { findTradePartners as computeTradePartners, TRADE_PARTNER_TUNE } from './tradePartners.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
 const RECENT_WRECK_LIMIT = 64;
@@ -99,6 +100,15 @@ export class TrafficBridge {
     this.stationIndex = new Map();
     /** `stationId` → kopia magazynu `{ resources, capacity, duress, bid, ask }`. */
     this.market = new Map();
+    /**
+     * Numer stanu kopii rynku: rośnie przy każdym buforze rynku z workera, zmianie gry (`stockDelta`) i nowej tabeli
+     * stacji. Komputer handlowy (`findTradePartners`) trzyma wyniki zapytań do następnej zmiany numeru.
+     */
+    this.marketSeq = 0;
+    /** Ile buforów rynku przyszło z workera (0 — kopia jeszcze pusta, komputer handlowy „liczy”). */
+    this.marketBuffers = 0;
+    this._partnerCache = new Map();
+    this._partnerCacheSeq = -1;
     /** Kursy w bańce: `data` (Float64Array, `COURSE_STRIDE`), `count`, `clock`. */
     this.courses = { data: new Float64Array(0), count: 0, clock: 0, time: 0 };
     /**
@@ -278,6 +288,7 @@ export class TrafficBridge {
     this._enter();
     try {
       const applied = applyToMirror(this.market.get(id), bag);
+      this.marketSeq++;
       const seq = ++this._stockSeq;
       this._pendingStock.push({ seq, stationId: id, bag: { ...bag } });
       this._post({ type: TRAFFIC_MSG.STOCK, seq, stationId: id, bag: { ...bag }, reason: String(reason) });
@@ -498,6 +509,7 @@ export class TrafficBridge {
     for (const entry of stations) {
       if (!this.market.has(entry.id)) this.market.set(entry.id, createMirror(this.tables.resources));
     }
+    this.marketSeq++;
   }
 
   _onTick(message) {
@@ -561,6 +573,8 @@ export class TrafficBridge {
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.
     this._pendingStock = this._pendingStock.filter(entry => entry.seq > stockSeq);
     for (const entry of this._pendingStock) applyToMirror(this.market.get(entry.stationId), entry.bag);
+    this.marketBuffers++;
+    this.marketSeq++;
   }
 
   /**
@@ -626,6 +640,39 @@ export class TrafficBridge {
    */
   getEconomy(stationId) {
     return this.market.get(String(stationId || '')) || null;
+  }
+
+  /**
+   * KOMPUTER HANDLOWY (E23a, `src/game/tradePartners.js`): kto skupi (`side = 'buy'`) albo sprzeda (`'sell'`) towar
+   * `resourceId` w układzie strony — cena z reputacją jak w terminalu, ile port przyjmie, odległość i czas lotu,
+   * frakcja i stosunki, kolejność po zysku z uwzględnieniem drogi. Liczone na żądanie z kopii rynku; wynik zostaje
+   * w pamięci do następnego bufora rynku (albo zmiany gry — `marketSeq`), więc karta, która pyta co klatkę, nie
+   * alokuje. Klucz: towar, strona, ilość, cena zakupu, pominięta stacja i kubełek pozycji gracza
+   * (`TRADE_PARTNER_TUNE.positionBucket`). Wynik jest wspólny — tylko do odczytu. Filtry: `findTradePartners`
+   * w `tradePartners.js` (`hidden` — mgła wojny, `positionOf`, `drives`, `reputation`, `limit`).
+   */
+  findTradePartners(resourceId, side = 'buy', filters = {}) {
+    if (this._partnerCacheSeq !== this.marketSeq) {
+      this._partnerCache.clear();
+      this._partnerCacheSeq = this.marketSeq;
+    }
+    const bucket = TRADE_PARTNER_TUNE.positionBucket;
+    const fx = Number(filters.from?.x);
+    const fy = Number(filters.from?.y);
+    const cacheKey = `${resourceId}|${side}|${Math.round(Number(filters.amount) || 0)}|`
+      + `${Math.round((Number(filters.costBasis) || 0) * 10)}|${filters.excludeId ?? ''}|${filters.limit ?? ''}|`
+      + `${Number.isFinite(fx) ? Math.round(fx / bucket) : 'x'}|${Number.isFinite(fy) ? Math.round(fy / bucket) : 'y'}`;
+    const cached = this._partnerCache.get(cacheKey);
+    if (cached) return cached;
+    const result = computeTradePartners({ stations: this.tables?.stations || [], market: this.market, ready: this.marketBuffers > 0 },
+      resourceId, side, filters);
+    result.marketSeq = this.marketSeq;
+    // Przed pierwszym buforem rynku nie zapamiętujemy — karta pyta dalej i pokazuje „liczę…”.
+    if (!result.pending) {
+      if (this._partnerCache.size >= TRADE_PARTNER_TUNE.cacheSize) this._partnerCache.clear();
+      this._partnerCache.set(cacheKey, result);
+    }
+    return result;
   }
 
   /** Opis stacji z tabeli `ready` (`id`, `name`, `factionId`, `x`, `y`, `moon`…). */
