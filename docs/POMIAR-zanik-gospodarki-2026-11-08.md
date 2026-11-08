@@ -4,6 +4,12 @@ Zgłoszenie E18 (`docs/PROPOZYCJA-ekonomia-ukladow.md` § 2.3, § 11): pełna sy
 połowę kursów i połowę zapasu stali, a bramka bilansu liczy 4 h. Stan i zasady: reguła `ruch-v2`, § „Flota
 przewoźników” i § „Bramka bilansu” (wariant długi).
 
+Dwie niezależne przyczyny, dwie poprawki:
+1. **Kursy i obsada** — przewoźnicy odkupywali każdą stratę najtańszym vanem, ładowność floty topniała
+   (2,70 → 0,55 mln t w 12 h). Poprawka floty: odkup tej samej klasy, ryzyko kadłuba we frachcie (commit 0978dc48).
+2. **Stal** — solver przemysłu liczył przetop złomu na Marsie jako źródło stali, a złom przychodzi tylko z wraków
+   (plan 1,06, w biegu 0,93). Poprawka: złom poza podażą planu (commit e3706b08, § „Krok 2: stal”).
+
 Warunki: skala gospodarki ×60, magazyny ×4, presja piractwa ×1, ziarna 7 / 11 / 23. Sonda co godzinę
 (`.tmp/dlugi/sonda.mjs`, poza repo): kursy wg rodzaju, flota przewoźników wg klas i firm, zakupy i straty, rachunek
 firm, zapasy, obsada, pola wydobywcze, kolejki, wraki, zlecenia. Bramka: `node scripts/bramka-bilansu.mjs --godziny 10`.
@@ -139,20 +145,58 @@ capital i 6 mega i nie ma nadpisania `MARKET_DOCK_OVERRIDES`. A/B z jednym zakup
   LF, maska słońca), 3 pominięte, 2 TODO. Worktree potrzebuje junctiona `node_modules` — bez niego pada 6 testów
   renderu, które czytają `node_modules/three` ścieżką względną.
 
+## Krok 2: stal (commity e3706b08, 1f3f5a04)
+
+Po poprawce floty stal dalej spadała (25 → 16% w 10 h, 7% po 20 h; w bazie do 8. h ta sama krzywa). Pomiar hut co 2 h
+przez 16 h (`.tmp/dlugi/huty.mjs`: jeden cykl receptur przy bieżącym zapasie, jak `runRecipes`):
+
+| | plan (na cykl, ×60) | w biegu |
+|---|---|---|
+| produkcja stali | 691 | 604 — wszystkie huty z rudy 100% planu, przetop złomu na Marsie 0 z 87 (brak złomu) |
+| zużycie stali | 670 | 641–670 |
+
+Przyczyna: solver przemysłu (`buildIndustryMap`) liczył przetop złomu jako źródło stali. Na Marsie ta linia miała
+wagę 2,90 (wytop z rudy 1,09) — solver dzieli popyt stali Marsa między obie linie, a recykling robi 1 stali z 4 złomu.
+Pokrycie stali w planie: 1,06 ze złomem, 0,927 bez niego. Złom przychodzi tylko z wraków, więc w biegu było ~0,93
+i stal schodziła o ~12 tys./h. Pozostałe tropy z pierwszego kroku (próg sprzedaży 70%, zapas roboczy 25% odbiorców,
+płyty kadłuba rosnące do pełnych magazynów) to skutki: bez nadwyżki huty nie sprzedają, a odbiorcy zjadają zapas.
+
+Poprawka (`stationEconomy.js`): linia na wsadzie bez stałego źródła (`UNPLANNED_INPUTS`: złom) nie liczy się do
+podaży planu (`isPlannedSupplyLine`). Solver dokłada stal hutom z rudy: pokrycie stali bez złomu 0,927 → 1,052,
+wytop +10–27% (Merkury 0,49 → 0,55, Wenus 1,45 → 1,67, Ziemia 2,86 → 3,16, Ceres 1,09 → 1,22, Westa 0,58 → 0,73),
+pozostałe towary 1,061–1,071 (było 1,067–1,079). Podział mocy w stacji bez zmian. Migawki testów: plan Ziemi +10%
+rudy żelaza, huta Ziemi 9,24 → 9,55 ekwiwalentu; nowy strażnik § 12 (stal pokryta samymi hutami z rudy).
+
+Ziarno 7, 12 h, obie poprawki (sonda): stal 27,7% (0 h) → 29,0% (4 h) → 29,2% (10 h) → 31,1% (12 h); bez kroku 2:
+23,5 → 15,5 → 12,6%. Ładowność 2,67–2,74 mln t, obsada 1,00, kursy 1500–1740 od 7. h.
+
+Bramka 4 h (obie poprawki): zaliczona — przechwyty 14,9 / 14,6 / 14,6%, kolejka 1,15 / 1,89 / 1,20 (Wenus),
+głód ≤ 6,2 min, stocznie 0 min, obsada 1, tick 10,6 / 10,8 / 10,4 ms.
+
+### Wariant długi 12 h, obie poprawki (`--godziny 12`, stal w progu, ziarna 7 / 11 / 23)
+
+| godz. | kursy | ładowność, tys. t | kapitał, mln CR | stal, tys. | obsada |
+|---|---|---|---|---|---|
+| 2 | 831 / 795 / 825 | 2741 / 2741 / 2741 | 74,4 / 75,5 / 76,0 | 256 / 254 / 257 | 1,00 / 1,00 / 1,00 |
+| 4 | 1206 / 1216 / 1214 | 2741 / 2741 / 2741 | 65,0 / 66,7 / 69,5 | 257 / 256 / 256 | 1,00 / 1,00 / 1,00 |
+| 6 | 1461 / 1394 / 1404 | 2741 / 2741 / 2741 | 58,9 / 62,4 / 66,2 | 261 / 263 / 257 | 1,00 / 1,00 / 1,00 |
+| 8 | 1520 / 1582 / 1609 | 2741 / 2741 / 2741 | 51,6 / 55,8 / 59,8 | 261 / 263 / 261 | 1,00 / 1,00 / 1,00 |
+| 10 | 1568 / 1600 / 1613 | 2740 / 2732 / 2741 | 53,5 / 60,5 / 63,3 | 266 / 265 / 266 | 1,00 / 1,00 / 1,00 |
+| 12 | 1627 / 1640 / 1546 | 2690 / 2675 / 2733 | 61,2 / 68,5 / 69,6 | 273 / 273 / 273 | 1,00 / 1,00 / 1,00 |
+
+Próg „długi bieg” zaliczony na 3 ziarnach: ziarno 7: kursy 141%, dostawy/h 148%, stal 106%, płyty 162%, ruda Fe 111%, paliwo fuz. 98%, obsada 100%, ładowność 98%; ziarno 11: kursy 140%, dostawy/h 138%, stal 107%, płyty 161%, ruda Fe 111%, paliwo fuz. 98%, obsada 100%, ładowność 98%; ziarno 23: kursy 133%, dostawy/h 138%, stal 106%, płyty 161%, ruda Fe 112%, paliwo fuz. 98%, obsada 100%, ładowność 100%. Cały bieg 12 h dalej łamie kolejkę (Wenus 9,0 / 9,3 / 8,3, Ziemia 2,4 / 9,5 / 5,2 — więcej stali w ruchu) i głód kryjówek (O₂ 280 min, stal 133 min), jak bez kroku 2.
+
+Testy po kroku 2: `npm test` 1919 OK (+2: strażnik stali w § 12); `node --test` 4016, 4009 OK, te same 2 znane porażki.
+
 ## Co zostaje (osobne zadania)
 
-1. **Stal −32–34% w 10 h** — także w bazie przed zanikiem (krzywa ta sama do 8. h). Huty sprzedają w trybie `'surplus'`
-   dopiero ponad 70% magazynu, a stoją na 30–70%; 16 księżyców (sam byt, −486 j./h każdy), Jowisz i Saturn są pod
-   zapasem roboczym 25% od pierwszych godzin i zjadają zapas startowy (księżyce 6,0 → 2,7 tys. w godzinach 2–10 —
-   ponad połowa spadku układu); plan stali ma −5% (−105 j./h w skali 1, montaż płyt bierze 1149 z 2179). Po 20 h
-   stal 7%; przy tempie z godzin 2–10 księżyce zeszłyby do zera ok. 15. h. Próg „długi bieg” na stali nie przechodzi.
-2. **Kolejki po 7. h**: ruch rośnie do ~11 tys. dostaw/h (+40% wobec 2–4 h), redy Wenus i Ziemi średnio 4–6 w biegu
+1. **Kolejki po 7. h**: ruch rośnie do ~11 tys. dostaw/h (+40% wobec 2–4 h), redy Wenus i Ziemi średnio 4–6 w biegu
    10 h (szczyt 487 kursów na Wenus w 17. h). W bazie zanik od 8. h to ukrywał (Wenus 1,3–3,3).
-3. **Kryjówki bez tlenu**: Gniazdo Hildy i Złomowisko stoją na zerze O₂ od ~7,3 h (159,8 min do 10. h) — w bazie
+2. **Kryjówki bez tlenu**: Gniazdo Hildy i Złomowisko stoją na zerze O₂ od ~7,3 h (159,8 min do 10. h) — w bazie
    identycznie; bramka 10 h liczy je w progu głodu.
-4. **Skala ×1** (`?trafficV2=1`): baza i poprawka gasną (ładowność 39 tys. → 4 tys. / 19 t w 8 h) — flota i kapitał
+3. **Skala ×1** (`?trafficV2=1`): baza i poprawka gasną (ładowność 39 tys. → 4 tys. / 19 t w 8 h) — flota i kapitał
    za małe; gra liczy ×60.
-5. Jedna z czterech dużych firm (firma-1) traci pieniądze od pierwszej godziny: kapitał 11,6 → 0,27 mln CR do 8. h,
+4. Jedna z czterech dużych firm (firma-1) traci pieniądze od pierwszej godziny: kapitał 11,6 → 0,27 mln CR do 8. h,
    statki 445 → 105 po 20 h (pozostałe duże trzymają 422–445). Dopłata jest jedna dla wszystkich klas, a duże ładunki
    giną częściej; projekt przewoźników dopuszcza, że słaba firma wypada z rynku. Układ to wytrzymuje (−5% ładowności
    po 20 h).
