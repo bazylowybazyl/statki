@@ -408,8 +408,16 @@ function lookGas(rng, ice) {
     color: (ice ? jitter(rng, srgb('#6a6a70'), 0.15) : jitter(rng, srgb(rng.pick(['#c8b49a', '#b0a08a', '#d0c4b0', '#9a8a78'])), 0.1)).map((v) => round(v)),
     gaps: rng.int(1, 4), tiltDeg: round(rng.range(-28, 28), 2), seed: rng.int(1, 1e6)
   } : null;
+  // bieguny (decyzja 5 użytkownika, 2026-11-08 — „żeby było widać, że bieguny żyją”): gromada cyklonów wokół
+  // centralnego (jak Jowisz), sześciokąt dżetu z wirem w środku (jak Saturn) albo sama mgła; obraca je silnik
+  // (czapa polarna GEN_GAS_POLES)
+  const poleStyle = () => rng.weighted([[1, 0.45], [2, 0.25], [0, 0.3]]);
+  const polar = {
+    north: poleStyle(), south: poleStyle(), count: rng.int(5, 9), phase: round(rng.range(0, 360), 2),
+    ringDeg: round(rng.range(9, 12), 3), hexDeg: round(rng.range(13, 16.5), 3)
+  };
   return {
-    palette: palName, contrast, rows, ext, cuts, vortices, ring,
+    palette: palName, contrast, rows, ext, cuts, vortices, ring, polar,
     windAt,
     storms: ice ? rng.range(0.2, 1.0) : rng.range(0.2, 0.9),   // drobne jasne chmury konwekcji
     festoons: ice ? 0 : rng.range(0.2, 1.0),                    // girlandy na skraju strefy równikowej
@@ -555,6 +563,61 @@ function surfaceFor(type, look) {
   return s;
 }
 
+// Rzeźba w materiale powierzchni (planetGenSurface.tsl.js): normal — przesadzenie normalnych, shadow — przesadzenie
+// wysokości w cieniu terenu, pen — półcień [rad], detail — amplituda detalu ponad mapę (× teksel [km] · 0,03),
+// detailAlbedo — siła detalu w jasności, rough — szorstkość z wypieku (bazowa, przyrost z nachyleniem, przy brzegu).
+const RELIEF = {
+  terran: { normal: 5, shadow: 5, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.15, 3.0, 0.6, 0] },
+  ocean: { normal: 5, shadow: 5, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.2, 3.0, 0.7, 0] },
+  desert: { normal: 4, shadow: 4.5, pen: 0.012, detail: 0.9, detailAlbedo: 0.12, rough: [0.3, 3.0, 0, 0] },
+  rocky: { normal: 3.5, shadow: 4, pen: 0.01, detail: 1.0, detailAlbedo: 0.12, rough: [0.35, 2.5, 0, 0] },
+  ice: { normal: 3, shadow: 3.5, pen: 0.012, detail: 0.6, detailAlbedo: 0.06, rough: [0.2, 2.5, 0, 0] },
+  volcanic: { normal: 3.5, shadow: 4, pen: 0.012, detail: 0.9, detailAlbedo: 0.1, rough: [0.35, 2.5, 0, 0] },
+  barren: { normal: 3.5, shadow: 4, pen: 0.008, detail: 1.0, detailAlbedo: 0.1, rough: [0.4, 2.5, 0, 0] },
+  toxic: { normal: 2.5, shadow: 3, pen: 0.015, detail: 0.6, detailAlbedo: 0.08, rough: [0.25, 2.0, 0, 0] }
+};
+function reliefFor(type) {
+  return RELIEF[type] ? { ...RELIEF[type], rough: [...RELIEF[type].rough] } : null;
+}
+
+/** Kierunek na kuli (biegun N = +Y, jak SphereGeometry: u = (lon + 180°) / 360°) z szerokości i długości [°]. */
+export function latLonDir(latDeg, lonDeg) {
+  const lat = latDeg * Math.PI / 180;
+  const phi = (lonDeg + 180) / 360 * 2 * Math.PI;
+  return [-Math.cos(phi) * Math.cos(lat), Math.sin(lat), Math.sin(phi) * Math.cos(lat)];
+}
+
+export const RUIN_CAP_SPEC = 8;
+/**
+ * Ruiny planety: lista { lat, lon, dir, radius [rad], value 0…1 (jasność świecenia — ile zostało do znalezienia),
+ * seed, kind (0 — na gruncie, 1 — unoszące się nad olbrzymem) }. Domyślnie z ziarna (ok. 1/4 planet bez ruin);
+ * `override` z danych gry: `false` / `[]` — bez ruin, liczba — tyle miejsc z ziarna, tablica { lat, lon, value,
+ * size? [rad] } — miejsca wprost (np. z tabeli eksploracji).
+ */
+function ruinsFor(type, kind, seed, override) {
+  const rng = rngFor(seed, `${type}:ruiny`);
+  const floating = kind === 'gas' ? 1 : 0;
+  const mk = (lat, lon, value, radius) => ({
+    lat: round(lat, 3), lon: round(lon, 3), dir: latLonDir(lat, lon).map((v) => round(v, 6)),
+    radius: round(radius, 5), value: round(Math.min(1, Math.max(0, value)), 3), seed: round(rng.range(0, 997), 2), kind: floating
+  });
+  if (override === false) return [];
+  if (Array.isArray(override)) {
+    return override.slice(0, RUIN_CAP_SPEC).map((r) => mk(Number(r.lat) || 0, Number(r.lon) || 0, r.value ?? 1, r.size ?? rng.range(0.014, 0.03)));
+  }
+  const count = typeof override === 'number' ? Math.min(RUIN_CAP_SPEC, Math.max(0, override | 0))
+    : rng.weighted([[0, 25], [1, 30], [2, 22], [3, 13], [4, 7], [5, 3]]);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const lat = Math.asin(rng.range(-0.92, 0.92)) * 180 / Math.PI;
+    const lon = rng.range(-180, 180);
+    // wartość: większość skromna, rzadko bogate (jasne)
+    const value = Math.pow(rng.next(), 1.6) * 0.85 + 0.15;
+    out.push(mk(lat, lon, value, rng.range(0.012, 0.032) * (floating ? 0.7 : 1)));
+  }
+  return out;
+}
+
 const LOOKS = {
   terran: lookTerran, ocean: lookOcean, desert: lookDesert, rocky: lookRocky, ice: lookIce, volcanic: lookVolcanic,
   barren: lookBarren, toxic: lookToxic, gas: (rng) => lookGas(rng, false), ice_giant: (rng) => lookGas(rng, true)
@@ -562,7 +625,8 @@ const LOOKS = {
 
 /**
  * Pełny opis planety z ziarna. `desc` = { type, seed (uint32), r? (promień w grze), rKm?, look? (nadpisania pól
- * wyglądu), clouds?: null | {…}, night?: {…} }. Wynik zamrożony płytko (obiekty wewnątrz — dane, nie zmieniać).
+ * wyglądu), clouds?: null | {…}, night?: {…}, ruins?: false | liczba | [{ lat, lon, value, size? }] (ruinsFor) }.
+ * Wynik zamrożony płytko (obiekty wewnątrz — dane, nie zmieniać).
  */
 export function describePlanet(desc) {
   const type = desc?.type;
@@ -581,26 +645,31 @@ export function describePlanet(desc) {
   return Object.freeze({
     type, seed, kind: T.kind, name: T.name, r: Number(desc.r) || null, rKm,
     seedOffset, seedInt: seed % 9973,
-    look, surface: surfaceFor(type, look), ...atm, clouds, night
+    look, surface: surfaceFor(type, look), relief: reliefFor(type), ...atm, clouds, night,
+    ruins: Object.freeze(ruinsFor(type, T.kind, seed, desc.ruins))
   });
 }
 
-/** Mapy, które powstaną dla opisu (bez wypieku): { day, normal, spec, night, clouds } → true/false. */
+/**
+ * Mapy, które powstaną dla opisu (bez wypieku): { day, relief, spec, night, clouds } → true/false. Połysk tylko
+ * dla cieczy poza morzem (solanka, lawa) i lodu — morze planet z wodą liczy shader (planetGenSurface.tsl.js).
+ */
 export function plannedMaps(spec) {
-  if (spec.kind === 'gas') return { day: true, normal: false, spec: false, night: false, clouds: false };
-  const water = (spec.look.water || 0) > 0.001;
+  if (spec.kind === 'gas') return { day: true, relief: false, spec: false, night: false, clouds: false };
+  const sea = spec.type === 'terran' || spec.type === 'ocean';
+  const brine = !sea && (spec.look.water || 0) > 0.001;
   const lavaGloss = spec.type === 'volcanic' && spec.look.style === 'lawa';
   return {
-    day: true, normal: true,
-    spec: water || lavaGloss || spec.type === 'ice',
+    day: true, relief: true,
+    spec: brine || lavaGloss || spec.type === 'ice',
     night: (spec.night.cities > 0) || (spec.night.lava > 0),
     clouds: !!spec.clouds
   };
 }
 
 /**
- * Pamięć GPU map dla opisu przy szerokości `size` (wysokość = size / 2) [bajty]: dzień, normalne, chmury — RGBA8
- * w pełnej rozdzielczości, połysk R8 i noc RGBA8 w połowie; mipmapy × 4/3. Tekstura profilu wiatru olbrzyma — 4 kB.
+ * Pamięć GPU map dla opisu przy szerokości `size` (wysokość = size / 2) [bajty]: dzień, chmury — RGBA8 w pełnej
+ * rozdzielczości, rzeźba RGBA16F w pełnej, połysk R8 i noc RGBA8 w połowie; mipmapy × 4/3. Profil wiatru olbrzyma — 4 kB.
  */
 export function plannedBytes(spec, size) {
   const m = plannedMaps(spec);
@@ -609,7 +678,7 @@ export function plannedBytes(spec, size) {
   const mip = 4 / 3;
   let b = 0;
   if (m.day) b += full * 4 * mip;
-  if (m.normal) b += full * 4 * mip;
+  if (m.relief) b += full * 8 * mip;
   if (m.clouds) b += full * 4 * mip;
   if (m.spec) b += half * 1 * mip;
   if (m.night) b += half * 4 * mip;

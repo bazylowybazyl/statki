@@ -1,13 +1,13 @@
 // src/3d/planetGen/planetGenBaker.js
 //
 // WYPIEKACZ MAP PLANETY NA GPU: opis z ziarna (planetGenSpec.js) → tekstury o tych samych rolach co `PLANET_MAPS`
-// gry (dzień sRGB, noc sRGB, połysk, normalne R = wschód / G = północ, chmury sRGB) albo — dla olbrzymów — mapa dnia
-// dla wspólnego silnika żywej atmosfery (planetGenGas.js). Bez nowego renderera: dostaje WebGPURenderer gry
-// (Core3D.renderer) albo dema.
+// gry (dzień sRGB, noc sRGB, połysk, chmury sRGB) i mapa RZEŹBY (RGBA16F: wysokość, nachylenie, szorstkość — czyta ją
+// materiał powierzchni generatora planetGenSurface.tsl.js), a dla olbrzymów — mapa dnia dla wspólnego silnika żywej
+// atmosfery (planetGenGas.js). Bez nowego renderera: dostaje WebGPURenderer gry (Core3D.renderer) albo dema.
 //
 // Przebieg na planetę: (1) PRÓBA — pole wysokości w 192 × 96 → odczyt CPU → kwantyle ważone polem powierzchni
 // (poziom morza z udziału oceanu, progi rodzaju); (2) POLE w pełnej rozdzielczości (RGBA32F, cel wspólny dla planet —
-// `releaseScratch()` po układzie); (3) DZIEŃ, NORMALNE (pełna), POŁYSK, NOC (połowa), CHMURY (pełna) — każde
+// `releaseScratch()` po układzie); (3) DZIEŃ, RZEŹBA (pełna), POŁYSK, NOC (połowa), CHMURY (pełna) — każde
 // tylko gdy potrzebne (plannedMaps), cele z mipmapami. Grafy RAZ na rodzaj × przejście (bakeGraph); pipeline'y
 // rozgrzewa `compile(rodzaje)` (compileAsyncNaCelu na celach tych samych formatów — pułapka 30).
 //
@@ -18,7 +18,7 @@ import { resizeRenderTarget } from '../renderTargetResize.js';
 import { describePlanet, plannedMaps, plannedBytes } from './planetGenSpec.js';
 import { PLANET_GEN_TYPE } from './planetGenTypes.js';
 import {
-  buildNormalGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, setBakeUniforms, CLOUD_CYCLONES
+  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, setBakeUniforms, CLOUD_CYCLONES
 } from './planetGenBake.tsl.js';
 import { SOLID_TYPES } from './planetGenSolid.tsl.js';
 import { GAS_BAKE, gasBakeUniforms } from './planetGenGasBake.tsl.js';
@@ -28,9 +28,9 @@ export const PROBE_W = 192;
 export const PROBE_H = 96;
 const DEG = Math.PI / 180;
 
-function makeTarget(w, h, { srgb = false, red = false, float32 = false, mips = true, name = '' } = {}) {
+function makeTarget(w, h, { srgb = false, red = false, float32 = false, half = false, mips = true, name = '' } = {}) {
   const rt = new THREE.RenderTarget(w, h, {
-    type: float32 ? THREE.FloatType : THREE.UnsignedByteType,
+    type: float32 ? THREE.FloatType : (half ? THREE.HalfFloatType : THREE.UnsignedByteType),
     format: red ? THREE.RedFormat : THREE.RGBAFormat,
     depthBuffer: false, stencilBuffer: false,
     generateMipmaps: mips,
@@ -78,7 +78,7 @@ export class PlanetGenBaker {
     this.stats = { bakes: 0, compiles: 0, lastMs: 0 };
   }
 
-  /** Graf przejścia (budowany raz): 'field:<rodzaj>', 'day:<rodzaj>', 'normal', 'spec', 'night', 'clouds', 'gas'. */
+  /** Graf przejścia (budowany raz): 'field:<rodzaj>', 'day:<rodzaj>', 'relief', 'spec', 'night', 'clouds', 'gas'. */
   graph(key) {
     let g = this._graphs.get(key);
     if (g) return g;
@@ -86,7 +86,7 @@ export class PlanetGenBaker {
     const [pass, type] = key.split(':');
     if (pass === 'field') g = SOLID_TYPES[type].field();
     else if (pass === 'day') g = SOLID_TYPES[type].color(F);
-    else if (pass === 'normal') g = buildNormalGraph(F);
+    else if (pass === 'relief') g = buildReliefGraph(F);
     else if (pass === 'spec') g = buildSpecGraph(F);
     else if (pass === 'night') g = buildNightGraph(F);
     else if (pass === 'clouds') g = buildCloudGraph();
@@ -99,14 +99,14 @@ export class PlanetGenBaker {
   /** Przejścia potrzebne rodzajowi: [klucz grafu, format celu]. */
   passesFor(type) {
     if (PLANET_GEN_TYPE[type].kind === 'gas') return [['gas', 'srgb']];
-    return [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['normal', 'rgba'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb']];
+    return [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['relief', 'half'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb']];
   }
 
   /** Rozgrzewka pipeline'ów przejść dla rodzajów (w tle; obietnica — gotowe). */
   async compile(types) {
     const r = this.renderer;
     const dummies = {
-      float: this.field, srgb: makeTarget(4, 2, { srgb: true, mips: false }), rgba: makeTarget(4, 2, { mips: false }),
+      float: this.field, srgb: makeTarget(4, 2, { srgb: true, mips: false }), half: makeTarget(4, 2, { half: true, mips: false }),
       red: makeTarget(4, 2, { red: true, mips: false })
     };
     const prev = r.getRenderTarget();
@@ -127,7 +127,7 @@ export class PlanetGenBaker {
       r.setRenderTarget(prev);
     }
     await Promise.all(jobs);
-    for (const k of ['srgb', 'rgba', 'red']) dummies[k].dispose();
+    for (const k of ['srgb', 'half', 'red']) dummies[k].dispose();
   }
 
   _draw(graphKey, target, values) {
@@ -158,7 +158,7 @@ export class PlanetGenBaker {
    * pełnej rozdzielczości bez czekania, (3) jedno czekanie na koniec pracy GPU. `size` — szerokość map (wysokość
    * size / 2), `sizes` — per planeta. Czas GPU (`gpuMs` wyniku całego układu) — ze znaczników czasu, gdy renderer
    * ma `trackTimestamp` (liczy wszystkie przejścia renderu od poprzedniego odczytu — rysunki klatek w tym czasie też).
-   * Wynik: tablica { spec, size, maps: { day, normal?, spec?, night?, clouds? }, levels, gas?, bytes, ms, dispose() }.
+   * Wynik: tablica { spec, size, maps: { day, relief?, spec?, night?, clouds? }, levels, gas?, bytes, ms, dispose() }.
    */
   async bakeSystem(list, { size = 2048, sizes = null } = {}) {
     const r = this.renderer;
@@ -223,7 +223,7 @@ export class PlanetGenBaker {
         }
         const tu = it.tu;
         const plan = plannedMaps(spec);
-        const levels = { uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, 0, 0], uQ: it.uQ, uQ2: it.uQ2, uOct: it.oct };
+        const levels = { uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: it.uQ, uQ2: it.uQ2, uOct: it.oct };
         this._ensureField(W, H);
         this._draw(`field:${spec.type}`, this.field, { ...common(it, W, H), ...levels, ...tu.field });
         const day = makeTarget(W, H, { srgb: true, name: name('day') });
@@ -231,11 +231,11 @@ export class PlanetGenBaker {
         this._draw(`day:${spec.type}`, day, { ...common(it, W, H), ...levels, ...tu.color });
         out.maps.day = day.texture;
         out.rt.day = day;
-        const normal = makeTarget(W, H, { name: name('normal') });
-        out.targets.push(normal);
-        this._draw('normal', normal, { ...common(it, W, H), ...levels, uNorm: [tu.norm[0], tu.water ? 1 : 0, tu.norm[2] ?? 0.6, 0] });
-        out.maps.normal = normal.texture;
-        out.rt.normal = normal;
+        const relief = makeTarget(W, H, { half: true, name: name('relief') });
+        out.targets.push(relief);
+        this._draw('relief', relief, { ...common(it, W, H), ...levels, uRel: spec.relief.rough });
+        out.maps.relief = relief.texture;
+        out.rt.relief = relief;
         if (plan.spec) {
           const t = makeTarget(W / 2, H / 2, { red: true, name: name('spec') });
           out.targets.push(t);

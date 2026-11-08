@@ -9,7 +9,13 @@
 //     obiektu renderu — NodeBuilderState.createBindings), stała nazwa bufora (jeden WGSL);
 //   • tekstura profilu wiatru — węzeł tekstury per obiekt (jak PlanetObjectTextureNode gry);
 //   • promień modelu stały (GEN_GAS_RADIUS — model obrazu: prędkości wiatru w opisie są dobrane do tego promienia),
-//     rozmiar mapy w kontraście faz stały (texSize), czapy polarne bez osobnego ruchu (pas przy biegunie prawie stoi).
+//     rozmiar mapy w kontraście faz stały (texSize);
+//   • CZAPY POLARNE (GEN_GAS_POLES, granica 72°): ruch po okręgach wokół bieguna z profilu wiatru planety, jądro
+//     obracane sztywnie (kąt z CPU) — jak Saturn, bez sześciokąta w przepływie (sześciokąt, gromady cyklonów albo mgła
+//     są w mapie wypieku z ziarna, przepływ z mapą przepływu ich nie rozmywa);
+//   • RUINY unoszące się (hak `surface` grafu gry, planetGenRuins.tsl.js) — świecą w dzień i w nocy;
+//   • CIEŃ PIERŚCIENI na tarczy (ten sam hak): promień ku słońcu przecina płaszczyznę równika (pierścienie są
+//     równikowe — normalna +Y w układzie kuli niezależnie od doby), krycie z profilu pierścieni (`ringTexture`).
 // Strona CPU planety: `createGenGasEngine(spec)` (model z opisu: segmenty pasów, rekordy, tekstura wiatru) i
 // `GenGasAtmosphere` (zegar — GasGiantAtmosphere 1:1, tylko tablice należą do planety).
 import * as THREE from 'three/webgpu';
@@ -18,6 +24,9 @@ import {
 } from '../gasGiantAtmosphere.js';
 import { createGasGiantFlowDayColor } from '../gasGiantAtmosphere.tsl.js';
 import { registerPlanetFlowKind, PlanetBodyNodeMaterial } from '../planet3d.assets.tsl.js';
+import { PerObjectUniformArrayNode, genObjectTexture, tinyTexture } from './planetGenNodes.js';
+import { ruinsShade, RUIN_KEYS } from './planetGenRuins.tsl.js';
+import { If, float, vec2, vec4, clamp, fwidth, length, max, normalize, smoothstep, abs, modelWorldMatrixInverse } from 'three/tsl';
 
 export const GEN_GAS_RADIUS = 70e6;   // [m] — wspólny promień modelu obrazu
 export const GEN_GAS_BAND_CAP = 48;
@@ -25,7 +34,12 @@ export const GEN_GAS_VORTEX_CAP = 12;
 export const GEN_GAS_WIND_TEXELS = 512;
 export const GEN_GAS_TEX_SIZE = Object.freeze([2048, 1024]);
 export const GEN_GAS_BANDS = Object.freeze({ blendDeg: 0.6, minDeg: 1.8, vortexReach: 1.3, vortexPad: 0.3 });
-export const GEN_GAS_UNIFORM_KEYS = Object.freeze({ uGgClock: 'vec4', uGgFlow: 'vec4', uGgTurb: 'vec4' });
+export const GEN_GAS_UNIFORM_KEYS = Object.freeze({ uGgClock: 'vec4', uGgFlow: 'vec4', uGgTurb: 'vec4', uGgPole: 'vec4', uGgRing: 'vec4' });
+/** Czapy polarne modelu (wspólne dla planet generatora — granica stała w grafie). */
+export const GEN_GAS_POLES = Object.freeze({
+  north: Object.freeze({ cap: 72, core: 3.5, blend: 2.5 }),
+  south: Object.freeze({ cap: 72, core: 3.5, blend: 2.5 })
+});
 /** Klucze `material.uniforms` z danymi planety (tablice Vector4 i tekstura wiatru). */
 export const GEN_GAS_DATA_KEYS = Object.freeze({ bands: 'genGasBands', vortices: 'genGasVortices', wind: 'genGasWind' });
 
@@ -44,47 +58,13 @@ export const GEN_GAS_ATM_TUNE = {
   refPxPerTexel: 1.5,
   zoomFollow: 0.75,
   vortexZoomFollow: 0.3,
-  zoomLag: 0.4
+  zoomLag: 0.4,
+  poleSpeed: 1
 };
 
-// ── Węzły per obiekt ──────────────────────────────────────────────────────────────────────────────────────────────
-class PerObjectUniformArrayNode extends THREE.UniformArrayNode {
-  static get type() { return 'PerObjectUniformArrayNode'; }
-  constructor(key, cap) {
-    super(Array.from({ length: cap }, () => new THREE.Vector4()), 'vec4');
-    this.objectKey = key;
-    this.updateType = THREE.NodeUpdateType.OBJECT;
-    this._fallback = this.array;
-  }
-  update(frame) {
-    const v = frame?.material?.uniforms?.[this.objectKey]?.value;
-    this.array = (Array.isArray(v) && v.length === this._fallback.length) ? v : this._fallback;
-    super.update(frame);
-  }
-}
-
-class GenGasObjectTextureNode extends THREE.TextureNode {
-  static get type() { return 'GenGasObjectTextureNode'; }
-  get updateType() { return THREE.NodeUpdateType.OBJECT; }
-  set updateType(_v) { /* stałe OBJECT */ }
-  update(frame) {
-    const value = frame.material?.uniforms?.[this.objectKey]?.value;
-    this.value = (value && value.isTexture === true) ? value : this.objectFallback;
-  }
-  clone() {
-    const node = super.clone();
-    node.objectKey = this.objectKey;
-    node.objectFallback = this.objectFallback;
-    return node;
-  }
-}
+// ── Węzły per obiekt (planetGenNodes.js) ──────────────────────────────────────────────────────────────────────────
 function windFallback() {
-  const t = new THREE.DataTexture(new Uint16Array([0, 0, 0, 15360]), 1, 1, THREE.RGBAFormat, THREE.HalfFloatType);
-  t.minFilter = THREE.LinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  t.generateMipmaps = false;
-  t.needsUpdate = true;
-  return t;
+  return tinyTexture(new Uint16Array([0, 0, 0, 15360]), THREE.HalfFloatType);
 }
 
 // ── Model grafu (jeden dla wszystkich planet generatora) ─────────────────────────────────────────────────────────
@@ -99,11 +79,7 @@ class GenGasGraphModel extends GasGiantModel {
   }
   windTexture() {
     if (!this._windTex) {
-      const fb = windFallback();
-      const n = new GenGasObjectTextureNode(fb, null);
-      n.objectKey = GEN_GAS_DATA_KEYS.wind;
-      n.objectFallback = fb;
-      this._windTex = n;
+      this._windTex = genObjectTexture(GEN_GAS_DATA_KEYS.wind, windFallback());
     }
     return this._windTex;
   }
@@ -113,13 +89,43 @@ const MODEL_COMMON = {
   radius: GEN_GAS_RADIUS, bands: GEN_GAS_BANDS, bandCap: GEN_GAS_BAND_CAP, vortexCap: GEN_GAS_VORTEX_CAP,
   windTexels: GEN_GAS_WIND_TEXELS, turbFade: [58, 10], texSize: GEN_GAS_TEX_SIZE,
   names: { bands: 'genGasBands', vortices: 'genGasVortices', wind: 'genGasWind' },
-  keys: { clock: 'uGgClock', flow: 'uGgFlow', turb: 'uGgTurb' }, tune: GEN_GAS_ATM_TUNE, poles: null
+  keys: { clock: 'uGgClock', flow: 'uGgFlow', turb: 'uGgTurb', pole: 'uGgPole' }, tune: GEN_GAS_ATM_TUNE, poles: GEN_GAS_POLES
 };
 export const GEN_GAS_GRAPH_MODEL = new GenGasGraphModel({ id: 'genGas', windAt: () => 0, cuts: [-90, 90], vortices: [], ...MODEL_COMMON });
 
 /** Barwa mapy dnia z przepływu dla grafu 'genGas' (wołana w Fn fragmentu grafu powierzchni). */
 export const genGasFlowDayColor = createGasGiantFlowDayColor(GEN_GAS_GRAPH_MODEL);
-registerPlanetFlowKind('genGas', { keys: GEN_GAS_UNIFORM_KEYS, color: genGasFlowDayColor, name: 'PlanetSurfaceGenGas' });
+// Profil pierścieni per obiekt (ta sama tekstura co siatka pierścieni; zastępcza przezroczysta).
+const RING_FALLBACK = tinyTexture(new Uint8Array([0, 0, 0, 0]));
+const ringProfileNode = genObjectTexture('ringTexture', RING_FALLBACK);
+
+// Ruiny unoszące się nad olbrzymem: tylko świecenie (bez plamy gruzu), czas i siła z uGsMisc (jak planety z
+// powierzchnią). Cień pierścieni: uGgRing = (wewnętrzny, zewnętrzny [R], krycie, 1 — są pierścienie).
+function genGasSurface({ U, local, worldPos }) {
+  const pixL = float(0.0).toVar();
+  pixL.assign(length(fwidth(local)));
+  const p = normalize(local).toVar();
+  const ruins = ruinsShade({ p, pixL, U, time: U.uGsMisc.x, gain: U.uGsMisc.y, land: float(0.0) });
+  const shadow = float(1.0).toVar();
+  If(U.uGgRing.w.greaterThan(0.5), () => {
+    const s = normalize(modelWorldMatrixInverse.mul(vec4(U.sunPosition.sub(worldPos), 0.0)).xyz).toVar();
+    // promień p + t·s do płaszczyzny y = 0 (t > 0: punkt i słońce po przeciwnych stronach równika)
+    const t = p.y.negate().div(s.y.add(1e-6)).toVar();
+    If(t.greaterThan(0.0).and(abs(s.y).greaterThan(0.002)), () => {
+      const h = p.add(s.mul(t));
+      const r = length(vec2(h.x, h.z));
+      const q = clamp(r.sub(U.uGgRing.x).div(max(U.uGgRing.y.sub(U.uGgRing.x), 1e-3)), 0.0, 1.0);
+      const inRing = smoothstep(U.uGgRing.x.sub(0.01), U.uGgRing.x, r).mul(float(1.0).sub(smoothstep(U.uGgRing.y, U.uGgRing.y.add(0.01), r)));
+      const a = ringProfileNode.sample(vec2(q, 0.5)).level(0).a;
+      shadow.assign(float(1.0).sub(clamp(a.mul(U.uGgRing.z).mul(inRing).mul(0.9), 0.0, 0.9)));
+    });
+  });
+  return { emit: ruins.emit, shadow };
+}
+registerPlanetFlowKind('genGas', {
+  keys: { ...GEN_GAS_UNIFORM_KEYS, uGsMisc: 'vec4', ...RUIN_KEYS }, color: genGasFlowDayColor, surface: genGasSurface,
+  name: 'PlanetSurfaceGenGas'
+});
 
 /** Materiał powierzchni olbrzyma generatora (uniformy jak DirectPlanet + klucze GEN_GAS_* — GenGasAtmosphere). */
 export const createGenGasSurfaceMaterial = (uniforms) => new PlanetBodyNodeMaterial('genGas', uniforms);

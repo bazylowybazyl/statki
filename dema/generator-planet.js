@@ -146,6 +146,8 @@ async function ensureCompiled(types) {
 }
 
 async function compileBody(body, cam, sp) {
+  // tekstury czytane węzłami per obiekt (profil pierścieni w cieniu na tarczy) — na GPU przed pierwszym rysunkiem
+  for (const t of body.gpuTextures()) renderer.initTexture(t);
   scene.add(body.group);
   const prev = renderer.getRenderTarget();
   try {
@@ -485,7 +487,8 @@ function drawLabels(cam) {
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────────────────────────────────────
-// Płaska mapa wypieku jako PNG (data URL) — narzędzia zrzutów: which = day | normal | spec | night | clouds; wiersz 0
+// Płaska mapa wypieku jako PNG (data URL) — narzędzia zrzutów: which = day | relief (cieniowana rzeźba) | spec | night
+// | clouds; wiersz 0
 // celu = biegun S (v = 0), obraz odwrócony do „północ u góry”.
 async function mapPng(which = 'day', tile = -1, maxW = 1024) {
   const b = tile < 0 ? S.close?.baked : S.tiles[tile]?.baked;
@@ -495,7 +498,10 @@ async function mapPng(which = 'day', tile = -1, maxW = 1024) {
   const h = rt.height;
   const px = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
   const red = which === 'spec';
+  const relief = which === 'relief';
   const stride = red ? 1 : 4;
+  // połówki (RGBA16F) → liczby
+  const h2f = (u) => { const e = (u >> 10) & 31; const m = u & 1023; const sg = u >> 15 ? -1 : 1; return e === 0 ? sg * m * 5.96e-8 : (e === 31 ? 0 : sg * Math.pow(2, e - 15) * (1 + m / 1024)); };
   const rowBytes = px.length / h;
   const k = Math.max(1, Math.ceil(w / maxW));
   const W = Math.floor(w / k);
@@ -509,6 +515,12 @@ async function mapPng(which = 'day', tile = -1, maxW = 1024) {
       const si = sy + x * k * stride;
       const di = (y * W + x) * 4;
       if (red) { img.data[di] = img.data[di + 1] = img.data[di + 2] = px[si]; }
+      else if (relief) {
+        // cieniowanie ze wschodu-północy (×6) i barwa szorstkości w niebieskim
+        const dE = h2f(px[si + 1]); const dN = h2f(px[si + 2]);
+        const sh = Math.max(0, Math.min(255, 128 + 900 * (-dE * 0.7 + dN * 0.7)));
+        img.data[di] = sh; img.data[di + 1] = sh; img.data[di + 2] = Math.min(255, sh * 0.6 + h2f(px[si + 3]) * 100);
+      }
       else { img.data[di] = px[si]; img.data[di + 1] = px[si + 1]; img.data[di + 2] = px[si + 2]; }
       img.data[di + 3] = 255;
     }
@@ -522,7 +534,7 @@ async function mapPng(which = 'day', tile = -1, maxW = 1024) {
 }
 
 window.__gen = {
-  S, baker, renderer, mapPng,
+  S, baker, renderer, mapPng, scene, cameras: () => ({ grid: gridCam, close: closeCam }),
   ready: () => S.busy === 0 && (S.view === 'close' ? !!S.close : S.tiles.length === COLS * ROWS),
   buildGrid, openClose, setView, describePlanet, plannedBytes,
   types: PLANET_GEN_TYPES

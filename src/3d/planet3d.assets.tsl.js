@@ -356,7 +356,10 @@ function buildSurfaceGraph(flow = null) {
     const T = normalize(q0.negate().mul(st1.x).add(q1.mul(st0.x)));
     const geoN = normalize(vNormal).toVar();
     const mappedNormal = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(geoN.mul(mapN.z)));
-    const normal = select(hasNight, mappedNormal, geoN).toVar();
+    // Hak powierzchni rodzaju (tylko rodzaje dopisane `registerPlanetFlowKind` z `surface` — planety generatora):
+    // własna normalna, cień terenu, barwa dnia, maska wody i świecenie. Bez haka graf (i WGSL) jak dawniej.
+    const hook = flow?.surface ? flow.surface({ U, uv: vUv, local: vLocal, geoN, worldPos: vWorldPosition, dayTex, specTex, nightTex }) : null;
+    const normal = (hook?.normal ? hook.normal : select(hasNight, mappedNormal, geoN)).toVar();
 
     // Gryz (tylko Ziemia): współrzędne gryzu fragmentu (earthBite.tsl.js); kula wycina obszar gryzu, na łacie
     // (ściany i dno) normalna, cień, barwa skał, żar i pole siłowe ze wzoru.
@@ -401,16 +404,16 @@ function buildSurfaceGraph(flow = null) {
     });
 
     const NdotL = dot(normal, lightDir).toVar();
-    const sunL = max(0.0, NdotL).mul(pitShadow).toVar();
+    const sunL = (hook?.shadow ? max(0.0, NdotL).mul(pitShadow).mul(hook.shadow) : max(0.0, NdotL).mul(pitShadow)).toVar();
     // Wysokość słońca nad horyzontem w punkcie (normalna geometryczna — gładki pas zachodu).
     const geoMu = dot(geoN, lightDir).toVar();
     // Próbki w jednolitym przepływie (toVar): select() niżej rozwija się w if/else, a próbka
     // z pochodnymi w gałęzi zależnej od piksela dawałaby nieokreślony poziom mipmapy.
-    const dayRgb = flow ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb;
+    const dayRgb = hook?.day ? hook.day : (flow?.color ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb);
     const dayColor = vec4(mix(dayRgb, pitAlbedo, pitOwn), 1.0).toVar();
     const nightColor = vec4(nightTex).toVar();
     const specularMask = vec4(specTex).toVar().r;
-    const waterMask = smoothstep(0.08, 0.82, specularMask);
+    const waterMask = hook?.water ? hook.water : smoothstep(0.08, 0.82, specularMask);
     const NdotH = max(0.0, dot(normal, halfVector));
     const shininess = mix(16.0, 42.0, waterMask);
     // połysk wody tylko z mapy — ściany i dno gryzu go nie mają
@@ -468,6 +471,8 @@ function buildSurfaceGraph(flow = null) {
     applyRingShadow(finalColor, vWorldPosition, dayAmount, U);
     // Żar gryzu (płaszcz ~2 500 K na dnie) świeci tak samo w dzień i w nocy — po cieniu ringu, przez samą ekstynkcję.
     finalColor.addAssign(pitEmit.mul(airExt));
+    // Świecenie z haka (ruiny planet generatora) — w dzień i w nocy, przez samą ekstynkcję mgiełki.
+    if (hook?.emit) finalColor.addAssign(hook.emit.mul(airExt));
 
     const luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
     const bloomPush = smoothstep(0.85, 1.0, luminance).mul(U.uPlanetBloom);
@@ -488,8 +493,10 @@ const CLOUD_KEYS = {
   uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4'
 };
 
-function buildCloudGraph() {
-  const U = perObjectUniforms(CLOUD_KEYS);
+// `flow.cloud` (rodzaje dopisane `registerPlanetCloudKind` — chmury planet generatora): hak wołany raz po masce,
+// przed gałęziami, z { U, local, mask, lightDir, normal }; zwraca { mask (maska po detalu), shade (mnożnik barwy) }.
+function buildCloudGraph(flow = null) {
+  const U = perObjectUniforms(flow ? { ...CLOUD_KEYS, ...flow.keys } : CLOUD_KEYS);
   const worldPos = modelWorldMatrix.mul(vec4(positionLocal, 1.0));
   const vNormal = varying(normalize(modelWorldMatrix.mul(vec4(normalLocal, 0.0)).xyz), 'vCloudNormal');
   const vWorldPosition = varying(worldPos.xyz, 'vCloudWorld');
@@ -505,11 +512,13 @@ function buildCloudGraph() {
     // przefiltrowanym przez atmosferę — przy terminatorze złote i różowe (pas zachodu).
     // Chmury to bryły, nie płaszczyzna: przy niskim słońcu jasne zostają ich boki od słońca — oświetlenie
     // gaśnie dopiero tuż przy terminatorze (dawniej rampa do 0,22 — chmury pasa zachodu były bure).
+    const hook = flow?.cloud ? flow.cloud({ U, local: vCloudLocal, mask, lightDir, normal }) : null;
+    const maskA = hook?.mask ? hook.mask : mask;
     const geoMu = dot(normal, lightDir).toVar();
     const muSun = geoMu.add(SUNSET.cloudDip).toVar();
     const sunVisC = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
     const lit = smoothstep(-0.02, 0.12, muSun).mul(sunVisC).toVar();
-    const alpha = mask.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
+    const alpha = maskA.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
     // Nad otworem gryzu chmur nie ma (żar, wznoszenie); uBite = środek gryzu w układzie TEJ kuli (chmury
     // obracają się szybciej niż grunt — przelicza go CPU co klatkę).
     If(U.uPitMode.greaterThan(0.5), () => {
@@ -519,7 +528,8 @@ function buildCloudGraph() {
     // Barwa chmury z chromy tekstury (biel — chmury, brąz — pył i burze piaskowe Ziemi przyszłości);
     // jasność niesie maska, więc dawna biała mapa daje barwę (1, 1, 1).
     const tint = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
-    const color = sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint).toVar();
+    const color = (hook?.shade ? sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint).mul(hook.shade)
+      : sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint)).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       const viewDirW = normalize(cameraPosition.sub(vWorldPosition));
       const mu = clamp(dot(normal, viewDirW), 0.0, 1.0);
@@ -533,7 +543,7 @@ function buildCloudGraph() {
       color.addAssign(sunsetGlow(muAir, airmass, sunVisC, U));
     });
     applyRingShadow(color, vWorldPosition, lit, U);
-    Discard(mask.lessThan(0.03).or(alpha.lessThan(0.01)));
+    Discard(maskA.lessThan(0.03).or(alpha.lessThan(0.01)));
     return vec4(color, alpha);
   })();
 
@@ -858,13 +868,29 @@ const EXTRA_MATERIAL_NAMES = {};
 /**
  * Dopisuje rodzaj grafu POWIERZCHNI z barwą dnia z przepływu (jak 'jupiter' / 'saturn': graf 'surface' 1:1, tylko
  * próbka mapy dnia z `color`) — dla gazowych olbrzymów generatora planet (src/3d/planetGen/planetGenGas.js: jeden
- * graf 'genGas' dla wszystkich planet generatora, dane planety per obiekt). Rodzaje gry i ich WGSL bez zmian; graf
- * budowany przy pierwszym materiale rodzaju. Drugie wywołanie z tym samym rodzajem nic nie robi.
+ * graf 'genGas' dla wszystkich planet generatora, dane planety per obiekt). `surface` — hak powierzchni (planety
+ * generatora z powierzchnią, src/3d/planetGen/planetGenSurface.tsl.js): wołany raz w Fn fragmentu, przed gałęziami,
+ * z { U, uv, local, geoN, worldPos, dayTex, specTex, nightTex }; zwraca opcjonalne { normal (widok), shadow (mnożnik
+ * słońca), day (barwa dnia), water (maska połysku), emit (świecenie po mgiełce) }. Rodzaje gry i ich WGSL bez zmian
+ * (bez haka gałęzie JS nie budują nic nowego); graf budowany przy pierwszym materiale rodzaju. Drugie wywołanie z tym
+ * samym rodzajem nic nie robi.
  */
-export function registerPlanetFlowKind(kind, { keys, color, name }) {
+export function registerPlanetFlowKind(kind, { keys, color = null, surface = null, name }) {
   if (BUILDERS[kind]) return;
-  BUILDERS[kind] = () => buildSurfaceGraph({ keys, color });
+  BUILDERS[kind] = () => buildSurfaceGraph({ keys, color, surface });
   EXTRA_MATERIAL_NAMES[kind] = name || `PlanetSurface_${kind}`;
+  PLANET_TSL_STATS.materials[kind] = 0;
+  PLANET_TSL_STATS.builds[kind] = 0;
+}
+
+/**
+ * Dopisuje rodzaj grafu CHMUR z hakiem `cloud` (chmury planet generatora: detal ponad rozdzielczość mapy — erozja
+ * brzegów i cieniowanie kłębów). Graf 'clouds' gry i jego WGSL bez zmian. Drugie wywołanie nic nie robi.
+ */
+export function registerPlanetCloudKind(kind, { keys, cloud, name }) {
+  if (BUILDERS[kind]) return;
+  BUILDERS[kind] = () => buildCloudGraph({ keys, cloud });
+  EXTRA_MATERIAL_NAMES[kind] = name || `PlanetClouds_${kind}`;
   PLANET_TSL_STATS.materials[kind] = 0;
   PLANET_TSL_STATS.builds[kind] = 0;
 }

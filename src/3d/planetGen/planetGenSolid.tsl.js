@@ -251,9 +251,12 @@ function earthColor(type) {
         .sub(max(h, 0.0).mul(0.1)).toVar();
       // wilgotność: komórki Hadleya (mokro przy równiku i ~55°, sucho ~25° i przy biegunach), wnętrza kontynentów suche,
       // granice pasów przesunięte szumem (nie równoleżniki)
-      const latW = C.lat.add(nM.mul(0.18));
-      const M = U.uK.y.mul(float(0.5).add(cos(latW.mul(6.0)).mul(0.33))).add(nM.mul(0.34)).add(nP.mul(0.12))
-        .sub(smoothstep(0.15, 0.8, d).mul(0.26)).add(0.1).toVar();
+      const latW = C.lat.add(nM.mul(0.3));
+      // pasy klimatu słabsze niż dawniej (×0,2 zamiast ×0,33) — wyraźne równoleżnikowe pasy wyglądały na malowane;
+      // wielkie plamy wilgoci z szumu niskiej częstości i suche wnętrza kontynentów (odległość od brzegu ≈ d)
+      const nMl = pgFbm(ps.mul(0.9).add(37.0).add(wq), 4).toVar();
+      const M = U.uK.y.mul(float(0.5).add(cos(latW.mul(6.0)).mul(0.2))).add(nM.mul(0.26)).add(nMl.mul(0.32)).add(nP.mul(0.12))
+        .sub(smoothstep(0.1, 0.7, d).mul(0.36)).add(0.12).toVar();
       // ląd
       const desertC = mix(U.uDesert, U.uDesertRed, smoothstep(0.0, 0.6, nV.add(nP.mul(0.5))).mul(0.6));
       const forestC = mix(mix(U.uTaiga, U.uForest, smoothstep(0.36, 0.55, T)), U.uRain, smoothstep(0.72, 0.9, T));
@@ -262,27 +265,28 @@ function earthColor(type) {
       land.assign(mix(land, forestC.mul(float(1.0).add(nP.mul(0.2))), smoothstep(0.36, 0.6, M.add(nP.mul(0.08))).mul(smoothstep(0.16, 0.3, T))));
       land.assign(mix(land, U.uTundra.mul(float(1.0).add(nP.mul(0.15))), inv(0.13, 0.3, T)));
       // doliny wilgotniejsze (ciemniej), grzbiety suche (jaśniej) — krzywizna z pola
-      land.mulAssign(float(1.0).add(clamp(curv.mul(-4.0), -0.1, 0.1)));
-      const rocky = max(smoothstep(0.14, 0.4, sl.s), smoothstep(0.25, 0.65, f.z).mul(smoothstep(0.5, 2.2, h))).toVar();
-      land.assign(mix(land, U.uRock.mul(float(1.0).add(nF.mul(0.22))), rocky.mul(0.8)));
-      const snowLine = float(0.5).add(max(T, 0.0).mul(5.8));
-      const snow = max(inv(-0.02, 0.08, T.add(nP.mul(0.08)).add(nF.mul(0.05))), smoothstep(snowLine, snowLine.add(0.8), h.add(nF.mul(0.35)))).mul(float(1.0).sub(smoothstep(0.35, 0.7, sl.s).mul(0.5)));
+      // krzywizna w barwie tylko lekko (światło i cień terenu liczy teraz materiał z mapy rzeźby — mocna krzywizna
+      // w albedo dawała „słoje drewna” na całym lądzie)
+      land.mulAssign(float(1.0).add(clamp(curv.mul(-2.5), -0.05, 0.05)));
+      const rocky = max(smoothstep(0.18, 0.5, sl.s), smoothstep(0.3, 0.7, f.z).mul(smoothstep(0.8, 2.6, h))).toVar();
+      land.assign(mix(land, U.uRock.mul(float(1.0).add(nF.mul(0.22))), rocky.mul(0.7)));
+      // śnieg gór: szeroki przedział wysokości, wzdłuż grzbietów (f.z) i płatami — nie białe „naklejki” na szczytach
+      const snowLine = float(0.6).add(max(T, 0.0).mul(5.8));
+      const snowM = smoothstep(snowLine.sub(0.6), snowLine.add(1.4), h.add(nF.mul(0.6)).add(nP.mul(0.4)))
+        .mul(mix(0.45, 1.0, smoothstep(0.15, 0.6, f.z))).mul(smoothstep(-0.25, 0.25, nF.add(nV.mul(0.5))).mul(0.5).add(0.5));
+      const snow = max(inv(-0.02, 0.08, T.add(nP.mul(0.08)).add(nF.mul(0.05))), snowM).mul(float(1.0).sub(smoothstep(0.35, 0.7, sl.s).mul(0.5)));
       land.assign(mix(land, U.uSnow, clamp(snow, 0.0, 1.0)));
       land.mulAssign(float(1.0).add(nV.mul(0.08)).add(nF.mul(0.07)));
-      // woda: barwa z głębokości tylko przy szelfie (głębia jednolicie ciemna — grzbiety dna nie rysują linii);
-      // płycizny turkusowe w cieple; lód morski płatami
-      const depth = h.negate().toVar();
-      // płycizny jaśniejsze tylko w cieple i tuż przy brzegu (wszędzie — turkusowe obwódki wybrzeży i jezior)
-      const shallow = mix(U.uOcean, U.uShallow, smoothstep(0.35, 0.8, T).mul(0.75)).toVar();
-      const w = mix(shallow, U.uOcean, smoothstep(0.02, 0.18, depth)).toVar();
-      w.assign(mix(w, U.uDeep, smoothstep(0.6, 2.2, depth).mul(0.7).add(nV.mul(0.08))));
-      w.mulAssign(float(1.0).add(nP.mul(0.05)));
+      // MORZE liczy shader (planetGenSurface.tsl.js: brzeg z wysokości i detalu, barwa wody z głębokości), więc mapa
+      // dnia ma WSZĘDZIE barwę gruntu — pod wodą to dno, które płycizny przepuszczają, a brzeg w mapie nie istnieje
+      // (bez schodków tekseli przy zbliżeniu). Alfa = lód morski (płaty z temperatury, ciągłe przez brzeg); na morzu
+      // RGB lodu, na lądzie RGB gruntu.
       const floe = smoothstep(-0.15, 0.3, nF.add(nV.mul(0.6)));
       const iceT = T.add(nP.mul(0.09)).add(nV.mul(0.06)).add(nF.mul(0.04));
-      const seaIce = inv(-0.04, 0.05, iceT).mul(mix(0.55, 1.0, floe)).mul(mix(0.85, 1.0, smoothstep(-0.2, 0.2, nM)));
-      w.assign(mix(w, U.uIce, clamp(seaIce, 0.0, 1.0)));
-      const isLand = smoothstep(-0.004, 0.004, h);
-      return vec4(mix(w, land, isLand), 1.0);
+      // lód morski tylko w zimnie (próg niżej niż śnieg lądu — białe jeziora w umiarkowanych szerokościach wyglądały na naklejki)
+      const seaIce = clamp(inv(-0.12, -0.02, iceT).mul(mix(0.55, 1.0, floe)).mul(mix(0.85, 1.0, smoothstep(-0.2, 0.2, nM))), 0.0, 1.0).toVar();
+      const isLand = smoothstep(-0.02, 0.02, h);
+      return vec4(mix(mix(land, U.uIce, seaIce), land, isLand), seaIce);
     })();
     return { U, material: bakeMaterial(`PlanetGenDay_${type}`, node) };
   };
@@ -318,7 +322,7 @@ function earthUniforms(spec, ctx) {
   return {
     field, color, probeQ: [L.water, 0.1, 0.5, 0.9], water: true, landTop: L.mountainKm * 0.6,
     octaves: { x: pgOctavesFor(ctx.size, 1.4 * 2.7, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6.5, 2.0, 3, 8), z: pgOctavesFor(ctx.size, L.mountainFreq, 2.07, 3, 9), w: 6 },
-    norm: [1.4, 1, 0.4], spec: [1, 0, 0, 0],
+    spec: [0, 0, 0, 0],   // morze — w shaderze (planetGenSurface.tsl.js)
     civ: { landOnly: 1, latDeg: 48, sea: ocean ? 0.6 : 0, habW: 0, freq: 26, gain: 1 }
   };
 }
@@ -422,7 +426,7 @@ function desertUniforms(spec, ctx) {
     },
     probeQ: [L.erg, saltFrac, 0.5, 0.9], water: false, landTop: L.mountainKm * 0.6,
     octaves: { x: pgOctavesFor(ctx.size, 2.7 * L.contFreq, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6, 2.0, 3, 8), z: pgOctavesFor(ctx.size, L.mountainFreq, 2.07, 3, 9), w: 6 },
-    norm: [1.4, 0, 0.35], spec: [0, 0, L.water > 0 ? 0.9 : 0, 0],
+    spec: [0, 0, L.water > 0 ? 0.9 : 0, 0],
     civ: { landOnly: 1, latDeg: 40, sea: 0, habW: 0, freq: 24, gain: 0.9 }
   };
 }
@@ -546,7 +550,7 @@ function rockyUniforms(spec, ctx) {
     color: { uRc: [0.35 - L.darkFrac * 0.9, L.capDeg, 0, 0], uDust: P.dust, uBasalt: P.basalt, uBright: P.bright, uDark: P.dark, uIce: P.ice },
     probeQ: [0.3, 0.1, 0.5, 0.9], water: false, landTop: 6,
     octaves: { x: pgOctavesFor(ctx.size, 2.0, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 5.5, 2.0, 3, 8), z: pgOctavesFor(ctx.size, 3.1, 2.07, 3, 8), w: 6 },
-    norm: [1.3, 0, 0.35], spec: [0, 0, 0, 0],
+    spec: [0, 0, 0, 0],
     civ: { landOnly: 0, latDeg: 45, sea: 0, habW: 0, freq: 30, gain: 0.8 }
   };
 }
@@ -687,7 +691,7 @@ function iceUniforms(spec, ctx) {
       uIceC: P.ice, uIceBlue: P.iceBlue, uLin: P.lineae, uDarkT: P.dark, uRockC: P.rock, uFrost: P.frost },
     probeQ: [1 - L.rock, L.seas, 0.5, 0.9], water: false, landTop: 3,
     octaves: { x: pgOctavesFor(ctx.size, 1.6, 2.03, 3, 9), y: 4, z: pgOctavesFor(ctx.size, 3.2, 2.07, 3, 8), w: 6 },
-    norm: [1.1, 0, 0.3], spec: [0, 0.22, 0, 0],
+    spec: [0, 0.22, 0, 0],
     civ: { landOnly: 0, latDeg: 60, sea: 0, habW: 0, freq: 30, gain: 0.8 }
   };
 }
@@ -800,7 +804,7 @@ function volcanicUniforms(spec, ctx) {
     color: { uVc: [style, 0, 0, 0], uBase: P.base, uSecond: P.second, uBrightV: P.bright, uDarkV: P.dark, uRed: P.red, uLava: P.lava },
     probeQ: [style === 1 ? L.lava * 0.025 : 0.02, 0.1, 0.5, 0.9], water: false, landTop: 4,
     octaves: { x: pgOctavesFor(ctx.size, 1.8, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6, 2.0, 3, 8), z: pgOctavesFor(ctx.size, 3, 2.07, 3, 8), w: 6 },
-    norm: [1.2, 0, 0.35], spec: [0, 0, style === 1 ? 0.8 : 0.3, 0],
+    spec: [0, 0, style === 1 ? 0.8 : 0.3, 0],
     lavaColor: P.lava,
     civ: { landOnly: 0, latDeg: 50, sea: 0, habW: 0, freq: 30, gain: 0.7 }
   };
@@ -896,7 +900,7 @@ function barrenUniforms(spec, ctx) {
     field, color: { uHigh: P.high, uMare: P.mare, uFresh: P.fresh, uBarC: [1.0, 0.25, 0, 0] },
     probeQ: [L.maria * 0.22, 0.1, 0.5, 0.9], water: false, landTop: 3,
     octaves: { x: pgOctavesFor(ctx.size, 1.8, 2.03, 3, 9), y: 4, z: 3, w: 6 },
-    norm: [1.1, 0, 0.3], spec: [0, 0, 0, 0],
+    spec: [0, 0, 0, 0],
     civ: { landOnly: 0, latDeg: 70, sea: 0, habW: 0, freq: 34, gain: 0.7 }
   };
 }
@@ -947,7 +951,7 @@ function toxicUniforms(spec, ctx) {
     color: { uGround: P.ground, uGroundDark: P.groundDark, uCloudC: P.cloud },
     probeQ: [0.2, 0.1, 0.5, 0.9], water: false, landTop: 3,
     octaves: { x: pgOctavesFor(ctx.size, 1.7, 2.03, 3, 9), y: 4, z: pgOctavesFor(ctx.size, 9, 2.1, 3, 6), w: 6 },
-    norm: [1.0, 0, 0.4], spec: [0, 0, 0, 0],
+    spec: [0, 0, 0, 0],
     civ: { landOnly: 0, latDeg: 60, sea: 0, habW: 0, freq: 28, gain: 0.8 }
   };
 }
@@ -955,7 +959,7 @@ function toxicUniforms(spec, ctx) {
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // Rejestr rodzajów: field() / color(F) — budowa grafu (raz), uniformsFor(spec, ctx) — wartości z opisu.
 // uniformsFor → { field, color, probeQ [4 ułamki dla kwantyli kanału w], water (poziom morza 0), landTop [km],
-//                 octaves { x, y, z, w }, norm [przesadzenie, woda, maks. nachylenie], spec [uSpec], civ, lavaColor? }
+//                 octaves { x, y, z, w }, spec [uSpec — bez morza: morze liczy shader], civ, lavaColor? }
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 export const SOLID_TYPES = {
   terran: { field: () => earthField('terran'), color: earthColor('terran'), uniformsFor: earthUniforms },
