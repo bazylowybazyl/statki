@@ -351,6 +351,8 @@ export class WzorzecCpu {
     const rozcHard = p.rozcHard, sciskHard = p.sciskHard;
     // Wiązanie ciągliwe (pręt zbrojenia, klasa ≥ 12, src/3d/woksele/kawalki.js): własny twardy limit rozciągania, linie zginania przez nie nie pękają. Wypiek bez prętów nie ma takich klas.
     const twardyC = this.w.ciagl ? this.w.ciagl.twardy : 1 + rozcHard;
+    // Twarde limity także w gałęzi sprężenia (solver z `limityF0`, par.limityF0 tutaj). Ta sama kolejność sprawdzeń co w kF.
+    const limityF0 = !!p.limityF0;
     const mu = p.mu, muG = p.muGrunt;
     const iK = 1 / K;
     const zG = gruntZ + 0.5 * dx;
@@ -417,6 +419,7 @@ export class WzorzecCpu {
             F0[ox] = 0;
             f = K * (r - Lb);
           } else {
+            if (limityF0 && (r > R0[ox] * (klasaW[ox] >= 12 ? twardyC : 1 + rozcHard) || r < R0[ox] * sciskHard)) { mNowa &= ~bit; zerwanych++; continue; }
             const wxB = vel[j3] - vxi, wyB = vel[j3 + 1] - vyi, wzB = vel[j3 + 2] - vzi;
             svx += wxB; svy += wyB; svz += wzB; sn++;
             const vn = wxB * nx + wyB * ny + wzB * nz;

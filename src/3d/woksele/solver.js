@@ -50,7 +50,9 @@ const KULA_PAS_TLUM = 12; // [1/s] tempo gaszenia w pasie: zabiera do 2400 j./s 
 
 // AGENT: `ciagliwe` (demo kawałków ze zbrojeniem) dokłada wiązanie ciągliwe: klasa ≥ 12 ma własny rząd tabeli (iT, iC, krusz, twardy limit rozciągania w .w)
 // i linie zginania przez nie nie pękają. Bez flagi graf kerneli jest ten sam co dotąd, a wypiek bez klas ≥ 12 liczy się bit w bit tak samo także z flagą.
-export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false } = {}) {
+// AGENT: `limityF0` (demo kawałków; druga opinia 2026-11-08): twarde limity rozciągania i ściskania także w gałęzi sprężenia. Bez flagi wiązanie z F0
+// mogło się rozciągnąć ponad R0 · (1 + rozcHard) bez zerwania, póki siła z F0 mieściła się w limicie (Continue omijał oba limity). Gra jest bez flagi.
+export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false } = {}) {
   const MAX = maxNodes;
   const ILE_T = ciagliwe ? ILE_TAB + 6 : ILE_TAB;
   const N_KOM = par.nKom;
@@ -310,6 +312,10 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
           wWiaz.element(ox).assign(vec4(Lb, dmg, 0, R0));
           f.assign(uK.mul(r.sub(Lb)));
         }).Else(() => {
+          if (limityF0) {
+            const rozcLim = ciagliwe ? select(kl.greaterThanEqual(uint(KLASA_CIAGLA)), tk.w, float(1 + par.rozcHard)) : float(1 + par.rozcHard);
+            If(r.greaterThan(R0.mul(rozcLim)).or(r.lessThan(R0.mul(par.sciskHard))), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot())); Continue(); });
+          }
           const w = v3(wWez.element(j3.add(uint(1))).xyz.sub(vi));
           sv.addAssign(w);
           sn.addAssign(1);
@@ -1468,7 +1474,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
   }
 
   return {
-    maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
+    maxNodes: MAX, ciagliwe, limityF0, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, puscCzesc, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     gPole: gNaWezle, // pole grawitacji w punkcie, dla gruzu obrazu (wklejane, woła się tylko w Fn)
     get wypiek() { return wypiek; },

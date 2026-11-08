@@ -33,6 +33,7 @@ export class WzorzecF32 extends WzorzecCpu {
     const zG = F(F(this.gruntZ) + F(0.5 * dx));
     const mu = F(p.mu), muG = F(p.muGrunt), oslab = F(p.fala.oslab), aMax = F(p.fala.aMax), prog = F(p.fala.prog);
     const wagaProg = F(p.wagaProg), wagaS = F(p.wagaS), r15 = F(1 + p.rozcHard), r045 = F(p.sciskHard);
+    const limityF0 = !!p.limityF0;
     const kB2 = F(kB * 2);
     const gxS = F(F(zr.gx) * uSkG), gyS = F(F(zr.gy) * uSkG), gzS = F(F(zr.gz) * uSkG), zrPole = !!(zr.punkt || zr.obrot);
     const wG = this._wG;
@@ -93,6 +94,7 @@ export class WzorzecF32 extends WzorzecCpu {
             F0[ox] = 0;
             f = F(K * F(r - Lb));
           } else {
+            if (limityF0 && (r > F(r0 * r15) || r < F(r0 * r045))) { mNowa &= ~bit; continue; } // solver z `limityF0` (bez prętów: wzorzec f32 nie zna klas ≥ 12)
             const wx = F(vel[j3] - vxi), wy = F(vel[j3 + 1] - vyi), wz = F(vel[j3 + 2] - vzi);
             svx = F(svx + wx); svy = F(svy + wy); svz = F(svz + wz); sn = F(sn + 1);
             const Fb = F(f + F(cB * F(F(F(wx * nx) + F(wy * ny)) + F(wz * nz))));

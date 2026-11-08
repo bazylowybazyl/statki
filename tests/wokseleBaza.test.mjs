@@ -56,3 +56,17 @@ test('W1 bez zdarzeń: scena stoi na samym układzie, plan pusty', () => {
   assert.equal(plan.gpu.kratery.length, 0);
   assert.equal(plan.gpu.puscKotwiceF, -1);
 });
+
+test('szyja: wzmocniona (gra, mocSzyi 8) to wnętrze ziarna, bez wzmocnienia (demo B1R) zostaje przy klasach z wypieku', () => {
+  // Druga opinia 2026-11-08: klasa + 6 w rdzeniu szyi szła też przy mocSzyi 1, więc szyja B1R nie pękała po granicach ziaren i fala jej nie łamała.
+  const { w: wG } = zbudujPlan(plany[80], {});
+  const { w: wD } = zbudujPlan(scenaB1({ dx: 80, mocSzyi: 1, giecieSzyi: 1 }), {});
+  assert.equal(wD.n, wG.n);
+  let inne = 0;
+  for (let q = 0; q < STRONA * wG.n; q++) {
+    if (wG.klasaW[q] === wD.klasaW[q]) continue;
+    assert.ok(wD.klasaW[q] < 6 && wG.klasaW[q] === wD.klasaW[q] + 6, `wiązanie ${q}: ${wG.klasaW[q]} wobec ${wD.klasaW[q]}`);
+    inne++;
+  }
+  assert.ok(inne > 0, 'szyja bez wzmocnienia ma granice ziaren');
+});

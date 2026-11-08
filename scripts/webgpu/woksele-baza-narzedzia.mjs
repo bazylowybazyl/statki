@@ -32,7 +32,7 @@ for (let t0 = Date.now(); ;) {
 
 const { server, base } = await startVite(Number(args.port || 5432));
 const [W, H] = String(args.rozmiar || '1280x720').split('x').map(Number);
-const chrome = await startChrome({ width: W, height: H, extraArgs: ['--enable-webgpu-developer-features'] });
+const chrome = await startChrome({ width: W, height: H, takt: args.noc === '1', extraArgs: ['--enable-webgpu-developer-features'] }); // --noc 1: takt monitora, bez flag zdejmujących limit klatek
 const logi = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 1800000) => evaluate(cdp, e, t);
@@ -44,7 +44,7 @@ const Z_GORY = { az: 0, el: 88, cel: [1200, 200, 0], odl: 9800 };
 
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}`;
+  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}${args.zap ? `&${args.zap}` : ''}`; // --zap 'limityF0=0&jakWGrze=0': dodatkowe pola adresu do A/B
   await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zap}` });
   await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
   if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.gotowe || window.__wok.blad))', 600000, 200)) throw new Error('strona nie wstała');

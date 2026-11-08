@@ -6,7 +6,7 @@ import * as THREE from 'three/webgpu';
 import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
 import { S1 } from '../src/3d/woksele/scena.js';
 import { zbudujKawalki, wybierzZbrojenie, wypiekZeZbrojeniem, nakladkaKruchosci, KRUCHOSC, BRAK } from '../src/3d/woksele/kawalki.js';
-import { zbuduj, parametry } from '../src/3d/woksele/budowa.js';
+import { zbuduj, parametry, PARAMETRY } from '../src/3d/woksele/budowa.js';
 import { createWokseleSolver } from '../src/3d/woksele/solver.js';
 import { createWokseleObraz } from '../src/3d/woksele/obraz.js';
 import { WzorzecCpu } from '../dema/woksele-zawalenia/wzorzec-cpu.js';
@@ -191,6 +191,34 @@ test('obraz kawałków: kernele i wierzchołki najwyżej 8 buforów storage, sol
     assert.deepEqual(nieprzypisane(b.vertexShader), [], `${mesh.name}: wierzchołek`);
     assert.deepEqual(nieprzypisane(b.fragmentShader), [], `${mesh.name}: fragment`);
   }
+});
+
+test('limity w gałęzi sprężenia (limityF0): bez flagi kF ten sam, z flagą drugi twardy limit; wzorzec CPU zrywa przeciągnięte wiązanie z F0', () => {
+  const kodKF = (s) => { const b = renderer.backend.createNodeBuilder(s.kernele.kF, renderer); b.build(); return b.computeShader; };
+  const zwykly = kodKF(createWokseleSolver()), bezFlagi = kodKF(createWokseleSolver({ limityF0: false })), zFlaga = kodKF(createWokseleSolver({ limityF0: true }));
+  assert.equal(bezFlagi, zwykly, 'bez flagi WGSL kF bajt w bajt jak dotąd (gra)');
+  const ile = (kod) => (kod.match(new RegExp(String(PARAMETRY.sciskHard).replace('.', '\.'), 'g')) || []).length;
+  assert.equal(ile(zFlaga), ile(zwykly) + 1, 'z flagą limit ściskania także w gałęzi sprężenia');
+  assert.ok(createWokseleSolver({ limityF0: true }).limityF0);
+
+  // Wiązanie ze sprężeniem między wolnymi węzłami, z limitem siły tak dużym, że sprężenie się nie wypieka: przeciągnięte do 1,7 R0 wzdłuż kierunku.
+  let i = -1, j = -1, d = -1;
+  for (let x = 0; x < w.n && i < 0; x++) for (let e = 0; e < 6; e++) {
+    const y = w.nbr[STRONA * x + e];
+    if (y >= 0 && ((w.maska[x] >>> e) & 1) && w.F0[STRONA * x + e] !== 0 && !w.nieruchomy[x] && !w.nieruchomy[y]) { i = x; j = y; d = e; break; }
+  }
+  assert.ok(i >= 0, 'S1 ma wiązanie ze sprężeniem między wolnymi węzłami');
+  const po = (flaga) => {
+    const m = new WzorzecCpu(w, flaga ? { ...(w.par ?? PARAMETRY), limityF0: true } : (w.par ?? PARAMETRY));
+    m.Ft = w.Ft.slice(); m.Fc = w.Fc.slice();
+    for (const ox of [STRONA * i + d, STRONA * j + (d ^ 1)]) { m.Ft[ox] = 1e15; m.Fc[ox] = 1e15; }
+    for (let c = 0; c < 3; c++) m.pos[3 * j + c] = m.pos[3 * i + c] + 1.7 * (w.pos[3 * j + c] - w.pos[3 * i + c]);
+    m._przebudujListe();
+    m._przebiegF();
+    return [(m.maskaW[i] >>> d) & 1, (m.maskaW[j] >>> (d ^ 1)) & 1, m.F0[STRONA * i + d] !== 0];
+  };
+  assert.deepEqual(po(false), [1, 1, true], 'bez flagi: sprężenie trzyma przeciągnięte wiązanie (dawny błąd, gra)');
+  assert.deepEqual(po(true), [0, 0, true], 'z flagą: oba końce zrywają wiązanie przy 1,7 R0');
 });
 
 test('obraz bez opcji kawałków: te same sceny i kernele co dotąd; tryb obrazu to sama widoczność siatek', () => {

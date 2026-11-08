@@ -58,6 +58,30 @@ Poprawka w demie: sztywność betonu `?sztywnosc=2|3` (sztywność ×4 albo ×9 
 
 Arkusze: `.tmp/woksele-demo/KAW/arkusz_szyja_sztywna_bez_wzmocnienia.png`, `arkusz_s1_sztywnosc_ukos.png`. Strona bazy ma teraz domyślnie ×2 i szyję bez wzmocnienia. Gra zostaje przy ×1 i szyi ×8, dopóki nie zdecydujesz. Druga opinia: osobna sesja „Silnik fizyki 3D Opus 5.5” analizuje model materiału (sprężenie, wytrzymałość na rozciąganie, zginanie, kotwice).
 
+### Druga opinia i poprawki (noc 2026-11-08/09)
+
+Druga opinia (sesja „Silnik fizyki 3D Opus 5.5” na Fable 5.1, surowe wyniki w jej scratchpadzie: `ANALIZA-guma-wokseli.md`) potwierdziła przyczynę: beton za miękki wobec ciężaru (g · H), sprężenie jest w porządku. Co z niej wzięte do kodu (gałąź `claude/unruffled-goodall-c42310`, gra bez zmian):
+
+1. **Prawdziwy uśpiony błąd:** wiązanie ze sprężeniem bez wypieku kończyło przez `Continue` i omijało twarde limity rozciągania (1,5 R0) i ściskania (0,45 R0). Takie wiązanie mogło się rozciągnąć ponad te limity, póki siła z F0 mieściła się w limicie wytrzymałości. Poprawka za flagą solvera `limityF0` (GPU i oba wzorce CPU, ta sama kolejność sprawdzeń). Test: bez flagi wiązanie z F0 przeciągnięte do 1,7 R0 przeżywa, z flagą pękają oba końce. W demie kawałków flaga jest domyślnie włączona (`?limityF0=0` wyłącza), gra jej nie ma (WGSL kF bez flagi bajt w bajt jak dotąd).
+2. **Szyja bez wzmocnienia dalej była „wnętrzem ziarna”:** rdzeń szyi dostawał klasę + 6 także przy `mocSzyi` 1, więc nie pękał po granicach ziaren, a fala go nie łamała. Teraz klasa + 6 tylko przy wzmocnieniu (`wnetrzeSzyi`, domyślnie `mocSzyi > 1`). Gra ma `mocSzyi` 8, więc bez zmian.
+3. **Demo bazy liczyło inaczej niż gra:** do gałęzi scalony `main` (fala względna z gry, puszczanie całych części, pole grawitacji). Baza B1R ustawia teraz to samo co `wGrze.zaladuj`: w bryle oderwanej od kotwic fala łamie od prędkości względnej, a stojąca konstrukcja wolniejsza niż próg fali jest tłumiona („stoi albo pęka”, `?jakWGrze=0` wyłącza). Narzędzie „Upadek” puszcza kotwice całymi częściami po kolei, jak gra (dawniej węzeł po węźle).
+4. **Harness w nocy:** `--noc 1` (albo `HULLFALL_HARNESS_TAKT=1`) uruchamia Chrome w takcie monitora, bez flag zdejmujących limit klatek.
+
+Czego nie wzięto (do decyzji, bez dowodu, że trzeba): sztywność 3 zamiast 2 (Fable poleca 3: odkształcenie statyczne 2,5 % zamiast 5,8 %), granica wytrzymałości w odkształceniu (Ft najwyżej K · R0 · 5 %: obciążone pręty dziś ustępują dopiero przy 20–130 % odkształcenia przy sztywności 1, przy 2 cztery razy mniej), granica gięcia malejąca ze sztywnością (przy sztywności 3 opór gięcia rośnie × 9, a wytrzymałość osiowa nie; ryzyko sztywnego, odbijającego się gruzu, na kadrach nie widać), pręty w ścianach szyi (przewracanie „jak drzewo” wymaga ciągliwej strony rozciąganej). Inne metody (dopasowanie kształtu, XPBD, solver niejawny) Fable odradza.
+
+Pomiary w nocy (`--noc 1`, 960 × 540, 60 kl/s, sztywność 2, krótkie przebiegi po kolei):
+
+| | Wynik |
+|---|---|
+| Szyja po nacięciu (`--scenariusz szyja --analiza 1`) | Żywe wiązania szyi najwyżej 6–7 % rozciągnięcia (przed poprawkami 12–13 %), w 9 s zerwanych 8004 (przed 6293). Głowa zgniata podstawę szyi i spada w bęben, bęben pęka pod jej ciężarem (przed: głowa leżała na krawędzi bębna). Arkusze `arkusz_noc_szyja.png`, `arkusz_noc_szyja_t3.png`. |
+| Baza bez strzałów (`--scenariusz stoi`) | 0 zerwanych z 1 037 806 wiązań przez 6 s, bez NaN. |
+| Pełny scenariusz (działo, ciężkie działo, taran, upadek) | Trzy strzały z działa w środek habitatu niszczą podporę szyi i wieża z głową spada w bęben do 5 s. Tak samo we wszystkich wariantach: wszystkie poprawki, szyja jako wnętrze ziarna jak dawniej, bez `limityF0`, bez ustawień z gry. To skutek wieczornego ustawienia B1R (sztywność 2, szyja bez wzmocnienia), nie poprawek z nocy. Bez ustawień z gry wieżowiec W-1 sypie się bardziej (pękło 1292 kawałków wobec 1079 w 9 s). Arkusze `arkusz_noc_ab_ukos.png`, `arkusz_noc_pelny_ukos.png`. |
+| Wieżowiec S1 z `limityF0` (sztywność 1) | Miażdży się tak samo jak bez poprawki (w 8 s pękło 582 wobec 596 kawałków poziomu 0). Arkusz `arkusz_noc_s1.png`. |
+| Pipeline'y synchroniczne, błędy konsoli | 0 we wszystkich przebiegach (także po upadku całymi częściami). |
+| Koszt kroku bazy | 1,02 ms GPU (8 podkroków), bez zmian. |
+
+Arkusze leżą w worktree w `.tmp/woksele-demo/KAW/`.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.
@@ -114,13 +138,16 @@ Pamięć: siatka kawałków S1 to 339 tys. trójkątów (9 MB), S5 540 tys. (15 
 3. **Ile zbrojenia:** (a) bez prętów w fizyce, druty tylko jako kikuty w obrazie, ruch jak dziś; (b) obecne pręty (40 % linii, ×4 rozciąganie, ×3 siła): ruch trochę inny, kikuty z przełomów; (c) mocne pręty (siła ×10): kawałki wiszą na drutach, stropy schodzą całymi płytami, ruch wyraźnie inny niż dziś. Dla (c) przebieg: `--zbrojenie '{"gestosc":0.5,"ciagl":6,"sila":10}'`.
 4. **Kruchość betonu:** dziś, kruchy czy bardzo kruchy (szyja i hałda wyżej). Możliwe też osobne ustawienie: bardzo kruchy tylko dla smukłych elementów (szyja, słupy), reszta jak dziś.
 5. **Czy wpiąć w misję 1.** Z góry różnica jest mała, z bliska duża. Wpięcie to osobna praca: skóra z wypieku i wnętrza na kawałkach, przekrój wysokości, koła habitatu, LOD.
+6. **Szyja w demie bazy:** przy sztywności 2 bez wzmocnienia wieża spada po trzech strzałach w środek habitatu. Zostawić tak, przywrócić część wzmocnienia (np. `?baza={"mocSzyi":2}`) czy spróbować sztywności 3 (Fable).
+7. **Co przenieść do gry** (dziś gra nie ma żadnej z tych zmian): sztywność betonu, poprawkę limitów w gałęzi sprężenia, szyję bez wzmocnienia ×8. W grze szyję i tak zrywa skrypt (`voxNeck`), więc gumową szyję widać w grze tylko wtedy, gdy zegnie się przed zerwaniem.
 
 ## Pliki
 
 - `src/3d/woksele/kawalki.js`: prefraktura przy wypieku (poziomy, siatka narożników, geometria) i wybór prętów. Moduł czysty, bez three.
 - `src/3d/woksele/kawalkiObraz.js`: kernele dopasowania sztywnego i wyboru poziomu, materiały kawałków i drutów w TSL.
 - `src/3d/woksele/obraz.js`: opcja `kawalki` i tryb obrazu (sama widoczność siatek).
-- `src/3d/woksele/solver.js`: flaga `ciagliwe` (klasy wiązań 12–17), `dema/woksele-zawalenia/wzorzec-cpu.js`: to samo na CPU.
+- `src/3d/woksele/solver.js`: flagi `ciagliwe` (klasy wiązań 12–17) i `limityF0` (twarde limity w gałęzi sprężenia), `dema/woksele-zawalenia/wzorzec-cpu.js` i `wzorzecF32.js`: to samo na CPU.
+- `src/3d/woksele/scenaBazy.js`: `wnetrzeSzyi` (klasa wnętrza ziarna rdzenia szyi tylko przy wzmocnieniu). `dema/woksele-zawalenia/narzedzia.js`: upadek całymi częściami jak w grze.
 - `src/3d/woksele/budowa.worker.js`: pole `kawalki` wiadomości.
 - `dema/woksele-zawalenia/pokaz.js`, `glowny.js`: `?kawalki=1`, panel, klawisz K, API harnessu (`pokaz.tryb`, `pokaz.statKawalki`).
 - `scripts/webgpu/woksele-kawalki.mjs`: kadry, koszt, arkusze. `tests/wokseleKawalki.test.mjs`: testy w Node.

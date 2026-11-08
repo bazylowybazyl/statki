@@ -510,6 +510,9 @@ export function scenaB1(oo = {}) {
   const w1 = cz.get('W-1').wiezowiec;
   // AGENT: szyja to drąg: wytrzymałość liczona z ciężaru głowy kruszy ją po nacięciu i głowa spada pionowo (pierwszy bieg). W grze zawias jest jawny (engine.addJoint, pirateBaseNeck.js), a tu szyja i szyb dostają zapas, a krater dalej usuwa węzły, więc nacięcie i przecięcie działają. Głowa zostaje zwykła i rozbija się przy uderzeniu.
   const mocS = o.mocSzyi, nzH = wz.start + wz.n, rP2 = Hs.ringR0 * Hs.ringR0;
+  // Rdzeń szyi jako wnętrze ziarna (klasa + 6: fala go nie łamie, gięcie do zlomWewn) tylko przy wzmocnionej szyi. Szyja bez wzmocnienia (demo B1R) pęka
+  // po granicach ziaren jak reszta betonu (druga opinia 2026-11-08). Gra: mocSzyi 8, więc bez zmian.
+  const wnetrzeSzyi = o.wnetrzeSzyi ?? mocS > 1;
   // Bez zapasu zostaje tylko zewnętrzny pierścień talerza: on rozbija się przy uderzeniu.
   const mocny = (w, i) => w.pos[3 * i] ** 2 + w.pos[3 * i + 1] ** 2 < rP2;
   const poWypieku = (w) => {
@@ -535,7 +538,7 @@ export function scenaB1(oo = {}) {
         const oy = STRONA * j + (d ^ 1);
         w.Ft[ox] *= mocS; w.Ft[oy] = w.Ft[ox];
         w.Fc[ox] *= mocS; w.Fc[oy] = w.Fc[ox];
-        if (w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
+        if (wnetrzeSzyi && w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
       }
     }
   };

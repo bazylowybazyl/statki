@@ -2,7 +2,8 @@
 //  • Krater: promień z kamery, krater w pierwszym węźle na jego drodze (strzał myszą z § 5.3).
 //  • Działo, Ciężkie działo: jak trafienie w grze (wGrze.js, voxHit). Pocisk leci w płaszczyźnie gry (z = 150) od dołu kadru, krater w pierwszym węźle pod nią, promień z obrażeń.
 //  • Taran: statek wpada od dołu kadru, nurkuje przez punkt kliknięcia w płaszczyźnie gry i ryje kanał: krater co krok fizyki na jego drodze (rdzeń usuwa, reszta rozpycha).
-//  • Upadek (HP 0): jak voxFall w grze. Szyja i sektory dysku cięte (grupyGry), po 3 s kotwice puszczają falą od osi habitatu, 1500 j./s.
+//  • Upadek (HP 0): jak voxFall w grze. Sektory dysku cięte (grupyGry), po 3 s kotwice puszczają CAŁE części (kPuscCzesc, bez wypieku sprężenia) po kolei
+//    według odległości środka części od osi habitatu, 1500 j./s, jak wGrze.js. Węzeł po węźle (puscKolo) bryła pękała w locie.
 // Czas narzędzi to klatki solvera, więc pauza i tempo działają. Siatki statku i pocisków są w scenie obrazu przed rozgrzewką (zero pipeline'ów w biegu).
 import * as THREE from 'three/webgpu';
 import { createGrupyGry } from '../../src/3d/woksele/grupyGry.js';
@@ -19,7 +20,7 @@ export const NARZEDZIA = Object.freeze([
   ['patrz', 'Patrz'], ['krater', 'Krater'], ['dzialo', 'Działo'], ['ciezkie', 'Ciężkie działo'], ['taran', 'Taran (statek)'],
 ]);
 
-export function createNarzedzia({ solver, obraz, camera, kanwa }) {
+export function createNarzedzia({ solver, obraz, camera, kanwa, budynki = () => null }) {
   const scena = obraz.scene;
 
   // ── Siatki ── Statek: kadłub, nadbudówka, dysze. Pociski: pula wydłużonych kostek, świecą (barwa > 1 w celu HDR).
@@ -139,7 +140,14 @@ export function createNarzedzia({ solver, obraz, camera, kanwa }) {
       if (!stan.grupy) stan.grupy = createGrupyGry({ w, l: createPirateBaseLayout({ id: 'B1' }), dx: w.dx });
       const { lista } = stan.grupy.upadek(0, -1);
       if (lista.length) solver.dodajKratery(lista);
-      stan.upadek = { f0: solver.fKlatka };
+      // Części bazy z wypieku (miasto.budynki) z czasem puszczenia: od osi habitatu na zewnątrz, cała część naraz (wzór wGrze.js).
+      const czesci = (budynki() || []).map((c) => {
+        let sx = 0, sy = 0;
+        for (let i = c.start; i < c.start + c.n; i++) { sx += w.pos[3 * i]; sy += w.pos[3 * i + 1]; }
+        const r = c.n ? Math.sqrt((sx / c.n) ** 2 + (sy / c.n) ** 2) : 0;
+        return { od: c.start, n: c.n, nazwa: c.nazwa, t: FALA_START + r / FALA_V };
+      }).sort((a, b) => a.t - b.t);
+      stan.upadek = { f0: solver.fKlatka, czesci, idx: 0 };
       return true;
     }
     return false;
@@ -160,10 +168,15 @@ export function createNarzedzia({ solver, obraz, camera, kanwa }) {
     }
     if (stan.upadek) {
       const t = (f - stan.upadek.f0) / 60;
-      if (t >= FALA_START && !stan.upadek.koniec) {
+      const u = stan.upadek, cz = u.czesci;
+      if (t >= FALA_START && !u.koniec && cz.length) {
+        while (u.idx < cz.length && cz[u.idx].t <= t) solver.puscCzesc(renderer, cz[u.idx++]);
+        // Węzły spoza tabeli części (gdyby jakieś były) puszcza jeszcze stara fala, raz.
+        if (u.idx >= cz.length) { solver.puscKolo(renderer, 0, 0, 1e7); u.koniec = true; }
+      } else if (t >= FALA_START && !u.koniec) {
         const R = FALA_V * (t - FALA_START);
         solver.puscKolo(renderer, 0, 0, R);
-        if (R > 14000) stan.upadek.koniec = true;
+        if (R > 14000) u.koniec = true;
       }
     }
   }

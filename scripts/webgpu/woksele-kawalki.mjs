@@ -58,7 +58,7 @@ const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : 'b.d.');
 await czekajNaCisze('start');
 const { server, base } = await startVite(Number(args.port || 5431));
 const [W, H] = String(args.rozmiar || '1280x720').split('x').map(Number);
-const chrome = await startChrome({ width: W, height: H, extraArgs: ['--enable-webgpu-developer-features'] });
+const chrome = await startChrome({ width: W, height: H, takt: args.noc === '1', extraArgs: ['--enable-webgpu-developer-features'] }); // --noc 1: takt monitora, bez flag zdejmujących limit klatek
 const logi = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 1800000) => evaluate(cdp, e, t);

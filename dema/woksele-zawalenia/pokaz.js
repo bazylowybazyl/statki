@@ -44,7 +44,8 @@ const SCENY = {
   // Baza piratów (plan LOD § 5c): kamery przez KAM_MIASTA z polem baza, pojemność z POJEMNOSC_BAZY, kamera cienia z rozmiaru sceny.
   B1: { nazwa: 'Baza piratów', miasto: true, baza: true, pomin: 0, cienZapas: 1.05 },
   // Baza bez skryptu: niszczy użytkownik (?kawalki=1, narzędzia). Start z kamery z góry jak w misji 1, pył jak B1.
-  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2 },
+  // jakWGrze: fala łamiąca z prędkości względnej w bryle oderwanej od kotwic i tłumienie stojącej konstrukcji do progu fali, jak wGrze.zaladuj (?jakWGrze=0: dawne demo).
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, jakWGrze: true },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
@@ -95,7 +96,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI });
   // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
   // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
-  const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa }) : null;
+  const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa, budynki: () => stan.miasto?.budynki ?? null }) : null;
   // ?kruchosc=1|2: beton kruchszy w wypieku (granice gięcia, kawalki.js KRUCHOSC). Zmiana przeładowuje stronę, bo wypiek idzie od nowa.
   const KRUCH = KAWALKI ? Math.max(0, Math.min(KRUCHOSC.length - 1, Number(adres.get('kruchosc')) || 0)) : 0;
   // ?sztywnosc=2|3: sztywniejszy beton (K × s², podkroki solvera × s, wytrzymałość bez zmian). Też przeładowanie.
@@ -190,6 +191,11 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     if (bU) bU.style.display = opis.baza ? '' : 'none';
     for (const n of Object.keys(KAM_MIASTA)) przyciski.get(`k:${n}`).style.display = !!KAM_MIASTA[n].baza === !!opis.baza ? '' : 'none';
     solver.wczytaj(w);
+    // Baza jak w grze (wGrze.zaladuj): w locie nic się nie łamie od samej prędkości, a ruch połączony z kotwicami wolniejszy niż próg fali gaśnie (stoi albo pęka).
+    const jakWGrze = !!opis.jakWGrze && adres.get('jakWGrze') !== '0';
+    const uS = solver.uniformy;
+    uS.uFalaWzgl.value = jakWGrze ? 1 : 0;
+    if (jakWGrze && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (obraz.kawalki) {

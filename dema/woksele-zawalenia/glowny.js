@@ -10,6 +10,8 @@ const TEST = parametryAdresu.get('test') === '1';
 const PROFIL = parametryAdresu.get('profil') === '1';
 // ?kawalki=1: demo A/B obrazu (kawałki z prefraktury i zbrojenie, src/3d/woksele/kawalki.js). Solver dostaje wiązanie ciągliwe (bez prętów w wypieku liczy bit w bit jak dotąd), obraz drugą siatkę.
 const KAWALKI = parametryAdresu.get('kawalki') === '1';
+// Twarde limity wiązań także w gałęzi sprężenia (solver.js, `limityF0`): w demie kawałków domyślnie tak, ?limityF0=0|1 do A/B. Gra bez tej flagi.
+const LIMITY_F0 = parametryAdresu.has('limityF0') ? parametryAdresu.get('limityF0') === '1' : KAWALKI;
 
 const wok = { gotowe: false, blad: null, profil: PROFIL };
 window.__wok = wok;
@@ -79,7 +81,7 @@ async function start() {
 
   // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd. ?nKom=2^k: komórki siatki kontaktów, miasto przy dx = 5 ma więcej zajętych komórek niż domyślne 65 536.
   const nKomAdresu = Number(parametryAdresu.get('nKom')) || 0;
-  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY, ciagliwe: KAWALKI });
+  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY, ciagliwe: KAWALKI, limityF0: LIMITY_F0 });
   await solver.rozgrzej(renderer);
 
   const pamiecStatyki = new Map();
