@@ -48,7 +48,8 @@
  *                 w powietrzu, dostaw na godzinę, zapasu stali, płyt kadłuba, rudy
  *                 żelaza i paliwa fuzyjnego na rynkach frakcji, średniej obsady
  *                 i ładowności floty przewoźników (t; sama liczba statków nie pokazuje,
- *                 że duże giną, a w ich miejsce wchodzą małe).
+ *                 że duże giną, a w ich miejsce wchodzą małe). Stal na razie tylko do
+ *                 wglądu (`DLUGI_DO_WGLADU`)
  *                 Bramka 4 h tego nie widzi, a gracz gra dłużej
  */
 
@@ -93,6 +94,12 @@ export const PROGI = Object.freeze({
 /** Wariant długi: okno odniesienia (minuty gry) i towary, których zapas pilnuje. */
 const DLUGI_OKNO = Object.freeze([120, 240]);
 const DLUGI_TOWARY = Object.freeze(['steel', 'hull_plate', 'iron_ore', 'fusion_fuel']);
+/**
+ * Miary wariantu długiego tylko DO WGLĄDU (liczone i wypisywane, poza progiem). Stal: zapas
+ * spada też przy zdrowej flocie (ok. −33% w 10 h, docs/POMIAR-zanik-gospodarki-2026-11-08.md) —
+ * wraca do progu razem z poprawką bilansu stali.
+ */
+const DLUGI_DO_WGLADU = new Set(['steel']);
 
 /** Zapełnienie, poniżej którego surowiec liczy się jako „na zerze”… */
 const PUSTO = 0.01;
@@ -392,7 +399,7 @@ function podsumujDlugi(probki, minuty) {
     const b = m.tempo ? tempo(baza) : srednia(baza, m.f);
     const k = m.tempo ? tempo(koniec) : srednia(koniec, m.f);
     return { id: m.id, baza: Math.round(b * 1000) / 1000, koniec: Math.round(k * 1000) / 1000,
-      udzial: b > 0 ? Math.round(k / b * 1000) / 1000 : 1 };
+      udzial: b > 0 ? Math.round(k / b * 1000) / 1000 : 1, ...(DLUGI_DO_WGLADU.has(m.id) ? { wglad: true } : {}) };
   });
   const godziny = [];
   for (let h = 1; h * 60 <= minuty; h++) {
@@ -450,10 +457,10 @@ function ocen(bieg) {
   }
   if (bieg.dlugi && bieg.dlugi.koniec[1] >= PROGI.dlugiOdMinut) {
     // Próg „w górę” jak przy obsadzie: wartość = brak do udziału `dlugiUdzialMin` (≤ 0 zaliczone).
-    const najnizszy = [...bieg.dlugi.miary].sort((a, b) => a.udzial - b.udzial)[0];
+    const najnizszy = bieg.dlugi.miary.filter(m => !m.wglad).sort((a, b) => a.udzial - b.udzial)[0];
     wyniki.push({ prog: 'długi bieg', wartosc: Math.max(0, PROGI.dlugiUdzialMin - najnizszy.udzial), limit: 0,
       opis: `godz. ${bieg.dlugi.koniec[1] / 60} wobec 2–4: `
-        + bieg.dlugi.miary.map(m => `${m.id} ${Math.round(m.udzial * 100)}%`).join(', ')
+        + bieg.dlugi.miary.map(m => `${m.id} ${Math.round(m.udzial * 100)}%${m.wglad ? ' (do wglądu)' : ''}`).join(', ')
         + ` (próg ${PROGI.dlugiUdzialMin * 100}%)` });
   }
   for (const w of wyniki) w.ok = w.wartosc <= w.limit && !(w.wartosc < (w.minimum ?? -Infinity));
