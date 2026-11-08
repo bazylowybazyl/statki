@@ -48,8 +48,8 @@
  *                 w powietrzu, dostaw na godzinę, zapasu stali, płyt kadłuba, rudy
  *                 żelaza i paliwa fuzyjnego na rynkach frakcji, średniej obsady
  *                 i ładowności floty przewoźników (t; sama liczba statków nie pokazuje,
- *                 że duże giną, a w ich miejsce wchodzą małe). Stal na razie tylko do
- *                 wglądu (`DLUGI_DO_WGLADU`)
+ *                 że duże giną, a w ich miejsce wchodzą małe). Miara tylko do wglądu —
+ *                 w `DLUGI_DO_WGLADU` (dziś pusty)
  *                 Bramka 4 h tego nie widzi, a gracz gra dłużej
  */
 
@@ -95,11 +95,10 @@ export const PROGI = Object.freeze({
 const DLUGI_OKNO = Object.freeze([120, 240]);
 const DLUGI_TOWARY = Object.freeze(['steel', 'hull_plate', 'iron_ore', 'fusion_fuel']);
 /**
- * Miary wariantu długiego tylko DO WGLĄDU (liczone i wypisywane, poza progiem). Stal: zapas
- * spada też przy zdrowej flocie (ok. −33% w 10 h, docs/POMIAR-zanik-gospodarki-2026-11-08.md) —
- * wraca do progu razem z poprawką bilansu stali.
+ * Miary wariantu długiego tylko DO WGLĄDU (liczone i wypisywane, poza progiem). Pusty: wszystkie
+ * w progu. Stal była tu do poprawki bilansu stali (przetop złomu poza podażą planu, 2026-11-08).
  */
-const DLUGI_DO_WGLADU = new Set(['steel']);
+const DLUGI_DO_WGLADU = new Set();
 
 /** Zapełnienie, poniżej którego surowiec liczy się jako „na zerze”… */
 const PUSTO = 0.01;
