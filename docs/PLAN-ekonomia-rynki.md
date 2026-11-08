@@ -560,3 +560,7 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - „Zanik gospodarki Sol po 6–8 h” (biegi 12 h po kolei, BelowNormal; liczby deterministyczne, czas ticku tylko w ciszy);
   - E24 „Górnicy i złomiarze w akcji” (rozpoznanie: większości górników nie widać, bo bańka żyje tylko przy portach i w studniach; złomiarze biorą tylko `war.wrecks`; warianty A–E zatwierdzone, z karencją 5 min dla wraków gracza);
   - E23a „Komputer handlowy” (plus status „Stabilizacja gospodarki”, D17).
+- 2026-11-08 sesja „Zanik gospodarki” (gałąź `claude/festive-panini-f7024e`): przyczyną zaniku był `maintainFleet`. Każdą stratę (piraci biorą duże ładunki) odkupywał najtańszym vanem, więc ładowność floty spadła w 12 h z 2,70 do 0,55 mln t, a za nią zgasły promy z obsadą i produkcja.
+  - Poprawka: odkup tej samej klasy, ryzyko kadłuba 0,4 we frachcie, do 4 zakupów na cykl. Wariant długi bramki: `--godziny N`.
+  - Na gałęzi bramka 4 h zaliczona. Po scaleniu z main (W5–W6) NIE: ziarno 7 ma kolejkę Wenus 2,02 > 2, reszta zalicza.
+  - Do main nie weszło. Sesja poprawia przepustowość portów (Wenus, Ziemia w biegu 12 h), potem bilans stali (huty sprzedają nadwyżkę dopiero od 70% magazynu; stal po 10 h ~60% stanu z 2–4 h).
