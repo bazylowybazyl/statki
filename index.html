@@ -35220,6 +35220,13 @@
         return playerRepairRig.launched || playerRepairRig.launch();
       },
       repairActive: () => playerRepairRig.launched || !!RepairSwarm.rigRepairing(ship),
+      // Załoga Atlasa (workforce W6): zdrada w skrypcie misji (`api.crew.betray`) — ta sama droga co hak konsoli.
+      betrayCrew: () => {
+        const before = PLAYER.crew.mode;
+        window.PlayerCrew.betray();
+        return before !== PLAYER.crew.mode;
+      },
+      crewMode: () => PLAYER.crew.mode,
       // Holownik serwisowy (src/game/serviceTug.js) dla skryptu misji: przylot przy Atlasie, naprawa rojem holownika;
       // bez „paki” (carry: false — misja nie odlatuje do K-7 w środku akcji), chyba że skrypt poda carry: true.
       // Zwraca wynik wezwania ({ planned, eta } | { existing } | null). Aktywny = w drodze, przy Atlasie albo z nim.

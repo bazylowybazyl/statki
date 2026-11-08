@@ -114,4 +114,8 @@ test('klej w grze: rój R, przeładowanie (źródło crew), zapis, kabiny w WYPO
   assert.ok(/adjustStationStock\(station, 'workforce', -n\)/.test(src) && /adjustStationStock\(station, 'workforce', moved\)/.test(src),
     'kontrakty i werbunek przez most (jedna ekonomia)');
   assert.ok(src.includes('pane.appendChild(buildCrewShipCard());'), 'karta KADRY: twój okręt');
+  // Zdrada z fabuły (misja przyszła): api skryptu → zależność bloku FABUŁA → ta sama droga co hak konsoli.
+  const story = readFileSync(new URL('../src/game/story/storyGame.js', import.meta.url), 'utf8');
+  assert.ok(/crew: \{\s*betray: \(\) => !!d\.betrayCrew\?\.\(\)/.test(story), 'api.crew.betray w storyGame');
+  assert.ok(/betrayCrew: \(\) => \{[\s\S]{0,120}window\.PlayerCrew\.betray\(\)/.test(src), 'zależność betrayCrew w bloku FABUŁA');
 });
