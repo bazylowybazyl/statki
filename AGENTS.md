@@ -177,6 +177,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `mgla-wojny` | Mgła wojny |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
+| `zasieg-czujnikow` | Zasięg czujników (radarów) jak w Starsectorze: czujniki × sygnatura × osłona, KONTAKT / IDENTYFIKACJA, suma stref radarów, obraz czujników z gry, prototyp `?radarZasiegi` (ocena obustronna: wachlarz / struna / błona, warstwa ZASIĘGI w CIC, scena), demo 2D propozycji |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
