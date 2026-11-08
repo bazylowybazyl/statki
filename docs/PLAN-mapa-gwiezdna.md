@@ -23,13 +23,14 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
 | `src/game/sector/sectorZone.js` | warunki strefy w punkcie (`zoneAt`: mgławica, burza, wiatr), punkty skoku, przejście strefa ↔ układ (`worldEntryFromJump`, `zoneExitFromWorld`) |
 | `src/game/sector/sectorFlight.js` | lot statku w strefie (`stepShip`), `SECTOR_FLIGHT` (prędkości, paliwo, czujniki, skan) |
 | `src/game/sector/sectorExploration.js` | mgła eksploracji (4 poziomy), zapis i odczyt |
-| `src/game/sector/sectorFleets.js` | floty między układami: konwoje, patrole, piraci; krok stały 10 Hz, zdarzenia, migawka |
+| `src/game/sector/sectorFleets.js` | floty między układami: konwoje, patrole, piraci; krok stały 10 Hz, zdarzenia, migawka; skład floty (`fleetComposition`, klasy `FLEET_HULL_CLASSES`) |
 | `src/game/sector/sectorRegistry.js` | opis układu z sektora → wpis rejestru `STAR_SYSTEMS` (`systemRegistryEntry`, `sectorRegistryEntries`, `localBodyId`) — § „Opis układu → wpis rejestru” |
 | `dema/mapa-gwiezdna.html` + `.js` | demo: lot, kamera od lotu do całego sektora, nakładka 2D (etykiety, punkty skoku, floty, trasa), HUD |
-| `dema/mapa-gwiezdna-obraz.js` | warstwy GPU (three r183 WebGPU, TSL): tło z wypieku galaktyki + gwiazdy ekranowe, mgławice z wypieków, mgiełka rozgrywki, burze, gwiazdy układów, szlaki, post (bloom gry, ACES gry) |
+| `dema/mapa-gwiezdna-obraz.js` | warstwy GPU (three r183 WebGPU, TSL): tło z wypieku galaktyki + gwiazdy ekranowe, paralaksa (model perspektywy, trzy warstwy gwiazd), ośrodek międzygwiezdny, pył przed kamerą, mgławice z wypieków, mgiełka rozgrywki, burze, gwiazdy układów, szlaki, post (bloom gry, ACES gry) |
+| `dema/mapa-gwiezdna-floty.js` | floty na mapie: sylwetki kadłubów gry w szyku (atlas sprite'ów), ogony z historii położeń (bufor storage), poświata dysz — § „Wrażenie lotu i statki na mapie” |
 | `scripts/webgpu/mapa-gwiezdna-demo.mjs` | zrzuty dema w headless Chrome (CDP) → `.tmp/mapa-gwiezdna/` + `raport.json` |
 | `scripts/mapa-gwiezdna-liczby.mjs` | liczby sektora dla ziaren (odległości, czasy lotu, paliwo, koszt kroku flot) |
-| `tests/sector.test.mjs` | determinizm, unikalne id, odstępy, rozkład, rdzeń i szlaki, ciała, strefa, punkty skoku, lot, eksploracja, floty |
+| `tests/sector.test.mjs` | determinizm, unikalne id, odstępy, rozkład, rdzeń i szlaki, ciała, strefa, punkty skoku, lot, eksploracja, floty, skład floty |
 | `tests/sectorRegistry.test.mjs` | wpis rejestru: pola jak `SOL_SYSTEM`, `buildSystemMap` na planetach wpisu, orbity za studnią, `globalBodyId` = id sektora, bez przypadkowego ringu, `resolveStarSystemId` |
 
 ## Model
@@ -102,6 +103,10 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
   zasięg czujników × mgławice; flota w porcie (w studni układu) niewidoczna.
 - Krok stały 0,1 s (10 Hz), losowanie tylko z ziarna floty → determinizm (test: 300 s krokami 0,1 s = `advanceFleets`
   300 s; migawka → ten sam dalszy bieg). Koszt: **36 µs na krok** (44 floty, Node, mediana) = 0,36 ms na sekundę gry.
+- Skład floty (`fleetComposition`, z id floty, stały w biegu): konwój — 1 + siła frachtowców (prom, kontenerowiec,
+  frachtowiec dalekiego zasięgu, ciężki), od siły 2 fregata eskorty na czele; patrol — siła okrętów (niszczyciel
+  prowadzi, przy sile 5 pancernik); piraci — siła + 1 (niszczyciel albo pancernik i fregaty). Ziarno 1: 176 okrętów
+  (konwoje 91, patrole 40, piraci 45). Dziś tylko obraz; model floty / doku (silniki, paliwo) policzy z tych klas.
 
 ## Demo (`dema/mapa-gwiezdna.html`)
 
@@ -114,6 +119,70 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
 - Zrzuty: `node scripts/webgpu/mapa-gwiezdna-demo.mjs [--out .tmp/mapa-gwiezdna/<katalog>] [--seed N] [--tylko start,sektor,…]`
   — start, cały sektor, rdzeń, mgławica (cała, w środku, w komórce burzy), punkt skoku i komunikat skoku, pogranicze
   przed i po skanie, pościg piratów, najbliższy zoom; 0 błędów konsoli.
+
+## Wrażenie lotu i statki na mapie (2026-11-08)
+
+Uwagi użytkownika do dema: „słabo czuć, że się leci po mapie” — tło prawie stoi; „chciałbym widzieć jednostki —
+Starsector rozwiązał to tak, że w kółku pokazywał uproszczone modele statków z ogonami różnokolorowymi”, „obecnie w demie
+statek to strzałka, tak samo NPC”. Przyczyna braku ruchu: tło przesuwało się o ~1/15 ruchu mapy, a przy zoomie lotu
+(190 px/ly, przelot 0,2 ly/s = 38 px/s) gwiazdy układów leżą ~760 px od siebie — w kadrze zwykle nic się nie ruszało.
+
+- **Paralaksa w modelu perspektywy** (`dema/mapa-gwiezdna-obraz.js`): warstwa na głębokości k ma skalę s = z / (1 + k·z)
+  px na jednostkę (z — px na ly mapy); pod środkiem ekranu zawsze `cam` warstwy, więc zoom nie robi skoków, a oddalenie
+  kurczy głębokie warstwy wolniej niż mapę. Ruch warstwy względem mapy przy zoomie lotu:
+
+  | warstwa | k | ruch przy 190 px/ly |
+  |---|---|---|
+  | wypiek galaktyki + gwiazdy nieba | 0,05 (skala ≥ 10 px/jedn.) | 9,5% |
+  | gwiazdy paralaksy 1 / 2 / 3 | 0,02 / 0,008 / 0,003 | 21% / 40% / 64% |
+  | mapa (gwiazdy układów, mgławice, ośrodek) | — | 100% |
+  | pył przed kamerą | ×1,35 | 135% |
+
+  Warstwy gwiazd gasną, gdy komórka na ekranie spada poniżej 16–34 px (cały sektor — zostaje samo niebo).
+- **Ośrodek międzygwiezdny** (tylko obraz, bez wpływu na grę): słabe włókna pyłu przypięte do mapy 1:1 — duże ~3 ly
+  (grzbiety fbm z przesunięciem dziedziny) i drobne ~0,7 ly (te niosą wrażenie ruchu; tylko z bliska, od ~25 px/ly),
+  wolno płyną (0,02–0,06 ly/s). Barwy chłodne (turkus → indygo) — mgławice rozgrywki są czerwono-fioletowe. Siła
+  0,25 na mapie sektora → 1 w locie.
+- **Pył przed kamerą**: drobiny w warstwie ×1,35, rozciągnięte w smugi z prędkości kamery (0,15 s × 0,65–1,35);
+  gęstość × (1 + 2,2 · mgławica + 3 · burza) — w mgławicy „gęsto”.
+- **Kamera lotu**: sprężyna krytycznie tłumiona (ω = 2,6) za punktem 2,5 s przed statkiem (najwyżej 22% kadru — widać,
+  dokąd się leci), zoom −10% przy pełnej prędkości i −7% w nurcie, drżenie w burzy 2,5 px × siła burzy.
+- **Statki na mapie** (`dema/mapa-gwiezdna-floty.js`): sylwetki z sprite'ów kadłubów gry (11: Atlas, fregata /
+  niszczyciel / pancernik Terra i piratów, prom, kontenerowiec, frachtowiec dalekiego zasięgu, ciężki frachtowiec) w
+  jednym atlasie z mipmapami; skład z `fleetComposition`; szyk — konwój kolumną parami, okręty klinem; długość ikony
+  w px CSS (Atlas 46, fregata 16, niszczyciel 21, pancernik 28, frachtowce 14–25) × skala √(z / 190) w [0,42; 1,35].
+  Kółko floty w barwie frakcji (pościg — wyraźniej), nazwa nad kółkiem od 80 px/ly.
+- **Ogony**: historia 44 próbek co 0,08 s (3,5 s) na flotę w buforze storage (47 wierszy × 46 vec4 ≈ 35 KB na
+  klatkę). Wstęga liczy się w shaderze: punkt = położenie floty w chwili próbki + przesunięcie statku w szyku obrócone
+  kursem z tej chwili (px → ly przez bieżący zoom) — ogony zgadzają się przy każdym przybliżeniu, a szyk w zakręcie
+  zostawia łuki; kołysanie w szyku lekko je faluje. Jasność z wieku próbki i prędkości odcinka (flota w porcie albo w
+  zasadzce nie ciągnie ogona). Barwy: frakcja, piraci czerwoni, gracz turkus; głowa ogona HDR (bloom).
+- **Eskorta gracza** (klawisz F): Atlas + niszczyciel + 2 fregaty — podgląd floty gracza na mapie; prędkość i paliwo
+  bez zmian (model — § „Dok międzygwiezdny”).
+- Zrzuty CDP: `.tmp/mapa-gwiezdna/feel2/` (pełny przebieg, m.in. `11-floty-z-bliska.png`, `12-eskorta-nurt-zakret.png`)
+  i `.tmp/mapa-gwiezdna/feel3/` (po strojeniu ośrodka). Harness: `runFrames` liczy wszystkie klatki, a RYSUJE tylko
+  ostatnią, w nowej klatce rAF — pass sceny three (`PassNode`) renderuje się raz na klatkę rAF (pułapka 44, reguła
+  `webgpu-tsl`); zrzuty sprzed 2026-11-08 miały obraz GPU z pierwszej klatki serii pod nakładką 2D z ostatniej.
+
+## Dok międzygwiezdny (kierunek użytkownika 2026-11-08 — do zaprojektowania)
+
+Użytkownik: „my też będziemy mieli floty — ale myślę, że inaczej, dorobimy »transporter« międzygwiezdny, taki latający
+dok, do którego się wepną statki”; „pojedynczy statek też powinien mieć możliwość latania, flota też”; „dock łączyłby
+wszystkie statki (paliwo ze wszystkich statków) i ładował to w pojedynczy silnik tego docku = większy zasięg; flota,
+czyli np. 10 statków, 10 silników na każdy = szybciej zużywa paliwo”.
+
+Propozycja modelu (do potwierdzenia; dziś w demie tylko podgląd eskorty, paliwo jak dla samego Atlasa):
+
+| tryb | paliwo | zużycie na ly | prędkość |
+|---|---|---|---|
+| sam statek | zbiornik statku | silnik statku | statku |
+| flota (N statków osobno) | zbiorniki statków | suma silników (≈ N × więcej) | najwolniejszego |
+| dok (statki wpięte) | wspólna pula wszystkich zbiorników + doku | jeden silnik doku | doku (wolniej?) |
+
+Dane już są: skład floty (`fleetComposition` → klasy `FLEET_HULL_CLASSES`); do dopisania `fuelPerLy` i `tank` klasy oraz
+`stepShip` z zużyciem grupy. Pytania: prędkość i pojemność doku (ile kadłubów, jakich klas), gdzie się wpina (port /
+strefa, ile trwa), co przy przechwyceniu (dok bezbronny, eskorta poza dokiem?), czy dok jest do kupienia, jak wygląda
+na mapie (jedna duża sylwetka z jednym ogonem).
 
 ## Opis układu → wpis rejestru (`src/game/sector/sectorRegistry.js`, 2026-11-08)
 
@@ -179,3 +248,7 @@ w grze LOKALNE ('earth'), globalny id na mapie = `globalBodyId(idUkładu, idLoka
 8. Przechwycenie przez piratów → scena walki w strefie (tak, osobny etap).
 9. Ukryte układy w gęstych mgławicach (~20% pogranicza) (tak).
 10. Konwoje niosą ładunek między gospodarkami układów (tak, etap po wpięciu strefy).
+11. Dok międzygwiezdny — tryby: sam statek / flota (zużycie = suma silników) / dok (wspólna pula paliwa, jeden silnik)
+    (tak — model w § „Dok międzygwiezdny”; do decyzji prędkość i pojemność doku).
+12. Ośrodek międzygwiezdny w strefie — słabe chłodne włókna przypięte do mapy, jak chmury nadprzestrzeni Starsectora
+    (tak; siłę ocenić w ruchu — mnożnik `image.mul.ism`).

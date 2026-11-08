@@ -38,6 +38,7 @@ try {
   report.sektor = await ev('window.__mapa.summary');
   report.wypieki = await ev('window.__mapa.waitBakes()');
   console.log('wypieki [ms]', JSON.stringify(report.wypieki));
+  report.sylwetki = await ev('window.__mapa.waitShips()');
   if (want('start')) {
     await ev('window.__mapa.keys(["KeyW"])');
     await shot('00-start-sol', 'Start: wyjście z Układu Słonecznego rogiem NE, lot z ciągiem (zoom lotu)', 120);
@@ -92,6 +93,26 @@ try {
     await ev(`window.__mapa.teleport(${p.x + 2.2}, ${p.y + 0.5})`);
     await ev('window.__mapa.setZoom(70)');
     await shot('09-piraci-poscig', `${p.name}: banda wypatruje Atlasa i rusza w pościg`, 150);
+  }
+  if (want('floty')) {
+    // Patrol albo konwój w drodze w rdzeniu: Atlas obok, zoom lotu, 4 s historii — sylwetki w szyku i ogony.
+    const f = await ev(`(() => { const M = window.__mapa; const f = M.fleets.fleets.find((q) => q.kind === 'patrol' && q.mode === 1)
+      || M.fleets.fleets.find((q) => q.mode === 1); return { id: f.id, name: f.name, x: f.x, y: f.y, vx: f.vx, vy: f.vy }; })()`);
+    report.floty = f;
+    await ev(`window.__mapa.teleport(${f.x + f.vx * 6 + 0.35}, ${f.y + f.vy * 6 + 0.25})`);
+    await ev('window.__mapa.setZoom(300)');
+    await shot('11-floty-z-bliska', `${f.name} z bliska: sylwetki kadłubów w szyku, ogony w barwie frakcji`, 240);
+  }
+  if (want('eskorta')) {
+    await ev('window.__mapa.teleportTo("sol", 1.2, 0.8, 0)');
+    await ev('window.__mapa.escort(true)');
+    await ev('window.__mapa.setZoom(240)');
+    await ev('window.__mapa.keys(["KeyW", "ShiftLeft"])');
+    await ev('window.__mapa.runFrames(150, 60)');
+    await ev('window.__mapa.keys(["KeyW", "ShiftLeft", "KeyD"])');
+    await shot('12-eskorta-nurt-zakret', 'Atlas z eskortą w nurcie, w zakręcie: ogony łukiem, pył w smugach, kamera wyprzedza', 70);
+    await ev('window.__mapa.keys([])');
+    await ev('window.__mapa.escort(false)');
   }
   if (want('zoom')) {
     await ev('window.__mapa.teleportTo("sol", 0.5, 0.3)');

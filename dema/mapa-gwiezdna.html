@@ -15,7 +15,9 @@
   Sterowanie: W ciąg, S hamowanie, A / D obrót, Shift nurt (szybciej, 2 × paliwo), kółko — przybliżenie,
   M — cały sektor / lot, LPM — wybór układu (trasa: odległość, czas, paliwo), PPM — autopilot do układu
   (do jego punktu skoku) albo punktu, E — skok w punkcie skoku (tu tylko komunikat; w grze przeładowanie
-  strony z id układu), Esc — odznacz.
+  strony z id układu), F — eskorta (podgląd floty gracza: Atlas + 3 okręty), Esc — odznacz.
+  Obraz: tło z paralaksą (wypiek galaktyki, trzy warstwy gwiazd, ośrodek międzygwiezdny przypięty do mapy, pył przed
+  kamerą ze smugami), floty jako sylwetki kadłubów gry w szyku z ogonami w barwach frakcji (dema/mapa-gwiezdna-floty.js).
   Parametry: ?seed=1 (ziarno sektora), ?test=1 (klatki tylko z __mapa.runFrames — scripts/webgpu/mapa-gwiezdna-demo.mjs).
 -->
 <style>
@@ -66,7 +68,7 @@
 <div id="card" class="panel"></div>
 <div id="log" class="panel"></div>
 <div id="banner" class="panel"></div>
-<div id="keys"><b>W</b> ciąg · <b>S</b> hamuj · <b>A / D</b> obrót · <b>Shift</b> nurt · <b>kółko</b> przybliżenie · <b>M</b> cały sektor · <b>LPM</b> wybór · <b>PPM</b> autopilot · <b>E</b> skok</div>
+<div id="keys"><b>W</b> ciąg · <b>S</b> hamuj · <b>A / D</b> obrót · <b>Shift</b> nurt · <b>kółko</b> przybliżenie · <b>M</b> cały sektor · <b>LPM</b> wybór · <b>PPM</b> autopilot · <b>E</b> skok · <b>F</b> eskorta</div>
 <div id="err"></div>
 <script type="module" src="./mapa-gwiezdna.js"></script>
 </body>

@@ -11,7 +11,7 @@ import {
   createShip, stepShip, SECTOR_FLIGHT,
   createExploration, updateExploration, serializeExploration, restoreExploration, EXPLORE,
   createFleets, stepFleets, advanceFleets, fleetSnapshot, restoreFleets, FLEET_MODE, fleetVisibleToPlayer,
-  hashU32, SectorRng
+  fleetComposition, FLEET_HULL_CLASSES, hashU32, SectorRng
 } from '../src/game/sector/index.js';
 
 const sector = generateSector({ seed: 1 });
@@ -323,4 +323,20 @@ test('piraci ścigają gracza na pograniczu i odpuszczają po przechwyceniu', ()
   }
   assert.ok(hunted, 'banda wyrusza za graczem');
   assert.ok(caught, 'banda dogania stojącego gracza');
+});
+
+test('skład floty: deterministyczny z id, liczba okrętów z siły, prowadzący na czele, klasy ze znanej listy', () => {
+  const st = createFleets(sector);
+  const counts = { trade: 0, patrol: 0, pirate: 0 };
+  for (const f of st.fleets) {
+    const c = fleetComposition(f);
+    assert.deepEqual(fleetComposition({ ...f, rng: 12345 }), c, `${f.id}: skład nie zależy od stanu rng`);
+    for (const h of c) assert.ok(FLEET_HULL_CLASSES[h], `${f.id}: klasa ${h}`);
+    const n = f.kind === 'trade' ? 1 + f.strength + (f.strength >= 2 ? 1 : 0) : f.kind === 'patrol' ? f.strength : f.strength + 1;
+    assert.equal(c.length, n, `${f.id}: ${c.join(', ')}`);
+    if (f.kind === 'trade') assert.ok(c.filter((h) => !FLEET_HULL_CLASSES[h].warship).length === 1 + f.strength);
+    else assert.ok(['niszczyciel', 'pancernik'].includes(c[0]), `${f.id}: prowadzi okręt liniowy`);
+    counts[f.kind] += c.length;
+  }
+  assert.ok(counts.trade > 40 && counts.patrol > 20 && counts.pirate > 20, JSON.stringify(counts));
 });

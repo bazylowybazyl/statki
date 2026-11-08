@@ -49,6 +49,43 @@ const MODE = Object.freeze({ DOCKED: 0, TRANSIT: 1, LOITER: 2, HUNT: 3, RETURN: 
 export const FLEET_MODE = MODE;
 export const FLEET_MODE_LABELS = Object.freeze(['w porcie', 'w drodze', 'zasadzka', 'pościg', 'powrót', 'ucieczka', 'rozbita']);
 
+/**
+ * Klasy kadłubów floty (skład z `fleetComposition`): obraz mapy rysuje sylwetki tych klas, przyszły model
+ * floty / doku (silniki, paliwo — docs/PLAN-mapa-gwiezdna.md § „Dok międzygwiezdny”) liczy z nich.
+ */
+export const FLEET_HULL_CLASSES = Object.freeze({
+  fregata: Object.freeze({ label: 'fregata', warship: true }),
+  niszczyciel: Object.freeze({ label: 'niszczyciel', warship: true }),
+  pancernik: Object.freeze({ label: 'pancernik', warship: true }),
+  prom: Object.freeze({ label: 'prom', warship: false }),
+  kontenerowiec: Object.freeze({ label: 'kontenerowiec', warship: false }),
+  frachtowiec: Object.freeze({ label: 'frachtowiec dalekiego zasięgu', warship: false }),
+  ciezki: Object.freeze({ label: 'ciężki frachtowiec', warship: false })
+});
+const FREIGHTERS = Object.freeze(['frachtowiec', 'kontenerowiec', 'ciezki', 'prom', 'frachtowiec']);
+
+/**
+ * Skład floty: lista klas kadłubów (pierwsza = prowadzący), z rodzaju i siły, deterministycznie z id floty
+ * (nie z `rng` rekordu — skład nie zmienia się w biegu). Konwój: 1 + siła frachtowców, od siły 2 eskorta
+ * (fregata na czele); patrol: siła okrętów (niszczyciel prowadzi, przy 5 — pancernik); piraci: siła + 1.
+ */
+export function fleetComposition(f) {
+  const h = { rng: hashU32('skład floty', f.id, f.kind, f.strength) };
+  const out = [];
+  const s = f.strength | 0;
+  if (f.kind === 'trade') {
+    if (s >= 2) out.push('fregata');
+    for (let i = 0; i < 1 + s; i++) out.push(FREIGHTERS[Math.floor(rngStep(h) * FREIGHTERS.length)]);
+  } else if (f.kind === 'patrol') {
+    out.push(s >= 5 ? 'pancernik' : 'niszczyciel');
+    for (let i = 1; i < s; i++) out.push(i === 1 && s >= 4 ? 'niszczyciel' : 'fregata');
+  } else {
+    out.push(s >= 4 ? 'pancernik' : 'niszczyciel');
+    for (let i = 0; i < s; i++) out.push(rngStep(h) < 0.25 && i > 0 ? 'niszczyciel' : 'fregata');
+  }
+  return out;
+}
+
 const PIRATE_NAMES = ['Kruka', 'Szakala', 'Żmii', 'Wilka', 'Hieny', 'Sępa', 'Szczura', 'Rekina', 'Kosy', 'Ości', 'Mątwy', 'Pająka'];
 /** Cel pościgu: gracz. */
 export const TARGET_PLAYER = -2;

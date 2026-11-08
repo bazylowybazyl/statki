@@ -58,6 +58,19 @@ paths:
 
 ## Obraz dema (pułapki)
 
+- PARALAKSA = model perspektywy: warstwa na głębokości k ma skalę s = z / (1 + k·z) (z — px na ly), współrzędna warstwy
+  = `cam` + px / s — nowa warstwa tła liczy tak samo (zoom bez skoków). Ośrodek międzygwiezdny to TYLKO obraz (gra go nie
+  widzi) i ma chłodne barwy — nie może udawać mgławicy rozgrywki.
+- STATKI NA MAPIE (`dema/mapa-gwiezdna-floty.js`): skład floty z danych (`fleetComposition`), szyk i rozmiar ikon w obrazie
+  (px CSS × `shipScaleFor(zoom)`); ogony z HISTORII w buforze storage (kolumny: info, teraz, próbki — przesuwane na CPU)
+  — przesunięcia w szyku w px przeliczane w shaderze przez BIEŻĄCY zoom. Nowa klasa kadłuba w `FLEET_HULL_CLASSES` →
+  sylwetka w `MAP_HULLS` (inaczej brak sprite'a w atlasie).
+- Wstęga ogona składana z (styczna, normalna) i odbita do sceny (Y = −y) jest lustrzana — tył do kamery; materiał wstęgi
+  ma `side: DoubleSide` (bez tego ogony nie rysowały się wcale, bez błędu).
+- Harness z ręcznym zegarem: pass sceny (`pass()`, `PassNode`) renderuje się RAZ na klatkę rAF (pułapka 44 w regule
+  `webgpu-tsl`) — `__mapa.runFrames` liczy wszystkie klatki, rysuje tylko ostatnią po `await` rAF. Kilka `render()` w
+  jednym zadaniu JS = obraz GPU z pierwszej klatki serii pod nakładką 2D z ostatniej.
+
 - `AdditiveBlending` three r183 to (SrcAlpha, One) bez premultiplied — `fragmentNode` addytywnego materiału zwraca alfę
   1 (alfa 0 = nic nie dochodzi; tak gwiazdy i mgławice dema nie rysowały się wcale). Pułapka 43 w regule `webgpu-tsl`.
 - Wypieki (tło galaktyki 2560 × 1600, 6 wariantów mgławic 1280 × 800) idą PO KOLEI jednym `SkyBaker` na styl; wynik
@@ -72,4 +85,5 @@ paths:
   przy nowym demie).
 - Liczby: `node scripts/mapa-gwiezdna-liczby.mjs [--seed N]` (odległości, czasy lotu, paliwo, koszt kroku flot).
 - Obraz: `node scripts/webgpu/mapa-gwiezdna-demo.mjs --out .tmp/mapa-gwiezdna/<katalog>` (headless, ?test=1,
-  `__mapa.runFrames`) — zrzuty scen + `raport.json` (wypieki, statystyki, błędy konsoli — ma być 0).
+  `__mapa.runFrames`) — zrzuty scen + `raport.json` (wypieki, statystyki, błędy konsoli — ma być 0); sceny `floty`
+  (sylwetki i ogony z bliska), `eskorta` (nurt w zakręcie). A/B warstw tła: `__mapa.image.mul` (`ism`, `layers`, `dust`).
