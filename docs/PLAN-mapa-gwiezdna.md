@@ -77,7 +77,11 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
 | wielkość | wartość |
 |---|---|
 | prędkość przelotowa / nurt (Shift) | 0,2 / 0,32 ly/s |
-| przyspieszenie / hamowanie | 0,09 / 0,16 ly/s² |
+| przyspieszenie / hamowanie | 0,08 (× poziom napędu) / 0,12 ly/s² |
+| rozpęd (napęd 0 → 1 w 1,7 s) | 0 → przelot ~3 s |
+| obrót (bezwładność 1,4 / 2,2 rad/s²) | 1,1 rad/s w miejscu, 0,55 przy przelocie, 0,42 w nurcie |
+| zawrót o 180° przy przelocie / w nurcie | 6 s, średnica 0,77 ly / 7,7 s, 1,57 ly |
+| poślizg w zakręcie / wybieg bez ciągu / hamowanie S | do 0,06 ly/s / 12 s, 0,65 ly / 1,7 s, 0,16 ly |
 | sąsiad: mediana / p90 odległości (ziarno 1) | 4,0 ly = 20 s / 7,7 ly = 38 s |
 | Słońce → Alfa Centauri | 4,37 ly = 22 s |
 | przez rdzeń (~40 ly) / cały sektor (160 ly) | 3,3 min / 13,3 min |
@@ -103,10 +107,15 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
   zasięg czujników × mgławice; flota w porcie (w studni układu) niewidoczna.
 - Krok stały 0,1 s (10 Hz), losowanie tylko z ziarna floty → determinizm (test: 300 s krokami 0,1 s = `advanceFleets`
   300 s; migawka → ten sam dalszy bieg). Koszt: **36 µs na krok** (44 floty, Node, mediana) = 0,36 ms na sekundę gry.
-- Skład floty (`fleetComposition`, z id floty, stały w biegu): konwój — 1 + siła frachtowców (prom, kontenerowiec,
-  frachtowiec dalekiego zasięgu, ciężki), od siły 2 fregata eskorty na czele; patrol — siła okrętów (niszczyciel
-  prowadzi, przy sile 5 pancernik); piraci — siła + 1 (niszczyciel albo pancernik i fregaty). Ziarno 1: 176 okrętów
-  (konwoje 91, patrole 40, piraci 45). Dziś tylko obraz; model floty / doku (silniki, paliwo) policzy z tych klas.
+- Ruch flot: kurs do celu z ograniczonym obrotem (`FLEET_KINDS.turn`: konwój 0,32, patrol 0,48, piraci 0,62 rad/s) i
+  przyspieszeniem (`accel` 0,03–0,06 ly/s²), zwalnianie w ostrym zakręcie (do 30% — bez krążenia wokół celu) —
+  ciężkie floty zostawiają łuki, nie załamania (uwaga użytkownika 2026-11-08: „za mocno skręca”).
+- Skład floty (`fleetComposition`, z id floty, stały w biegu; liczebność `FLEET_SIZE`): konwój — 3 + 3 · siła
+  (+0–2) frachtowców (prom, kontenerowiec, frachtowiec dalekiego zasięgu, ciężki) i eskorta 2 · (siła − 1) fregat
+  (+ niszczyciel przy sile 3) — 6–19; patrol — ~30 okrętów (użytkownik: „flota patrolowa będzie miała ± 30 statków”;
+  22–34: pancernik prowadzi od siły 4, lotniskowiec od siły 4, ~20% niszczycieli, reszta fregaty); piraci — 10–19
+  (niszczyciel albo pancernik i fregaty). Ziarno 1: 738 okrętów (patrol średnio 27). Dziś obraz; model floty / doku
+  (silniki, paliwo) policzy z tych klas.
 
 ## Demo (`dema/mapa-gwiezdna.html`)
 
@@ -147,18 +156,27 @@ statek to strzałka, tak samo NPC”. Przyczyna braku ruchu: tło przesuwało si
   gęstość × (1 + 2,2 · mgławica + 3 · burza) — w mgławicy „gęsto”.
 - **Kamera lotu**: sprężyna krytycznie tłumiona (ω = 2,6) za punktem 2,5 s przed statkiem (najwyżej 22% kadru — widać,
   dokąd się leci), zoom −10% przy pełnej prędkości i −7% w nurcie, drżenie w burzy 2,5 px × siła burzy.
-- **Statki na mapie** (`dema/mapa-gwiezdna-floty.js`): sylwetki z sprite'ów kadłubów gry (11: Atlas, fregata /
-  niszczyciel / pancernik Terra i piratów, prom, kontenerowiec, frachtowiec dalekiego zasięgu, ciężki frachtowiec) w
-  jednym atlasie z mipmapami; skład z `fleetComposition`; szyk — konwój kolumną parami, okręty klinem; długość ikony
-  w px CSS (Atlas 46, fregata 16, niszczyciel 21, pancernik 28, frachtowce 14–25) × skala √(z / 190) w [0,42; 1,35].
-  Kółko floty w barwie frakcji (pościg — wyraźniej), nazwa nad kółkiem od 80 px/ly.
-- **Ogony**: historia 44 próbek co 0,08 s (3,5 s) na flotę w buforze storage (47 wierszy × 46 vec4 ≈ 35 KB na
-  klatkę). Wstęga liczy się w shaderze: punkt = położenie floty w chwili próbki + przesunięcie statku w szyku obrócone
-  kursem z tej chwili (px → ly przez bieżący zoom) — ogony zgadzają się przy każdym przybliżeniu, a szyk w zakręcie
-  zostawia łuki; kołysanie w szyku lekko je faluje. Jasność z wieku próbki i prędkości odcinka (flota w porcie albo w
-  zasadzce nie ciągnie ogona). Barwy: frakcja, piraci czerwoni, gracz turkus; głowa ogona HDR (bloom).
-- **Eskorta gracza** (klawisz F): Atlas + niszczyciel + 2 fregaty — podgląd floty gracza na mapie; prędkość i paliwo
-  bez zmian (model — § „Dok międzygwiezdny”).
+- **Statki na mapie** (`dema/mapa-gwiezdna-floty.js`): sylwetki z sprite'ów kadłubów gry (12: Atlas, fregata /
+  niszczyciel / pancernik Terra i piratów, lotniskowiec, prom, kontenerowiec, frachtowiec dalekiego zasięgu, ciężki
+  frachtowiec) w jednym atlasie z mipmapami; skład z `fleetComposition`; szyk — prowadzący z przodu, za nim rzędy
+  (okręty klinem do 6 w rzędzie, konwój kolumną po 3), co drugi rząd przesunięty, drobny rozrzut z hasza. Długość
+  ikony w px CSS przy zoomie lotu (Atlas 24, fregata 7, niszczyciel 9, pancernik 12, lotniskowiec 13, frachtowce
+  6–10,5 — małe jak na mapie Starsectora; uwaga użytkownika: „statki wciąż za duże”) × skala √(z / 190) w
+  [0,42; 1,35]; patrol ~30 okrętów ≈ 60 × 45 px. Kółko floty w barwie frakcji (pościg — wyraźniej), nazwa nad
+  kółkiem od 80 px/ly.
+- **Ogony**: historia 32 próbek co 0,075 s (2,4 s; życie 2,3 s — „lekko za długie” przy 3,4 s) na flotę w buforze
+  storage (47 wierszy × 34 vec4 ≈ 26 KB na klatkę). Wstęga liczy się w shaderze: punkt = położenie floty w chwili
+  próbki + przesunięcie statku w szyku obrócone kursem z tej chwili (px → ly przez bieżący zoom) — ogony zgadzają się
+  przy każdym przybliżeniu, a szyk w zakręcie zostawia łuki; kołysanie w szyku lekko je faluje. Jasność z wieku próbki
+  i prędkości odcinka (flota w porcie albo w zasadzce nie ciągnie ogona), na statek × min(1, 2,6 / √liczebność) —
+  30 ogonów obok siebie nie robi plamy; połowa szerokości ≥ 1,4 px (węższa „paciorkuje” pod MSAA). Barwy: frakcja,
+  piraci czerwoni, gracz turkus; głowa ogona HDR (bloom). ~740 statków → ~24 tys. odcinków na jeden rysunek.
+- **Eskorta gracza** (klawisz F): Atlas + 2 niszczyciele + 5 fregat w szyku — podgląd floty gracza na mapie;
+  prędkość i paliwo bez zmian (model — § „Dok międzygwiezdny”).
+- **Lot** (`stepShip`, uwaga użytkownika: „fizyka za prosta, za mocno skręca, nie czuć, że statki lecą w
+  nadprzestrzeni”): napęd rozkręca się, obrót ma bezwładność i limit malejący z prędkością, w zakręcie statek znosi
+  (poślizg), bez ciągu ośrodek go hamuje — liczby w tabeli § „Lot, punkty skoku, eksploracja”. HUD pokazuje poziom
+  napędu; autopilot to regulator kursu z tłumieniem prędkości kątowej (samo P kołysało).
 - Zrzuty CDP: `.tmp/mapa-gwiezdna/feel2/` (pełny przebieg, m.in. `11-floty-z-bliska.png`, `12-eskorta-nurt-zakret.png`)
   i `.tmp/mapa-gwiezdna/feel3/` (po strojeniu ośrodka). Harness: `runFrames` liczy wszystkie klatki, a RYSUJE tylko
   ostatnią, w nowej klatce rAF — pass sceny three (`PassNode`) renderuje się raz na klatkę rAF (pułapka 44, reguła
@@ -252,3 +270,7 @@ w grze LOKALNE ('earth'), globalny id na mapie = `globalBodyId(idUkładu, idLoka
     (tak — model w § „Dok międzygwiezdny”; do decyzji prędkość i pojemność doku).
 12. Ośrodek międzygwiezdny w strefie — słabe chłodne włókna przypięte do mapy, jak chmury nadprzestrzeni Starsectora
     (tak; siłę ocenić w ruchu — mnożnik `image.mul.ism`).
+13. Ciężki lot: rozpęd ~3 s, zawrót 6 s przy przelocie, poślizg w zakręcie (tak; strojenie `SECTOR_FLIGHT` po próbie w
+    ruchu — `turn`, `turnAccel`, `slip`, `spoolUp`).
+14. Liczebność flot: patrol ~30, piraci 10–19, konwoje 6–19 (tak; siła w starciu nadal z `strength` — przeliczenie
+    starcia na skład floty razem z modelem doku).

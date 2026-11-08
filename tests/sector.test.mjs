@@ -8,7 +8,7 @@ import {
   PLANET_TYPES, MAX_ORBIT_AU,
   zoneAt, createZoneSample, stormPosition, jumpPointsOf, jumpPointAt, nearestSystem, worldEntryFromJump,
   zoneExitFromWorld, ZONE, nebulaDensityAt,
-  createShip, stepShip, SECTOR_FLIGHT,
+  createShip, stepShip, SECTOR_FLIGHT, turnRateAt,
   createExploration, updateExploration, serializeExploration, restoreExploration, EXPLORE,
   createFleets, stepFleets, advanceFleets, fleetSnapshot, restoreFleets, FLEET_MODE, fleetVisibleToPlayer,
   fleetComposition, FLEET_HULL_CLASSES, hashU32, SectorRng
@@ -233,6 +233,27 @@ test('lot: rozpęd do prędkości przelotowej, paliwo za drogę, nurt szybszy, p
   assert.ok(t > 10 && t < 60, `przelot do sąsiada ${t} s`);
 });
 
+test('lot ciężki: napęd się rozkręca, obrót z bezwładnością i limitem z prędkości, poślizg w zakręcie', () => {
+  const dt = 1 / 60;
+  const s = createShip(-30, 30, 0);
+  for (let i = 0; i < 60; i++) stepShip(s, { thrust: 1, turn: 0 }, dt, sector, i * dt);
+  assert.ok(s.speed < SECTOR_FLIGHT.cruise * 0.4, `po 1 s ciągu: ${s.speed}`);
+  for (let i = 0; i < 600; i++) stepShip(s, { thrust: 1, turn: 0 }, dt, sector, 1 + i * dt);
+  assert.ok(Math.abs(s.speed - SECTOR_FLIGHT.cruise) < 0.005);
+  assert.ok(turnRateAt(SECTOR_FLIGHT.cruise) < SECTOR_FLIGHT.turn * 0.6, 'obrót wolniejszy przy prędkości');
+  const h0 = s.heading;
+  let slide = 0;
+  for (let i = 0; i < 60; i++) {
+    stepShip(s, { thrust: 1, turn: 1 }, dt, sector, 11 + i * dt);
+    slide = Math.max(slide, Math.abs(s.slide));
+  }
+  const turned = s.heading - h0;
+  assert.ok(turned > 0.25 && turned < turnRateAt(SECTOR_FLIGHT.cruise), `1 s skrętu: ${turned} rad`);
+  assert.ok(slide > 0.01 && slide < SECTOR_FLIGHT.cruise * 0.4, `poślizg ${slide}`);
+  for (let i = 0; i < 30; i++) stepShip(s, { thrust: 1, turn: 0 }, dt, sector, 12 + i * dt);
+  assert.equal(s.omega, 0, 'obrót gaśnie po puszczeniu A / D');
+});
+
 test('mgła eksploracji: rdzeń znany, skan po czasie w zasięgu, wizyta w studni, zapis i odczyt', () => {
   const exp = createExploration(sector);
   for (const i of sector.core) assert.equal(exp.level[i], EXPLORE.VISITED);
@@ -325,18 +346,25 @@ test('piraci ścigają gracza na pograniczu i odpuszczają po przechwyceniu', ()
   assert.ok(caught, 'banda dogania stojącego gracza');
 });
 
-test('skład floty: deterministyczny z id, liczba okrętów z siły, prowadzący na czele, klasy ze znanej listy', () => {
+test('skład floty: deterministyczny z id, liczebność z siły (patrol ~30), prowadzący na czele, klasy ze znanej listy', () => {
   const st = createFleets(sector);
+  const range = { trade: [6, 19], patrol: [22, 34], pirate: [10, 19] };
   const counts = { trade: 0, patrol: 0, pirate: 0 };
   for (const f of st.fleets) {
     const c = fleetComposition(f);
     assert.deepEqual(fleetComposition({ ...f, rng: 12345 }), c, `${f.id}: skład nie zależy od stanu rng`);
     for (const h of c) assert.ok(FLEET_HULL_CLASSES[h], `${f.id}: klasa ${h}`);
-    const n = f.kind === 'trade' ? 1 + f.strength + (f.strength >= 2 ? 1 : 0) : f.kind === 'patrol' ? f.strength : f.strength + 1;
-    assert.equal(c.length, n, `${f.id}: ${c.join(', ')}`);
-    if (f.kind === 'trade') assert.ok(c.filter((h) => !FLEET_HULL_CLASSES[h].warship).length === 1 + f.strength);
-    else assert.ok(['niszczyciel', 'pancernik'].includes(c[0]), `${f.id}: prowadzi okręt liniowy`);
+    assert.ok(c.length >= range[f.kind][0] && c.length <= range[f.kind][1], `${f.id} (siła ${f.strength}): ${c.length}`);
+    const freighters = c.filter((h) => !FLEET_HULL_CLASSES[h].warship).length;
+    if (f.kind === 'trade') assert.equal(c.length - freighters, 2 * (f.strength - 1) + (f.strength >= 3 ? 1 : 0), `${f.id}: eskorta`);
+    else {
+      assert.equal(freighters, 0);
+      assert.ok(['niszczyciel', 'pancernik'].includes(c[0]), `${f.id}: prowadzi okręt liniowy`);
+    }
     counts[f.kind] += c.length;
   }
-  assert.ok(counts.trade > 40 && counts.patrol > 20 && counts.pirate > 20, JSON.stringify(counts));
+  const patrols = st.fleets.filter((f) => f.kind === 'patrol');
+  const avg = counts.patrol / patrols.length;
+  assert.ok(avg > 24 && avg < 34, `patrol średnio ${avg}`);
+  assert.ok(counts.trade > 150 && counts.pirate > 100, JSON.stringify(counts));
 });

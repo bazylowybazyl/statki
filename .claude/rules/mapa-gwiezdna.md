@@ -52,6 +52,12 @@ paths:
   'jupiter' (dopasowanie ringu „Halo” po fragmencie nazwy). Moduł sektora NIE importuje `starSystems.js` (cykl) —
   Słońce (`SOL_SYSTEM`, ręczne) podaje wołający w `handmade`. Nowe pole wpisu → test `tests/sectorRegistry.test.mjs`
   (pola jak `SOL_SYSTEM`, `buildSystemMap` na planetach wpisu, orbity za studnią gwiazdy — `minOrbitAu`).
+- LOT CIĘŻKI (`stepShip`): rekord statku niesie `omega` (prędkość kątowa), `drive` (poziom napędu 0…nurt) i `slide`
+  (poślizg) — `input.turn` zadaje prędkość kątową (× `turnRateAt(v)`), nie kąt. Sterowanie automatyczne (autopilot,
+  AI) to regulator kursu z tłumieniem `omega` (wzór `readInput` w `dema/mapa-gwiezdna.js`) — samo P kołysze kursem.
+  Floty NPC: kurs z limitem obrotu `FLEET_KINDS.turn`, zwalnianie w ostrym zakręcie (inaczej krążą wokół celu).
+- SKŁAD FLOTY: `fleetComposition` (liczebność `FLEET_SIZE`, patrol ~30) — z id floty, nie z `rng` rekordu; siła starcia
+  nadal z `strength`.
 - Mgła eksploracji to dane zapisu gracza (`serializeExploration` z ziarnem i wersją sektora; inny sektor → stan
   startowy). Obraz i UI nie pokazują nic ponad poziom (`HIDDEN` — ani gwiazdy, `SEEN` — katalog i klasa, `SCANNED` —
   nazwa i planety, `VISITED` — właściciel, kryjówka, brama).

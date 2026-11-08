@@ -10,7 +10,7 @@ import * as THREE from 'three/webgpu';
 import {
   generateSector, sectorSummary, createFleets, stepFleets, advanceFleets, createShip, stepShip,
   createExploration, updateExploration, nearestSystem, jumpPointAt, jumpPointPosition, zoneExitFromWorld,
-  worldEntryFromJump, fleetVisibleToPlayer, timeForDistance, fuelForDistance,
+  worldEntryFromJump, fleetVisibleToPlayer, timeForDistance, fuelForDistance, turnRateAt,
   SECTOR_FLIGHT, ZONE, EXPLORE, EXPLORE_LABELS, FLEET_MODE, FLEET_TICK, JUMP_CORNERS,
   PLANET_TYPE_LABELS, STAR_CLASSES, starColorRgb
 } from '../src/game/sector/index.js';
@@ -134,7 +134,7 @@ addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
 
 function toggleEscort() {
   fleetImage.escort = !fleetImage.escort;
-  addLog(fleetImage.escort ? 'Eskorta: Atlas + niszczyciel + 2 fregaty (podgląd floty gracza)' : 'Eskorta odesłana — Atlas sam');
+  addLog(fleetImage.escort ? 'Eskorta: Atlas + 2 niszczyciele + 5 fregat (podgląd floty gracza)' : 'Eskorta odesłana — Atlas sam');
 }
 
 function toggleSectorView() {
@@ -256,10 +256,12 @@ function readInput() {
     const d = Math.sqrt(dx * dx + dy * dy);
     let diff = Math.atan2(dy, dx) - ship.heading;
     diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    input.turn = Math.max(-1, Math.min(1, diff * 3));
+    // Regulator z tłumieniem: obrót ma bezwładność (sectorFlight.js) — samo P kołysałoby kursem.
+    const wMax = Math.max(0.05, turnRateAt(ship.speed));
+    input.turn = Math.max(-1, Math.min(1, (1.2 * diff - 0.45 * ship.omega) / wMax));
     const brakeDist = (ship.speed * ship.speed) / (2 * SECTOR_FLIGHT.brake) + 0.03;
     if (d < brakeDist) input.thrust = -1;
-    else input.thrust = Math.abs(diff) < 0.45 ? 1 : 0;
+    else input.thrust = Math.abs(diff) < 0.8 ? 1 : 0;
     input.burn = input.burn || (ap.burn && d > 2);
     if (d < 0.05 && ship.speed < 0.02) S.autopilot = null;
   }
@@ -573,7 +575,7 @@ function drawOverlay(dt, bolts) {
   g.font = '600 11px system-ui, sans-serif';
   g.fillStyle = 'rgba(200, 240, 255, 0.9)';
   g.textAlign = 'center';
-  g.fillText(fleetImage.escort ? 'ATLAS + ESKORTA' : 'ATLAS', P.x, P.y + fleetImage.rowCircle(fleetImage.playerRow, RC).radius + (fleetImage.escort ? 30 : 12));
+  g.fillText(fleetImage.escort ? 'ATLAS + ESKORTA' : 'ATLAS', P.x, P.y + fleetImage.rowCircle(fleetImage.playerRow, RC).radius + 12);
   g.textAlign = 'left';
 }
 
@@ -613,8 +615,8 @@ function updateHud() {
     <div class="lbl">Atlas — strefa międzygwiezdna</div>
     <div class="row"><span>Paliwo</span><span>${fmt(ship.fuel, 0)} / ${F.fuelMax} · zasięg ${fmt(rangeLy, 0)} ly</span></div>
     <div class="bar ${fuelPct < 0.25 ? 'low' : ''}"><i style="width:${(fuelPct * 100).toFixed(1)}%"></i></div>
-    <div class="row"><span>Prędkość</span><span>${fmt(ship.speed, 2)} ly/s${ship.burn ? ' <span class="warn">NURT</span>' : ''}${ship.fuel <= 0 ? ' <span class="danger">DRYF</span>' : ''}</span></div>
-    <div class="row"><span>Flota</span><span>${fleetImage.escort ? 'Atlas + 3 eskorty' : 'Atlas (sam)'} <span class="muted">· F</span></span></div>
+    <div class="row"><span>Prędkość</span><span>${fmt(ship.speed, 2)} ly/s · napęd ${Math.round(ship.drive * 100)}%${ship.burn ? ' <span class="warn">NURT</span>' : ''}${ship.fuel <= 0 ? ' <span class="danger">DRYF</span>' : ''}</span></div>
+    <div class="row"><span>Flota</span><span>${fleetImage.escort ? 'Atlas + 7 eskorty' : 'Atlas (sam)'} <span class="muted">· F</span></span></div>
     <div class="row"><span>Położenie</span><span>${fmt(ship.x, 1)} · ${fmt(-ship.y, 1)} ly</span></div>
     <div class="row"><span>Strefa</span><span style="text-align:right">${zoneTxt}</span></div>
     ${ns ? `<div class="row"><span>Najbliżej</span><span>${displayName(nearKnown.index)} · ${fmt(nearKnown.dist, 1)} ly</span></div>` : ''}

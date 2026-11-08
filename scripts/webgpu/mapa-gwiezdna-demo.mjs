@@ -96,12 +96,15 @@ try {
   }
   if (want('floty')) {
     // Patrol albo konwój w drodze w rdzeniu: Atlas obok, zoom lotu, 4 s historii — sylwetki w szyku i ogony.
-    const f = await ev(`(() => { const M = window.__mapa; const f = M.fleets.fleets.find((q) => q.kind === 'patrol' && q.mode === 1)
-      || M.fleets.fleets.find((q) => q.mode === 1); return { id: f.id, name: f.name, x: f.x, y: f.y, vx: f.vx, vy: f.vy }; })()`);
+    // Patrol (~30 okrętów) w drodze, daleko od przystanku (nie zniknie w porcie w trakcie zrzutu).
+    const f = await ev(`(() => { const M = window.__mapa; const S = M.sector.systems;
+      const far = (q) => q.hop >= 0 && (S[q.hop].x - q.x) ** 2 + (S[q.hop].y - q.y) ** 2 > 4;
+      const f = M.fleets.fleets.find((q) => q.kind === 'patrol' && q.mode === 1 && far(q)) || M.fleets.fleets.find((q) => q.mode === 1 && far(q));
+      return { id: f.id, name: f.name, x: f.x, y: f.y, vx: f.vx, vy: f.vy }; })()`);
     report.floty = f;
-    await ev(`window.__mapa.teleport(${f.x + f.vx * 6 + 0.35}, ${f.y + f.vy * 6 + 0.25})`);
+    await ev(`window.__mapa.teleport(${f.x + f.vx * 4 - f.vy * 1.6}, ${f.y + f.vy * 4 + f.vx * 1.6})`);
     await ev('window.__mapa.setZoom(300)');
-    await shot('11-floty-z-bliska', `${f.name} z bliska: sylwetki kadłubów w szyku, ogony w barwie frakcji`, 240);
+    await shot('11-floty-z-bliska', `${f.name} z bliska: ~30 sylwetek kadłubów w szyku, ogony w barwie frakcji`, 240);
   }
   if (want('eskorta')) {
     await ev('window.__mapa.teleportTo("sol", 1.2, 0.8, 0)');

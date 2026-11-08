@@ -24,10 +24,14 @@ import { SECTOR_FLIGHT } from './sectorFlight.js';
 
 export const FLEET_TICK = 0.1;
 
+/**
+ * Rodzaje flot: prędkość [ly/s], wzrok [ly], postój [s], siła; `turn` — najwyższy obrót [rad/s] i `accel` —
+ * przyspieszenie [ly/s²] (ciężkie floty: łuki w zakrętach, rozpęd — jak lot gracza, `sectorFlight.js`).
+ */
 export const FLEET_KINDS = Object.freeze({
-  trade: Object.freeze({ label: 'konwój kupiecki', speed: 0.13, sight: 3.0, dwell: [8, 22], strength: [1, 3] }),
-  patrol: Object.freeze({ label: 'patrol', speed: 0.17, sight: 5.0, dwell: [3, 8], strength: [3, 5] }),
-  pirate: Object.freeze({ label: 'piraci', speed: 0.19, sight: 4.5, dwell: [12, 30], strength: [2, 4] })
+  trade: Object.freeze({ label: 'konwój kupiecki', speed: 0.13, sight: 3.0, dwell: [8, 22], strength: [1, 3], turn: 0.32, accel: 0.03 }),
+  patrol: Object.freeze({ label: 'patrol', speed: 0.17, sight: 5.0, dwell: [3, 8], strength: [3, 5], turn: 0.48, accel: 0.05 }),
+  pirate: Object.freeze({ label: 'piraci', speed: 0.19, sight: 4.5, dwell: [12, 30], strength: [2, 4], turn: 0.62, accel: 0.06 })
 });
 
 export const FLEET_DEFAULTS = Object.freeze({
@@ -57,6 +61,7 @@ export const FLEET_HULL_CLASSES = Object.freeze({
   fregata: Object.freeze({ label: 'fregata', warship: true }),
   niszczyciel: Object.freeze({ label: 'niszczyciel', warship: true }),
   pancernik: Object.freeze({ label: 'pancernik', warship: true }),
+  lotniskowiec: Object.freeze({ label: 'lotniskowiec', warship: true }),
   prom: Object.freeze({ label: 'prom', warship: false }),
   kontenerowiec: Object.freeze({ label: 'kontenerowiec', warship: false }),
   frachtowiec: Object.freeze({ label: 'frachtowiec dalekiego zasięgu', warship: false }),
@@ -64,26 +69,45 @@ export const FLEET_HULL_CLASSES = Object.freeze({
 });
 const FREIGHTERS = Object.freeze(['frachtowiec', 'kontenerowiec', 'ciezki', 'prom', 'frachtowiec']);
 
+/** Liczebność floty z rodzaju i siły: [stała, × siła, rozrzut] → stała + siła · k + los(0 … rozrzut). */
+export const FLEET_SIZE = Object.freeze({
+  /** Frachtowce konwoju (eskorta osobno: 2 · (siła − 1) fregat, przy sile 3 + niszczyciel). */
+  trade: Object.freeze([3, 3, 2]),
+  /** Patrol: ~30 okrętów (decyzja użytkownika 2026-11-08: „flota patrolowa będzie miała ± 30 statków”). */
+  patrol: Object.freeze([13, 3, 6]),
+  pirate: Object.freeze([4, 3, 3])
+});
+
 /**
- * Skład floty: lista klas kadłubów (pierwsza = prowadzący), z rodzaju i siły, deterministycznie z id floty
- * (nie z `rng` rekordu — skład nie zmienia się w biegu). Konwój: 1 + siła frachtowców, od siły 2 eskorta
- * (fregata na czele); patrol: siła okrętów (niszczyciel prowadzi, przy 5 — pancernik); piraci: siła + 1.
+ * Skład floty: lista klas kadłubów (pierwsza = prowadzący, potem od największych), z rodzaju i siły,
+ * deterministycznie z id floty (nie z `rng` rekordu — skład nie zmienia się w biegu). Liczebność — `FLEET_SIZE`:
+ * konwój 6–19 (frachtowce + eskorta), patrol 22–34 (prowadzi pancernik od siły 4, przy sile ≥ 4 lotniskowiec,
+ * ~20% niszczycieli, reszta fregaty), piraci 10–19 (niszczyciel albo pancernik i fregaty, ~25% niszczycieli).
  */
 export function fleetComposition(f) {
   const h = { rng: hashU32('skład floty', f.id, f.kind, f.strength) };
   const out = [];
   const s = f.strength | 0;
+  const [base, perS, spread] = FLEET_SIZE[f.kind] || FLEET_SIZE.pirate;
+  const n = base + perS * s + Math.floor(rngStep(h) * (spread + 1));
   if (f.kind === 'trade') {
-    if (s >= 2) out.push('fregata');
-    for (let i = 0; i < 1 + s; i++) out.push(FREIGHTERS[Math.floor(rngStep(h) * FREIGHTERS.length)]);
-  } else if (f.kind === 'patrol') {
-    out.push(s >= 5 ? 'pancernik' : 'niszczyciel');
-    for (let i = 1; i < s; i++) out.push(i === 1 && s >= 4 ? 'niszczyciel' : 'fregata');
-  } else {
-    out.push(s >= 4 ? 'pancernik' : 'niszczyciel');
-    for (let i = 0; i < s; i++) out.push(rngStep(h) < 0.25 && i > 0 ? 'niszczyciel' : 'fregata');
+    for (let i = 0; i < 2 * (s - 1); i++) out.push('fregata');
+    if (s >= 3) out.unshift('niszczyciel');
+    for (let i = 0; i < n; i++) out.push(FREIGHTERS[Math.floor(rngStep(h) * FREIGHTERS.length)]);
+    return out;
   }
-  return out;
+  out.push(s >= 4 ? 'pancernik' : 'niszczyciel');
+  if (f.kind === 'patrol' && s >= 4) out.push('lotniskowiec');
+  const big = [];
+  const small = [];
+  while (out.length + big.length + small.length < n) {
+    const r = rngStep(h);
+    if (f.kind === 'patrol' && s >= 5 && r < 0.07) big.push('pancernik');
+    else if (r < (f.kind === 'patrol' ? 0.22 : 0.25)) big.push('niszczyciel');
+    else small.push('fregata');
+  }
+  big.sort((a, b) => (a === b ? 0 : a === 'pancernik' ? -1 : 1));
+  return out.concat(big, small);
 }
 
 const PIRATE_NAMES = ['Kruka', 'Szakala', 'Żmii', 'Wilka', 'Hieny', 'Sępa', 'Szczura', 'Rekina', 'Kosy', 'Ości', 'Mątwy', 'Pająka'];
@@ -173,6 +197,7 @@ export function createFleets(sector, opts = {}) {
     f.dest = dest;
     f.tx = S[hop].x;
     f.ty = S[hop].y;
+    f.heading = Math.atan2(f.ty - f.y, f.tx - f.x);
   }
   let pn = 0;
   for (const fid of Object.keys(territory)) {
@@ -313,18 +338,25 @@ function tickOnce(state, sector, player) {
       if (f.timer <= 0) goHome(f, S);
     }
     if (f.mode === MODE.GONE || f.mode === MODE.DOCKED) continue;
-    // Ruch: sterowanie do celu z hamowaniem przy dojściu.
+    // Ruch: kurs do celu z ograniczonym obrotem (łuki, nie załamania), zwalnianie w ostrym zakręcie (bez
+    // krążenia wokół celu) i przy dojściu, prędkość z ograniczonym przyspieszeniem; lot wzdłuż kursu.
     const dx = f.tx - f.x;
     const dy = f.ty - f.y;
     const d = Math.sqrt(dx * dx + dy * dy);
-    const v = speed * z.speedMul * (f.mode === MODE.LOITER || f.mode === MODE.HUNT ? 1 : Math.min(1, 0.35 + d / 0.6));
-    const inv = d > 1e-6 ? 1 / d : 0;
-    const k = Math.min(1, 2.5 * dt);
-    f.vx += (dx * inv * v - f.vx) * k;
-    f.vy += (dy * inv * v - f.vy) * k;
+    let v = speed * z.speedMul * (f.mode === MODE.LOITER || f.mode === MODE.HUNT ? 1 : Math.min(1, 0.35 + d / 0.6));
+    if (d > 1e-6) {
+      let diff = Math.atan2(dy, dx) - f.heading;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      const wMax = K.turn * dt;
+      f.heading += Math.max(-wMax, Math.min(wMax, diff));
+      v *= Math.max(0.3, Math.cos(Math.min(Math.abs(diff), Math.PI / 2)));
+    } else v = 0;
+    const sp0 = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
+    const sp = sp0 + Math.max(-2 * K.accel * dt, Math.min(K.accel * dt, v - sp0));
+    f.vx = Math.cos(f.heading) * sp;
+    f.vy = Math.sin(f.heading) * sp;
     f.x += (f.vx + z.windX) * dt;
     f.y += (f.vy + z.windY) * dt;
-    if (f.vx * f.vx + f.vy * f.vy > 1e-8) f.heading = Math.atan2(f.vy, f.vx);
     // Dojście do układu (przystanek trasy / cel / dom).
     if (f.hop >= 0) {
       const s = S[f.hop];

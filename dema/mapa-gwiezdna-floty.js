@@ -23,38 +23,41 @@ import {
   uniform, varyingProperty, vec2, vec3, vec4, length, abs
 } from 'three/tsl';
 import { acesGryInv } from '../src/3d/skybake/skyGameColor.js';
-import { fleetComposition, fleetVisibleToPlayer, FLEET_KINDS, FLEET_MODE, SECTOR_FLIGHT } from '../src/game/sector/index.js';
+import { fleetComposition, fleetVisibleToPlayer, hashU32, FLEET_KINDS, FLEET_MODE, SECTOR_FLIGHT } from '../src/game/sector/index.js';
 import { FACTIONS } from '../src/data/factions.js';
 
 const url = (p) => new URL(p, import.meta.url).href;
 
-/** Sylwetki: klucz → plik sprite'a gry i długość ikony [px CSS przy skali 1]. */
+/**
+ * Sylwetki: klucz → plik sprite'a gry i długość ikony [px CSS przy skali 1 — zoom lotu 190 px/ly]. Małe jak na mapie
+ * Starsectora (uwaga użytkownika 2026-11-08: „statki wciąż za duże, floty będą większe”).
+ */
 export const MAP_HULLS = Object.freeze({
-  atlas: { src: url('../assets/capital_ship_rect_v1.png'), len: 46 },
-  'terra:fregata': { src: url('../src/assets/ships/terranfrigate.png'), len: 16 },
-  'terra:niszczyciel': { src: url('../src/assets/ships/terrandestroyer.png'), len: 21 },
-  'terra:pancernik': { src: url('../src/assets/ships/terranbattleship.png'), len: 28 },
-  'piraci:fregata': { src: url('../src/assets/ships/piratefrigate.png'), len: 16 },
-  'piraci:niszczyciel': { src: url('../src/assets/ships/piratedestroyer.png'), len: 21 },
-  'piraci:pancernik': { src: url('../src/assets/ships/piratebattleship.png'), len: 28 },
-  prom: { src: url('../assets/inter_station_shuttle.png'), len: 14 },
-  kontenerowiec: { src: url('../assets/container_ship.png'), len: 21 },
-  frachtowiec: { src: url('../assets/long_haul_freighter.png'), len: 22 },
-  ciezki: { src: url('../assets/ships/heavy_freighter.png'), len: 25 }
+  atlas: { src: url('../assets/capital_ship_rect_v1.png'), len: 24 },
+  'terra:fregata': { src: url('../src/assets/ships/terranfrigate.png'), len: 7 },
+  'terra:niszczyciel': { src: url('../src/assets/ships/terrandestroyer.png'), len: 9 },
+  'terra:pancernik': { src: url('../src/assets/ships/terranbattleship.png'), len: 12 },
+  'terra:lotniskowiec': { src: url('../src/assets/ships/terrancarrier.png'), len: 13 },
+  'piraci:fregata': { src: url('../src/assets/ships/piratefrigate.png'), len: 7 },
+  'piraci:niszczyciel': { src: url('../src/assets/ships/piratedestroyer.png'), len: 9 },
+  'piraci:pancernik': { src: url('../src/assets/ships/piratebattleship.png'), len: 12 },
+  prom: { src: url('../assets/inter_station_shuttle.png'), len: 6 },
+  kontenerowiec: { src: url('../assets/container_ship.png'), len: 9 },
+  frachtowiec: { src: url('../assets/long_haul_freighter.png'), len: 9.5 },
+  ciezki: { src: url('../assets/ships/heavy_freighter.png'), len: 10.5 }
 });
 const HULL_KEYS = Object.keys(MAP_HULLS);
 const ATLAS = Object.freeze({ cols: 4, rows: 3, cellW: 512, cellH: 256, pad: 10 });
 
-/** Ogony: próbki historii, odstęp [s], życie [s], szerokość (× długość statku), prędkość pełnego ogona [ly/s]. */
-export const TRAIL = Object.freeze({ samples: 44, every: 0.08, life: 3.4, widthK: 0.15, fullSpeed: 0.07 });
+/**
+ * Ogony: próbki historii, odstęp [s], życie [s] (2,3 s — „lekko za długie” przy 3,4 s), szerokość (× długość
+ * statku, najmniej `minHalfPx` px połowy — węższa wstęga „paciorkuje” pod MSAA), prędkość pełnego ogona [ly/s].
+ */
+export const TRAIL = Object.freeze({ samples: 32, every: 0.075, life: 2.3, widthK: 0.13, minHalfPx: 1.4, fullSpeed: 0.07 });
 const STRIDE = TRAIL.samples + 2;
 
-/** Eskorta gracza (podgląd floty gracza — klawisz F): przesunięcia względem Atlasa [px przy skali 1]. */
-const ESCORT = Object.freeze([
-  { key: 'terra:niszczyciel', x: -14, y: -34 },
-  { key: 'terra:fregata', x: -16, y: 32 },
-  { key: 'terra:fregata', x: -40, y: -14 }
-]);
+/** Eskorta gracza (podgląd floty gracza — klawisz F): okręty w szyku za Atlasem. */
+const ESCORT = Object.freeze(['terra:niszczyciel', 'terra:niszczyciel', 'terra:fregata', 'terra:fregata', 'terra:fregata', 'terra:fregata', 'terra:fregata']);
 
 const PLAYER_COLOR = '#79dcff';
 const PIRATE_COLOR = '#ff5a4a';
@@ -70,21 +73,34 @@ function hexToLinear(hex) {
   return [c.r, c.g, c.b];
 }
 
-/** Szyk floty [px przy skali 1, osie gry]: konwój — kolumna parami, okręty — klin; środek ciężkości w punkcie floty. */
-function formation(kind, keys) {
+const hash01 = (...p) => hashU32('szyk floty', ...p) / 4294967296;
+
+/**
+ * Szyk floty [px przy skali 1, osie gry: x wzdłuż kursu]: prowadzący sam z przodu, za nim rzędy — okręty klinem
+ * rosnącym do 6 w rzędzie, konwój kolumną po 3; co drugi rząd przesunięty, drobny rozrzut z hasza (`salt` — flota),
+ * środek ciężkości w punkcie floty. Zwraca przesunięcia i promień kółka floty.
+ */
+function formation(kind, keys, salt = 0) {
+  const n = keys.length;
   const lens = keys.map((k) => MAP_HULLS[k].len);
-  const maxL = Math.max(...lens);
-  const off = keys.map((k, i) => {
-    if (i === 0) return [0, 0];
-    if (kind === 'trade') {
-      const rank = Math.ceil(i / 2);
-      const side = i % 2 ? 1 : -1;
-      return [-rank * (maxL * 0.95 + 5), side * (maxL * 0.36 + 3)];
+  const avg = lens.reduce((a, b) => a + b, 0) / n;
+  const sx = avg * (kind === 'trade' ? 1.3 : 1.05);
+  const sy = avg * (kind === 'trade' ? 1.0 : 0.92);
+  const rows = [1];
+  for (let left = n - 1, r = 1; left > 0; r++) {
+    const w = Math.min(left, kind === 'trade' ? 3 : Math.min(6, r + 1));
+    rows.push(w);
+    left -= w;
+  }
+  const off = [];
+  let x = 0;
+  rows.forEach((w, r) => {
+    if (r > 0) x -= r === 1 ? Math.max(sx, lens[0] * 0.5 + avg * 0.7) : sx;
+    for (let k = 0; k < w; k++) {
+      const jx = r ? (hash01(salt, r, k, 1) - 0.5) * 0.45 * sx : 0;
+      const jy = r ? (hash01(salt, r, k, 2) - 0.5) * 0.35 * sy : 0;
+      off.push([x + jx, (k - (w - 1) / 2) * sy + (r % 2 ? 0.25 * sy : 0) + jy]);
     }
-    const row = Math.ceil(i / 2);
-    const side = i % 2 ? 1 : -1;
-    const sp = maxL * 0.62 + 6;
-    return [-row * sp, side * row * sp * 0.95];
   });
   const cx = off.reduce((a, o) => a + o[0], 0) / off.length;
   const cy = off.reduce((a, o) => a + o[1], 0) / off.length;
@@ -131,17 +147,24 @@ export class FleetImage {
     this.fleets.fleets.forEach((f, r) => {
       const fam = f.kind === 'pirate' ? 'piraci' : 'terra';
       const keys = fleetComposition(f).map((c) => (MAP_HULLS[`${fam}:${c}`] ? `${fam}:${c}` : c));
-      const { off, radius } = formation(f.kind, keys);
+      const { off, radius } = formation(f.kind, keys, r);
       const col = f.kind === 'pirate' ? PIRATE_COLOR : (FACTIONS[f.faction]?.color || '#9fb4d0');
       this.rowRadius[r] = radius;
       this.rowColor[r] = col;
-      const boost = f.kind === 'trade' ? 0.75 : 1.1;
+      // Dużo ogonów obok siebie sumuje się (mieszanie addytywne) — jasność na statek maleje z liczebnością.
+      const boost = (f.kind === 'trade' ? 0.8 : 1.15) * Math.min(1, 2.6 / Math.sqrt(keys.length));
       keys.forEach((k, i) => ships.push({ row: r, key: k, ox: off[i][0], oy: off[i][1], color: col, boost, phase: (r * 2.399 + i * 1.713) % 6.283 }));
     });
-    this.rowRadius[this.playerRow] = MAP_HULLS.atlas.len * 0.5 + 6;
+    // Gracz: Atlas (wiersz gracza) + eskorta w szyku za nim (osobny wiersz z tą samą historią, widoczny po F).
+    const esc = formation('patrol', ['atlas', ...ESCORT], 999);
+    const [ax, ay] = esc.off[0];
+    this.atlasRadius = MAP_HULLS.atlas.len * 0.5 + 5;
+    this.escortRadius = esc.radius + Math.sqrt(ax * ax + ay * ay);
     this.rowColor[this.playerRow] = PLAYER_COLOR;
-    ships.push({ row: this.playerRow, key: 'atlas', ox: 0, oy: 0, color: PLAYER_COLOR, boost: 1.4, phase: 0.4 });
-    ESCORT.forEach((e, i) => ships.push({ row: this.escortRow, key: e.key, ox: e.x, oy: e.y, color: PLAYER_COLOR, boost: 1.0, phase: 1.1 + i * 2.1 }));
+    ships.push({ row: this.playerRow, key: 'atlas', ox: 0, oy: 0, color: PLAYER_COLOR, boost: 1.3, phase: 0.4 });
+    ESCORT.forEach((k, i) => ships.push({
+      row: this.escortRow, key: k, ox: esc.off[i + 1][0] - ax, oy: esc.off[i + 1][1] - ay, color: PLAYER_COLOR, boost: 0.8, phase: 1.1 + i * 2.1
+    }));
     this.rowRadius[this.escortRow] = 0;
     this.rowColor[this.escortRow] = PLAYER_COLOR;
     this.ships = ships;
@@ -320,7 +343,7 @@ export class FleetImage {
       const dtS = max(s0.w.sub(sN.w), 1e-3);
       const spd = length(s0.xy.sub(sN.xy)).div(dtS);
       const moving = smoothstep(TRAIL.fullSpeed * 0.12, TRAIL.fullSpeed, spd);
-      const halfW = a.w.mul(TRAIL.widthK).mul(fade.mul(0.65).add(0.35)).mul(this.shipScale.div(this.U.pxPerLy));
+      const halfW = max(a.w.mul(TRAIL.widthK).mul(this.shipScale), TRAIL.minHalfPx).mul(fade.mul(0.65).add(0.35)).div(this.U.pxPerLy);
       const pos = p0.add(nrm.mul(q.y).mul(halfW));
       vAcross.assign(q.y);
       vA.assign(fade.mul(fade).mul(moving).mul(info.x).mul(info.z.mul(0.7).add(1.0)));
@@ -506,7 +529,8 @@ export class FleetImage {
     out.x = this.hist[o + 4];
     out.y = this.hist[o + 5];
     out.vis = this.vis[r];
-    out.radius = this.rowRadius[r] * this.shipScale.value;
+    const rad = r === this.playerRow ? (this.escort ? this.escortRadius : this.atlasRadius) : this.rowRadius[r];
+    out.radius = rad * this.shipScale.value;
     out.color = this.rowColor[r];
     return out;
   }
