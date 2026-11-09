@@ -1192,6 +1192,12 @@
       createLootContainers, spillLootCargo, stepLootContainers, nearestLootD2, fillLootRenderFrame
     } from "./src/game/lootContainers.js";
     import {
+      createTrafficSalvage, noteTrafficWreck, stepTrafficSalvage, onTrafficSalvageTaken, fillTrafficWorkFrame,
+      classifyGameWreck, forEachTrafficSalvageWreck, isTrafficSalvageWreck
+    } from "./src/game/trafficSalvage.js";
+    import { createTrafficWorkBlock } from "./src/render/blocks/trafficWorkBlock.js";
+    import { TrafficWork3D } from "./src/3d/trafficWork3D.js";
+    import {
       LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
     } from "./src/data/lootGear.js";
     import {
@@ -12987,6 +12993,11 @@
         // Zasięg radarów (prototyp ?radarZasiegi): Atlas, eskorta, czata piratów w kadrze, Corvus i flota poza wzrokiem.
         radar(opts = {}) { return startRadarScene(opts); },
         radarStop() { stopRadarScene(); },
+        // Złomiarze NPC (E24): plac wraków przy Ziemi, hol i cięcie po kolei (opts.angle — kierunek placu od Ziemi).
+        holowanie(opts = {}) { return startTowScene(opts); },
+        holowanieStop() { return stopTowScene(); },
+        /** Kadr sceny „holowanie” od nowa (plac, lejek, Atlas) — po przesunięciu kamery. */
+        holowanieKadr() { towSceneCamera(); return !!TowScene.spot; },
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
         // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
@@ -18075,6 +18086,351 @@
       return out;
     }
 
+    // ============================================================
+    // GÓRNICY I ZŁOMIARZE NPC W BAŃCE (E24) — src/game/trafficSalvage.js. Worker ruchu mówi, kto pracuje (rekordy
+    // `TrafficV2.actorWorks`): górnik w etapie wydobycia, złomiarz tnie albo holuje wrak. Gra: nowy wrak w bańce gracza
+    // (hak `HullBodies.onWreckSpawned`) idzie do rejestru złomiarzy świata ruchu, złomiarz przy wraku zdejmuje węzły
+    // (`cutOuterNode`) albo ciągnie go liną `TowSystem` (zaczep od strony wraku), wrak znika (`removeWreckFromWorld` — lista, zimne
+    // wraki, `recycleWreckEntity`) po końcu pracy. Obraz: blok `trafficWork` (worker) albo `TrafficWork3D` tutaj (off).
+    // Kontenery-łup zniszczonego statku ruchu zostają graczowi (osobne paczki — złomiarz bierze tylko kadłub).
+    // ============================================================
+    let trafficSalvage = null;
+    /** Wraki bliżej bazy piratów fabuły niż tyle [j.] — bez złomiarzy (pole misji 1–2). */
+    const TRAFFIC_SALVAGE_STORY_CLEAR = 400000;
+    const trafficSalvageHooks = {
+      alive: (w) => !w.dead,
+      remove: (w) => removeWreckFromWorld(w),
+      cut: (w) => HullBodies.cutOuterNode(w),
+      nodes: (w) => wreckStructureCount(w),
+      // Zimny wrak (migawka) przed cięciem i liną budzi się jawnie — najwyżej jeden na klatkę (kolejka odmrożeń).
+      thaw: (w) => { if (!w.isCold) return true; thawWreck(w, 'zlomiarz-npc'); return false; },
+      attachRope: (anchor, w, o) => TowSystem.attach(anchor, w, o),
+      detachRope: (h) => TowSystem.detach(h),
+      playerBusy: (w) => salvageState.towed === w || salvageState.cutting === w
+    };
+    function trafficSalvageStep(dt) {
+      if (!trafficSalvage || !trafficBubble) return;
+      const t0 = performance.now();
+      const px = ship ? ship.pos.x : 0;
+      const py = ship ? ship.pos.y : 0;
+      stepTrafficSalvage(trafficSalvage, trafficBubble, _trafficStepTime, dt, px, py);
+      _trafficGameMs += performance.now() - t0;
+    }
+    // Nowy wrak gry → klasa dla złomiarzy (okręt: klasa `WARSHIP_CLASSES` i hol; odłam i cywil — sam złom), źródło
+    // straty garnizonu (awansowany okręt ruchu), filtr: kadłuby graczy, budowle i odłamy bazy, wraki misji fabuły,
+    // wraki z ładunkiem w manifeście (łup gracza), drobnica.
+    {
+      const prevSpawned = HullBodies.onWreckSpawned;
+      HullBodies.onWreckSpawned = (wreck, parent, parentBody) => {
+        if (typeof prevSpawned === 'function') prevSpawned(wreck, parent, parentBody);
+        if (!trafficSalvage || !wreck || wreck.dead) return;
+        noteTrafficWreck(trafficSalvage, wreck, trafficWreckSpec(wreck, parent, parentBody), _trafficStepTime, parent, parentBody);
+      };
+    }
+    function trafficWreckSpec(wreck, parent, parentBody) {
+      const hull = wreck.beamHull;
+      if (!hull || hull.world || wreck.isWorldPiece || wreck.worldDebris) return null;
+      // Wraki przy bazie piratów (misje 1–2: pole bitwy, okręty w stoczni) zostają dla fabuły i gracza.
+      const sc = StoryGame.site?.center;
+      if (sc && (wreck.x - sc.x) ** 2 + (wreck.y - sc.y) ** 2 < TRAFFIC_SALVAGE_STORY_CLEAR ** 2) return null;
+      if (!cargoBagIsEmpty(wreck._cargoManifest)) return null;
+      const radius = Number(wreck.radius) || 0;
+      // Drobnica: odłamy (z cięcia, rozpadu ciała) poniżej progu — cięcie się nie opłaca; cały kadłub (fregata) zgłasza się zawsze.
+      if (radius < trafficSalvage.tune.minRadius && (parentBody || parent?.isWreck)) return null;
+      // Statek, z którego jest wrak: przy śmierci — sam rodzic; odłam wraku — właściciel wraku-rodzica.
+      const src = parent && !parent.isWreck ? parent : (wreck.owner || parent);
+      if (!src || src === ship || src === player2Ship || src.isPlayer || src.playerOwned) return null;
+      // Okręty fabuły (znaczniki StoryGame: __storyTag / __storyKey, okręt flagowy, wieże) i strażnicy misji najemniczej.
+      if (src.__storyTag || src.__storyKey || src.__storyFlagship || src.__storyTurret) return null;
+      if (mercMission?.guards?.includes(src)) return null;
+      const spec = classifyGameWreck({
+        kind: getUnitKind(src), type: src.type, radius: Number(src.radius) || radius,
+        mass: wreck.mass, mass0: src.mass, piece: !!parentBody || !!parent?.isWreck
+      });
+      spec.factionId = src.faction || src.factionId || (src.isPirate ? FACTION.PIRATES : null);
+      // Scena „holowanie”: wraki statków sceny zgłaszają się wstrzymane — kolej ustala scena (`towSceneRelease`).
+      if (TowScene.active && (towSceneShipOf(wreck) || towSceneShipOf(parent))) spec.held = true;
+      // Awansowany okręt ruchu (garnizon, zapas floty): wrak gry = wrak jego straty w świecie ruchu.
+      if (src.trafficCourse != null && !parentBody && !parent?.isWreck) {
+        spec.source = `${src.trafficFree ? 'entity' : 'course'}:${src.trafficCourse}`;
+      }
+      return spec;
+    }
+    /** Ramka obrazu pracy w chwili klatki renderu (blok `trafficWork` / `TrafficWork3D` w off); w soczewce skoku — pusta. */
+    function trafficWorkRenderFrame(alpha) {
+      if (!trafficSalvage || !trafficV2 || !trafficBubble) return null;
+      if (_lensDotsActive || trafficBubble.hideRender || trafficSalvage.hideRender) { trafficSalvage.frame.count = 0; return trafficSalvage.frame; }
+      const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
+      return fillTrafficWorkFrame(trafficSalvage, trafficBubble, t, trafficActorPoseAt);
+    }
+    /**
+     * `?hol=` — prędkość holownika z wrakiem na linie w bańce (worker: `config.bubble.towHaulSpeed`): liczba [j./s]
+     * (`?hol=1200` — dzisiejsza, prędkość trybu) albo `wolny` — prędkość, z której rekord kursu złomiarza liczy przelot
+     * z wrakiem (`cruiseSpeed / towSpeedPenalty`). Bez parametru — null (dzisiejsza).
+     */
+    function trafficHaulQuery() {
+      const q = new URLSearchParams(location.search).get('hol');
+      if (q == null || q === '') return null;
+      if (q === 'wolny' || q === 'model' || q === 'ekonomia') return 'model';
+      const v = Number(q);
+      return Number.isFinite(v) && v >= 0 ? v : null;
+    }
+
+    // SCENA „HOLOWANIE” (E24) — `?scena=holowanie` (sekundę po wejściu do gry swobodnej, jak `?wojna`) albo
+    // `DevScene.holowanie()`. Pokaz pracy złomiarzy NPC na PRAWDZIWYCH wrakach gry, bez nakładek: plac 68 tys. j. od
+    // Ziemi po stronie, gdzie port Ziemi jest najbliższym portem (złomiarze startują z niego); lejek ringu ~9 km od
+    // placu to punkt zrzutu — holownik kończy tam kurs i znika z wrakiem na linie. Atlas z boku, kamera floty nad placem
+    // i lejkiem. Wraki ścieżką gry: niszczyciel, fregata i frachtowiec giną z puli HP (`applyDamageToNPC` →
+    // `convertToWreck`), pancernik piratów pęka na trzy części stopieniem rdzenia (`ReactorGame.forceMeltdown`, wariant
+    // `thirds`). Wraki statków sceny zgłaszają się wstrzymane (`held`), scena puszcza je po kolei — niszczyciel (hol),
+    // największy odłam (cięcie), fregata (hol), frachtowiec (cięcie), na koniec reszta; następny, gdy złomiarz
+    // poprzedniego pracuje (lina albo palniki) + `gap` s. Złomiarze świata w scenie: bez pierwszeństwa gracza, każdy wrak
+    // wart lotu, krótsze postoje (`config.scrappers`). Prędkość holu — `?hol=` (działa też poza sceną).
+    const TOW_SCENE = {
+      /**
+       * Plac: odległość od środka Ziemi [j.]. Lejek ringu (punkt zrzutu: `funnelR` ringu w `ringRouter.js`, ~64,6 tys. j.
+       * — tylko do kadru): holownik wraca z wrakiem ~5 km w stronę Ziemi i tam kończy kurs.
+       */
+      radius: 70500,
+      funnelR: 64600,
+      /** Atlas z boku placu — na przedłużeniu linii wraków, po stronie od Ziemi [j.]; dziobem do placu. */
+      atlasAlong: 7200,
+      /** Inny port bliżej placu niż tyle [j.] — kierunek odpada (złomiarz ma lecieć z Ziemi). */
+      portClear: 150000,
+      /** Następny wrak tyle sekund po początku pracy poprzedniego; złomiarza czekamy najwyżej `waitWork` s. */
+      gap: 6,
+      waitWork: 150,
+      /** Kadłuby NPC budują się ze sprite'a przy rysowaniu — najwyżej tyle sekund czekamy, zanim zginą. */
+      hullWait: 15,
+      /** Odliczanie stopienia rdzenia pancernika i uspokojenie wraków przed kolejką [s]. */
+      meltdown: 1.2,
+      settle: 4,
+      /** Złomiarze świata ruchu w scenie. */
+      scrappers: { gameWreckDelay: 0, minProfit: -1e9, gameReserve: 6, hookSeconds: 20, cutSeconds: 40 },
+      /**
+       * Statki sceny: miejsce na placu (u — od Ziemi, v — w bok) i śmierć (pula HP albo stopienie rdzenia). Linia
+       * wzdłuż kierunku holu (lejek – plac – Atlas poziomo w kadrze): wąski pas w pionie = większy zoom na ekranie 32:9.
+       */
+      ships: [
+        { role: 'niszczyciel', key: 'destroyer', du: -700, dv: -450, kill: 'hp' },
+        { role: 'fregata', key: 'frigate_pd', du: -700, dv: 500, kill: 'hp' },
+        { role: 'frachtowiec', key: 'freighter-large', du: 1100, dv: 50, kill: 'hp', dev: true },
+        { role: 'odlamy', key: 'pirate_battleship', du: 3400, dv: 0, kill: 'rdzen' }
+      ]
+    };
+    const TowScene = {
+      active: false, phase: 'idle', t: 0, phaseT: 0, opts: null, spot: null, u: null, v: null,
+      ships: [], queue: [], rest: [], released: [], current: null, currentAt: 0, workAt: -1, log: []
+    };
+    function towSceneNote(what, w = null) {
+      TowScene.log.push({ t: Math.round(TowScene.t * 10) / 10, what, gid: w?.gid ?? null, role: w?.role ?? null });
+    }
+    /** Statek sceny, z którego jest encja (statek, wrak albo odłam wraku) — null, gdy obca. */
+    function towSceneShipOf(e) {
+      for (let i = 0; i < 3 && e; i++) {
+        for (const s of TowScene.ships) if (s.npc === e) return s;
+        e = e.owner || null;
+      }
+      return null;
+    }
+    function startTowScene(opts = {}) {
+      if (!trafficV2 || !trafficSalvage) return { blad: 'ruch v2 wyłączony' };
+      const earth = CURRENT_SYSTEM.handmade ? planets.find((p) => p.id === 'earth') : null;
+      if (!earth) return { blad: 'scena tylko przy Ziemi (Układ Słoneczny)' };
+      stopTowScene();
+      if (WarScene.active) stopWarScene({ clear: false });
+      if (RadarRangeScene.active) stopRadarScene();
+      Object.assign(TowScene, {
+        active: true, phase: 'czeka', t: 0, phaseT: 0, opts, spot: null, u: null, v: null,
+        ships: [], queue: [], rest: [], released: [], current: null, currentAt: 0, workAt: -1, log: []
+      });
+      window.TowScene = TowScene;
+      towSceneNote('start');
+      return { faza: TowScene.phase };
+    }
+    function stopTowScene() {
+      const S = TowScene;
+      if (!S.active) return false;
+      // Wraki sceny wstrzymane do końca kolejki wracają do puli złomiarzy.
+      const held = [];
+      if (trafficSalvage) for (const rec of trafficSalvage.reported.values()) if (towSceneShipOf(rec.wreck) && !S.released.includes(rec.gid)) held.push(rec.gid);
+      if (held.length && trafficV2) trafficV2.wrecksHold(held, false);
+      SensorSystem.clearArea('scena-holowanie');
+      S.active = false;
+      S.phase = 'idle';
+      if (camera.mode === 'rts') setPlayerRtsMode(false);
+      return true;
+    }
+    /** Plac, Atlas, statki sceny i kadr — gdy świat ruchu po rozgrzewce (bańka stoi do jej końca). */
+    function towScenePlace() {
+      const S = TowScene;
+      const earth = planets.find((p) => p.id === 'earth');
+      const R = TOW_SCENE.radius;
+      // Kierunek placu: inne porty dalej niż `portClear` (złomiarz leci z najbliższego), w tej kolejności — poziomo
+      // w kadrze (plac i lejek wzdłuż dłuższego boku ekranu) przed pionem i skosem; żaden — najdalej od innych portów.
+      let best = null;
+      for (const a of [Math.PI, 0, Math.PI / 2, -Math.PI / 2, 0.75 * Math.PI, -0.75 * Math.PI, 0.25 * Math.PI, -0.25 * Math.PI]) {
+        const px = earth.x + Math.cos(a) * R;
+        const py = earth.y + Math.sin(a) * R;
+        let near = Infinity;
+        for (const st of trafficV2.tables?.stations || []) {
+          if (!st || st.id === 'earth' || !Number.isFinite(st.x) || !Number.isFinite(st.y)) continue;
+          const d = Math.sqrt((st.x - px) ** 2 + (st.y - py) ** 2);
+          if (d < near) near = d;
+        }
+        const score = Math.min(near, TOW_SCENE.portClear);
+        if (!best || score > best.score) best = { a, score };
+      }
+      S.earth = { x: earth.x, y: earth.y };
+      const a = Number.isFinite(S.opts?.angle) ? S.opts.angle : best.a;
+      const ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+      const P = { x: earth.x + ux * R, y: earth.y + uy * R };
+      S.spot = P;
+      S.u = { x: ux, y: uy };
+      S.v = { x: vx, y: vy };
+      const ax = P.x + ux * TOW_SCENE.atlasAlong;
+      const ay = P.y + uy * TOW_SCENE.atlasAlong;
+      if (typeof window.devTeleportTo === 'function') window.devTeleportTo(ax, ay, { angle: Math.atan2(P.y - ay, P.x - ax), quiet: true });
+      trafficV2.setConfig({ scrappers: TOW_SCENE.scrappers });
+      for (const def of TOW_SCENE.ships) {
+        const pos = { x: P.x + ux * def.du + vx * def.dv, y: P.y + uy * def.du + vy * def.dv };
+        const ang = a + Math.PI / 2;
+        const r = def.dev ? spawnDevHull(def.key, { pos, mode: 'dummy', spawnAngle: ang })
+          : spawnCallInShip(def.key, { mode: 'dummy', spawnPos: pos, spawnAngle: ang, exitK: 0 });
+        const npc = Array.isArray(r) ? r[0] : r;
+        if (!npc) { towSceneNote(`brak-statku:${def.key}`); continue; }
+        npc.vx = 0;
+        npc.vy = 0;
+        S.ships.push({ role: def.role, key: def.key, kill: def.kill, npc, pos });
+      }
+      // Plac i lejek odsłonięte w mgle wojny (złomiarze, wraki i Atlas w jednym kadrze).
+      SensorSystem.revealArea('scena-holowanie', P.x - ux * 4000, P.y - uy * 4000, 16000, Infinity);
+      towSceneCamera();
+      S.phase = 'kadluby';
+      S.phaseT = 0;
+      towSceneNote(`plac:${Math.round(P.x)},${Math.round(P.y)}:kat=${a.toFixed(2)}`);
+    }
+    /** Kamera floty nad placem, lejkiem ringu i Atlasem. */
+    function towSceneCamera() {
+      const S = TowScene;
+      if (!S.spot) return;
+      const P = S.spot, u = S.u, drop = TOW_SCENE.radius - TOW_SCENE.funnelR;
+      // Lejek (punkt zrzutu), statki sceny i Atlas (kadłub wzdłuż linii — ± promień).
+      const ar = Number(ship.radius) || 0;
+      const pts = [{ x: P.x - u.x * drop, y: P.y - u.y * drop },
+        { x: ship.pos.x - u.x * ar, y: ship.pos.y - u.y * ar }, { x: ship.pos.x + u.x * ar, y: ship.pos.y + u.y * ar }];
+      for (const s of S.ships) pts.push(s.pos);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      const mx = 700, my = 600;
+      // Kokpit zasłania dół środka ekranu: kadr w ~60% wysokości, środek treści na 0,4 wysokości ekranu.
+      const zoom = clamp(Math.min(W * 0.94 / (x1 - x0 + 2 * mx), H * 0.6 / (y1 - y0 + 2 * my)), camera.minZoom, camera.maxZoom);
+      camera.transition = null;
+      camera.manualZoom = true;
+      camera.zoom = camera.targetZoom = camera.zoomBase = zoom;
+      camera.zoomVel = 0;
+      camera.zoomImpulseLog = 0;
+      if (camera.mode !== 'rts') setPlayerRtsMode(true);
+      camera.x = camera.targetX = (x0 + x1) / 2;
+      camera.y = camera.targetY = (y0 + y1) / 2 + H * 0.1 / zoom;
+      prevCameraState.x = camera.x;
+      prevCameraState.y = camera.y;
+    }
+    /** Statki sceny giną ścieżką gry (wrak z puli HP; pancernik — stopienie rdzenia, trzy części). */
+    function towSceneKill() {
+      for (const s of TowScene.ships) {
+        const n = s.npc;
+        if (!n || n.dead) continue;
+        n.vx = 0;
+        n.vy = 0;
+        if (!n.beamHull) towSceneNote(`bez-kadluba:${s.key}`);
+        if (s.kill === 'rdzen' && n.beamHull && ReactorGame.forceMeltdown(n, TOW_SCENE.meltdown, 'thirds')) continue;
+        window.applyDamageToNPC(n, 1e12, 'default');
+      }
+      TowScene.phase = 'wraki';
+      TowScene.phaseT = 0;
+      towSceneNote('wraki');
+    }
+    /** Kolejka wraków sceny ze zgłoszonych (wstrzymanych) — po uspokojeniu, gdy żaden nie czeka na zgłoszenie. */
+    function towSceneQueue() {
+      const S = TowScene;
+      const mine = [];
+      for (const rec of trafficSalvage.reported.values()) {
+        const s = towSceneShipOf(rec.wreck);
+        if (s) mine.push({ gid: rec.gid, role: s.role, r: Math.round(Number(rec.wreck.radius) || 0), tow: !!rec.spec?.towable });
+      }
+      const take = (pred) => {
+        let k = -1;
+        for (let i = 0; i < mine.length; i++) if (pred(mine[i]) && (k < 0 || mine[i].r > mine[k].r)) k = i;
+        return k < 0 ? null : mine.splice(k, 1)[0];
+      };
+      S.queue = [
+        take((w) => w.role === 'niszczyciel' && w.tow),
+        take((w) => w.role === 'odlamy' && !w.tow),
+        take((w) => w.role === 'fregata' && w.tow),
+        take((w) => w.role === 'frachtowiec')
+      ].filter(Boolean);
+      S.rest = mine.map((w) => w.gid);
+      S.current = null;
+      S.phase = 'kolejka';
+      S.phaseT = 0;
+      towSceneNote(`kolejka:${S.queue.map((w) => `${w.role}/${w.gid}/${w.tow ? 'hol' : 'ciecie'}`).join(',')}:reszta=${S.rest.length}`);
+    }
+    /** Złomiarz wraku `gid` pracuje: lina podpięta albo palniki ruszyły. */
+    function towSceneWorking(gid) {
+      for (const job of trafficSalvage.jobs.values()) if (job.gid === gid && (job.rope || job.cut0 > 0)) return true;
+      return false;
+    }
+    function towSceneRelease() {
+      const S = TowScene;
+      if (S.current) {
+        const gid = S.current.gid;
+        if (S.workAt < 0 && towSceneWorking(gid)) { S.workAt = S.t; towSceneNote('praca', S.current); }
+        const gone = !trafficSalvage.reported.has(gid);
+        if (!gone && !(S.workAt >= 0 && S.t - S.workAt >= TOW_SCENE.gap) && S.t - S.currentAt < TOW_SCENE.waitWork) return;
+        if (S.workAt < 0) towSceneNote(gone ? 'zniknal-przed-praca' : 'bez-zlomiarza', S.current);
+        S.current = null;
+      }
+      const next = S.queue.shift();
+      if (next) {
+        S.current = next;
+        S.currentAt = S.t;
+        S.workAt = -1;
+        S.released.push(next.gid);
+        trafficV2.wrecksHold([next.gid], false);
+        towSceneNote('puszczony', next);
+        return;
+      }
+      if (S.rest.length) {
+        trafficV2.wrecksHold(S.rest, false);
+        S.released.push(...S.rest);
+        towSceneNote(`reszta:${S.rest.length}`);
+        S.rest = [];
+      }
+      S.phase = 'praca';
+      S.phaseT = 0;
+    }
+    /** Krok sceny (physicsStep, po złomiarzach): rozstawienie, śmierć statków, kolejka wraków. */
+    function stepTowScene(dt) {
+      const S = TowScene;
+      if (!S.active) return;
+      S.t += dt;
+      S.phaseT += dt;
+      if (S.phase === 'czeka') {
+        if (trafficV2?.ready && !trafficV2.warmup?.active && ship && !ship.dead) towScenePlace();
+      } else if (S.phase === 'kadluby') {
+        if (S.ships.every((s) => s.npc.dead || s.npc.beamHull) || S.phaseT > TOW_SCENE.hullWait) towSceneKill();
+      } else if (S.phase === 'wraki') {
+        if (S.phaseT > TOW_SCENE.meltdown + TOW_SCENE.settle && !trafficSalvage.pending.some((p) => towSceneShipOf(p.wreck))) towSceneQueue();
+      } else if (S.phase === 'kolejka') {
+        towSceneRelease();
+      } else if (S.phase === 'praca') {
+        let left = 0;
+        for (const rec of trafficSalvage.reported.values()) if (towSceneShipOf(rec.wreck)) left++;
+        if (!left) { S.phase = 'koniec'; towSceneNote('koniec'); }
+      }
+    }
+
     // AWANS DO PEŁNEGO NPC (E6, src/game/trafficPromotion.js): encja z kursem trafiona przez gracza (pocisk, taran)
     // staje się NPC gry — kadłub na belkach ze sprite'a kadłuba ruchu (buduje go drawNPCPretty jak kadłuby
     // DEV_HULL_SPAWNS), lot i rozkazy NPC, rany, wrak. Kurs przejmuje gra (`attach` — rekord stoi). Najwyżej jeden
@@ -18838,6 +19194,13 @@
       });
       trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed, onHit: onTrafficActorHit });
       window.TrafficBubble = trafficBubble;
+      // Górnicy i złomiarze NPC w bańce (E24): wraki gry do rejestru złomiarzy, cięcie, lina holu, ramka obrazu.
+      trafficSalvage = createTrafficSalvage(trafficV2, trafficSalvageHooks);
+      window.TrafficSalvage = trafficSalvage;
+      trafficV2.on('salvage-taken', (list) => onTrafficSalvageTaken(trafficSalvage, list));
+      // Prędkość holu złomiarzy w bańce z adresu (`?hol=1200` — dzisiejsza, `?hol=wolny` — jak rekord kursu).
+      const towHaul = trafficHaulQuery();
+      if (towHaul != null) trafficV2.setConfig({ bubble: { towHaulSpeed: towHaul } });
       trafficPromotion = createTrafficPromotion();
       // Narzędzia: zmierzona budowa kadłubów NPC ruchu [ms] (próg taranu — trafficRamLead).
       trafficPromotion.hullBuildMs = _trafficHullBuildMs;
@@ -28115,6 +28478,7 @@
         const w = wrecks[i];
         if (!w?.beamHull) continue;
         if (salvageState.towed === w || salvageState.cutting === w) continue;
+        if (isTrafficSalvageWreck(trafficSalvage, w)) continue;
         if (!cargoBagIsEmpty(w._cargoManifest)) continue;
         const dx = w.x - px;
         const dy = w.y - py;
@@ -28166,6 +28530,8 @@
       _coldRefMarkStamp = stamp;
       markColdRef(salvageState.cutting);
       markColdRef(salvageState.towed);
+      // Wraki pod palnikiem i na linie złomiarzy NPC (E24) nie marzną pod ręką.
+      if (trafficSalvage) forEachTrafficSalvageWreck(trafficSalvage, markColdRef);
       markColdRef(lockedTarget);
       markColdRef(lockedTarget2);
       for (let i = 0; i < lockedTargets.length; i++) markColdRef(lockedTargets[i]);
@@ -28592,6 +28958,10 @@
       PerfHUD.markPhysicsStep();
       // Bańka ruchu v2 (E6): pozy statków ruchu w czasie tego kroku — przed pociskami i taranem.
       trafficBubbleStep(dt);
+      // Złomiarze NPC (E24): zgłoszenia wraków, cięcie, kotwice lin holu (przed TowSystem.update).
+      trafficSalvageStep(dt);
+      // Scena „holowanie” (?scena=holowanie): rozstawienie, śmierć statków, kolejka wraków dla złomiarzy.
+      stepTowScene(dt);
       // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
       ServiceTugGame.restorePose();
       let tPhysSection0 = performance.now();
@@ -31582,6 +31952,8 @@
       // kontenery-łup (K2): paczki, lampki i wiązka (src/3d/cargo/lootContainers3D.js w workerze)
       if (RW_WORKER) renderSnapshot.addBlock(createLootBlock());
       if (RW_WORKER) renderSnapshot.addBlock(createEscapePodBlock());
+      // E24: górnicy i złomiarze NPC w pracy (src/3d/trafficWork3D.js w workerze; drony i lasery — MiningView pasa)
+      if (RW_WORKER) renderSnapshot.addBlock(createTrafficWorkBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -31777,6 +32149,7 @@
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
       f.loot = RW_WORKER ? _lootRender : null;
       f.pods = RW_WORKER ? _podRender : null;
+      f.trafficWork = RW_WORKER && trafficSalvage ? trafficSalvage.frame : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -32957,6 +33330,8 @@
       lootRenderFrame(alpha);
       // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off).
       escapePodRenderFrame(alpha);
+      // Górnicy i złomiarze NPC (E24): praca w chwili klatki — blok `trafficWork` (worker) albo rysunek tutaj (off).
+      const trafficWorkFrame = trafficWorkRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -33051,6 +33426,8 @@
           sharedLootContainers3D().update(_lootRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           // Kapsuły ratunkowe (E22): kadłubki, lampy i płomienie (worker — z bloku `pods`).
           sharedEscapePods3D().update(_podRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
+          // Górnicy i złomiarze NPC (E24): drony i lasery w pasie, palniki, iskry i wiązka holu (worker — z bloku trafficWork).
+          TrafficWork3D.update(trafficWorkFrame, asteroidBelt, Core3D.frameNowMs() * 0.001, PAUSED ? 0 : frameDt);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
           updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);
@@ -36175,6 +36552,10 @@
       // Zasięg radarów (prototyp): ?radarZasiegi=scena — scena sekundę po wejściu do gry swobodnej.
       if (RADAR_RANGE_QUERY.get('radarZasiegi') === 'scena' && !storyCampaign) {
         setTimeout(() => { try { startRadarScene(); } catch (err) { console.error('[Zasięg radarów] start sceny:', err); } }, 1000);
+      }
+      // Złomiarze NPC (E24): ?scena=holowanie — plac wraków przy Ziemi, hol i cięcie (blok „GÓRNICY I ZŁOMIARZE”).
+      if (warQuery.get('scena') === 'holowanie' && !storyCampaign) {
+        setTimeout(() => { try { startTowScene(); } catch (err) { console.error('[Holowanie] start sceny:', err); } }, 1000);
       }
     }
     if (newGameButton) {

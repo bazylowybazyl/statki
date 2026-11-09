@@ -290,6 +290,29 @@ function driveTableSection(t) {
     const a = getActorList(bubble)[0];
     t.close(`strefa planety: ${mode} × ${expectK}`, a.cruise / a.driveCruise, expectK, 1e-9);
   }
+
+  // Hol złomiarza (E24, `towHaulSpeed` z `?hol=` gry): przelot powrotny kursu w trybie hol (ostatni etap) najwyżej
+  // z limitem konfiguracji bańki; przelot do wraku, kurs cięcia i limit 0 — prędkość trybu.
+  const conv = DRIVE_MODES.conventional.speed;
+  for (const [name, cap, salvageMode, haulLast, expect] of [
+    ['hol, przelot powrotny', 409, 'tow', true, 409],
+    ['hol, przelot do wraku', 409, 'tow', false, conv],
+    ['cięcie', 409, 'cut', true, conv],
+    ['hol bez limitu', 0, 'tow', true, conv]
+  ]) {
+    const registry = createCourseRegistry();
+    const trip = travelStage('a', 'b', { seconds: 3000, distance: 3_000_000 });
+    const hook = dwellStage('a', 1, DWELL_REASON.SERVICE, { x: 0, y: 0 });
+    const course = launchCourse(registry, {
+      kind: COURSE_KIND.TUG, unitClass: 'tug', stages: haulLast ? [hook, trip] : [trip, hook]
+    });
+    course.salvageMode = salvageMode;
+    if (haulLast) advanceCourses(registry, 2);
+    const bubble = createBubble({ towHaulSpeed: cap });
+    updateBubble(bubble, far, registry, indeks(registry), { x: 0, y: 0 }, 50_000, 0);
+    const a = getActorList(bubble)[0];
+    t.equal(`towHaulSpeed: ${name} — ${expect} j./s`, a?.cruise, expect);
+  }
 }
 
 /**

@@ -101,6 +101,11 @@ export const FLIGHT_DEFAULTS = Object.freeze({
   separationStrength: 0.55,
   /** Ile encji wolno utrzymywać naraz. Bańka ma być ograniczona, nie nieskończona. */
   maxActors: 400,
+  /**
+   * Holownik z wrakiem na linie (E24, kurs złomiarza `salvageMode: 'tow'`, przelot powrotny) leci najwyżej tyle [j./s];
+   * 0 — bez limitu (prędkość trybu etapu jak każdy przelot). Gra ustawia z adresu `?hol=` (`config.bubble`).
+   */
+  towHaulSpeed: 0,
   /** Poza tym ułamkiem promienia bańki encja wraca do rekordu (histereza). */
   releaseMargin: 1.25,
   /** Wyprzedzenie punktu celowania [s] i jego granice w swobodnym locie [j.]. */
@@ -221,16 +226,24 @@ function driveFor(stage, course) {
   return driveModeFor(stage?.mode, vanClass) || DRIVE_MODES.conventional;
 }
 
-/** Prędkość przelotowa etapu — z napędu kursu; brama i nieznany tryb lecą konwencjonalnym. */
-function cruiseFor(stage, course) {
+/**
+ * Prędkość przelotowa etapu — z napędu kursu; brama i nieznany tryb lecą konwencjonalnym. Holownik z wrakiem
+ * na linie (kurs złomiarza w trybie hol, `salvageMode`, przelot powrotny) — najwyżej `towHaulSpeed` konfiguracji bańki
+ * (E24; 0 = bez limitu — prędkość trybu jak każdy przelot; `?hol=wolny` w grze = prędkość z rachunku złomiarzy).
+ */
+function cruiseFor(stage, course, config = null) {
   const speed = driveFor(stage, course).speed;
-  return Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+  const v = Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+  const cap = Number(config?.towHaulSpeed) || 0;
+  if (cap > 0 && course?.salvageMode === 'tow' && stage && stage === course.stages?.[course.stages.length - 1]
+    && stage.kind === STAGE_KIND.TRAVEL) return Math.min(v, cap);
+  return v;
 }
 
 /** Napęd etapu na encję: prędkość przelotowa i — gdy tabela je ma (hipercruise) — rozpęd i hamowanie. */
-function applyDrive(actor, stage, course) {
+function applyDrive(actor, stage, course, config = null) {
   const mode = driveFor(stage, course);
-  actor.cruise = cruiseFor(stage, course);
+  actor.cruise = cruiseFor(stage, course, config);
   actor.driveCruise = actor.cruise;
   actor.mode = stage?.mode || null;
   actor.driveAccel = mode.accel > 0 ? mode.accel : 0;
@@ -660,7 +673,7 @@ function planTravel(bubble, network, course, stage, actor) {
   if (next) {
     const brake = freeBrake(bubble.config, actor);
     if (next.kind === STAGE_KIND.TRAVEL) {
-      vEnd = Math.min(actor.cruise, cruiseFor(next, course));
+      vEnd = Math.min(actor.cruise, cruiseFor(next, course, bubble.config));
       fEnd = 0;
     } else if (next.pos) {
       const dist = Math.hypot(next.pos.x - ex, next.pos.y - ey);
@@ -857,7 +870,7 @@ function materialize(bubble, network, course, focus, inner) {
   const stage = currentStage(course);
   if (!stage) return null;
   const actor = createActor(bubble, course);
-  applyDrive(actor, stage, course);
+  applyDrive(actor, stage, course, bubble.config);
   const ok = stage.kind === STAGE_KIND.TRAVEL
     ? placeTravel(bubble, network, course, stage, actor)
     : placeDwell(bubble, network, course, stage, actor);
@@ -1541,7 +1554,7 @@ function enterStage(bubble, network, course, actor) {
   const stage = currentStage(course);
   actor.stageIndex = course.stageIndex;
   if (!stage) return;
-  applyDrive(actor, stage, course);
+  applyDrive(actor, stage, course, bubble.config);
   actor.dwell = Math.max(0, Number(course.stageElapsed) || 0);
   actor.pathStart = 0;
   if (stage.kind === STAGE_KIND.DWELL) planDwell(bubble, network, course, stage, actor);

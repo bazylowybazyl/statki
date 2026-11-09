@@ -397,3 +397,44 @@ export const BELT_MSG = Object.freeze({
   MINED: 'belt-mined',
   HOLES: 'belt-holes'
 });
+
+/**
+ * PRACA STATKÓW RUCHU W BAŃCE I WRAKI GRY DLA ZŁOMIARZY (E24) — osobna tabela jak `BELT_MSG`.
+ *
+ * WORKER → GRA (w wiadomości `actors`, tylko zmiany — jak `docks`):
+ *   works: [WorkRecord]   encja w etapie pracy albo holu (nowa lub zmieniona),
+ *   unworked: [id]        encja skończyła pracę albo zniknęła z bańki.
+ *   WorkRecord = { id, kind, phase, x, y, t0, dur, gid }
+ *     id    — numer kursu (= `ACTOR_FIELD.ID` encji),
+ *     kind  — `WORK_KIND`: górnik w etapie wydobycia, złomiarz tnie albo holuje,
+ *     phase — 'work' (postój przy polu / wraku), 'haul' (złomiarz wraca z wrakiem na linie),
+ *     x, y  — punkt pracy z rekordu (miejsce wydobycia, pozycja wraku z rejestru),
+ *     t0, dur — czas mostu początku i długość postoju (koniec pracy = t0 + dur; w holu 0, 0),
+ *     gid   — id wraku GRY (zgłoszony przez `wreck-report`) albo null (wrak wojny liczonej w tle).
+ *
+ * GRA → WORKER
+ *   wreck-report { wrecks: [{ gid, x, y, classId, scale, towable, factionId, source }] }
+ *       wraki gry w bańce gracza do rejestru złomiarzy (`war.wrecks`): klasa okrętu wojennego (`WARSHIP_CLASSES`),
+ *       `scale` — ułamek kadłuba klasy (0–1), `towable: false` — sam złom (odłam, cywil); `source` — 'course:N'
+ *       albo 'entity:N' (okręt garnizonu / zapasu floty: wrak wiąże się ze stratą zapasu, bez drugiego wraku);
+ *   wreck-gone { gids: [gid] }   wrak gry przepadł — złomiarz w drodze wraca pusty, wpis wypada z rejestru;
+ *   wreck-hold { gids: [gid], on } gracz pracuje przy wraku (tnie, holuje, zbiera łup) — złomiarze go pomijają, holownik
+ *       w drodze albo przy wraku wraca pusty (wrak zostaje w rejestrze); `on: false` — gracz go zostawił.
+ *   Pierwszeństwo gracza: złomiarz nie leci po wrak gry wcześniej niż `gameWreckDelay` (300 s) po zgłoszeniu.
+ * WORKER → GRA
+ *   salvage-taken { taken: [{ gid, mode, course }] }   złomiarz skończył cięcie albo zaczepił wrak (koniec postoju):
+ *       gra usuwa wrak (`removeWreckFromWorld`), a przy holu w bańce — dopiero gdy holownik zniknie z bańki.
+ */
+export const SALVAGE_MSG = Object.freeze({
+  WRECK_REPORT: 'wreck-report',
+  WRECK_GONE: 'wreck-gone',
+  WRECK_HOLD: 'wreck-hold',
+  TAKEN: 'salvage-taken'
+});
+
+/** Rodzaj pracy encji w `WorkRecord`. */
+export const WORK_KIND = Object.freeze({
+  MINE: 'mine',
+  CUT: 'cut',
+  TOW: 'tow'
+});

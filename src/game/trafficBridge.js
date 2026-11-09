@@ -26,7 +26,7 @@ import {
   TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD,
   TRAFFIC_WARMUP_FALLBACK_SECONDS
 } from './traffic/trafficProtocol.js';
-import { BELT_MSG } from './traffic/trafficProtocol.js';
+import { BELT_MSG, SALVAGE_MSG } from './traffic/trafficProtocol.js';
 import { moveStock } from './traffic/marketStock.js';
 import { findTradePartners as computeTradePartners, TRADE_PARTNER_TUNE } from './tradePartners.js';
 import { describeWorkforce } from './workforce.js';
@@ -130,6 +130,11 @@ export class TrafficBridge {
     this.actorDocks = new Map();
     /** Ładunek encji bańki (kontenery-łup K1): numer kursu → { id, cargo, mass, value }. Worker przysyła zmiany. */
     this.actorManifests = new Map();
+    /**
+     * Praca encji bańki (E24, `WorkRecord` z `trafficProtocol.js`): numer kursu → { id, kind, phase, x, y, t0, dur, gid } —
+     * górnik w etapie wydobycia, złomiarz przy wraku albo z wrakiem na linie. Worker przysyła zmiany.
+     */
+    this.actorWorks = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -437,6 +442,31 @@ export class TrafficBridge {
     this._send({ type: BELT_MSG.MINED, x: Number(x), y: Number(y), tons: amount });
   }
 
+  // ============================================================
+  // Złomiarze i wraki gry (E24)
+  // ============================================================
+
+  /**
+   * Wraki gry w bańce gracza do rejestru złomiarzy świata ruchu: `[{ gid, x, y, classId, scale, towable, factionId,
+   * source }]` (`SALVAGE_MSG.WRECK_REPORT`). Złomiarz, który skończy pracę, wraca zdarzeniem `salvage-taken`.
+   */
+  reportWrecks(wrecks) {
+    if (!Array.isArray(wrecks) || !wrecks.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_REPORT, wrecks });
+  }
+
+  /** Gracz pracuje przy zgłoszonych wrakach (`on`) albo je zostawił — złomiarze ich nie ruszają, dopóki trwa praca gracza. */
+  wrecksHold(gids, on = true) {
+    if (!Array.isArray(gids) || !gids.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_HOLD, gids, on: !!on });
+  }
+
+  /** Zgłoszone wraki gry, których już nie ma (zabrał je gracz, przepadły) — złomiarz w drodze wraca pusty. */
+  wrecksGone(gids) {
+    if (!Array.isArray(gids) || !gids.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_GONE, gids });
+  }
+
   /** Wyrwy z workera: kopia `beltHoles` i zdarzenie `belt-holes` ze zmianami (depth 0 = usunięta). */
   _onBeltHoles(message) {
     const list = Array.isArray(message.holes) ? message.holes : [];
@@ -477,6 +507,9 @@ export class TrafficBridge {
         case BELT_MSG.HOLES: this._onBeltHoles(message); break;
         // Kapsuły ratunkowe (E22 K4): cel kapsuł promu zniszczonego w grze (port nadania, ludzie z kontraktu).
         case TRAFFIC_MSG.PODS_TARGET: this._emit('pods-target', message); break;
+        case SALVAGE_MSG.TAKEN:
+          if (Array.isArray(message.taken) && message.taken.length) this._emit('salvage-taken', message.taken);
+          break;
         default: break;
       }
     } finally {
@@ -640,6 +673,9 @@ export class TrafficBridge {
     if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
     if (Array.isArray(message.unmanifested)) for (const id of message.unmanifested) this.actorManifests.delete(id);
     if (Array.isArray(message.manifests)) for (const rec of message.manifests) this.actorManifests.set(rec.id, rec);
+    if (Array.isArray(message.unworked)) for (const id of message.unworked) this.actorWorks.delete(id);
+    if (Array.isArray(message.works)) for (const rec of message.works) this.actorWorks.set(rec.id, rec);
+    if (!actors.count && this.actorWorks.size) this.actorWorks.clear();
     // Pusta bańka (wyjście z zasięgu portów) — postoje i manifesty znikają razem z encjami.
     if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
     if (!actors.count && this.actorManifests.size) this.actorManifests.clear();
