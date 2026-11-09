@@ -6,6 +6,12 @@ import { createWokseleObraz } from '../../src/3d/woksele/obraz.js';
 import { OPCJE_PYLU } from '../../src/3d/woksele/pyl.js';
 import { DX_MIASTA, POJEMNOSC_MIASTA } from '../../src/3d/woksele/scenaMiasta.js';
 import { DX_BAZY, POJEMNOSC_BAZY } from '../../src/3d/woksele/scenaBazy.js';
+import { wypiekZeZbrojeniem, statystykaKawalkow, KRUCHOSC } from '../../src/3d/woksele/kawalki.js';
+import { createNarzedzia, NARZEDZIA } from './narzedzia.js';
+import { PLANETY_ATM, planetaZAdresu } from '../../src/3d/woksele/atmosfera.js';
+import { createSpalanie } from '../../src/3d/woksele/spalanie.js';
+import { createPowierzchniaAtm } from './powierzchniaAtm.js';
+import { createAtlas } from './atlas.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -41,8 +47,16 @@ const SCENY = {
   M3: { nazwa: 'Miasto: tysiące', miasto: true, pomin: 0, dalekie: true, cien: [[0, 900, 100], 3700] },
   // Baza piratów (plan LOD § 5c): kamery przez KAM_MIASTA z polem baza, pojemność z POJEMNOSC_BAZY, kamera cienia z rozmiaru sceny.
   B1: { nazwa: 'Baza piratów', miasto: true, baza: true, pomin: 0, cienZapas: 1.05 },
+  // Baza bez skryptu: niszczy użytkownik (?kawalki=1, narzędzia). Start z kamery z góry jak w misji 1, pył jak B1.
+  // jakWGrze: fala łamiąca z prędkości względnej w bryle oderwanej od kotwic i tłumienie stojącej konstrukcji do progu fali, jak wGrze.zaladuj (?jakWGrze=0: dawne demo).
+  // tlumienie: false (decyzja użytkownika 2026-11-09): tłumienie „stoi albo pęka” gasiło powolny początek przewracania wieży podciętej klinem.
+  // skora: wygląd z gry (prośba użytkownika 2026-11-09: „nałóż na demo skórkę”): skóra z wypieku starej bryły, wnętrza, okna fasad (skoraDema.js, obraz.js). ?skora=0: barwy dema.
+  // planeta: planetoida Hidalgo pod bazą jak w grze (prośba użytkownika 2026-11-09; planetaDema.js): skała, pole ku niej, kontakt, kratery. ?planeta=0: płaska podłoga dema.
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true, tlumienie: false, skora: true, planeta: true },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
+// Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
+const TRYBY = [[0, 'Woksele'], [1, 'Kawałki'], [2, 'Kawałki + zbrojenie']];
 // Kamery miasta: skala w px na j., więc budynek ma na ekranie tyle pikseli, co w grze przy tym zoomie, a mniejsze okno pokazuje tylko wycinek kadru. Plan LOD § 1: Atlas 0,569 (kadr 9000 j. przy 5120 px), limit gry 3,2 (1600 j.), mały statek 7,88 (650 j.).
 // Kierunek jak w grze: góra budynku leży w płaszczyźnie gry, więc kamera patrzy w poprzek ringu (wzdłuż y dzielnicy) i widzi fasady. Niskie el zamiast przesunięcia kadru, cel bliskich kamer z planu sceny. LOD: tier 1 i tier 2 z § 4.
 const KAM_MIASTA = {
@@ -54,6 +68,11 @@ const KAM_MIASTA = {
   bAtlas: { nazwa: 'Atlas', pxNaJ: 0.14, az: 12, el: 24, cel: [1700, 0, -500], lod: { sloty: 2, cien: 1 }, baza: true },
   bCala: { nazwa: 'Cała baza', pxNaJ: 0.085, az: 12, el: 24, cel: [1700, 0, -900], lod: { sloty: 2, cien: 1 }, baza: true }, // okno 1280 × 720: cała baza i podłoga, węzeł 3,4 px
   bBliska: { nazwa: 'Z bliska', pxNaJ: 0.5, az: 28, el: 10, zCelu: true, lod: { sloty: 7, cien: 2 }, baza: true },
+  // Kamera misji 1: prawie pionowo z góry (płaszczyzna gry to XY). Atlas przy oddaleniu (0,14 px/j.) i przybliżona (0,4 px/j.) nad habitatem.
+  bGra: { nazwa: 'Z góry (gra)', pxNaJ: 0.14, az: 0, el: 88, cel: [1800, 200, 0], lod: { sloty: 2, cien: 1 }, baza: true },
+  bGraBlisko: { nazwa: 'Z góry, bliżej', pxNaJ: 0.4, az: 0, el: 88, cel: [600, 0, 200], lod: { sloty: 7, cien: 2 }, baza: true },
+  // Baza i planetoida pod nią (planetaDema.js): z boku, szczyt skały 40 km pod bazą. Przy 540 px wysokości kamera stoi około 118 km od celu: baza u góry kadru, czapa skały w dolnej połowie.
+  bPlaneta: { nazwa: 'Z planetą', pxNaJ: 0.008, az: 20, el: 14, cel: [6000, -6000, -26000], lod: { sloty: 2, cien: 1 }, baza: true },
 };
 const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
 
@@ -82,22 +101,56 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 20, 700000);
   camera.up.set(0, 0, 1);
 
-  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film' });
+  const KAWALKI = adres.get('kawalki') === '1';
+  // AGENT: hak spalania (spalanie.js, powierzchniaAtm.js): planeta pod bazą z adresu (?planeta=hidalgo|ziemia|mars, demo kawałków). Z atmosferą: odłamki płoną,
+  // grunt sceny znika, pod bazą krzywa powierzchnia 60–110 km niżej, dalsza płaszczyzna cięcia kamery. Hidalgo: wszystko jak dotąd (bez modułu).
+  const PLANETA_OPIS = KAWALKI ? planetaZAdresu(adres.get('planeta')) : PLANETY_ATM.hidalgo;
+  const spalanie = PLANETA_OPIS.atmosfera ? createSpalanie({ solver, planeta: PLANETA_OPIS }) : null;
+  if (spalanie) { camera.far = 4e6; camera.updateProjectionMatrix(); }
+  // Skóra z gry na bazie: wygląd jak w misji 1 przy świetle dema. Obraz z tą opcją ma inny graf, więc decyzja przy starcie strony (scena z adresu albo ?skora=1|0).
+  const SKORA = KAWALKI && (adres.has('skora') ? adres.get('skora') === '1' : !!SCENY[adres.get('scena')]?.skora);
+  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI, skora: SKORA, spalanie: spalanie?.hak ?? null });
+  spalanie?.polacz(obraz);
+  if (spalanie) createPowierzchniaAtm({ planeta: PLANETA_OPIS, obraz, spalanie });
+  // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
+  // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
+  const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa, budynki: () => stan.miasto?.budynki ?? null }) : null;
+  // ?kruchosc=1|2: beton kruchszy w wypieku (granice gięcia, kawalki.js KRUCHOSC). Zmiana przeładowuje stronę, bo wypiek idzie od nowa.
+  // Bez parametru: kruchość sceny z adresu (B1R: 1, propozycja użytkownika 2026-11-09 „beton kruchy, sztywność ×2 lub ×3”), reszta 0.
+  const KRUCH = KAWALKI ? Math.max(0, Math.min(KRUCHOSC.length - 1, adres.has('kruchosc') ? Number(adres.get('kruchosc')) || 0 : SCENY[adres.get('scena')]?.kruchosc ?? 0)) : 0;
+  // ?sztywnosc=2|3: sztywniejszy beton (K × s², podkroki solvera × s, wytrzymałość bez zmian). Też przeładowanie.
+  // Bez parametru: sztywność sceny z adresu (B1R: 2, reszta 1).
+  const SZTYW = KAWALKI ? Math.max(1, Math.min(4, Number(adres.get('sztywnosc')) || SCENY[adres.get('scena')]?.sztywnosc || 1)) : 1;
+  const opcjeKawalkow = KAWALKI ? { kawalki: adres.has('kawOp') ? JSON.parse(adres.get('kawOp')) : {}, zbrojenie: adres.has('zbrojenie') ? JSON.parse(adres.get('zbrojenie')) : {} } : null;
   // AGENT: miasto dalekie tylko na stronie, która je pokazuje: nowy materiał i kernel, a stare sceny mają zostać bez zmian co do pipeline'u.
   const dalekie = adres.get('scena') === 'M3' ? (await import('./miastoDalekie.js')).createMiastoDalekie({ solver, obraz }) : null;
   const sterowanie = new OrbitControls(camera, kanwa);
   sterowanie.enableDamping = true;
   sterowanie.dampingFactor = 0.12;
-  sterowanie.maxDistance = 30000;
+  sterowanie.maxDistance = spalanie ? 1.5e6 : 30000;
   sterowanie.minDistance = 60;
   sterowanie.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   sterowanie.zoomToCursor = true;
+  // Atlas do taranowania (solver z flagą statek, glowny.js ?atlas): siatki w scenie obrazu przed rozgrzewką, sprite i pole obrysu wczytane przed nią.
+  // Błąd Atlasa albo planety zostawia demo bez nich (dziennik konsoli), zamiast całej strony bez obrazu.
+  const atlas = solver.statek ? await createAtlas({ solver, obraz, camera, sterowanie, kanwa, renderer, masa: Number(adres.get('atlasMasa')) || undefined }).catch((e) => { console.error('[woksele] Atlas', e); return null; }) : null;
+  // Planeta pod bazą jak w grze (planetaDema.js). Import dynamiczny, jak skóra: skała gry ciągnie src/3d/core3d.js z hakiem rulonu we wszystkich materiałach.
+  // Hidalgo (planetaDema.js) tylko przy ?planeta=hidalgo albo bez pola; Ziemia i Mars mają swoją powierzchnię i spalanie (wyżej), ?planeta=0: płaska podłoga.
+  const PLANETA = KAWALKI && PLANETA_OPIS.id === 'hidalgo' && (adres.has('planeta') ? !['0', 'ziemia', 'mars'].includes(adres.get('planeta')) : !!SCENY[adres.get('scena')]?.planeta);
+  const planeta = PLANETA ? await import('./planetaDema.js').then((m) => m.createPlanetaDema({ solver, obraz, renderer })).catch((e) => { console.error('[woksele] planeta', e); return null; }) : null;
+  // Z planetą kamera musi odjechać na setki km (skała r 48 km, szczyt 40 km pod bazą): limit orbity 30 km przyciągał kamerę „Z planetą” pod bazę, a kadr był pusty.
+  if (planeta) sterowanie.maxDistance = 500000;
+  const GRUNT_PLANETY = -70000; // planetaDema.js: grunt solvera pod kulą skały (jak GRUNT_GRY w wGrze.js)
 
-  const stan = { scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false, jedzie: false, c0x: 0, c0y: 0, c0z: 0, vcx: 0, vcy: 0, vcz: 0, ocx: 0, ocy: 0, ocz: 0 };
+  const stan = { tryb: KAWALKI ? Number(adres.get('tryb') ?? 1) : 0, scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false, jedzie: false, c0x: 0, c0y: 0, c0z: 0, vcx: 0, vcy: 0, vcz: 0, ocx: 0, ocy: 0, ocz: 0 };
 
   function krokSceny() {
     if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
+    narz?.krok(renderer);
+    atlas?.krok();
     solver.krok(renderer);
+    spalanie?.krok(renderer); // AGENT: hak spalania
+    planeta?.krok();
     dalekie?.krok(stan.krok + 1);
     if (stan.pierwszyKrok) { obraz.krokBezLimitu(renderer); stan.pierwszyKrok = false; } else obraz.krok(renderer);
     stan.krok++;
@@ -132,10 +185,21 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? { ...(planeta ? { gruntZ: GRUNT_PLANETY } : {}), ...bazaAdresu } : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}), ...(KRUCH ? { kruchosc: KRUCH } : {}), ...(SZTYW > 1 ? { sztywnosc: SZTYW } : {}) });
     }
     return czekajace.get(id).obietnica;
   }
+  /** Wypiek skóry do bazy z bębnem albo bez (skoraDema.js). Błąd wypieku zostawia barwy bez skóry. */
+  // AGENT: import dynamiczny: bryła starej bazy ciągnie src/3d/core3d.js (hullDamageMap.tsl.js), a ten przy imporcie zakłada hak rulonu warpa we WSZYSTKICH materiałach węzłowych.
+  // Strony dema bez skóry mają zostać bez niego (te same pipeline'y co dotąd).
+  async function wypieczSkore(w, bezBebna) {
+    stan.skoraBezBebna = bezBebna;
+    try {
+      const { wypalSkoreDema } = await import('./skoraDema.js');
+      await wypalSkoreDema({ renderer, obraz, w, bezBebna });
+    } catch (e) { console.error('[woksele] wypiek skóry', e); }
+  }
+
   /** Wejście w scenę z panelu: czeka na budowę, ostatni klik wygrywa. */
   async function wejdz(id, opcje) {
     stan.celScena = id;
@@ -158,16 +222,48 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   function ustawScene(id, { kamera = true, pomin = true } = {}) {
     const opis = SCENY[id];
     if (!opis) throw new Error(`Nieznana scena ${id}`);
-    const { w, g, zdarzeniaOd, rDysk, poklad, miasto } = wypieki.get(id);
+    const { w: w0, g, zdarzeniaOd, rDysk, poklad, miasto, kaw, zbr } = wypieki.get(id);
+    // Tryb ze zbrojeniem: ten sam wypiek z prętami w tablicach wiązań. Scena bez prefraktury (miasto, baza) zostaje przy wokselach.
+    const trybSceny = kaw ? stan.tryb : 0;
+    const w = trybSceny === 2 ? (wypieki.get(id).wZbr ??= wypiekZeZbrojeniem(w0, zbr)) : w0;
     // Kamery baza / miasto to osobne zestawy na jednym panelu.
-    if (opis.miasto && !!KAM_MIASTA[stan.kamMiasta].baza !== !!opis.baza) stan.kamMiasta = opis.baza ? 'bAtlas' : 'atlas';
+    if (opis.miasto && !!KAM_MIASTA[stan.kamMiasta].baza !== !!opis.baza) stan.kamMiasta = opis.baza ? (opis.kamStart ?? 'bAtlas') : 'atlas';
+    if (opis.kamStart && kamera) stan.kamMiasta = opis.kamStart;
+    narz?.reset();
+    atlas?.reset(!!opis.baza && stan.atlasWl !== false);
+    if (panelAtlasu) panelAtlasu.hidden = !(atlas && opis.baza);
+    const bU = przyciski.get('n:upadek');
+    if (bU) bU.style.display = opis.baza ? '' : 'none';
     for (const n of Object.keys(KAM_MIASTA)) przyciski.get(`k:${n}`).style.display = !!KAM_MIASTA[n].baza === !!opis.baza ? '' : 'none';
     solver.wczytaj(w);
+    // Baza jak w grze (wGrze.zaladuj): w locie nic się nie łamie od samej prędkości, a ruch połączony z kotwicami wolniejszy niż próg fali gaśnie (stoi albo pęka).
+    const jakWGrze = !!opis.jakWGrze && adres.get('jakWGrze') !== '0';
+    const uS = solver.uniformy;
+    uS.uFalaWzgl.value = jakWGrze ? 1 : 0;
+    // Tłumienie „stoi albo pęka” z opisu sceny (B1R: bez), ?tlumienie=1|0 nadpisuje; fala względna zostaje. Tłumienie gasi też powolny początek przewracania:
+    // wieża z klinem przy mocniejszej szyi (mocSzyi 3) stoi pod nim, a bez niego przechyla się ku klinowi (pomiar 2026-11-09, docs/RAPORT-kawalki-zawalen.md).
+    const tlum = jakWGrze && (adres.has('tlumienie') ? adres.get('tlumienie') !== '0' : opis.tlumienie !== false);
+    if (tlum && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    if (SKORA) {
+      // Koła habitatu jak w grze (wGrze.js ustawKola), promień szyi z opcji sceny. Inne sceny: bez kół i bez skóry (wnętrza zostają).
+      obraz.ustawKola(opis.baza && miasto?.kola ? miasto.kola : []);
+      if (!opis.baza) obraz.ustawSkore({ x0: 0, y0: 0, w: 1, h: 1, gora: 0, zakres: 1, wl: 0 });
+      // Wypiek do tej bazy (z bębnem albo bez): pierwszy przy starcie przed rozgrzewką, kolejne w tle (pipeline'y już są), do tego czasu zostaje poprzednia skóra.
+      else if (stan.rozgrzane && stan.skoraBezBebna !== !!miasto?.bezBebna) wypieczSkore(w, !!miasto?.bezBebna);
+    }
+    if (obraz.kawalki) {
+      if (kaw && stan.kawScena !== `${id}:${trybSceny === 2}`) { obraz.kawalki.wczytaj(kaw, trybSceny === 2 ? zbr : null, w.n, w.dx); stan.kawScena = `${id}:${trybSceny === 2}`; } else if (kaw) obraz.kawalki.reset();
+      if (stan.rozgrzane) obraz.ustawTryb(trybSceny);
+      stan.trybSceny = trybSceny;
+    }
     dalekie?.wczytaj(miasto?.dalekie ?? null);
+    spalanie?.wczytaj(w); // AGENT: hak spalania: bez gruntu sceny, stan od zera
     if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
+    // Planeta po solver.wczytaj (pole sceny od nowa) i obraz.wczytaj (grunt), słońce skały po ustawieniu słońca dema.
+    if (planeta) { planeta.wczytaj(w, !!opis.baza); planeta.slonce(obraz.sun); }
     stan.miasto = miasto;
     if (opis.miasto) { obraz.sun.shadow.bias = CIEN_MIASTA.bias; obraz.sun.shadow.normalBias = CIEN_MIASTA.normalBias; }
     stan.scena = id;
@@ -264,17 +360,17 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     location.search = q.toString();
   }
   /** Baza piratów na stronie bez pojemności: to samo przeładowanie co miasto, przycisk od razu daje ?scena=B1&maxWez=…&nKom=…. */
-  function przeladujBaze() {
+  function przeladujBaze(id = 'B1') {
     const p = POJEMNOSC_BAZY[dxBazy];
     const q = new URLSearchParams(location.search);
-    q.set('scena', 'B1');
+    q.set('scena', id);
     q.set('maxWez', String(p.maxWez));
     q.set('nKom', String(p.nKom));
     location.search = q.toString();
   }
   for (const id of Object.keys(SCENY)) {
     if (SCENY[id].ukryta) continue;
-    const akcja = SCENY[id].baza ? () => { if (bazaSieMiesci) wejdz(id); else przeladujBaze(); } : SCENY[id].miasto ?() => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
+    const akcja = SCENY[id].baza ? () => { if (bazaSieMiesci) wejdz(id); else przeladujBaze(id); } : SCENY[id].miasto ?() => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
     const b = dodaj(gr1, SCENY[id].nazwa, akcja, `s:${id}`);
     b.disabled = !zdarzeniaDostepne(id);
   }
@@ -283,13 +379,98 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const bPauza = dodaj(gr3, 'Pauza (spacja)', () => { stan.pauza = !stan.pauza; zaznacz(); });
   const nowaGrupa = (id) => { const d = document.createElement('div'); d.className = 'grupa'; d.id = id; d.hidden = true; panel.insertBefore(d, gr2); return d; };
   const panelKamer = nowaGrupa('panelKamery');
+  const panelObrazu = nowaGrupa('panelObraz');
+  /** Tryb obrazu z panelu: 0 ↔ 1 w biegu, przy tym samym stanie fizyki. Do zbrojenia i z niego reset sceny (inna fizyka), kamera zostaje. */
+  function ustawTrybObrazu(t) {
+    if (!KAWALKI) return;
+    const reset = (t === 2) !== (stan.tryb === 2);
+    stan.tryb = t;
+    if (reset) ustawScene(stan.scena, { kamera: false });
+    else { const kaw = wypieki.get(stan.scena)?.kaw; obraz.ustawTryb(kaw ? t : 0); stan.trybSceny = kaw ? t : 0; }
+    zaznacz();
+  }
+  if (KAWALKI) {
+    for (const [t, opis] of TRYBY) dodaj(panelObrazu, opis, () => ustawTrybObrazu(t), `o:${t}`);
+    panelObrazu.hidden = false;
+  }
+  // Beton: przełącznik kruchości (przeładowanie z ?kruchosc, scena zostaje).
+  const panelBetonu = nowaGrupa('panelBeton');
+  if (KAWALKI) {
+    for (const [k, opis] of [[0, 'Beton: dziś'], [1, 'Kruchy'], [2, 'Bardzo kruchy']]) {
+      dodaj(panelBetonu, opis, () => {
+        if (k === KRUCH) return;
+        const q = new URLSearchParams(location.search);
+        q.set('kruchosc', String(k));
+        q.set('scena', stan.scena);
+        location.search = q.toString();
+      }, `b:${k}`);
+    }
+    for (const [s, opis] of [[1, 'Sztywność ×1'], [2, '×2'], [3, '×3']]) {
+      dodaj(panelBetonu, opis, () => {
+        if (s === SZTYW) return;
+        const q = new URLSearchParams(location.search);
+        q.set('sztywnosc', String(s));
+        q.set('scena', stan.scena);
+        location.search = q.toString();
+      }, `z:${s}`);
+    }
+    panelBetonu.hidden = false;
+  }
+  // Narzędzia: klik w kadr bez przeciągania używa wybranego (klawisze 1–5), F trzymane strzela seriami w kursor, U: upadek jak przy HP 0 (tylko baza).
+  const panelNarzedzi = nowaGrupa('panelNarzedzia');
+  const ustawNarzedzie = (n) => { narz?.ustaw(n); zaznacz(); };
+  if (narz) {
+    for (const [n, opis] of NARZEDZIA) dodaj(panelNarzedzi, opis, () => ustawNarzedzie(n), `n:${n}`);
+    dodaj(panelNarzedzi, 'Upadek (HP 0)', () => narz.uzyj('upadek'), 'n:upadek');
+    panelNarzedzi.hidden = false;
+  }
+  // AGENT: hak spalania: planeta pod bazą (przeładowanie z ?planeta, bo solver Ziemi i Marsa ma inny sufit prędkości), kamera z boku na słup atmosfery.
+  const panelPlanety = nowaGrupa('panelPlaneta');
+  if (KAWALKI) {
+    for (const p of ['hidalgo', 'ziemia', 'mars']) {
+      dodaj(panelPlanety, PLANETY_ATM[p].nazwa, () => {
+        if (p === PLANETA_OPIS.id) return;
+        const q = new URLSearchParams(location.search);
+        q.set('planeta', p);
+        q.set('scena', stan.scena);
+        location.search = q.toString();
+      }, `p:${p}`);
+    }
+    if (spalanie) {
+      dodaj(panelPlanety, 'Z boku', () => ustawKamere(camera, sterowanie, kameraBoku()), 'p:bok');
+      dodaj(panelPlanety, 'Z boku, bliżej', () => ustawKamere(camera, sterowanie, kameraBoku(true)), 'p:bokBlisko');
+    }
+    panelPlanety.hidden = false;
+  }
+  /** Kamera z boku na słup atmosfery: cała droga od bazy do gruntu w kadrze, albo (blisko) pas, w którym odłamki płoną (0–45 % wysokości bazy). */
+  function kameraBoku(blisko = false) {
+    const h0 = PLANETA_OPIS.wysBazy ?? 0, tg = Math.tan((camera.fov * Math.PI) / 360);
+    return blisko ? { az: 20, el: 4, cel: [0, 0, -0.78 * h0], odl: (0.24 * h0) / tg } : { az: 20, el: 6, cel: [0, 0, -0.5 * h0], odl: (0.75 * h0) / tg };
+  }
+  // Atlas (taran w płaszczyźnie gry): wł./wył., powrót na start, kamera za statkiem. Pod przyciskami klawisze i prędkość.
+  const panelAtlasu = atlas ? nowaGrupa('panelAtlas') : null;
+  let infoAtlasu = null;
+  if (atlas) {
+    const naBazie = () => !!SCENY[stan.scena]?.baza;
+    dodaj(panelAtlasu, 'Atlas', () => { stan.atlasWl = stan.atlasWl === false; atlas.wlacz(stan.atlasWl && naBazie()); zaznacz(); }, 'a:wl');
+    dodaj(panelAtlasu, 'Na start', () => atlas.reset(stan.atlasWl !== false && naBazie()), 'a:start');
+    dodaj(panelAtlasu, 'Kamera za nim (C)', () => { atlas.kameraZa(!atlas.kamera); zaznacz(); }, 'a:kam');
+    const klawisze = document.createElement('div');
+    klawisze.className = 'opis';
+    klawisze.textContent = 'W/S ciąg · A/D obrót · Shift dopalacz · X hamulec · T statek pod kursor';
+    infoAtlasu = document.createElement('div');
+    infoAtlasu.className = 'opis';
+    panelAtlasu.append(klawisze, infoAtlasu);
+    panelAtlasu.hidden = false;
+  }
   const panelGestosci = nowaGrupa('panelGestosc');
   for (const n of Object.keys(KAM_MIASTA)) dodaj(panelKamer, KAM_MIASTA[n].nazwa, () => kameraMiasta(n), `k:${n}`);
   for (const dx of Object.keys(POJEMNOSC_MIASTA).map(Number).sort((a, b) => b - a)) dodaj(panelGestosci, `dx ${dx}`, () => { if (dx !== dxMiasta) przeladujMiasto(stan.scena, dx); }, `d:${dx}`);
   stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}`;
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}`
+        || (k === 'a:wl' && stan.atlasWl !== false) || (k === 'a:kam' && !!atlas?.kamera) || k === `p:${PLANETA_OPIS.id}`;
       b.classList.toggle('wl', wl);
     }
     bPauza.classList.toggle('wl', stan.pauza);
@@ -306,6 +487,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     else if (e.code === 'KeyR') ustawScene(stan.scena, { kamera: false });
     else if (e.code === 'KeyP') { stan.licznik = !stan.licznik; licznik.hidden = !stan.licznik; }
     else if (e.code === 'KeyH') panel.hidden = !panel.hidden;
+    else if (e.code === 'KeyK' && KAWALKI) ustawTrybObrazu((stan.tryb + 1) % 3);
+    else if (narz && /^Digit[1-5]$/.test(e.code)) ustawNarzedzie(NARZEDZIA[Number(e.code.slice(5)) - 1][0]);
+    else if (narz && e.code === 'KeyU' && SCENY[stan.scena]?.baza) narz.uzyj('upadek');
   });
 
   // ── Start ── Rozgrzewka przed pierwszą klatką, potem efekt od razu.
@@ -315,7 +499,14 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   await wypiek(scenaStartu);
   ustawScene(scenaStartu, { pomin: false });
   zmienRozmiar();
+  // Skóra przed rozgrzewką: wypiek kompiluje bryłę na celu skóry i rysuje ją raz, a rozgrzewka obrazu idzie już na grafie ze skórą.
+  if (SKORA && SCENY[scenaStartu]?.baza) await wypieczSkore(wypieki.get(scenaStartu).w, !!wypieki.get(scenaStartu).miasto?.bezBebna);
+  await spalanie?.rozgrzej(renderer); // AGENT: hak spalania: kernele przed pierwszym krokiem
   await obraz.rozgrzej(renderer);
+  // Rozgrzewka szła z widocznymi wszystkimi siatkami (bryły, kawałki, druty, narzędzia), dopiero teraz tryb obrazu.
+  stan.rozgrzane = true;
+  obraz.ustawTryb(stan.trybSceny ?? 0);
+  narz?.schowaj();
   // Rozgrzewka szła na scenie bez kroków, pomijane kroki stania idą już po niej. Harness liczy czas sceny od zera.
   if (mig) await wgrajMigawke(mig);
   else if (!adres.has('bezPominiecia')) for (let k = 0; k < SCENY[stan.scena].pomin; k++) krokSceny();
@@ -338,7 +529,15 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       if (stan.akum >= H) stan.akum = H * 0.999; // reszta przepada
     }
     sledzSrodek();
+    atlas?.klatka(stan.akum);
     sterowanie.update();
+    if (narz) { narz.serie(teraz); narz.klatka(stan.akum); }
+    spalanie?.klatka(camera, stan.akum, renderer.domElement.height); // AGENT: hak spalania
+    if (infoAtlasu && atlas.aktywny && teraz - (stan.tInfoAtlasu || 0) > 250) {
+      stan.tInfoAtlasu = teraz;
+      const a = atlas.stan();
+      infoAtlasu.textContent = `${a.v} j./s · styki ${a.styki} · wyrwane kotwice ${a.kotwice}`;
+    }
     if (stan.rysowac !== false) obraz.rysuj(renderer, camera, stan.akum);
     stan.msKlatki = dtMs;
     if (stan.licznik) {
@@ -351,7 +550,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   }
   requestAnimationFrame(petla);
   // Budowa w tle: pod harnessem miasta tylko scena z adresu (dx = 5 to około minuta CPU na scenę), a miasto tylko na stronie, która je pomieści.
-  if (!lodS1Adresu && !(window.__harness && (adres.has('miasto') || adres.get('scena') === 'B1'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (SCENY[id].baza ? bazaSieMiesci : !SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
+  // Strona z bazą na starcie (B1, B1R): bez budowy pozostałych scen w tle, sama baza to 85 tys. węzłów i jej kawałki.
+  if (!lodS1Adresu && !SCENY[scenaStartu]?.baza && !(window.__harness && (adres.has('miasto') || adres.get('scena') === 'B1'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (SCENY[id].baza ? bazaSieMiesci : !SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {
@@ -381,6 +581,21 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         return { krok: stan.krok };
       },
       kamera(k) { ustawKamere(camera, sterowanie, k); },
+      /** Harness, demo kawałków: tryb obrazu (jak przycisk) i stan kawałków z GPU. */
+      tryb(t) { ustawTrybObrazu(t); return { tryb: stan.tryb, trybSceny: stan.trybSceny }; },
+      narzedzia: narz,
+      spalanie, // harness: planeta z atmosferą (null: Hidalgo)
+      kameraBoku: (blisko = false) => (spalanie ? kameraBoku(blisko) : null),
+      atlas, // harness: atlas.ustaw({ x, y, kurs, v }), atlas.sterowanie({ w, dop, … }), atlas.stan()
+      planeta, // harness: planeta.stan() (kratery, uderzenia), planeta.skala
+      solver, // harness: wypiek i odczyt stanu (analiza wiązań, woksele-baza-narzedzia.mjs --scenariusz szyja)
+      async statKawalki() {
+        const kw = obraz.kawalki, wy = wypieki.get(stan.scena);
+        if (!kw || !wy?.kaw) return null;
+        // Odczyt z GPU tu, na stronie dema: moduły renderu w src/3d go nie mają (strażnik szwu renderu).
+        const [bS, bP] = await Promise.all([renderer.getArrayBufferAsync(kw.atrybuty.stan), renderer.getArrayBufferAsync(kw.atrybuty.poziom)]);
+        return { ...statystykaKawalkow(wy.kaw, new Float32Array(bS), new Uint32Array(bP), solver.wypiek.n), stat: wy.kaw.stat, prety: stan.trybSceny === 2 ? wy.zbr?.ile ?? 0 : 0 };
+      },
       kameraMiasta,
       /** Harness: klatka po zmianie kamery albo LOD, przy zatrzymanym zegarze. */
       async przerysuj() {

@@ -75,8 +75,12 @@ function budujWiezowce(b, l) {
 }
 
 /** H-C i H-T jako jedna część: szyb, płyta na szybie, szyja, głowa (talerz, piasta), maszt. Jedna część, bo szyja stoi na szybie wiązaniami: cięcie szybu kraterami to zerwanie „kotwic” szyi z gry. */
-function budujWieze(b, Hs) {
+function budujWieze(b, Hs, wnetrzeTyp = 0) {
   const dx = b.dx;
+  // Wnętrze szybu i szyi: 0 pusta rura (gra), 1 stropy jak w wieżowcu (dwie warstwy na trzy), 2 pełne. Pytanie użytkownika 2026-11-09: wieżowiec
+  // podcięty klinem przewraca się w bok, a wieża zawsze siada w dół; wieżowiec jest prawie lity, a rura szyi ma ściankę na dwie komórki i niesie głowę
+  // kilka razy cięższą od siebie: przy klinie zostaje cienki łuk ściany, który się miażdży zamiast być zawiasem.
+  const wnetrze = (z) => (wnetrzeTyp === 2 ? KIND.RDZEN : wnetrzeTyp === 1 && Math.floor(z / dx) % 3 < 2 ? KIND.STROP : -1);
   const zF = k7HeightToZ(Hs.floorY), zCore = k7HeightToZ(Hs.coreTop), zN1 = k7HeightToZ(Hs.neckY1);
   const zR0 = k7HeightToZ(Hs.ringY0), zR1 = k7HeightToZ(Hs.ringY1), zHead = k7HeightToZ(Hs.headTop), zMast = k7HeightToZ(Hs.mastTop);
   const scSzybu = Math.max(80, 2 * dx), plyta = 2 * dx;
@@ -89,9 +93,13 @@ function budujWieze(b, Hs) {
     if (z <= zCore) {
       if (r > Hs.coreR) return -1;
       if (r > Hs.coreR - scSzybu) return KIND.RDZEN;
-      return z > zCore - plyta ? KIND.STROP : -1;
+      return z > zCore - plyta ? KIND.STROP : wnetrze(z);
     }
-    if (z < zN1) return r <= Hs.neckR && r > Hs.neckR - scSzyi ? KIND.RDZEN : r <= Hs.neckR - scSzyi && z < zCore + plyta ? KIND.STROP : -1;
+    if (z < zN1) {
+      if (r > Hs.neckR) return -1;
+      if (r > Hs.neckR - scSzyi) return KIND.RDZEN;
+      return z < zCore + plyta ? KIND.STROP : wnetrze(z);
+    }
     if (z < zR0) return r <= Hs.neckR + (Hs.ringR0 - Hs.neckR) * ((z - zN1) / Math.max(1, zR0 - zN1)) && r > Hs.neckR - scSzyi ? KIND.RDZEN : -1; // lejek do talerza
     if (z <= zR1) {
       if (r > Hs.ringR1) return -1;
@@ -135,11 +143,12 @@ function budujBeben(b, l) {
   return c;
 }
 
-function budujTrzon(b, Hs) {
+/** Trzon pod bębnem: rura od dysku do podłogi bębna. zamkniety: z pokrywą i dnem (baza bez bębna: szyb stoi na pokrywie, a nie nad pustą rurą). */
+function budujTrzon(b, Hs, zamkniety = false) {
   const dx = b.dx, sc = Math.max(80, 2 * dx);
   const zD = k7HeightToZ(Hs.tier2Y), zF = k7HeightToZ(Hs.floorY);
   const c = b.nowa('trzon', TON.trzon);
-  b.wypelnij(c, -Hs.stemR, Hs.stemR, -Hs.stemR, Hs.stemR, zD, zF, rura(0, 0, Hs.stemR, sc, zD, zF, 0, KIND.RDZEN, KIND.STROP));
+  b.wypelnij(c, -Hs.stemR, Hs.stemR, -Hs.stemR, Hs.stemR, zD, zF, rura(0, 0, Hs.stemR, sc, zD, zF, zamkniety ? 2 * dx : 0, KIND.RDZEN, KIND.STROP));
 }
 
 function budujPomosty(b, l, podesty) {
@@ -464,6 +473,15 @@ const OPCJE_B1 = Object.freeze({
   // szyb: nacięcie od strony wyłomu w pierwszej liczbie, a zawias przecięty w drugiej, kiedy głowa uderza.
   czasy: Object.freeze({ w1: [1, 4], w2: [4, 7], wylom: [7, 10], szyb: [10, 14], sektory: [15, 20], paliwo: [17, 21.5], puszcza: 21.5 }),
   mocSzyi: 8,
+  // Mnożnik granicy gięcia szyi i szybu (rdzeń w promieniu pierścienia). Domyślnie jak siła (8): szyja nie pęka od zginania nigdy i gnie się jak guma
+  // (zgłoszenie użytkownika 2026-11-08). Demo B1R ma 1: siła zostaje, zgięta szyja pęka. Gra (wGrze) bez zmian, dopóki użytkownik nie zdecyduje.
+  giecieSzyi: 8,
+  // Demo B1R (prośba użytkownika 2026-11-09: „usuń dysk, w którym gracz musiał zrobić wyłom”, „szyja trochę grubsza”): bez bębna (ćwiartki,
+  // pierścień wewnętrzny, grodzie) i promień szyi szyjaR zamiast neckR z układu (0: z układu). W grze wyłom w ćwiartce bębna to etap misji, więc gra ma bęben.
+  // Bez bębna trzon dostaje pokrywę i dno: szyb stał nad pustą rurą trzonu i wisiał w powietrzu (zgłoszenie użytkownika 2026-11-09).
+  bezBebna: false,
+  szyjaR: 0,
+  szyjaWnetrze: 0, // 0 pusta rura (gra), 1 stropy jak w wieżowcu, 2 pełna (budujWieze)
   mocPodestu: 30,
   T: 30,
 });
@@ -477,15 +495,18 @@ export function scenaB1(oo = {}) {
   const dx = o.dx ?? DX_BAZY;
   // W grze (wGrze.js): bez planu krater po kraterze (kratery zleca misja) i z gruntem na poziomie skały pod bazą.
   if (o.wGrze) o.stoi = true;
-  const l = createPirateBaseLayout({ id: 'B1' });
+  // Skrypt zniszczeń (planSekwencji) robi wyłom w ćwiartce bębna: baza bez bębna ma tylko tryb bez skryptu.
+  if (o.bezBebna) o.stoi = true;
+  const l0 = createPirateBaseLayout({ id: 'B1' });
+  const l = o.szyjaR > 0 ? { ...l0, habitat: { ...l0.habitat, neckR: o.szyjaR } } : l0;
   const Hs = l.habitat;
   const b = createBudowa(dx);
   const los = prng((o.ziarno >>> 0) * 6151 + 29);
   budujWiezowce(b, l);
   const podesty = b.czesci.map((c) => c.podest);
-  budujWieze(b, Hs);
-  budujBeben(b, l);
-  budujTrzon(b, Hs);
+  budujWieze(b, Hs, o.szyjaWnetrze);
+  if (!o.bezBebna) budujBeben(b, l);
+  budujTrzon(b, Hs, !!o.bezBebna);
   budujPomosty(b, l, podesty);
   budujPaliwo(b, l);
   budujMagazyn(b, l);
@@ -507,6 +528,9 @@ export function scenaB1(oo = {}) {
   const w1 = cz.get('W-1').wiezowiec;
   // AGENT: szyja to drąg: wytrzymałość liczona z ciężaru głowy kruszy ją po nacięciu i głowa spada pionowo (pierwszy bieg). W grze zawias jest jawny (engine.addJoint, pirateBaseNeck.js), a tu szyja i szyb dostają zapas, a krater dalej usuwa węzły, więc nacięcie i przecięcie działają. Głowa zostaje zwykła i rozbija się przy uderzeniu.
   const mocS = o.mocSzyi, nzH = wz.start + wz.n, rP2 = Hs.ringR0 * Hs.ringR0;
+  // Rdzeń szyi jako wnętrze ziarna (klasa + 6: fala go nie łamie, gięcie do zlomWewn) tylko przy wzmocnionej szyi. Szyja bez wzmocnienia (demo B1R) pęka
+  // po granicach ziaren jak reszta betonu (druga opinia 2026-11-08). Gra: mocSzyi 8, więc bez zmian.
+  const wnetrzeSzyi = o.wnetrzeSzyi ?? mocS > 1;
   // Bez zapasu zostaje tylko zewnętrzny pierścień talerza: on rozbija się przy uderzeniu.
   const mocny = (w, i) => w.pos[3 * i] ** 2 + w.pos[3 * i + 1] ** 2 < rP2;
   const poWypieku = (w) => {
@@ -525,14 +549,14 @@ export function scenaB1(oo = {}) {
     }
     for (let i = wz.start; i < nzH; i++) {
       if (!mocny(w, i)) continue;
-      w.bMax2W[i] *= mocS * mocS;
+      w.bMax2W[i] *= o.giecieSzyi * o.giecieSzyi;
       for (let d = 0; d < ND; d++) {
         const ox = STRONA * i + d, j = w.nbr[ox];
         if (j <= i || !mocny(w, j)) continue;
         const oy = STRONA * j + (d ^ 1);
         w.Ft[ox] *= mocS; w.Ft[oy] = w.Ft[ox];
         w.Fc[ox] *= mocS; w.Fc[oy] = w.Fc[ox];
-        if (w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
+        if (wnetrzeSzyi && w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
       }
     }
   };
@@ -549,6 +573,8 @@ export function scenaB1(oo = {}) {
     dane,
     gpu: { zerujL: false, kratery: pl.kratery, puscKotwiceF: pl.puscKotwiceF },
     czesci,
+    // Promienie kół habitatu jak ustawKola w wGrze.js: obraz kawałków dociąga do nich narożniki części z bitem koła (kawalki.js, opcje.kola).
+    kola: [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.innerR - Hs.innerW, Hs.innerR, Hs.ringR1, Hs.drumR - Hs.wall, Hs.drumR, Hs.tier2R, Hs.tier1R, Hs.discR],
     wezlySzybu: wSzyb,
     // Pola jak plan miasta: pokaz.js bierze stąd tony części, kamerę z bliska i statBazy.
     miasto: {
@@ -558,6 +584,9 @@ export function scenaB1(oo = {}) {
       celBliska: [w1.x, w1.y, 0.5 * (w1.zB + w1.zD)],
       trafien: pl.kratery.length,
       budynkow: b.czesci.length,
+      // Skóra w demie (dema/woksele-zawalenia/skoraDema.js): wypiek starej bryły bez ćwiartek bębna, gdy woksele nie mają bębna; koła habitatu dla obrazu brył.
+      bezBebna: !!o.bezBebna,
+      kola: [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.innerR - Hs.innerW, Hs.innerR, Hs.ringR1, Hs.drumR - Hs.wall, Hs.drumR, Hs.tier2R, Hs.tier1R, Hs.discR],
     },
     czasy: { indeksy: new Int32Array(0), t: new Float64Array(0), rozerwij: new Uint8Array(0), zostawZiarna: false },
   };

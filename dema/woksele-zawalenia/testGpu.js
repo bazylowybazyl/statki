@@ -173,6 +173,8 @@ function diagnoza(w, wzor, wynik, przed) {
 }
 
 export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
+  // Wzorce CPU liczą z tą samą flagą twardych limitów w gałęzi sprężenia co solver strony (?kawalki=1 albo ?limityF0=1).
+  const parWzorca = (w) => (solver.limityF0 ? { ...(w.par ?? PARAMETRY), limityF0: true } : (w.par ?? PARAMETRY));
   /** Jeden przebieg kLista + kF z migawki Node. opcje.mutacja: nazwa z MUTACJE; opcje.diag: lista węzłów i zbiory kontaktów. */
   async function podkrok(nazwa, { mutacja = null, diag = false } = {}) {
     const m = await wczytajMigawke(nazwa);
@@ -190,7 +192,7 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     // Etykieta liczona tylko w scenach z kotwicami: § 1.6, bez kotwic Node jej nie liczy, a wzór GPU daje 0.
     const liczEtyk = !mutacja && w.capEtyk > 0;
     // AGENT: wzorzec „po” liczony tutaj, nie z pliku: migawki P0 policzono przy S = 16, a solver ma S = 24 (§ 2.7). Stan „przed” z pliku jest dobry, to tylko punkt na trajektorii.
-    const c64 = new WzorzecCpu(w);
+    const c64 = new WzorzecCpu(w, parWzorca(w));
     c64.wgraj(stanMigawki(m));
     c64.podkrokPorownania();
     const po = c64.stanPoPodkroku();
@@ -204,7 +206,7 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     if (mutacja) wy.mutacjaNode = m.mutacje?.[mutacja] ?? null;
     else {
       // Ten sam podkrok w Node w arytmetyce f32 (§ 8): te same progi, inny wzorzec. Odróżnia zaokrąglenie przy progu od błędu kernela.
-      const c32 = new WzorzecF32(w);
+      const c32 = new WzorzecF32(w, parWzorca(w));
       c32.wgraj(stanMigawki(m));
       c32.podkrokPorownania();
       const w32 = c32.stanPoPodkroku();
@@ -242,7 +244,7 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     const wy = {};
     for (const [nazwa, id, skala] of [['obrót', 'S4obrot', 1], ['punkt', 'S4punkt', 1], ['grunt, kotwice, rampa skali 0,5', 'S4grunt', 0.5]]) {
       const w = wypiekSceny(id);
-      const cpu = new WzorzecCpu(w);
+      const cpu = new WzorzecCpu(w, parWzorca(w));
       for (let k = 0; k < 30; k++) cpu.krok();
       if (skala !== 1) { cpu.skalaG(skala); for (let k = 0; k < 6; k++) cpu.krok(); }
       const m = cpu.migawka();
@@ -269,9 +271,9 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     const w = wypiekSceny(m.scena);
     solver.wczytaj(w);
     solver.wgraj(stanMigawki(m));
-    const cpu = new WzorzecCpu(w);
+    const cpu = new WzorzecCpu(w, parWzorca(w));
     cpu.wgraj(stanMigawki(m));
-    const c32 = new WzorzecF32(w);
+    const c32 = new WzorzecF32(w, parWzorca(w));
     c32.wgraj(stanMigawki(m));
     await wok.krok(krokow);
     for (let k = 0; k < krokow; k++) { cpu.krok(); c32.krok(); }
@@ -462,7 +464,7 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
       for (let i = 0; i < n; i++) bitPas[i] = (i * 2654435761) >>> 31; // bit z indeksu, bez Math.random
       solver.wczytaj(w);
       solver.ustawPlan({ czasy: null, pchniecia: [], kratery, zerujL: false, swobodnyG: 0, skalaG: null, bitPas });
-      const m = new WzorzecCpu(w);
+      const m = new WzorzecCpu(w, parWzorca(w));
       const dt = 1 / 60;
       let q = 0;
       const akt = [];

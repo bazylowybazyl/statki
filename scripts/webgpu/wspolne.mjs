@@ -19,7 +19,9 @@ const CHROME = [
 /**
  * Headless Chrome jak w dema/rdzen-cdp.js (te same flagi GPU), plus dodatkowe
  * argumenty (np. '--enable-dawn-features=use_dxc') i stały port debugowania.
- * @param {{ width?: number, height?: number, extraArgs?: string[], webgpu?: boolean }} o
+ * @param {{ width?: number, height?: number, extraArgs?: string[], webgpu?: boolean, takt?: boolean }} o
+ * takt: true (albo HULLFALL_HARNESS_TAKT=1): headless w takcie monitora, bez --disable-gpu-vsync i --disable-frame-rate-limit.
+ * Pomiar nocny, gdy przy komputerze ktoś śpi: bez tych flag strona nie rysuje setek klatek na sekundę w bezruchu.
  */
 export async function startChrome(o = {}) {
   if (!CHROME) throw new Error('Nie znaleziono chrome.exe');
@@ -31,8 +33,8 @@ export async function startChrome(o = {}) {
   const args = [
     ...(o.headless === false ? [] : ['--headless=new']), `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
     '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
-    // okno (headless: false) — z vsync jak u gracza; headless bez limitu klatek (pomiary kosztu)
-    ...(o.headless === false ? [] : ['--disable-gpu-vsync', '--disable-frame-rate-limit']), '--hide-scrollbars',
+    // okno (headless: false) — z vsync jak u gracza; headless bez limitu klatek (pomiary kosztu), chyba że takt
+    ...(o.headless === false || o.takt || process.env.HULLFALL_HARNESS_TAKT === '1' ? [] : ['--disable-gpu-vsync', '--disable-frame-rate-limit']), '--hide-scrollbars',
     '--autoplay-policy=no-user-gesture-required',
     // webgpu: false — bez flag włączających WebGPU (zadanie 23: sprawdzenie gry w Chrome bez WebGPU)
     ...(o.webgpu !== false ? ['--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU'] : []),

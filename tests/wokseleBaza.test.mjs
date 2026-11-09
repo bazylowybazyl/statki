@@ -56,3 +56,48 @@ test('W1 bez zdarzeń: scena stoi na samym układzie, plan pusty', () => {
   assert.equal(plan.gpu.kratery.length, 0);
   assert.equal(plan.gpu.puscKotwiceF, -1);
 });
+
+test('szyja: wzmocniona (gra, mocSzyi 8) to wnętrze ziarna, bez wzmocnienia (demo B1R) zostaje przy klasach z wypieku', () => {
+  // Druga opinia 2026-11-08: klasa + 6 w rdzeniu szyi szła też przy mocSzyi 1, więc szyja B1R nie pękała po granicach ziaren i fala jej nie łamała.
+  const { w: wG } = zbudujPlan(plany[80], {});
+  const { w: wD } = zbudujPlan(scenaB1({ dx: 80, mocSzyi: 1, giecieSzyi: 1 }), {});
+  assert.equal(wD.n, wG.n);
+  let inne = 0;
+  for (let q = 0; q < STRONA * wG.n; q++) {
+    if (wG.klasaW[q] === wD.klasaW[q]) continue;
+    assert.ok(wD.klasaW[q] < 6 && wG.klasaW[q] === wD.klasaW[q] + 6, `wiązanie ${q}: ${wG.klasaW[q]} wobec ${wD.klasaW[q]}`);
+    inne++;
+  }
+  assert.ok(inne > 0, 'szyja bez wzmocnienia ma granice ziaren');
+});
+
+test('demo B1R: bez bębna i z grubszą szyją (prośba 2026-11-09), opcje domyślne (gra) z bębnem i szyją z układu', () => {
+  const nazwy = (p) => p.miasto.budynki.map((b) => b.nazwa);
+  const demo = scenaB1({ dx: 80, bezBebna: true, szyjaR: 200 });
+  assert.ok(nazwy(plany[80]).includes('H-E, S, W, N'));
+  assert.ok(!nazwy(demo).includes('H-E, S, W, N'));
+  // Szyja: węzły wieży w połowie jej wysokości (między szybem a talerzem), najdalszy od osi.
+  const promienSzyi = (p) => {
+    const c = p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T'), pos = p.scena.pos;
+    let z0 = Infinity, z1 = -Infinity, rMax = 0;
+    for (let i = c.start; i < c.start + c.n; i++) { z0 = Math.min(z0, pos[3 * i + 2]); z1 = Math.max(z1, pos[3 * i + 2]); }
+    const zM = 0.5 * (z0 + z1);
+    for (let i = c.start; i < c.start + c.n; i++) if (Math.abs(pos[3 * i + 2] - zM) < 200) rMax = Math.max(rMax, Math.hypot(pos[3 * i], pos[3 * i + 1]));
+    return rMax;
+  };
+  assert.ok(promienSzyi(demo) > promienSzyi(plany[80]) + 40, `szyja: ${promienSzyi(demo)} wobec ${promienSzyi(plany[80])}`);
+  assert.equal(demo.kola[0], 200);
+  assert.equal(plany[80].kola[0], 150);
+  // Bez bębna trzon ma pokrywę i dno (szyb nie wisi nad pustą rurą), z bębnem jak dotąd.
+  const trzon = (p) => p.miasto.budynki.find((b) => b.nazwa === 'trzon').n;
+  assert.ok(trzon(demo) > 1.5 * trzon(plany[80]), `trzon: ${trzon(demo)} wobec ${trzon(plany[80])}`);
+});
+
+test('wnętrze szyi i szybu (szyjaWnetrze): 0 jak dotąd, 1 stropy, 2 pełne — więcej węzłów tylko w wieży', () => {
+  const ile = (w) => { const p = scenaB1({ dx: 80, bezBebna: true, szyjaR: 200, szyjaWnetrze: w }); return [p.scena.n, p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T').n]; };
+  const [n0, w0] = ile(0), [n1, w1] = ile(1), [n2, w2] = ile(2);
+  assert.equal(n1 - n0, w1 - w0);
+  assert.equal(n2 - n0, w2 - w0);
+  assert.ok(w0 < w1 && w1 < w2, `${w0} / ${w1} / ${w2}`);
+  assert.equal(scenaB1({ dx: 80 }).scena.n, scenaB1({ dx: 80, szyjaWnetrze: 0 }).scena.n);
+});
