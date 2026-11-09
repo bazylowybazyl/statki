@@ -143,11 +143,12 @@ function budujBeben(b, l) {
   return c;
 }
 
-function budujTrzon(b, Hs) {
+/** Trzon pod bębnem: rura od dysku do podłogi bębna. zamkniety: z pokrywą i dnem (baza bez bębna: szyb stoi na pokrywie, a nie nad pustą rurą). */
+function budujTrzon(b, Hs, zamkniety = false) {
   const dx = b.dx, sc = Math.max(80, 2 * dx);
   const zD = k7HeightToZ(Hs.tier2Y), zF = k7HeightToZ(Hs.floorY);
   const c = b.nowa('trzon', TON.trzon);
-  b.wypelnij(c, -Hs.stemR, Hs.stemR, -Hs.stemR, Hs.stemR, zD, zF, rura(0, 0, Hs.stemR, sc, zD, zF, 0, KIND.RDZEN, KIND.STROP));
+  b.wypelnij(c, -Hs.stemR, Hs.stemR, -Hs.stemR, Hs.stemR, zD, zF, rura(0, 0, Hs.stemR, sc, zD, zF, zamkniety ? 2 * dx : 0, KIND.RDZEN, KIND.STROP));
 }
 
 function budujPomosty(b, l, podesty) {
@@ -477,6 +478,7 @@ const OPCJE_B1 = Object.freeze({
   giecieSzyi: 8,
   // Demo B1R (prośba użytkownika 2026-11-09: „usuń dysk, w którym gracz musiał zrobić wyłom”, „szyja trochę grubsza”): bez bębna (ćwiartki,
   // pierścień wewnętrzny, grodzie) i promień szyi szyjaR zamiast neckR z układu (0: z układu). W grze wyłom w ćwiartce bębna to etap misji, więc gra ma bęben.
+  // Bez bębna trzon dostaje pokrywę i dno: szyb stał nad pustą rurą trzonu i wisiał w powietrzu (zgłoszenie użytkownika 2026-11-09).
   bezBebna: false,
   szyjaR: 0,
   szyjaWnetrze: 0, // 0 pusta rura (gra), 1 stropy jak w wieżowcu, 2 pełna (budujWieze)
@@ -504,7 +506,7 @@ export function scenaB1(oo = {}) {
   const podesty = b.czesci.map((c) => c.podest);
   budujWieze(b, Hs, o.szyjaWnetrze);
   if (!o.bezBebna) budujBeben(b, l);
-  budujTrzon(b, Hs);
+  budujTrzon(b, Hs, !!o.bezBebna);
   budujPomosty(b, l, podesty);
   budujPaliwo(b, l);
   budujMagazyn(b, l);

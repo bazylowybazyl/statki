@@ -88,6 +88,9 @@ test('demo B1R: bez bębna i z grubszą szyją (prośba 2026-11-09), opcje domy�
   assert.ok(promienSzyi(demo) > promienSzyi(plany[80]) + 40, `szyja: ${promienSzyi(demo)} wobec ${promienSzyi(plany[80])}`);
   assert.equal(demo.kola[0], 200);
   assert.equal(plany[80].kola[0], 150);
+  // Bez bębna trzon ma pokrywę i dno (szyb nie wisi nad pustą rurą), z bębnem jak dotąd.
+  const trzon = (p) => p.miasto.budynki.find((b) => b.nazwa === 'trzon').n;
+  assert.ok(trzon(demo) > 1.5 * trzon(plany[80]), `trzon: ${trzon(demo)} wobec ${trzon(plany[80])}`);
 });
 
 test('wnętrze szyi i szybu (szyjaWnetrze): 0 jak dotąd, 1 stropy, 2 pełne — więcej węzłów tylko w wieży', () => {

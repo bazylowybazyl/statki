@@ -102,6 +102,8 @@ Wniosek: pustka w szyi nie jest przyczyną. Głowa waży cztery razy tyle co szy
 
 Decyzja użytkownika (2026-11-09): demo B1R ma domyślnie szyję ×3 (`mocSzyi`) i bez tłumienia. Na tych ustawieniach baza bez strzałów stoi (0 zerwanych wiązań przez 6 s), a wieża podcięta klinem kładzie się ku klinowi (głowa 612 j. w bok w 10 s). Powrót: `?baza={"mocSzyi":1}&tlumienie=1`.
 
+Potem (uwaga użytkownika: „szyja wisi w powietrzu”, „wypełnij ją jak wieżowiec”): szyja i szyb mają w środku stropy jak wieżowiec (`szyjaWnetrze` 1, +1061 węzłów, około 1 % sceny), a trzon pod szybem ma pokrywę i dno, więc szyb stoi na pokrywie. Baza bez strzałów stoi (0 zerwanych z 998 510 wiązań przez 6 s), klin: głowa 618 j. w bok w 10 s.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

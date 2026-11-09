@@ -63,7 +63,8 @@ export const PLANY_POKAZU = {
   // Bez bębna i z szyją r 200 zamiast 150 (prośba użytkownika 2026-11-09): ?baza={"bezBebna":false,"szyjaR":0} wraca do bazy z gry.
   // Szyja ×3 (decyzja użytkownika 2026-11-09, razem z wyłączonym tłumieniem w pokaz.js): podcięta klinem wytrzymuje i kładzie się ku klinowi, a przy ×1 miażdżyła się od dołu
   // i głowa siadała. Gięcie bez wzmocnienia. ?baza={"mocSzyi":1}: szyja bez wzmocnienia.
-  B1R: (ziarno, lod, baza) => scenaB1({ mocSzyi: 3, giecieSzyi: 1, bezBebna: true, szyjaR: 200, ...(baza ?? {}), stoi: true }),
+  // Szyja i szyb ze stropami w środku jak wieżowiec (prośba użytkownika 2026-11-09), ?baza={"szyjaWnetrze":0}: pusta rura jak w grze.
+  B1R: (ziarno, lod, baza) => scenaB1({ mocSzyi: 3, giecieSzyi: 1, bezBebna: true, szyjaR: 200, szyjaWnetrze: 1, ...(baza ?? {}), stoi: true }),
   // Ziarno z adresu strony (?ziarno=7), domyślnie 21 jak w filmie. Pozostałe sceny argumentu nie czytają.
   S5: (ziarno) => S5({ miejsce: 'g', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5v: (ziarno) => S5({ miejsce: 'proznia', ...(ziarno === undefined ? {} : { ziarno }) }),
