@@ -1544,15 +1544,10 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
   }
 
   /**
-   * Demo, statek: pęd oddany węzłom od poprzedniego odczytu (masa węzła 1), moment wokół środka kadłuba, styki i wyrwane kotwice. Liczniki od zera po kopii:
-   * getArrayBufferAsync wysyła kopię od razu, a zerowanie idzie za nią w kolejce GPU, więc żaden podkrok nie przepada.
+   * Demo, statek: liczniki kadłuba [Σ Δv · skala.ped (3), Σ moment z · skala.moment, styki, wyrwane kotwice, licznik podkroków, krok] jako i32. Odczyt robi strona dema
+   * (atlas.js; moduły src/3d nie dokładają odczytów z GPU, strażnik szwu renderu): kopia bufora, zaraz po niej `zeruj` w kolejce GPU, więc żaden podkrok nie przepada.
    */
-  async function odczytStatku(renderer) {
-    const obietnica = renderer.getArrayBufferAsync(aStatek);
-    renderer.compute(kStatekZeruj);
-    const b = new Int32Array(await obietnica);
-    return { px: b[0] / ST_SKALA, py: b[1] / ST_SKALA, pz: b[2] / ST_SKALA, moment: b[3] / (ST_SKALA * ST_SKALA_M), styki: b[4], kotwice: b[5] };
-  }
+  const odczytStatku = statek ? { atrybut: aStatek, zeruj: kStatekZeruj, skala: { ped: ST_SKALA, moment: ST_SKALA * ST_SKALA_M } } : null;
 
   /** Jeden przebieg kLista + kF bez całkowania: to, co porównuje test § 8. Wynik: odczyt(renderer). */
   function podkrokPorownania(renderer) { renderer.compute(listaPodkroku); }
@@ -1620,7 +1615,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     maxNodes: MAX, ciagliwe, limityF0, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, puscCzesc, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     gPole: gNaWezle, // pole grawitacji w punkcie, dla gruzu obrazu (wklejane, woła się tylko w Fn)
-    statek: statek ? { ustaw: ustawStatek, ksztalt: ustawKsztaltStatku, odczyt: odczytStatku } : null,
+    statek: statek ? { ustaw: ustawStatek, ksztalt: ustawKsztaltStatku, ...odczytStatku } : null,
     get wypiek() { return wypiek; },
     get strzalCzeka() { return strzalCzeka !== null; },
     get fKlatka() { return fKlatka; },
