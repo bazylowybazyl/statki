@@ -5,6 +5,7 @@
 //   node scripts/webgpu/woksele-baza-narzedzia.mjs [--out .tmp/woksele-demo/KAW/baza] [--rozmiar 1280x720] [--port 5432] [--zbrojenie 1]
 //        [--kruchosc 0|1|2] [--baza '{"giecieSzyi":8}'] [--scenariusz szyja]
 // --scenariusz szyja: dwa kratery z boku u podstawy szyi (z ≈ 300), głowa przechyla się. Kadry z boku: czy szyja gnie się jak guma, czy pęka (zgłoszenie 2026-11-08).
+// --scenariusz klin: klin kraterami od +y u podstawy szyi, przesunięcie środka głowy w bok i w dół (czy wieża przewraca się jak wieżowiec, 2026-11-09).
 import os from 'node:os';
 os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -141,6 +142,42 @@ try {
     const k = await ev('window.__wok.pokaz.kosztKlatki(8, 9)');
     raport.koszt = k;
     console.log(`  koszt: krok + kernele ${k.computeGpuMs.toFixed(2)} ms GPU, rysunek ${k.renderGpuMs.toFixed(2)} ms, podkroki ${await ev('window.__wok.pokaz.solver.wypiek.podkrokiEf')}`);
+  } else if (args.scenariusz === 'klin') {
+    // Klin u podstawy szyi od strony +y narzędziem Krater, jak klika użytkownik (pytanie 2026-11-09: wieżowiec podcięty klinem pada w bok, wieża zawsze
+    // siada w dół). Głowa = węzły wieży dalej niż 300 j. od osi: przesunięcie jej środka w poziomie (przewrót) i w pionie (siadanie). Kadry z boku (+x).
+    const BOKX = { az: Number(args.klinAz ?? 90), el: 6, cel: [0, 0, 900], odl: 5600 }; // az 90: kamera na osi x, upadek ku +y idzie w poprzek kadru
+    const GLOWA = `(async () => {
+      const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt();
+      const cz = window.__wok.pokaz.stan.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T');
+      let n = 0, x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+      for (let i = cz.start; i < cz.start + cz.n; i++) {
+        const x = w.pos[3 * i], y = w.pos[3 * i + 1];
+        if (x * x + y * y < 300 * 300 || !r.aktywny[i]) continue;
+        n++; x0 += x; y0 += y; z0 += w.pos[3 * i + 2]; x1 += r.poz[3 * i]; y1 += r.poz[3 * i + 1]; z1 += r.poz[3 * i + 2];
+      }
+      return { n, dx: (x1 - x0) / n, dy: (y1 - y0) / n, dz: (z1 - z0) / n };
+    })()`;
+    const kadrBok = async (nazwa, t) => {
+      await ev(`window.__wok.pokaz.kamera(${JSON.stringify(BOKX)}); true`);
+      await ev('window.__wok.pokaz.przerysuj()');
+      const plik = `${nazwa}_t${t.toFixed(1)}_bok.png`;
+      await screenshotPng(cdp, join(wyDir, plik));
+      raport.kadry.push(plik);
+      const g = await ev(GLOWA);
+      (raport.glowa ??= []).push({ t, ...g });
+      console.log(`${nazwa} t = ${t}: głowa w bok ${Math.hypot(g.dx, g.dy).toFixed(0)} j. (ku +y ${g.dy.toFixed(0)}), w dół ${(-g.dz).toFixed(0)} j., węzłów ${g.n}`);
+    };
+    await ev('window.__wok.pokaz.doChwili(0.5)');
+    await kadrBok('k0', 0.5);
+    await ev(`${N}.stan.rKratera = 130; true`);
+    for (const z of [300, 380]) for (const x of [-160, -80, 0, 80, 160]) {
+      await ev(`${N}.uzyj('krater', { o: [${x}, 4000, ${z}], dir: [0, -1, 0] }); true`);
+      await ev(`window.__wok.pokaz.doChwili(window.__wok.pokaz.stan.krok / 60 + 2 / 60)`);
+    }
+    for (const t of String(args.klinT || '1.5,2.5,3.5,5,7,10').split(',').map(Number)) { // --klinT '2,5,10,15,20': chwile kadrów
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrBok('k', t);
+    }
   } else {
   await ev('window.__wok.pokaz.doChwili(1)');
   await kadr('01-przed', 1);

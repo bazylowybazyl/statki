@@ -196,7 +196,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const jakWGrze = !!opis.jakWGrze && adres.get('jakWGrze') !== '0';
     const uS = solver.uniformy;
     uS.uFalaWzgl.value = jakWGrze ? 1 : 0;
-    if (jakWGrze && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
+    // ?tlumienie=0: bez tłumienia „stoi albo pęka” (fala względna zostaje). Tłumienie gasi też powolny początek przewracania: wieża z klinem przy mocniejszej
+    // szyi (mocSzyi 3) stoi pod nim, a bez niego przechyla się ku klinowi (pomiar 2026-11-09, docs/RAPORT-kawalki-zawalen.md).
+    if (jakWGrze && adres.get('tlumienie') !== '0' && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (obraz.kawalki) {

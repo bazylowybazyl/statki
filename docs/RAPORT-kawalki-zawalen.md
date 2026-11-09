@@ -82,6 +82,24 @@ Pomiary w nocy (`--noc 1`, 960 × 540, 60 kl/s, sztywność 2, krótkie przebieg
 
 Arkusze leżą w worktree w `.tmp/woksele-demo/KAW/`.
 
+### Baza bez bębna i klin w szyi (2026-11-09)
+
+Prośba użytkownika: bez bębna (dysku z wyłomem), szyja trochę grubsza, beton kruchy przy sztywności ×2 albo ×3. Demo B1R ma teraz bez bębna szyję r 200 (było 150), domyślnie beton kruchy i sztywność 2. Baza bez strzałów stoi (0 zerwanych z 955 670 wiązań przez 6 s).
+
+Uwaga użytkownika: „wieżowce, jak je podetnę klinem, potrafią spaść w bok, wieża nie, zawsze w dół. Może to kształt i podpory? Wieża w środku jest pusta, a wieżowiec nie.” Pomiar: klin dziesięcioma kraterami od +y u podstawy szyi (`--scenariusz klin`), przesunięcie środka głowy:
+
+| Wariant (beton kruchy) | W bok | W dół | Co widać |
+|---|---|---|---|
+| sztywność 2, szyja pusta (dziś) | 30 j. w 5 s | 2108 j. | szyja miażdży się od dołu, głowa siada |
+| sztywność 2, szyja ze stropami | 37 j. | 2034 j. | to samo |
+| sztywność 2, szyja pełna | 43 j. | 1516 j. | to samo, trochę wolniej |
+| sztywność 3, szyja pusta | 61 j. | 1935 j. | to samo |
+| sztywność 2, `mocSzyi` 2 | 21 j. w 10 s, potem siada | 1888 j. w 15 s | stoi 10 s, potem siada |
+| sztywność 2, `mocSzyi` 3 | 26 j. w 10 s | 38 j. | stoi, ledwo się przechyla |
+| sztywność 2, `mocSzyi` 3, bez tłumienia | 508 j. w 10 s | 3114 j. | prosta szyja kładzie się ku klinowi, głowa sypie się po drodze |
+
+Wniosek: pustka w szyi nie jest przyczyną. Głowa waży cztery razy tyle co szyja (6688 węzłów wobec 1618), a wytrzymałość wiązania to wielokrotność siły, którą niesie w spoczynku. Po klinie reszta przekroju jest przeciążona i miażdży się od dołu, a przechył od grawitacji rusza powoli (wieża 1,4 km). Mocniejsza szyja wytrzymuje, ale wtedy tłumienie „stoi albo pęka” z gry gasi powolny początek przechyłu. Wieżowiec jest prawie lity (stropy grube na dwie komórki co trzy warstwy) i nie ma ciężkiej głowy, więc klin go przechyla. Arkusze: `.tmp/woksele-demo/KAW/arkusz_klin.png`, `arkusz_klin_m3_ukos.png`.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

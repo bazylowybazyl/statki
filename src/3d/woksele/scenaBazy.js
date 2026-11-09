@@ -75,8 +75,12 @@ function budujWiezowce(b, l) {
 }
 
 /** H-C i H-T jako jedna część: szyb, płyta na szybie, szyja, głowa (talerz, piasta), maszt. Jedna część, bo szyja stoi na szybie wiązaniami: cięcie szybu kraterami to zerwanie „kotwic” szyi z gry. */
-function budujWieze(b, Hs) {
+function budujWieze(b, Hs, wnetrzeTyp = 0) {
   const dx = b.dx;
+  // Wnętrze szybu i szyi: 0 pusta rura (gra), 1 stropy jak w wieżowcu (dwie warstwy na trzy), 2 pełne. Pytanie użytkownika 2026-11-09: wieżowiec
+  // podcięty klinem przewraca się w bok, a wieża zawsze siada w dół; wieżowiec jest prawie lity, a rura szyi ma ściankę na dwie komórki i niesie głowę
+  // kilka razy cięższą od siebie: przy klinie zostaje cienki łuk ściany, który się miażdży zamiast być zawiasem.
+  const wnetrze = (z) => (wnetrzeTyp === 2 ? KIND.RDZEN : wnetrzeTyp === 1 && Math.floor(z / dx) % 3 < 2 ? KIND.STROP : -1);
   const zF = k7HeightToZ(Hs.floorY), zCore = k7HeightToZ(Hs.coreTop), zN1 = k7HeightToZ(Hs.neckY1);
   const zR0 = k7HeightToZ(Hs.ringY0), zR1 = k7HeightToZ(Hs.ringY1), zHead = k7HeightToZ(Hs.headTop), zMast = k7HeightToZ(Hs.mastTop);
   const scSzybu = Math.max(80, 2 * dx), plyta = 2 * dx;
@@ -89,9 +93,13 @@ function budujWieze(b, Hs) {
     if (z <= zCore) {
       if (r > Hs.coreR) return -1;
       if (r > Hs.coreR - scSzybu) return KIND.RDZEN;
-      return z > zCore - plyta ? KIND.STROP : -1;
+      return z > zCore - plyta ? KIND.STROP : wnetrze(z);
     }
-    if (z < zN1) return r <= Hs.neckR && r > Hs.neckR - scSzyi ? KIND.RDZEN : r <= Hs.neckR - scSzyi && z < zCore + plyta ? KIND.STROP : -1;
+    if (z < zN1) {
+      if (r > Hs.neckR) return -1;
+      if (r > Hs.neckR - scSzyi) return KIND.RDZEN;
+      return z < zCore + plyta ? KIND.STROP : wnetrze(z);
+    }
     if (z < zR0) return r <= Hs.neckR + (Hs.ringR0 - Hs.neckR) * ((z - zN1) / Math.max(1, zR0 - zN1)) && r > Hs.neckR - scSzyi ? KIND.RDZEN : -1; // lejek do talerza
     if (z <= zR1) {
       if (r > Hs.ringR1) return -1;
@@ -471,6 +479,7 @@ const OPCJE_B1 = Object.freeze({
   // pierścień wewnętrzny, grodzie) i promień szyi szyjaR zamiast neckR z układu (0: z układu). W grze wyłom w ćwiartce bębna to etap misji, więc gra ma bęben.
   bezBebna: false,
   szyjaR: 0,
+  szyjaWnetrze: 0, // 0 pusta rura (gra), 1 stropy jak w wieżowcu, 2 pełna (budujWieze)
   mocPodestu: 30,
   T: 30,
 });
@@ -493,7 +502,7 @@ export function scenaB1(oo = {}) {
   const los = prng((o.ziarno >>> 0) * 6151 + 29);
   budujWiezowce(b, l);
   const podesty = b.czesci.map((c) => c.podest);
-  budujWieze(b, Hs);
+  budujWieze(b, Hs, o.szyjaWnetrze);
   if (!o.bezBebna) budujBeben(b, l);
   budujTrzon(b, Hs);
   budujPomosty(b, l, podesty);

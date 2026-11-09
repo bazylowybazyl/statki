@@ -89,3 +89,12 @@ test('demo B1R: bez bębna i z grubszą szyją (prośba 2026-11-09), opcje domy�
   assert.equal(demo.kola[0], 200);
   assert.equal(plany[80].kola[0], 150);
 });
+
+test('wnętrze szyi i szybu (szyjaWnetrze): 0 jak dotąd, 1 stropy, 2 pełne — więcej węzłów tylko w wieży', () => {
+  const ile = (w) => { const p = scenaB1({ dx: 80, bezBebna: true, szyjaR: 200, szyjaWnetrze: w }); return [p.scena.n, p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T').n]; };
+  const [n0, w0] = ile(0), [n1, w1] = ile(1), [n2, w2] = ile(2);
+  assert.equal(n1 - n0, w1 - w0);
+  assert.equal(n2 - n0, w2 - w0);
+  assert.ok(w0 < w1 && w1 < w2, `${w0} / ${w1} / ${w2}`);
+  assert.equal(scenaB1({ dx: 80 }).scena.n, scenaB1({ dx: 80, szyjaWnetrze: 0 }).scena.n);
+});
