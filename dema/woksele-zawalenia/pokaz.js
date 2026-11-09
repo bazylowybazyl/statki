@@ -45,7 +45,7 @@ const SCENY = {
   B1: { nazwa: 'Baza piratów', miasto: true, baza: true, pomin: 0, cienZapas: 1.05 },
   // Baza bez skryptu: niszczy użytkownik (?kawalki=1, narzędzia). Start z kamery z góry jak w misji 1, pył jak B1.
   // jakWGrze: fala łamiąca z prędkości względnej w bryle oderwanej od kotwic i tłumienie stojącej konstrukcji do progu fali, jak wGrze.zaladuj (?jakWGrze=0: dawne demo).
-  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, jakWGrze: true },
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
@@ -98,7 +98,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
   const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa, budynki: () => stan.miasto?.budynki ?? null }) : null;
   // ?kruchosc=1|2: beton kruchszy w wypieku (granice gięcia, kawalki.js KRUCHOSC). Zmiana przeładowuje stronę, bo wypiek idzie od nowa.
-  const KRUCH = KAWALKI ? Math.max(0, Math.min(KRUCHOSC.length - 1, Number(adres.get('kruchosc')) || 0)) : 0;
+  // Bez parametru: kruchość sceny z adresu (B1R: 1, propozycja użytkownika 2026-11-09 „beton kruchy, sztywność ×2 lub ×3”), reszta 0.
+  const KRUCH = KAWALKI ? Math.max(0, Math.min(KRUCHOSC.length - 1, adres.has('kruchosc') ? Number(adres.get('kruchosc')) || 0 : SCENY[adres.get('scena')]?.kruchosc ?? 0)) : 0;
   // ?sztywnosc=2|3: sztywniejszy beton (K × s², podkroki solvera × s, wytrzymałość bez zmian). Też przeładowanie.
   // Bez parametru: sztywność sceny z adresu (B1R: 2, reszta 1).
   const SZTYW = KAWALKI ? Math.max(1, Math.min(4, Number(adres.get('sztywnosc')) || SCENY[adres.get('scena')]?.sztywnosc || 1)) : 1;

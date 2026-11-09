@@ -467,6 +467,10 @@ const OPCJE_B1 = Object.freeze({
   // Mnożnik granicy gięcia szyi i szybu (rdzeń w promieniu pierścienia). Domyślnie jak siła (8): szyja nie pęka od zginania nigdy i gnie się jak guma
   // (zgłoszenie użytkownika 2026-11-08). Demo B1R ma 1: siła zostaje, zgięta szyja pęka. Gra (wGrze) bez zmian, dopóki użytkownik nie zdecyduje.
   giecieSzyi: 8,
+  // Demo B1R (prośba użytkownika 2026-11-09: „usuń dysk, w którym gracz musiał zrobić wyłom”, „szyja trochę grubsza”): bez bębna (ćwiartki,
+  // pierścień wewnętrzny, grodzie) i promień szyi szyjaR zamiast neckR z układu (0: z układu). W grze wyłom w ćwiartce bębna to etap misji, więc gra ma bęben.
+  bezBebna: false,
+  szyjaR: 0,
   mocPodestu: 30,
   T: 30,
 });
@@ -480,14 +484,17 @@ export function scenaB1(oo = {}) {
   const dx = o.dx ?? DX_BAZY;
   // W grze (wGrze.js): bez planu krater po kraterze (kratery zleca misja) i z gruntem na poziomie skały pod bazą.
   if (o.wGrze) o.stoi = true;
-  const l = createPirateBaseLayout({ id: 'B1' });
+  // Skrypt zniszczeń (planSekwencji) robi wyłom w ćwiartce bębna: baza bez bębna ma tylko tryb bez skryptu.
+  if (o.bezBebna) o.stoi = true;
+  const l0 = createPirateBaseLayout({ id: 'B1' });
+  const l = o.szyjaR > 0 ? { ...l0, habitat: { ...l0.habitat, neckR: o.szyjaR } } : l0;
   const Hs = l.habitat;
   const b = createBudowa(dx);
   const los = prng((o.ziarno >>> 0) * 6151 + 29);
   budujWiezowce(b, l);
   const podesty = b.czesci.map((c) => c.podest);
   budujWieze(b, Hs);
-  budujBeben(b, l);
+  if (!o.bezBebna) budujBeben(b, l);
   budujTrzon(b, Hs);
   budujPomosty(b, l, podesty);
   budujPaliwo(b, l);

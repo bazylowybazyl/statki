@@ -60,7 +60,8 @@ export const PLANY_POKAZU = {
   // Ta sama baza bez skryptu zniszczeń: niszczy użytkownik narzędziami dema (dema/woksele-zawalenia/narzedzia.js), jak gracz w misji 1.
   // Szyja bez wzmocnienia (mocSzyi i giecieSzyi 1): przy sztywnym betonie (strona B1R ma domyślnie ?sztywnosc=2) pęka, a głowa przewraca się w całości.
   // Wzmocnienie ×8 obchodziło miękki beton (szyja ściśnięta o 23 % pod głową). ?baza={"mocSzyi":8,"giecieSzyi":8}: jak w grze.
-  B1R: (ziarno, lod, baza) => scenaB1({ mocSzyi: 1, giecieSzyi: 1, ...(baza ?? {}), stoi: true }),
+  // Bez bębna i z szyją r 200 zamiast 150 (prośba użytkownika 2026-11-09): ?baza={"bezBebna":false,"szyjaR":0} wraca do bazy z gry.
+  B1R: (ziarno, lod, baza) => scenaB1({ mocSzyi: 1, giecieSzyi: 1, bezBebna: true, szyjaR: 200, ...(baza ?? {}), stoi: true }),
   // Ziarno z adresu strony (?ziarno=7), domyślnie 21 jak w filmie. Pozostałe sceny argumentu nie czytają.
   S5: (ziarno) => S5({ miejsce: 'g', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5v: (ziarno) => S5({ miejsce: 'proznia', ...(ziarno === undefined ? {} : { ziarno }) }),

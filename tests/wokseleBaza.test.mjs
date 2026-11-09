@@ -70,3 +70,22 @@ test('szyja: wzmocniona (gra, mocSzyi 8) to wnętrze ziarna, bez wzmocnienia (de
   }
   assert.ok(inne > 0, 'szyja bez wzmocnienia ma granice ziaren');
 });
+
+test('demo B1R: bez bębna i z grubszą szyją (prośba 2026-11-09), opcje domyślne (gra) z bębnem i szyją z układu', () => {
+  const nazwy = (p) => p.miasto.budynki.map((b) => b.nazwa);
+  const demo = scenaB1({ dx: 80, bezBebna: true, szyjaR: 200 });
+  assert.ok(nazwy(plany[80]).includes('H-E, S, W, N'));
+  assert.ok(!nazwy(demo).includes('H-E, S, W, N'));
+  // Szyja: węzły wieży w połowie jej wysokości (między szybem a talerzem), najdalszy od osi.
+  const promienSzyi = (p) => {
+    const c = p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T'), pos = p.scena.pos;
+    let z0 = Infinity, z1 = -Infinity, rMax = 0;
+    for (let i = c.start; i < c.start + c.n; i++) { z0 = Math.min(z0, pos[3 * i + 2]); z1 = Math.max(z1, pos[3 * i + 2]); }
+    const zM = 0.5 * (z0 + z1);
+    for (let i = c.start; i < c.start + c.n; i++) if (Math.abs(pos[3 * i + 2] - zM) < 200) rMax = Math.max(rMax, Math.hypot(pos[3 * i], pos[3 * i + 1]));
+    return rMax;
+  };
+  assert.ok(promienSzyi(demo) > promienSzyi(plany[80]) + 40, `szyja: ${promienSzyi(demo)} wobec ${promienSzyi(plany[80])}`);
+  assert.equal(demo.kola[0], 200);
+  assert.equal(plany[80].kola[0], 150);
+});
