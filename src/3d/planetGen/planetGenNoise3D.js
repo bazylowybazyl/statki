@@ -1,7 +1,8 @@
 // src/3d/planetGen/planetGenNoise3D.js
 //
 // TEKSTURA SZUMU 3D (kafelkowana) dla objętości liczonych marszem promienia: chmury jako bryła
-// (planetGenCloudVolume.tsl.js) i zorza (planetGenAurora.tsl.js). Jedna próbka tekstury zamiast szumu liczonego
+// (planetGenCloudVolume.tsl.js), zorza (planetGenShell.tsl.js) i cień kłębów na gruncie
+// (planetGenSurfaceNear.tsl.js). Jedna próbka tekstury zamiast szumu liczonego
 // w shaderze (szum gradientowy to ~40 działań z haszami na próbkę; marsz promienia bierze ich dziesiątki na piksel).
 // Kanały (0…1): R — kłęby (szum gradientowy × odwrócony Worley, niskie częstości — kształt chmur), G — odwrócony
 // Worley średni (erozja brzegów), B — odwrócony Worley drobny, A — gładki szum gradientowy (kurtyny zorzy, wiatr).

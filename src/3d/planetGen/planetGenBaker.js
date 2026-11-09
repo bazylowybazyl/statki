@@ -115,6 +115,13 @@ export class PlanetGenBaker {
     const keys = new Set();
     for (const t of types) for (const [k, fmt] of this.passesFor(t)) if (!this._compiled.has(`${k}|${fmt}`)) keys.add(`${k}|${fmt}`);
     if (!keys.size) return;
+    // AGENT (three r183, pułapka 45 w regule webgpu-tsl): compileAsync liczy węzły pod tymczasowym numerem renderu
+    // „poprzedni + 1” (poza renderem = 1), a zwykły render bierze numer z licznika `info.calls` — PIERWSZY render
+    // w życiu renderera też ma 1. Kompilacja przed pierwszym renderem zostawia więc węzły odświeżane „raz na
+    // render” i grupę uniformów „render” oznaczone jako aktualne i pierwszy rysunek idzie ze stanem z kompilacji:
+    // wypiek próby rysował pusty cel, kwantyle wychodziły 1 i planeta z wodą była samym oceanem (strona bez klatek
+    // rAF przed wypiekiem — karta w tle, harness). Licznik podbity przed kompilacją usuwa zbieżność numerów.
+    if (r.info && r.info.calls === 0) r.info.calls = 1;
     try {
       for (const kf of keys) {
         const [k, fmt] = kf.split('|');

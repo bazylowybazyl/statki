@@ -316,9 +316,9 @@ potrzebę (ostry obraz przy każdym zbliżeniu) załatwia WYPIEK W BIEGU SAMEGO 
   a komórki Worleya dawały równe owalne „cekiny”. Bryłowatość BEZ marszu promienia: maska = grubość, światło gaśnie
   z grubością chmur po drodze ku słońcu (dwie próbki maski przesunięte o wysokość chmur / tangens wysokości słońca).
   Cień chmur na gruncie: mapa chmur planety w punkcie przesuniętym ku słońcu (materiał powierzchni, `uGnCloud`).
-- Pełny marsz promienia przez chmury świadomie nie: kamera gry patrzy z góry bez paralaksy — boków chmur nie widać,
-  głębię niesie światło i cień. Marsz opłaca się tam, gdzie okręt wlatuje w chmury (pokład olbrzyma w płaszczyźnie
-  gry, na polu gazu) — nie zrobione.
+- Maska bez marszu promienia jest domyślna w widoku gry: kamera patrzy z góry bez paralaksy — boków chmur nie widać,
+  głębię niesie światło i cień. Chmury jako bryła (marsz promienia, § 10.8) są domyślne w widoku orbitalnym i do
+  włączenia w widoku gry (klawisz B). Okręt wlatujący w chmury (pokład olbrzyma w płaszczyźnie gry) — nie zrobione.
 
 ### 10.5. Koszt (headless Chrome, RTX; kadr w całości na planecie przy 1 px = 1 j. gry, promień planety 12 600 j.)
 
@@ -340,10 +340,14 @@ kadr to ~0,1–0,15 ms. Najdroższy jest pióropusz z bliska — przy wpięciu: 
 ### 10.6. Narzędzia
 
 - Demo: `dema/planeta-zblizenie.html` (`?styl=popiol|lawa|siarka|terran`, `?ziarno=N`, `?wycinek=2048|4096`,
-  `?wycinki=0`, `?erupcja=0`, `?pora=`, `?x=&y=&zoom=`, `?test=1`, `?gpu=1`), `window.__zbl` (`setView`, `goVent`,
-  `advance(s)`, `measureGpu(n)`, `snapshot()`, `viewDirs()`).
+  `?wycinki=0`, `?erupcja=0`, `?pora=`, `?x=&y=&zoom=`, `?test=1`, `?gpu=1`; widok: `?widok=orbita|gora`,
+  `?bryla=0|1`, `?az=&el=&odl=&px=&py=`, `?chmury=0…1`), `window.__zbl` (`setView`, `goVent`, `setViewMode`,
+  `orbitAt`, `advance(s)`, `measureGpu(n)`, `snapshot()`, `viewDirs()`). Klawisze: O — widok, B — chmury jako
+  bryła, Z — zorza, C — chmury, E — erupcja.
 - Zrzuty: `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
-  (kadry: daleko, wulkan, blisko, bardzo-blisko, bez-wycinka, noc, planeta albo `nazwa:x,y,zoom`).
+  (kadry widoku gry: daleko, wulkan, blisko, bardzo-blisko, bez-wycinka, noc, planeta albo `nazwa:x,y,zoom`;
+  orbitalne: orbita, orbita-plaska, orbita-blisko, orbita-daleko, orbita-noc, orbita-zorza albo
+  `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`).
 - Testy: `node --test tests/planetGenNear.test.mjs` (układy i siatka okna, wypiek w pasach, uniformy, WGSL).
 
 ### 10.7. Do decyzji i dalsze kroki
@@ -355,3 +359,67 @@ kadr to ~0,1–0,15 ms. Najdroższy jest pióropusz z bliska — przy wpięciu: 
 - Zgodność poziomów dla pozostałych rodzajów (desert, rocky, ice, barren, toxic) — jak w § 10.1.
 - Pasma cirrusów z bliska: smugi bez drobnego detalu (pręgowane łaty) — osłabione w wycinku, nie zastąpione.
 - Wąskie zatoki-ryfty kontynentów (`rift` w `plates`) z bliska rwą się w łańcuch ciemnych odcinków morza.
+
+### 10.8. Widok orbitalny: chmury jako bryła, atmosfera po promieniu, zorza, sieci świateł (2026-11-09, demo)
+
+Wzór: render planety z Blendera (objętość chmur i atmosfery, zorza, światła miast) i plansze innego generatora —
+przysłane przez użytkownika. Demo dostało drugą kamerę (perspektywiczna, przy krawędzi tarczy) i cztery nowe części.
+Wszystkie działają też w widoku gry (kamera z góry, ortho) — promień widzenia liczy wspólny pomocnik `shellRay`.
+
+- SZUM 3D (`planetGenNoise3D.js`): tekstura 64³ RGBA8 o okresie 1, liczona raz na CPU z własnego haszu (~0,3 s):
+  R — kłęby (szum gradientowy × odwrócony Worley), G, B — Worley średni i drobny (erozja), A — gładki szum (zorza).
+  Jedna próbka tekstury zamiast szumu liczonego w shaderze (marsz promienia bierze ich dziesiątki na piksel).
+- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`, siatka = kula jednostkowa, powłoka 0,3–1,7% promienia nad
+  gruntem): marsz promienia widzenia, 16–44 kroków z długości odcinka w powłoce. Pokrycie z mapy chmur planety,
+  kształt z szumu 3D: kłąb jest tam, gdzie szum (dwie skale: kłęby i ~3× większe masy) przekracza próg, a próg spada
+  z pokryciem i rośnie z wysokością — udział kłębów ≈ pokrycie, wierzchołki w kopułach, małe pokrycie = niskie kłęby.
+  Brzegi strzępi drobny Worley. Pod kłębami cienka ława warstwowa przy dużym pokryciu (niesie wzór frontów i cyklonów
+  widziany z daleka). Światło: dwie próbki gęstości ku słońcu (bliska z kłębami, daleka z rzadszej mipmapy mapy),
+  osłabienie z drugim, wolniej gasnącym członem, rozjaśnienie pod słońce (przycięte), światło nieba z wysokości,
+  barwa zachodu i cień planety. Nocna strona bez próbek światła; odcinek z zerowym średnim pokryciem (jedna próbka
+  z mipmapy obejmującej odcinek) nie zaczyna marszu.
+- CIEŃ KŁĘBÓW NA GRUNCIE (`planetGenSurfaceNear.tsl.js`, `uGnCloud.w`, `uGnCloudVol`): materiał powierzchni liczy
+  te same kłęby (ten sam próg i szum — `puffShape`, `puffThreshold`) w dwóch punktach promienia ku słońcu, nisko
+  i wysoko w powłoce. Cień ma kształt chmur; z miękkiej mapy pokrycia nie było go widać.
+- ATMOSFERA (`planetGenShell.tsl.js`, `createGenAtmosphereMaterial`): rozpraszanie pojedyncze, 10 próbek po
+  promieniu, gęstość e^(−h / Hs), droga słońca z funkcji Chapmana (za terminatorem — przez punkt promienia
+  najbliższy planecie), cień planety. Daje cienką błękitną krawędź, mgiełkę pod kątem i ciepły pas zmierzchu z
+  jednego wzoru. Mieszanie addytywne; graf gry zostawia ekstynkcję gruntu, a jego barwa mgiełki idzie ×0,6
+  (`setAtmosphere` — pełna barwa + powłoka liczyły mgiełkę dwa razy).
+- ZORZA (`createGenAuroraMaterial`): świecąca objętość nad owalem ~20° od bieguna magnetycznego (oś z ziarna,
+  odchylona od osi obrotu), 22 próbki; kurtyny = wstęgi wzdłuż poziomic szumu zależnego tylko od kierunku (pionowe
+  promienie), zieleń u dołu, róż u góry; tylko po nocnej stronie. Planety `terran`, `ocean`, `ice`.
+- SIECI ŚWIATEŁ MIAST (`uGnCity`): w skupiskach mapy nocy żyłki z grzbietów szumu wielofraktalnego (gęstsze
+  w środku skupiska) — arterie zamiast samych plam; planety z cywilizacją.
+
+Błędy po drodze (zostają jako zasady w regule `generator-planet`):
+- faza Rayleigha bez podzielenia przez 4π wybielała cały kadr (w jednostkach grafu gry współczynnik 3 / 16);
+- chmury z gęstością „pokrycie × profil + szum” były gładką bitą śmietaną, prześwietloną przez fazę pod słońce (do
+  ×4,9) — pomógł dopiero próg szumu zależny od pokrycia i wysokości oraz faza przycięta do 1,9;
+- pole kłębów jednej skali wyglądało z daleka jak popcorn — druga skala i ława warstwowa;
+- zorza z jasnością dobraną „na oko” zalewała zielenią pół kadru (bloom): jasność ×0,2, maska nocy przed terminatorem;
+- powietrze za terminatorem świeciło blado (droga słońca liczona jak na horyzoncie) — szaroróżowy pas zamiast
+  czerwieni zmierzchu;
+- pierwszy wypiek na stronie bez klatek rAF (karta w tle, panel przeglądarki aplikacji) dawał planetę z wodą jako sam
+  ocean: próba rysowała pusty cel, kwantyle wychodziły 1. Przyczyna w three r183 (pułapka 45 w regule `webgpu-tsl`):
+  numer renderu kompilacji = numer pierwszego renderu w życiu renderera. `PlanetGenBaker.compile` podbija licznik
+  renderów przed kompilacją; sprawdzenie: `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --bez-raf 1`
+  (`requestAnimationFrame` wyłączony przed wczytaniem strony) — przed poprawką 0 wybrzeży, po niej 32.
+
+Koszt GPU klatki (headless Chrome, RTX; planeta `terran` ziarno 21, zachmurzenie 0,33; czas z postem):
+
+| kadr | 5120 × 1440, okno 4096: cała klatka / chmury płaskie / bez chmur [ms] | 1920 × 1080, okno 2048 [ms] |
+|---|---|---|
+| orbita (krawędź tarczy w kadrze) | 2,7 / 2,2 / 1,7 | 1,2 / 0,9 / 0,75 |
+| orbita średnio (pole kłębów na pół kadru) | 3,8 / 2,9 / 2,3 | 1,3 / 1,0 / 0,85 |
+| orbita blisko (kłęby na cały kadr) | 4,5 / 3,3 / 2,6 | 1,2 / 0,9 / 0,8 |
+| cała planeta z daleka | 1,9 / 1,0 / 0,95 | 1,3 / 0,7 / 0,6 |
+| noc z sieciami świateł | 2,5 / 1,7 / 1,4 | 1,0 / 0,7 / 0,6 |
+| noc z zorzą na pół kadru | 3,3 / 2,0 / 1,7 | 2,0 / 1,2 / 1,1 |
+| widok gry 1 px = 1 j., chmury jako bryła | 4,3 / 3,1 / 2,5 | 1,3 / 0,9 / 0,8 |
+
+Osobno (różnica do pełnej klatki): bryła chmur ponad płaskie +0,5…1,3 ms przy 5120 × 1440 (+0,25…0,8 przy 1080p),
+z tego cień kłębów na gruncie ~0,2–0,35 ms; atmosfera +0,2–0,3 ms (+0,07…0,12); zorza +0,1 ms, w kadrze na pół ekranu
++0,5 ms (+0,3). Pusta powłoka chmur (planeta bez chmur w kadrze) ~0,2–0,3 ms. Dźwignie przy wpięciu: bryła chmur
+w połowie rozdzielczości z rozmyciem przy składaniu (4× mniej pikseli marszu), mniej kroków (16 zamiast do 44:
+−0,3…0,4 ms), bryła tylko na planecie przy graczu i tylko od presetu Wysokie.

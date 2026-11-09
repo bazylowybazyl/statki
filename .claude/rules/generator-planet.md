@@ -90,8 +90,41 @@ paths:
 - Odcień żaru z palety planety tylko słaby (potęga ~0,12): barwa sRGB lawy to liniowo ~(1; 0,15; 0,01) i mnożenie
   przez nią zostawia samą czerwień — barwę niesie temperatura.
 
+## Widok orbitalny: powłoki liczone marszem promienia (demo, niewpięte; opis i koszt: `docs/OPIS-generator-planet.md` § 10.8)
+
+- Powłoki nad planetą to kule jednostkowe (promień daje graf), dzieci kuli planety, bez odcinania kadrem; promień
+  widzenia w układzie obiektu z `shellRay` (`planetGenShell.tsl.js`) — kamera perspektywiczna (z pozycji kamery)
+  i ortho gry (stały kierunek) jednym grafem. `createGenNearBody`: `setCamera(camera)` i `setSun(dir)` co klatkę,
+  `setCloudMode('volume' | 'flat' | 'off')`, `setAtmosphere(on)`. Kolejność rysunku: chmury 5, atmosfera 6, zorza 7,
+  pióropusz 10 (`renderOrder`).
+- Tekstura szumu 3D (`planetGenNoise3D.js`, 64³, okres 1, z haszu na CPU) jest wspólna dla chmur, zorzy i cienia
+  kłębów na gruncie. Próbki w pętli i gałęziach z jawnym poziomem (`texture3D(t, uvw, float(0))`, `.level()`).
+- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`): gęstość = (szum kształtu − próg) · K; próg z POKRYCIA mapy
+  chmur i WYSOKOŚCI w powłoce (`puffThreshold`: 0,71 − 0,43 · pokrycie + wysokość · 0,27…0,52 — liczby z kwantyli
+  kanału R szumu, pilnuje test). Szum kształtu w dwóch skalach (`puffNoise`), erozja brzegów tylko wewnątrz kłębu,
+  ława warstwowa przy dużym pokryciu (`sheetDensity`). Zmiana progu albo szumu = zmiana także cienia na gruncie —
+  materiał powierzchni woła te same funkcje (`puffShape`, `puffThreshold`, `cloudCover`, `sheetDensity`).
+- Gęstość „pokrycie × profil wysokości + szum” daje gładką masę (wygląd bitej śmietany); kłęby jednej skali —
+  z daleka równy „popcorn” i widoczny okres kafla szumu. Kopuły wychodzą z progu rosnącego z wysokością.
+- Jasność chmur w jednostkach grafu gry: oświetlony wierzchołek ~0,9 (pod progiem bloomu), faza pod słońce
+  przycięta (Henyey–Greenstein bez przycięcia to ×5 — prześwietlona cała ława), słońce bez mnożenia przez jasność
+  ponad 1. Zorza i krawędź atmosfery to emitery HDR — jasność dobieraj na kadrze, w którym leżą na krawędzi tarczy
+  (droga promienia przez powłokę jest tam wielokrotnie dłuższa niż z góry).
+- ATMOSFERA: faza Rayleigha w jednostkach grafu gry to 3 / 16 · (1 + cos²) (bez podzielenia przez 4π wybiela kadr);
+  droga słońca z funkcji Chapmana z gałęzią za terminatorem (przez punkt promienia najbliższy planecie) — droga
+  „jak na horyzoncie” zostawia za terminatorem jasny, blady pas. Powłoka dokłada rozpraszanie nad tarczą, więc
+  barwa mgiełki grafu gry idzie przy niej ×0,6 (`setAtmosphere`); ekstynkcja i barwy zachodu grafu gry zostają.
+- Oszczędności marszu: liczba kroków z długości odcinka w powłoce (16–44), pokrycie z mapy raz na krok (służy też
+  bliskiej próbce światła), nocna strona bez próbek światła, odcinek o zerowym średnim pokryciu (próbka z mipmapy
+  obejmującej odcinek) bez marszu. Dalsza dźwignia przy wpięciu: pół rozdzielczości.
+- Kamera orbitalna dema stoi względem miejsca-bohatera (`orbitAt`), słońce w widoku orbitalnym wyżej (34° za
+  terminatorem); `advance()` ustawia kamerę orbitalną przed krokami (kierunki kadru dla wycinka biorą jej macierz).
+
 ## Zasady i pułapki
 
+- `PlanetGenBaker.compile` podbija `renderer.info.calls` z 0 na 1 przed kompilacją (three r183, pułapka 45 w regule
+  `webgpu-tsl`): bez tego wypiek zrobiony przed pierwszym renderem renderera rysuje próbę ze stanem z kompilacji —
+  pusty cel, kwantyle 1, planeta z wodą samym oceanem. Objaw „sam ocean, 0 wybrzeży” = sprawdź `baked.levels.uQ`.
 - Wiersz celu wypieku rośnie ku PÓŁNOCY (piksel y = 0 to v = 0 = biegun S): różnica po y jest pochodną na północ —
   bez minusa (odwrócona rzeźba N–S nie rzuca się w oczy przy słońcu ze wschodu; próba: słońce z północy, oświetlona
   ma być ściana krateru zwrócona ku słońcu).
@@ -145,6 +178,8 @@ paths:
 - Czasy i pamięć: `node scripts/webgpu/generator-planet-pomiar.mjs [--roz 1024,2048,4096 --uklad terran,rocky,…]`.
 - Testy: `node --test tests/planetGen.test.mjs`.
 - Planeta z bliska: demo `dema/planeta-zblizenie.html` (`?styl=popiol|lawa|siarka|terran`, `?wycinek=2048|4096`,
-  `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `window.__zbl`: `setView`, `goVent`, `advance(s)`, `measureGpu(n)`,
-  `snapshot()`), zrzuty `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry
-  planeta,daleko,wulkan,blisko,bez-wycinka`, testy `node --test tests/planetGenNear.test.mjs`.
+  `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `?widok=orbita|gora`, `?bryla=0|1`, `?chmury=0…1`, `window.__zbl`: `setView`,
+  `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
+  `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
+  (orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
+  `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`), testy `node --test tests/planetGenNear.test.mjs`.

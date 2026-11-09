@@ -5,13 +5,15 @@
 // tarczy, ma jasną stronę od słońca, ciemny spód i rzuca cień na sąsiednie chmury — to, czego płaska maska
 // (planetGenCloudsNear.tsl.js) nie pokaże pod kątem.
 //   • POKRYCIE z mapy chmur planety (wypiek generatora: pasy klimatu, fronty, cyklony) — gdzie i jak grubo;
-//   • KSZTAŁT: profil wysokości (podstawa nisko, wierzchołek tym wyżej, im większe pokrycie) × kłęby z tekstury
-//     szumu 3D (planetGenNoise3D.js), erozja brzegów drobnym szumem;
+//   • KSZTAŁT: kłąb tam, gdzie szum 3D (planetGenNoise3D.js, dwie skale) przekracza próg zależny od pokrycia
+//     i wysokości w powłoce — kopuły zamiast płaskiego wieka; erozja brzegów drobnym szumem, pod kłębami cienka
+//     ława warstwowa przy dużym pokryciu;
 //   • ŚWIATŁO: w każdej próbce dwie próbki gęstości ku słońcu (bliska z kłębami, daleka bez szumu) → osłabienie światła,
 //     z drugim, wolniej gasnącym członem (wielokrotne rozpraszanie w przybliżeniu), faza z rozjaśnieniem pod słońce,
 //     światło nieba zależne od wysokości w chmurze, cień planety i barwa słońca przy terminatorze.
-// Cień chmur na gruncie liczy materiał powierzchni z tej samej mapy pokrycia (uGnCloud). Wartości per obiekt
-// w `material.uniforms` (CLOUD_VOLUME_UNIFORM_KEYS, tekstura `cloudTexture`). Obraz (zasada żelazna 1).
+// Cień chmur na gruncie liczy materiał powierzchni z tych samych kłębów (funkcje `cloudCover`, `puffThreshold`,
+// `puffShape`, `sheetDensity` stąd; uniformy uGnCloud, uGnCloudVol). Wartości per obiekt w `material.uniforms`
+// (CLOUD_VOLUME_UNIFORM_KEYS, tekstura `cloudTexture`). Obraz (zasada żelazna 1).
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Break, float, int, vec2, vec3, vec4, varying, positionGeometry, texture3D,
@@ -202,7 +204,7 @@ export function createGenCloudVolumeMaterial(uniforms) {
 }
 
 /**
- * Uniformy chmur-bryły z opisu planety i map (`maps.clouds`). Powłoka 0,3–1,7% promienia nad powierzchnią —
+ * Uniformy chmur-bryły z opisu planety i map (`maps.clouds` — z mipmapami). Powłoka 0,3–1,7% promienia nad powierzchnią —
  * przesadzona względem prawdziwej (jak cała rzeźba planet gry), żeby chmury było widać z profilu.
  */
 export function cloudVolumeUniforms(spec, maps) {

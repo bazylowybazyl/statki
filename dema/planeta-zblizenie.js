@@ -43,12 +43,17 @@ renderer.setClearColor(0x000000, 1);
 await renderer.init();
 if (!renderer.backend?.isWebGPUBackend) showError('WebGPU niedostępne — demo wymaga przeglądarki z WebGPU.');
 // Osłona jak Core3D._guardPendingPipelines (pipeline z compileAsync w cache, zanim GPU go odda).
+const guardStats = { skipped: 0, names: [] };
 {
   const backend = renderer.backend;
   const draw = backend.draw;
   backend.draw = function drawWhenPipelineReady(renderObject, info) {
     const data = this.get(renderObject.pipeline);
-    if (data.pipeline === undefined && data.error !== true) return undefined;
+    if (data.pipeline === undefined && data.error !== true) {
+      guardStats.skipped++;
+      if (guardStats.names.length < 24) guardStats.names.push(`${renderObject.material?.name || '?'} @ ${performance.now().toFixed(0)} ms`);
+      return undefined;
+    }
     return draw.call(this, renderObject, info);
   };
 }
@@ -634,7 +639,7 @@ function updateStat() {
   const texPx = (act ? act.st : 2 * Math.PI / S.baked.size) * R_GAME * S.zoom;
   const lines = [
     `${S.view === 'orbit' ? `widok orbitalny, ${(S.orb.dist - 1).toFixed(2)} R nad powierzchnią` : `1 px = ${(1 / S.zoom).toFixed(2)} j.`} · planeta R = ${R_GAME.toLocaleString('pl')} j. · ${b.spec.look.style || b.spec.name}, ziarno ${b.spec.seed}`,
-    `${act ? `wycinek ${P.width} × ${P.height}, poziom ${act.level}` : 'mapa planety 2048'} · teksel ${texPx.toFixed(1)} px · wypieków ${P.stats.bakes}, ostatni ${S.stats.bakeMs.toFixed(1)} ms`
+    `${act ? `wycinek ${P.width} × ${P.height}, poziom ${act.level}` : 'mapa planety 2048'}${S.view === 'orbit' ? '' : ` · teksel ${texPx.toFixed(1)} px`} · wypieków ${P.stats.bakes}, ostatni ${S.stats.bakeMs.toFixed(1)} ms`
       + ` · ${S.stats.fps.toFixed(0)} kl/s${S.stats.gpuMs != null ? ` · GPU ${S.stats.gpuMs.toFixed(2)} ms` : ''}`
   ];
   $('stat').textContent = lines.join('\n');
@@ -643,7 +648,7 @@ function updateStat() {
 
 // ── Start ─────────────────────────────────────────────────────────────────────────────────────────────────────
 window.__zbl = {
-  S, baker, renderer, scene, cam, orb, R_GAME, setViewMode, uBloomOn,
+  S, baker, renderer, scene, cam, orb, R_GAME, setViewMode, uBloomOn, guardStats,
   ready: () => S.busy === 0 && !!S.body,
   build, rebuild, goVent, orbitAt, viewAll, toggleEruption, nearestVent, seedForStyle, viewDirs,
   /** Kadr: środek [R], zoom [px / j.]. */
@@ -698,6 +703,8 @@ await build(S.style, S.seed);
 setViewMode(S.view || 'orbit');
 if (S.body) {
   goVent(S.ventIdx);
+  // kamera orbitalna nad bohaterem, chyba że adres podaje ją wprost (?az=&el=)
+  if (!params.has('az') && !params.has('el')) orbitAt(undefined, undefined, num('odl', ORB_DEFAULT[2]), num('px', ORB_DEFAULT[3]), num('py', ORB_DEFAULT[4]));
   if (params.has('x') || params.has('y') || params.has('zoom')) {
     S.cx = num('x', S.cx); S.cy = num('y', S.cy); S.zoom = num('zoom', S.zoom);
   }

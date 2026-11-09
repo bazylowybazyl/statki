@@ -5,12 +5,13 @@
 //   • wspólne: promień widzenia w układzie obiektu (kamera perspektywiczna — z pozycji kamery; ortho — stały
 //     kierunek), odcinek w powłoce między kulą zewnętrzną a wewnętrzną (`shellRay`), cień planety (`planetLit`);
 //   • ATMOSFERA (`createGenAtmosphereMaterial`): rozpraszanie pojedyncze — gęstość e^(−h / Hs), 10 próbek wzdłuż
-//     promienia, światło słońca osłabione drogą przez powietrze (z wysokości słońca) i cieniem planety. Błękit
+//     promienia, światło słońca osłabione drogą przez powietrze (funkcja Chapmana, za terminatorem — przez punkt
+//     promienia słońca najbliższy planecie) i cieniem planety. Błękit
 //     krawędzi tarczy, mgiełka pod kątem i czerwień przy terminatorze wychodzą z jednego wzoru (nie z doklejonej
 //     barwy). Mieszanie addytywne — osłabienie gruntu mgiełką liczy graf powierzchni gry;
 //   • ZORZA (`createGenAuroraMaterial`): świecąca objętość nad owalem wokół bieguna magnetycznego — kurtyny z szumu
 //     zależnego tylko od KIERUNKU (stałe wzdłuż promienia planety = pionowe promienie), ostry dół, zanik ku górze,
-//     zieleń u dołu i róż u góry; tylko po nocnej stronie i o zmierzchu.
+//     zieleń u dołu i róż u góry; tylko po nocnej stronie.
 // Wartości per obiekt w `material.uniforms` (SHELL_UNIFORM_KEYS + klucze materiału). Obraz (zasada żelazna 1).
 import * as THREE from 'three/webgpu';
 import {

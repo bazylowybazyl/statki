@@ -3,6 +3,8 @@
 // nie zmienia tekseli), plan okna z kadru, wypiek w pasach po kroku na klatkę i przenikanie miejsc, kroki wypieku
 // (pole przed przejściami czytającymi sąsiadów), uniformy materiałów zbliżenia, WGSL w Node bez GPU (materiał
 // powierzchni, chmur i pióropusza; grafy gry bez haków zbliżenia), małe przesunięcie dziedziny szumu (float32).
+// Widok orbitalny: tekstura szumu 3D (powtarzalna, rozkład zgodny z progami kłębów), powłoki liczone marszem promienia
+// (bryła chmur, atmosfera, zorza — planetGenCloudVolume.tsl.js, planetGenShell.tsl.js): komplet uniformów, WGSL.
 // node --test tests/planetGenNear.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +22,14 @@ import { createGenNearSurfaceMaterial, GEN_NEAR_UNIFORM_KEYS, GEN_NEAR_DATA_KEYS
 import { createGenCloudNearMaterial, GEN_CLOUD_NEAR_UNIFORM_KEYS } from '../src/3d/planetGen/planetGenCloudsNear.tsl.js';
 import { createPlumeMaterial, plumeUniforms, PLUME_UNIFORM_KEYS } from '../src/3d/planetGen/planetGenPlume.tsl.js';
 import { createPlanetSurfaceMaterial, createPlanetCloudMaterial, PLANET_GRAPH_KEYS } from '../src/3d/planet3d.assets.tsl.js';
+import { buildCloudNoise } from '../src/3d/planetGen/planetGenNoise3D.js';
+import {
+  createGenCloudVolumeMaterial, cloudVolumeUniforms, CLOUD_VOLUME_UNIFORM_KEYS, CLOUD_VOLUME_STEPS, CLOUD_VOLUME_STEPS_MIN
+} from '../src/3d/planetGen/planetGenCloudVolume.tsl.js';
+import {
+  createGenAtmosphereMaterial, atmosphereUniforms, ATMOSPHERE_UNIFORM_KEYS,
+  createGenAuroraMaterial, auroraUniforms, AURORA_UNIFORM_KEYS, SHELL_UNIFORM_KEYS
+} from '../src/3d/planetGen/planetGenShell.tsl.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
@@ -281,3 +291,91 @@ test('opis: przesunięcie dziedziny szumu małe (float32 trzyma teksel wycinka)'
   const ulp = Math.pow(2, -21);
   assert.ok(ulp * 30 < 2 * Math.PI / (2048 * 64));
 });
+
+test('szum 3D: powtarzalny, kanały w zakresie, rozkład kanału kłębów obejmuje progi pokrycia', () => {
+  const N = 32;
+  const a = buildCloudNoise(N);
+  const b = buildCloudNoise(N);
+  assert.equal(a.length, N * N * N * 4);
+  assert.deepEqual(a, b, 'ten sam szum przy każdej budowie (hasz, nie Math.random)');
+  const r = [];
+  for (let i = 0; i < a.length; i += 4) r.push(a[i] / 255);
+  r.sort((x, y) => x - y);
+  const q = (p) => r[Math.floor(p * (r.length - 1))];
+  // próg kłębów: 0,71 − 0,43 · pokrycie (planetGenCloudVolume.tsl.js) — pełne pokrycie = prawie wszystko ponad
+  // progiem, zerowe = prawie nic
+  assert.ok(q(0.05) > 0.71 - 0.43, `kwantyl 5% kanału R = ${q(0.05)}`);
+  assert.ok(q(0.95) < 0.71, `kwantyl 95% kanału R = ${q(0.95)}`);
+  assert.ok(q(0.5) > 0.45 && q(0.5) < 0.6, `mediana kanału R = ${q(0.5)}`);
+  for (let c = 1; c < 4; c++) {
+    let lo = 255; let hi = 0;
+    for (let i = c; i < a.length; i += 4) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; }
+    assert.ok(hi - lo > 120, `kanał ${c}: zakres ${lo}…${hi}`);
+  }
+});
+
+test('powłoki z marszem promienia: komplet uniformów, WGSL bryły chmur, atmosfery i zorzy (pętle, próbki z poziomem)', () => {
+  const t = describePlanet({ type: 'terran', seed: 21 });
+  const cu = cloudVolumeUniforms(t, { clouds: new THREE.Texture() });
+  for (const k of Object.keys(CLOUD_VOLUME_UNIFORM_KEYS)) assert.ok(cu[k], `bryła chmur: brak ${k}`);
+  assert.ok('cloudTexture' in cu);
+  assert.ok(cu.uCvShape.value.y > cu.uCvShape.value.x && cu.uCvShape.value.x > 1, 'powłoka nad powierzchnią');
+  assert.ok(CLOUD_VOLUME_STEPS_MIN < CLOUD_VOLUME_STEPS);
+  const au = atmosphereUniforms(t);
+  for (const k of Object.keys(ATMOSPHERE_UNIFORM_KEYS)) assert.ok(au[k], `atmosfera: brak ${k}`);
+  const zu = auroraUniforms(t, [0.3, 0.7]);
+  for (const k of Object.keys(AURORA_UNIFORM_KEYS)) assert.ok(zu[k], `zorza: brak ${k}`);
+  for (const k of Object.keys(SHELL_UNIFORM_KEYS)) assert.ok(cu[k] && au[k] && zu[k], `klucz wspólny powłok ${k}`);
+  assert.ok(Math.abs(Math.hypot(zu.uAuAxis.value.x, zu.uAuAxis.value.y, zu.uAuAxis.value.z) - 1) < 1e-6, 'oś magnetyczna jednostkowa');
+  for (const camera of [new THREE.PerspectiveCamera(), new THREE.OrthographicCamera()]) {
+    const cm = createGenCloudVolumeMaterial(cu);
+    const cv = build(sphere(cm), cm, camera);
+    assert.match(cv, /for\s*\(/, 'bryła chmur: marsz jako pętla');
+    assert.match(cv, /texture_3d/, 'bryła chmur: tekstura szumu 3D');
+    assert.doesNotMatch(cv, /textureSample\(/, 'bryła chmur: każda próbka z jawnym poziomem (pętla i gałęzie)');
+    assert.doesNotMatch(cv, /NaN/);
+    assert.ok(cv.length < 30000, `bryła chmur: WGSL ${cv.length} znaków`);
+    const am = createGenAtmosphereMaterial(au);
+    const at = build(sphere(am), am, camera);
+    assert.match(at, /for\s*\(/);
+    assert.doesNotMatch(at, /textureSample/, 'atmosfera bez tekstur');
+    const zm = createGenAuroraMaterial(zu);
+    const zo = build(sphere(zm), zm, camera);
+    assert.match(zo, /for\s*\(/);
+    assert.doesNotMatch(zo, /textureSample\(/);
+  }
+  // materiały powłok: bez zapisu głębi, barwa pomnożona przez krycie (chmury) albo addytywna (atmosfera, zorza)
+  const cm = createGenCloudVolumeMaterial(cu);
+  assert.equal(cm.depthWrite, false);
+  assert.equal(cm.blendSrc, THREE.OneFactor);
+  assert.equal(cm.blendDst, THREE.OneMinusSrcAlphaFactor);
+  assert.equal(createGenAtmosphereMaterial(au).blendDst, THREE.OneFactor);
+  // planeta bez wody: atmosfera z barwy poświaty rodzaju (nie błękit Ziemi)
+  const d = atmosphereUniforms(describePlanet({ type: 'desert', seed: 3 }));
+  assert.ok(d.uAtBeta.value.x >= d.uAtBeta.value.z, 'pustynia: rozpraszanie płowe');
+});
+
+test('cień brył chmur na gruncie: materiał zbliżenia liczy te same kłęby (szum 3D, klucze bryły)', () => {
+  const t = describePlanet({ type: 'terran', seed: 21 });
+  const TU = nearSurfaceUniforms(t, { day: new THREE.Texture(), clouds: new THREE.Texture() }, { size: 2048 });
+  assert.ok(TU.uGnCloudVol && TU.uGnCloudVol2);
+  assert.equal(TU.uGnCloud.value.w, 0, 'domyślnie chmury płaskie');
+  const m = createGenNearSurfaceMaterial(TU);
+  const near = build(sphere(m), m, new THREE.PerspectiveCamera());
+  assert.match(near, /texture_3d/, 'cień kłębów czyta teksturę szumu bryły');
+  const src = read('src/3d/planetGen/planetGenSurfaceNear.tsl.js');
+  assert.match(src, /puffShape\(xc, puffThreshold\(cov, float\(hN\)\)/, 'ten sam kształt i próg co bryła');
+});
+
+test('wypiek przed pierwszym renderem: licznik renderów podbity przed kompilacją (three r183 — numer renderu kompilacji = numer pierwszego renderu)', () => {
+  // założenia obejścia w źródłach three: kompilacja bierze „poprzedni + 1”, render — licznik info.calls
+  const three = readFileSync(new URL('../node_modules/three/src/renderers/common/Renderer.js', import.meta.url), 'utf8');
+  const compile = three.slice(three.indexOf('async compileAsync('), three.indexOf('async renderAsync('));
+  assert.match(compile, /nodeFrame\.renderId \+\+/, 'compileAsync: tymczasowy numer renderu = poprzedni + 1');
+  assert.match(three, /nodeFrame\.renderId = this\.info\.calls;/, 'render: numer z licznika info.calls');
+  const baker = read('src/3d/planetGen/planetGenBaker.js');
+  const body = baker.slice(baker.indexOf('async compile(types)'), baker.indexOf('_draw(graphKey'));
+  assert.match(body, /if \(r\.info && r\.info\.calls === 0\) r\.info\.calls = 1;/);
+  assert.ok(body.indexOf('r.info.calls = 1') < body.indexOf('compileAsyncNaCelu('), 'podbicie przed kompilacją');
+});
+

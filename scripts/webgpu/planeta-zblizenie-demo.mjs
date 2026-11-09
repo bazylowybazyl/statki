@@ -4,6 +4,7 @@
 //   node scripts/webgpu/planeta-zblizenie-demo.mjs [--out .tmp/planeta-zblizenie/<tag>] [--styl popiol|lawa|siarka]
 //        [--ziarno N] [--wycinek 2048|4096] [--szer 1600 --wys 900] [--kadry wulkan,blisko,…] [--erupcja 16]
 //        [--kod "<JS wykonywany po starcie, np. window.__zbl.S.pora = 60>"] [--port 5443]
+//        [--bez-raf 1]  (sam start na stronie bez klatek rAF: kwantyle próby pierwszego wypieku, bez zrzutów)
 // Kadry widoku z góry: daleko, wulkan, blisko, bardzo-blisko, bez-wycinka (jak „blisko”, wycinki wyłączone), noc,
 // planeta albo własny „nazwa:x,y,zoom” (środek w promieniach planety, px na jednostkę gry). Kadry widoku orbitalnego:
 // orbita, orbita-plaska (chmury jako maska — porównanie z bryłą), orbita-blisko, orbita-daleko, orbita-noc,
@@ -35,8 +36,15 @@ try {
   if (args.ziarno) q.set('ziarno', String(args.ziarno));
   if (args.wycinek) q.set('wycinek', String(args.wycinek));
   if (args.gpu) q.set('gpu', '1');
+  // --bez-raf 1: strona bez klatek rAF (jak karta w tle) — sam start: czy pierwszy wypiek ma poprawną próbę
+  if (args['bez-raf']) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
   await cdp.send('Page.navigate', { url: `${base}/dema/planeta-zblizenie.html?${q}` });
   if (!await waitFor(cdp, '!!(window.__zbl && window.__zbl.ready())', 600000, 500)) throw new Error('demo nie wstało');
+  if (args['bez-raf']) {
+    report.start = await ev('(() => { const Z = window.__zbl; return { uQ: Z.S.baked.levels.uQ, miejsca: Z.S.vents.length, pominieteRysunki: Z.guardStats.skipped }; })()');
+    console.log('start bez rAF:', JSON.stringify(report.start), report.start.uQ.every((v) => v === report.start.uQ[0]) ? '— PRÓBA PUSTA' : '— próba poprawna');
+    shots.length = 0;
+  }
   if (args.kod) await ev(`(() => { ${args.kod}; return 1; })()`);
   if (erupt > 0) await ev(`(() => { const Z = window.__zbl; Z.goVent(Z.S.ventIdx); Z.toggleEruption(); Z.advance(${erupt}); return 1; })()`);
   const ZOOM = { daleko: 0.22, wulkan: 0.45, blisko: 1.0, 'bardzo-blisko': 2.0, 'bez-wycinka': 1.0, noc: 0.45 };

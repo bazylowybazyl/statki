@@ -8,7 +8,7 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 
 - Opis obszaru (jak działa, decyzje użytkownika, pułapki, jak sprawdzić) → jego reguła w `.claude/rules/`. Nowy obszar = nowa reguła z `paths:` (każdy glob w cudzysłowie — zepsuty YAML ładuje regułę ZAWSZE) + wiersz w indeksie niżej. Do tego pliku dopisuj tylko zasadę przekrojową (dotyczy kodu poza obszarem: „nowa ścieżka X musi wołać Y”) albo zmianę indeksu.
 - Reguła opisuje STAN i ZASADY w czasie teraźniejszym. Historia („dawniej…”), wyniki pomiarów i A/B → `docs/` (audyty, plany); w regule zostaje wniosek i odnośnik.
-- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–44) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
+- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–45) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
 - Notatka dla kolejnych agentów w kodzie: komentarz z prefiksem `AGENT:`.
 
 ## Zasady żelazne
@@ -133,12 +133,12 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 | Reguła | Obszar |
 |---|---|
-| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–44), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
+| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–45), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
 | `core3d` | Core3D: klatka i passy, post i bloom, efekty GPU (`Core3D.fx`), maska słońca i cień kadłubów, wydajność renderu |
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
 | `uklady-gwiezdne` | Układy gwiezdne: rejestr `starSystems.js`, jeden układ na stronę (inny = przeładowanie), dom gracza, treść ręczna tylko w Sol, założenia Sol do zdjęcia |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
-| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), planeta z bliska (wycinek mapy pod kamerą, lawa, erupcja, chmury z cieniem), dema (niewpięty) |
+| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), planeta z bliska (wycinek mapy pod kamerą, lawa, erupcja, chmury z cieniem), widok orbitalny (chmury jako bryła, atmosfera po promieniu, zorza), dema (niewpięty) |
 | `niebo` | Wypiekacz nieba, tło kosmosu |
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |
 | `doki-portow` | Doki portów bez ringu (krzyż, okrąg, koło z wlotem): geometria, ścieżki bańki, kolizje, model |
