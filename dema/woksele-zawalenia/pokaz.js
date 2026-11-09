@@ -68,8 +68,8 @@ const KAM_MIASTA = {
   // Kamera misji 1: prawie pionowo z góry (płaszczyzna gry to XY). Atlas przy oddaleniu (0,14 px/j.) i przybliżona (0,4 px/j.) nad habitatem.
   bGra: { nazwa: 'Z góry (gra)', pxNaJ: 0.14, az: 0, el: 88, cel: [1800, 200, 0], lod: { sloty: 2, cien: 1 }, baza: true },
   bGraBlisko: { nazwa: 'Z góry, bliżej', pxNaJ: 0.4, az: 0, el: 88, cel: [600, 0, 200], lod: { sloty: 7, cien: 2 }, baza: true },
-  // Baza i planetoida pod nią (planetaDema.js): z boku, nisko, szczyt skały 40 km pod bazą.
-  bPlaneta: { nazwa: 'Z planetą', pxNaJ: 0.011, az: 20, el: 10, cel: [4000, -4000, -22000], lod: { sloty: 2, cien: 1 }, baza: true },
+  // Baza i planetoida pod nią (planetaDema.js): z boku, szczyt skały 40 km pod bazą. Przy 540 px wysokości kamera stoi około 118 km od celu: baza u góry kadru, czapa skały w dolnej połowie.
+  bPlaneta: { nazwa: 'Z planetą', pxNaJ: 0.008, az: 20, el: 14, cel: [6000, -6000, -26000], lod: { sloty: 2, cien: 1 }, baza: true },
 };
 const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
 
@@ -127,6 +127,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   // Planeta pod bazą jak w grze (planetaDema.js). Import dynamiczny, jak skóra: skała gry ciągnie src/3d/core3d.js z hakiem rulonu we wszystkich materiałach.
   const PLANETA = KAWALKI && (adres.has('planeta') ? adres.get('planeta') !== '0' : !!SCENY[adres.get('scena')]?.planeta);
   const planeta = PLANETA ? await import('./planetaDema.js').then((m) => m.createPlanetaDema({ solver, obraz, renderer })).catch((e) => { console.error('[woksele] planeta', e); return null; }) : null;
+  // Z planetą kamera musi odjechać na setki km (skała r 48 km, szczyt 40 km pod bazą): limit orbity 30 km przyciągał kamerę „Z planetą” pod bazę, a kadr był pusty.
+  if (planeta) sterowanie.maxDistance = 500000;
   const GRUNT_PLANETY = -70000; // planetaDema.js: grunt solvera pod kulą skały (jak GRUNT_GRY w wGrze.js)
 
   const stan = { tryb: KAWALKI ? Number(adres.get('tryb') ?? 1) : 0, scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false, jedzie: false, c0x: 0, c0y: 0, c0z: 0, vcx: 0, vcy: 0, vcz: 0, ocx: 0, ocy: 0, ocz: 0 };
