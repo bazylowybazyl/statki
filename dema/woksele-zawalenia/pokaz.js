@@ -434,13 +434,16 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         location.search = q.toString();
       }, `p:${p}`);
     }
-    if (spalanie) dodaj(panelPlanety, 'Z boku', () => ustawKamere(camera, sterowanie, kameraBoku()), 'p:bok');
+    if (spalanie) {
+      dodaj(panelPlanety, 'Z boku', () => ustawKamere(camera, sterowanie, kameraBoku()), 'p:bok');
+      dodaj(panelPlanety, 'Z boku, bliżej', () => ustawKamere(camera, sterowanie, kameraBoku(true)), 'p:bokBlisko');
+    }
     panelPlanety.hidden = false;
   }
-  /** Kamera z boku na słup atmosfery: cała droga od bazy do gruntu w kadrze. */
-  function kameraBoku() {
-    const h0 = PLANETA_OPIS.wysBazy ?? 0;
-    return { az: 20, el: 6, cel: [0, 0, -0.5 * h0], odl: (0.75 * h0) / Math.tan((camera.fov * Math.PI) / 360) };
+  /** Kamera z boku na słup atmosfery: cała droga od bazy do gruntu w kadrze, albo (blisko) pas, w którym odłamki płoną (0–45 % wysokości bazy). */
+  function kameraBoku(blisko = false) {
+    const h0 = PLANETA_OPIS.wysBazy ?? 0, tg = Math.tan((camera.fov * Math.PI) / 360);
+    return blisko ? { az: 20, el: 4, cel: [0, 0, -0.78 * h0], odl: (0.24 * h0) / tg } : { az: 20, el: 6, cel: [0, 0, -0.5 * h0], odl: (0.75 * h0) / tg };
   }
   // Atlas (taran w płaszczyźnie gry): wł./wył., powrót na start, kamera za statkiem. Pod przyciskami klawisze i prędkość.
   const panelAtlasu = atlas ? nowaGrupa('panelAtlas') : null;
@@ -580,7 +583,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       tryb(t) { ustawTrybObrazu(t); return { tryb: stan.tryb, trybSceny: stan.trybSceny }; },
       narzedzia: narz,
       spalanie, // harness: planeta z atmosferą (null: Hidalgo)
-      kameraBoku: () => (spalanie ? kameraBoku() : null),
+      kameraBoku: (blisko = false) => (spalanie ? kameraBoku(blisko) : null),
       atlas, // harness: atlas.ustaw({ x, y, kurs, v }), atlas.sterowanie({ w, dop, … }), atlas.stan()
       planeta, // harness: planeta.stan() (kratery, uderzenia), planeta.skala
       solver, // harness: wypiek i odczyt stanu (analiza wiązań, woksele-baza-narzedzia.mjs --scenariusz szyja)

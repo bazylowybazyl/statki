@@ -20,6 +20,9 @@ import { STRONA } from './budowa.js';
 export const CAP_SMUG = 131072;
 const T_DEKOD = 16384; // wZar < 0: −(ubytek · 63 · T_DEKOD + T / 2)
 const T_WIDAC = 950; // [K] od tej temperatury odłamek świeci
+// [K] Ścianka, z której materiał paruje, nie grzeje się ponad temperaturę wrzenia: q z równowagi promienistej (do ~28 000 K na Ziemi) to miara
+// strumienia ciepła i jasności plazmy przed czołem, a barwa ścian kończy się na żółtobiałym żarze. Bez tego cała baza świeciła płaską bielą (przebieg 2026-11-09).
+const T_SCIANY = 2800;
 
 /** Stan żaru z wZar (TSL, wklejane): x = temperatura [K], y = ubytek komórki 0…1. Dodatnie wZar (trafienie solvera) i zero → zimny. */
 export const dekodujZar = (zf) => {
@@ -30,15 +33,18 @@ export const dekodujZar = (zf) => {
   return vec2(a.sub(q.mul(T_DEKOD)).mul(2), q.div(63));
 };
 
-/** Barwa żaru ciała o temperaturze T (przybliżenie ciała doskonale czarnego, już z jasnością), HDR. Wklejane. */
-const barwaZaru = (T) => {
+/** Barwa żaru ścianki odłamka o temperaturze równowagi T (ciało czarne do T_SCIANY, już z jasnością, HDR ≤ ~2,7). Wklejane. */
+const barwaZaru = (T0) => {
+  const T = float(0).toVar();
+  T.assign(min(T0, T_SCIANY));
   const k = float(0).toVar();
   k.assign(clamp(T.sub(T_WIDAC).div(500), 0, 1));
-  const g = clamp(T.sub(900).div(2600), 0, 1);
-  const b = clamp(T.sub(2300).div(5200), 0, 1);
-  const jas = min(T.div(1700).mul(T.div(1700)), 18);
-  return vec3(1, g.mul(g.mul(-0.2).add(1.12)).mul(0.92), b.mul(0.95)).mul(jas.mul(k).mul(k));
+  const g = clamp(T.sub(900).div(2200), 0, 1);
+  const b = clamp(T.sub(2200).div(1600), 0, 1);
+  return vec3(1, g.mul(g.mul(-0.2).add(1.12)).mul(0.82), b.mul(0.45)).mul(T.div(1700).mul(T.div(1700)).mul(k).mul(k));
 };
+/** Siła plazmy przed czołem 0…1 z temperatury równowagi (T⁴ ∝ q): Ziemia przy 10–28 tys. K ~1, Mars przy 2–6 tys. K do ~0,25. Wklejane. */
+const plazmaZT = (T) => { const p = clamp(T.sub(2000).div(8000), 0, 1); return p.mul(p); };
 
 function hasz(x) {
   const h = uint(0).toVar();
@@ -194,10 +200,10 @@ export function createSpalanie({ solver, planeta }) {
     const moc = fv(mocPlazmy(q));
     If(T.greaterThan(1300).and(odsl.greaterThan(0.4)), () => {
       If(faza.mod(uint(3)).equal(uint(0)).and(hz.shiftRight(uint(8)).bitAnd(uint(3)).equal(uint(0))), () => {
-        emituj(x.sub(v.mul(3 * DT)), x, 1, uDx.mul(0.55), moc, T, hz);
+        emituj(x.sub(v.mul(3 * DT)), x, 1, uDx.mul(1.1), moc, T, hz);
       });
       If(faza.mod(uint(12)).equal(uint(0)).and(hz.shiftRight(uint(12)).bitAnd(uint(7)).equal(uint(0))).and(dUb.greaterThan(1e-5)), () => {
-        emituj(x.sub(v.mul(12 * DT)), x, 2, uDx.mul(0.7), moc, T, hz);
+        emituj(x.sub(v.mul(12 * DT)), x, 2, uDx.mul(1.5), moc, T, hz);
       });
     });
     // Żar dla obrazu: wZar < 0. Trafienie solvera (wZar > 0, żar 1 s) ma pierwszeństwo, póki świeci.
@@ -336,7 +342,7 @@ export function createSpalanie({ solver, planeta }) {
       });
       const wy = v4(ukryj);
       If(zywy.greaterThan(0.5).and(T.greaterThan(T_WIDAC)), () => {
-        const g = fv(clamp(T.sub(T_WIDAC).div(2600), 0, 1));
+        const g = fv(plazmaZT(T));
         const vV = v3(cameraViewMatrix.mul(vec4(x, 1)).xyz);
         const vd = v3(cameraViewMatrix.mul(vec4(v, 0)).xyz);
         const dist = fv(max(vV.z.negate(), 1));
@@ -347,7 +353,7 @@ export function createSpalanie({ solver, planeta }) {
         const e1 = vec2(1, 0).toVar();
         If(ls.greaterThan(1e-3), () => { e1.assign(sd.div(ls)); });
         const e2 = vec2(e1.y.negate(), e1.x);
-        const R = fv(r.mul(float(1.7).add(g.mul(2.6))));
+        const R = fv(r.mul(float(1.4).add(g.mul(2.8))));
         const ogon = fv(float(1).add(g.mul(3).mul(clamp(ls.mul(0.12).div(R), 0, 1))));
         const px = fv(R.mul(uPxSkala).div(dist));
         const f = fv(max(float(1), float(MIN_PX).div(px)));
@@ -355,10 +361,10 @@ export function createSpalanie({ solver, planeta }) {
         const h = fv(wysokosc(x));
         const tr = v3(przepuszczalnosc(h));
         const jas = fv(uMoc.div(f.mul(f)));
-        vKol.assign(barwaZaru(T).mul(tr).mul(jas));
-        vKolB.assign(mix(uPlazmaBrzeg, uPlazma, 0.35).mul(g.mul(g).mul(min(T.div(1700).mul(T.div(1700)), 18)).mul(0.6)).mul(tr).mul(jas));
+        vKol.assign(barwaZaru(T).mul(0.8).add(uPlazma.mul(g.mul(5))).mul(tr).mul(jas));
+        vKolB.assign(mix(uPlazmaBrzeg, uPlazma, 0.35).mul(g.mul(2.2).add(barwaZaru(T).x.mul(0.12))).mul(tr).mul(jas));
         const dl = fv(mix(R.mul(ogon), R, step(0, c.x)));
-        const P = v3(vec3(vV.xy.add(e1.mul(r.mul(0.6))).add(e1.mul(c.x.mul(dl))).add(e2.mul(c.y.mul(R))), vV.z));
+        const P = v3(vec3(vV.xy.add(e1.mul(r.mul(0.25))).add(e1.mul(c.x.mul(dl))).add(e2.mul(c.y.mul(R))), vV.z));
         wy.assign(cameraProjectionMatrix.mul(vec4(P, 1)));
       });
       vL.assign(c);
@@ -366,9 +372,9 @@ export function createSpalanie({ solver, planeta }) {
     })();
     matGlowy.fragmentNode = Fn(() => {
       const r2 = fv(dot(vL, vL));
-      const rdz = fv(exp(r2.mul(-7)));
-      const otoczka = fv(max(float(1).sub(r2), 0).mul(exp(r2.mul(-2))));
-      return vec4(vKol.mul(rdz.mul(1.6)).add(vKolB.mul(otoczka)), 1);
+      const rdz = fv(exp(r2.mul(-9)));
+      const otoczka = fv(max(float(1).sub(r2), 0).mul(exp(r2.mul(-2.5))));
+      return vec4(vKol.mul(rdz).add(vKolB.mul(otoczka)), 1);
     })();
     wezelGlowy = matGlowy.vertexNode;
   }
@@ -402,7 +408,7 @@ export function createSpalanie({ solver, planeta }) {
         // Szerokość: plazma × (1 + u), dym rośnie z √wieku do ~7×, błysk szybko, pył uderzenia wolno.
         const sz = fv(s1.w.mul(
           jeden(1).mul(u.add(1))
-            .add(jeden(2).mul(sqrt(wiek).mul(1.6).add(1)))
+            .add(jeden(2).mul(sqrt(wiek).mul(4).add(1)))
             .add(jeden(3).mul(sqrt(u).mul(2.2).add(0.3)))
             .add(jeden(4).mul(sqrt(wiek).mul(1.4).add(1)))));
         const unies = fv(jeden(4).mul(wiek).mul(35)); // pył uderzenia wznosi się powoli
@@ -435,7 +441,8 @@ export function createSpalanie({ solver, planeta }) {
         const zan = fv(float(1).sub(u));
         const jasF = fv(float(1).div(f));
         // 1 plazma: młoda w barwie żaru i białej plazmy, starsza w barwie ogona (powietrze świeci jeszcze chwilę za czołem).
-        const kPl = v3(mix(barwaZaru(T).mul(0.5).add(uPlazma.mul(moc.mul(3))), uPlazmaOgon.mul(moc.mul(2.2).add(0.3)), smoothstep(0, 0.45, u)).mul(zan.mul(zan)).mul(uMoc));
+        const pl = fv(plazmaZT(T));
+        const kPl = v3(mix(barwaZaru(T).mul(0.35).add(uPlazma.mul(pl.mul(3))), uPlazmaOgon.mul(pl.mul(2).add(0.15)), smoothstep(0, 0.45, u)).mul(zan.mul(zan)).mul(uMoc));
         // 3 błysk: biały, w pomarańcz.
         const kBl = v3(mix(vec3(6, 5.2, 4.2), uPlazmaOgon.mul(3), smoothstep(0, 0.5, u)).mul(moc).mul(zan.mul(zan).mul(zan)).mul(uMoc));
         // 2 dym, 4 pył: światło słońca i otoczenia, przy czole podświetlony żarem.

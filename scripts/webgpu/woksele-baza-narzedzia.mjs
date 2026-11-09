@@ -87,10 +87,11 @@ try {
     }
   } else if (args.scenariusz === 'spalanie') {
     const BOK = await ev('window.__wok.pokaz.kameraBoku()');
+    const BLISKO = await ev('window.__wok.pokaz.kameraBoku(true)');
     if (!BOK) throw new Error('strona bez planety z atmosferą (--planeta ziemia|mars)');
     const stan = `(async () => { const w = window.__wok.pokaz.solver.wypiek; const r = await window.__wok.odczyt(); let zywe = 0, nizej = 0, zMin = 1e9; for (let i = 0; i < w.n; i++) { if (r.poz[3 * i] !== r.poz[3 * i]) continue; const zy = r.aktywny ? r.aktywny[i] : 1; if (!zy) continue; zywe++; const z = r.poz[3 * i + 2]; if (z < -2000) nizej++; if (z < zMin) zMin = z; } return { n: w.n, zywe, nizej, zMin: Math.round(zMin) }; })()`;
     const kadrS = async (nazwa, t) => {
-      for (const [kam, k] of [['gora', Z_GORY], ['bok', BOK]]) {
+      for (const [kam, k] of [['gora', Z_GORY], ['bok', BOK], ['blisko', BLISKO]]) {
         await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
         await ev('window.__wok.pokaz.przerysuj()');
         const plik = `${nazwa}_t${t.toFixed(1)}_${kam}.png`;

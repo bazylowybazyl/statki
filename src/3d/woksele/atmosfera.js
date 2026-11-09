@@ -56,8 +56,8 @@ export const PLANETY_ATM = Object.freeze({
       rho0: 0.020, H: 11_100,
       plazma: [1.0, 0.78, 0.55], plazmaBrzeg: [1.0, 0.52, 0.42], plazmaOgon: [1.0, 0.42, 0.22],
       dym: [0.55, 0.42, 0.32],
-      // Pył: grubość optyczna 0,4–0,6 w pogodny dzień, rozprasza rudo („toffi”).
-      tauZenit: [0.42, 0.5, 0.62], mgla: [0.95, 0.68, 0.45],
+      // Pył: grubość optyczna 0,2–0,35 (pogodny dzień poza burzą), rozprasza rudo („toffi”).
+      tauZenit: [0.2, 0.25, 0.34], mgla: [0.95, 0.68, 0.45],
     }),
     grunt: 'mars',
   }),
