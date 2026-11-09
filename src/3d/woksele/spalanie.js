@@ -388,6 +388,7 @@ export function createSpalanie({ solver, planeta }) {
   // ── Smugi: dym (mieszanie zwykłe, premultiplied) i plazma z błyskami (addytywne) z jednej puli ──
   const vSm = varyingProperty('vec4', 'vSpSm'); // c.x, c.y, wzdłuż w szerokościach, długość w szerokościach
   const vSmK = varyingProperty('vec4', 'vSpSmK'); // barwa (premul.) + alfa
+  const vSmZ = varyingProperty('float', 'vSpSmZ'); // ziarno odcinka: nieregularność dymu wzdłuż smugi
   const ZYCIE = [0, 0.6, 14, 0.75, 24];
   function budujSmugi(mat, typy) {
     mat.vertexNode = Fn(() => {
@@ -449,14 +450,16 @@ export function createSpalanie({ solver, planeta }) {
         const kBl = v3(mix(vec3(6, 5.2, 4.2), uPlazmaOgon.mul(3), smoothstep(0, 0.5, u)).mul(moc).mul(zan.mul(zan).mul(zan)).mul(uMoc));
         // 2 dym, 4 pył: światło słońca i otoczenia, przy czole podświetlony żarem.
         const swiatlo = fv(dot(uSlonce, vec3(0, 0, 1)).mul(0.55).add(0.35));
-        const alfaD = fv(zan.mul(zan).mul(0.5).div(wiek.mul(0.25).add(1)).mul(jasF));
-        const kD = v3(uDym.mul(swiatlo).add(uPlazmaOgon.mul(moc.mul(1.5)).mul(exp(wiek.mul(-2.5)))));
+        // AGENT: dym leży za czołem, czyli NAD odłamkiem, więc z góry przykrywa bazę: krycie jednego odcinka małe (nakłada się ich wiele), barwa przygaszona (przebieg 2026-11-09).
+        const alfaD = fv(zan.mul(zan).mul(0.16).div(wiek.mul(0.25).add(1)).mul(jasF));
+        const kD = v3(uDym.mul(swiatlo).mul(0.6).add(uPlazmaOgon.mul(moc.mul(0.6)).mul(exp(wiek.mul(-4)))));
         const alfaP = fv(zan.mul(0.55).div(wiek.mul(0.06).add(1)).mul(jasF));
         const kP = v3(uDym.mul(vec3(1.05, 0.95, 0.85)).mul(swiatlo));
         const dodaj = v3(kPl.mul(jeden(1)).add(kBl.mul(jeden(3))).mul(tr).mul(jasF));
         const alfa = fv(alfaD.mul(jeden(2)).add(alfaP.mul(jeden(4))));
         const kolDym = v3(kD.mul(jeden(2)).add(kP.mul(jeden(4))).mul(tr).add(uMgla.mul(0.12).mul(float(1).sub(tr.y))));
         vSmK.assign(vec4(dodaj.add(kolDym.mul(alfa)), alfa));
+        vSmZ.assign(s2.w);
       });
       return wy;
     })();
@@ -464,7 +467,9 @@ export function createSpalanie({ solver, planeta }) {
       const da = fv(max(vSm.z.negate(), 0).add(max(vSm.z.sub(vSm.w), 0)));
       const r2 = fv(da.mul(da).div(0.16).add(vSm.y.mul(vSm.y)));
       const k = fv(max(float(1).sub(r2), 0));
-      return vec4(vSmK.rgb.mul(k), vSmK.a.mul(k));
+      // Kłęby: jasność i krycie falują wzdłuż smugi (dwa sinusy z ziarnem odcinka), brzeg miękki (k²).
+      const fala = fv(clamp(vSm.z.mul(1.3).add(vSmZ).sin().mul(0.25).add(vSm.z.mul(0.47).add(vSmZ.mul(1.7)).sin().mul(0.2)).add(0.75), 0.3, 1.2));
+      return vec4(vSmK.rgb.mul(k.mul(k)).mul(fala), vSmK.a.mul(k.mul(k)).mul(fala));
     })();
   }
   const geoSmug = geoKwad();
