@@ -14,8 +14,8 @@
 // (RGBA32F nie jest filtrowalny bez cechy urządzenia).
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, Loop, float, int, vec2, vec3, vec4, ivec2, uniform, screenCoordinate, textureLoad,
-  abs, clamp, cos, dot, exp, floor, fract, length, max, min, mix, mod, normalize, sin, smoothstep, sqrt, step, cross, pow
+  Fn, If, Loop, float, int, vec2, vec3, vec4, ivec2, uniform, screenCoordinate, textureLoad, select,
+  abs, asin, atan, clamp, cos, dot, exp, floor, fract, length, max, min, mix, mod, normalize, sin, smoothstep, sqrt, step, cross, pow
 } from 'three/tsl';
 import { pgNoise, pgCells, pgFbm, pgWarp, pgHashU, pgU1, pgU3, pgRehash, pgRidged } from './planetGenNoise.tsl.js';
 
@@ -50,29 +50,66 @@ export const COMMON_DEFS = Object.freeze({
   uOct: 'vec4',      // liczby oktaw: x — kształt, y — detal, z — grzbiety, w — chmury
   uLevels: 'vec4',   // x — poziom morza [km] (0 — planety z wodą; bez wody −1e3), y — typowy szczyt lądu [km], z — 1: z wodą, w — wolne
   uQ: 'vec4',        // kwantyle kanału próby (pole .w) w ułamkach rodzaju (probeQ — np. udział oceanu, wydm, mórz)
-  uQ2: 'vec4'        // q01, q99, min, max kanału próby
+  uQ2: 'vec4',       // q01, q99, min, max kanału próby
+  // WYCINEK (planetGenPatch.js; zera = cała mapa): cel przejścia to okno siatki długość / szerokość w układzie
+  // OBRÓCONYM (osie uFr* w układzie planety, środek okna przy „równiku” układu — teksele prawie kwadratowe także przy
+  // biegunach planety). x, y — kąt wschodni / północny lewej górnej krawędzi celu [rad], z — kąt teksela [rad], w — 1.
+  uWin: 'vec4',
+  uFrX: 'vec3', uFrY: 'vec3', uFrZ: 'vec3'
 });
 
 // ── Współrzędne piksela mapy ───────────────────────────────────────────────────────────────────────────────────────
+// u, v, lat, dir — PRAWDZIWE (układ planety: klimat, pasy, szum); latGrid — szerokość w układzie SIATKI celu, stE / stN
+// — kąt teksela na wschód (na równiku siatki) i na północ [rad]: tylko do odległości między sąsiednimi tekselami
+// (nachylenia). Dla całej mapy siatka = układ planety.
 export function bakeCoords(U) {
   const px = screenCoordinate.xy;
-  const u = px.x.mul(U.uRes.z).toVar();
-  const v = px.y.mul(U.uRes.w).toVar();
-  const phi = u.mul(2 * PI);
-  const theta = float(1.0).sub(v).mul(PI);
-  const st = sin(theta).toVar();
-  const dir = vec3(cos(phi).negate().mul(st), cos(theta), sin(phi).mul(st)).toVar();
-  const lat = v.sub(0.5).mul(PI).toVar();
+  const u = float(0.0).toVar();
+  const v = float(0.0).toVar();
+  const dir = vec3(0.0).toVar();
+  const lat = float(0.0).toVar();
+  const latGrid = float(0.0).toVar();
+  const stE = float(0.0).toVar();
+  const stN = float(0.0).toVar();
+  If(U.uWin.w.greaterThan(0.5), () => {
+    // kierunek w układzie wycinka jak w SphereGeometry z u = ½ + a / 2π, v = ½ + b / π: (cos a cos b, sin b, −sin a cos b)
+    const a = U.uWin.x.add(px.x.mul(U.uWin.z));
+    const b = U.uWin.y.add(px.y.mul(U.uWin.z));
+    const cb = cos(b);
+    // AGENT: gałąź ma być skończona także dla zer w uniformach (cała mapa): kompilator GPU potrafi ją policzyć
+    // spekulatywnie i NaN z normalize(0) / atan2(0, 0) przeciekał do pola całej planety (czarne mapy, 2026-11-09)
+    const d = U.uFrX.mul(cos(a).mul(cb)).add(U.uFrY.mul(sin(b))).add(U.uFrZ.mul(sin(a).mul(cb).negate())).toVar();
+    dir.assign(d.div(max(length(d), 1e-6)));
+    lat.assign(asin(clamp(dir.y, -1.0, 1.0)));
+    const flat = abs(dir.x).add(abs(dir.z));
+    u.assign(fract(atan(dir.z.negate(), dir.x.add(step(flat, 1e-7).mul(1e-6))).div(2 * PI).add(0.5)));
+    v.assign(lat.div(PI).add(0.5));
+    latGrid.assign(b);
+    stE.assign(U.uWin.z);
+    stN.assign(U.uWin.z);
+  }).Else(() => {
+    u.assign(px.x.mul(U.uRes.z));
+    v.assign(px.y.mul(U.uRes.w));
+    const phi = u.mul(2 * PI);
+    const theta = float(1.0).sub(v).mul(PI);
+    const st = sin(theta);
+    dir.assign(vec3(cos(phi).negate().mul(st), cos(theta), sin(phi).mul(st)));
+    lat.assign(v.sub(0.5).mul(PI));
+    latGrid.assign(lat);
+    stE.assign(U.uRes.z.mul(2 * PI));
+    stN.assign(U.uRes.w.mul(PI));
+  });
   const ix = int(floor(px.x)).toVar();
   const iy = int(floor(px.y)).toVar();
-  return { u, v, dir, lat, ix, iy };
+  return { u, v, dir, lat, latGrid, stE, stN, ix, iy };
 }
 
-/** Odczyt pola (textureLoad z zawinięciem długości, szerokość przycięta). */
+/** Odczyt pola (textureLoad): cała mapa — zawinięcie długości, szerokość przycięta; wycinek — obie osie przycięte. */
 export function fieldAt(F, U, ix, iy) {
   const W = int(U.uRes.x);
   const H = int(U.uRes.y);
-  const x = mod(ix.add(W), W);
+  const wrapped = mod(ix.add(W), W);
+  const x = U.uWin ? select(U.uWin.w.greaterThan(0.5), clamp(ix, int(0), W.sub(1)), wrapped) : wrapped;
   const y = clamp(iy, int(0), H.sub(1));
   return textureLoad(F, ivec2(x, y));
 }
@@ -107,11 +144,13 @@ export function buildReliefGraph(F) {
     const hh = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
     const gx = hh(1, -1).add(hh(1, 0).mul(2.0)).add(hh(1, 1)).sub(hh(-1, -1)).sub(hh(-1, 0).mul(2.0)).sub(hh(-1, 1)).mul(0.125);
     const gy = hh(-1, 1).add(hh(0, 1).mul(2.0)).add(hh(1, 1)).sub(hh(-1, -1)).sub(hh(0, -1).mul(2.0)).sub(hh(1, -1)).mul(0.125);
-    const cosLat = max(cos(C.lat), U.uRes.w.mul(PI)).toVar();
+    const cosLat = max(cos(C.latGrid), U.uRes.w.mul(PI)).toVar();
     const R = U.uGeo.x;
-    const dE = gx.div(R.mul(2 * PI).mul(cosLat).mul(U.uRes.z));
-    // wiersz y rośnie ku POŁUDNIOWI (v = 0 u góry = biegun N) — północ to −y
-    const dN = gy.div(R.mul(PI).mul(U.uRes.w)).negate();
+    const dE = gx.div(R.mul(cosLat).mul(C.stE));
+    // AGENT: wiersz y celu rośnie ku PÓŁNOCY (y = 0 to v = 0 = biegun S — bakeCoords), więc gy to już pochodna na
+    // północ. Dawny minus odwracał rzeźbę w osi północ–południe: przy słońcu z północy oświetlona ściana krateru
+    // wychodziła ciemna (przy słońcu ze wschodu nie było tego widać).
+    const dN = gy.div(R.mul(C.stN));
     const slope = length(vec2(dE, dN));
     const coast = exp(hC.mul(hC).mul(-12.0)).mul(step(0.5, U.uLevels.z));
     const rough = clamp(U.uRel.x.add(slope.mul(U.uRel.y)).add(coast.mul(U.uRel.z)), 0.0, 1.0);
@@ -120,6 +159,20 @@ export function buildReliefGraph(F) {
   return { U, material: bakeMaterial('PlanetGenRelief', node) };
 }
 const inv01 = (lo, hi, x) => float(1.0).sub(smoothstep(lo, hi, x));
+
+// ── MASKI (wspólne; RGBA8, pełna rozdzielczość) ───────────────────────────────────────────────────────────────────
+// Kanały pola dla materiału zbliżenia (planetGenSurfaceNear.tsl.js): R — ciecz poza morzem (pole.y: lawa, solanka),
+// G — maska rodzaju (pole.z: osady, potoki, kaldery). Piecze się tylko na życzenie (`mask: true` wypieku planety)
+// i w wycinkach pod kamerą.
+export function buildMaskGraph(F) {
+  const U = bakeUniforms(COMMON_DEFS);
+  const node = Fn(() => {
+    const C = bakeCoords(U);
+    const f = fieldAt(F, U, C.ix, C.iy);
+    return vec4(clamp(f.y, 0.0, 1.0), clamp(f.z, 0.0, 1.0), 0.0, 1.0);
+  })();
+  return { U, material: bakeMaterial('PlanetGenMask', node) };
+}
 
 // ── POŁYSK (wspólny, pół rozdzielczości) ──────────────────────────────────────────────────────────────────────────
 // R = maska połysku grafu gry (woda: smoothstep(0,08; 0,82; R) → połysk i ostrość odblasku). uSpec: x — woda,
@@ -274,8 +327,19 @@ export function buildCloudGraph() {
     const warp = pgWarp(qs.mul(1.5).mul(sc), 4, 0.6).toVar();
     const warp2 = pgWarp(qs.add(warp).mul(3.0).mul(sc).add(vec3(1.3, 4.1, -2.2)), 3, 0.12).toVar();
     const qw = qs.add(warp).add(warp2.mul(0.6)).toVar();
-    const base = pgFbm(qw.mul(2.5).mul(sc), U.uOct.w).toVar();
-    const fine = pgFbm(qw.mul(12.0).mul(sc), int(U.uOct.w).sub(2)).toVar();
+    // dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw i trafia w te same pola chmur co mapa planety
+    // Dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw i trafia w te same pola chmur co mapa planety.
+    // Oktawy mapy planety (pierwsze 6 / 4) — w dziedzinie skręconej przez cyklony i rozciągniętej strefowo (ramiona
+    // spiral, smugi frontów); DALSZE — w dziedzinie nieskręconej i izotropowej: drobny detal chmur to kłęby, a w
+    // dziedzinie skręconej wychodził w wycinku jako rozmazane smugi wzdłuż ramion.
+    const nO = int(U.uOct.w).toVar();
+    const qd = C.dir.add(U.uSeed.xyz.mul(1.37)).add(warp).add(warp2.mul(0.6)).toVar();
+    const qr = C.dir.add(U.uSeed.xyz.mul(1.37)).toVar();     // dziedzina surowa: bez skrętu, rozciągnięcia i odkształceń
+    const base = pgFbm(qw.mul(2.5).mul(sc), min(nO, int(5)), 2.03, 0.5, true)
+      .add(pgFbm(qd.mul(2.5 * Math.pow(2.03, 5)).mul(sc).add(vec3(3.3, -7.1, 1.9)), max(nO.sub(5), int(0)), 2.03, 0.5, true).mul(Math.pow(0.5, 5))).toVar();
+    const fine = pgFbm(qw.mul(12.0).mul(sc), min(nO.sub(2), int(4)), 2.03, 0.5, true)
+      .add(pgFbm(qd.mul(12.0 * Math.pow(2.03, 4)).mul(sc).add(vec3(-5.7, 2.2, 8.4)), max(nO.sub(6), int(0)), 2.03, 0.5, true).mul(Math.pow(0.5, 4))).toVar();
+    const st = C.stN;                                   // kąt teksela celu [rad]
     const out = float(0.0).toVar();
     const tintMix = float(0.0).toVar();
     If(style.lessThan(0.5), () => {
@@ -290,13 +354,25 @@ export function buildCloudGraph() {
       const edge = U.uCloud2.y;
       out.assign(smoothstep(float(0.5).sub(edge), float(0.5).add(edge), dens));
       // pola cumulusów (komórki) tam, gdzie gęstość tuż pod progiem — podzwrotniki nad oceanem
-      const cc = pgCells(qw.mul(34.0).mul(sc), 0.95).toVar();
-      const puff = inv01(0.2, 0.75, cc.x).mul(cc.z.mul(0.6).add(0.4)).mul(smoothstep(-0.1, 0.4, fine));
+      // (bez haszu komórki w jasności: hasz skacze na krawędzi komórki — z bliska widać wielokąty)
+      // (w dziedzinie nieskręconej `qd`: w skręconej komórki przy cyklonach rozciągały się w wachlarze)
+      const cc = pgCells(qr.mul(34.0).mul(sc).add(warp.mul(0.25)), 0.95).toVar();
+      const puff = inv01(0.2, 0.75, cc.x).mul(smoothstep(-0.1, 0.4, fine));
       out.assign(max(out, puff.mul(smoothstep(0.3, 0.48, dens)).mul(0.45)));
+      // drobne kłęby (tylko w wycinkach pod kamerą): cienkie pola chmur (cumulusy, brzegi frontów) rozpadają się na
+      // nieregularne kłęby — inaczej powiększona komórka pola to płaska plama o ostrym brzegu; grube chmury dostają
+      // grudkowate wierzchołki (grubość niesie maska — światło z bliska liczy z niej cień). Szum izotropowy
+      // w dziedzinie SUROWEJ (bez odkształceń): komórki Worleya dawały równe owalne „cekiny”, a odkształcona
+      // dziedzina rozciągała je w smugi.
+      const hi = pgFbm(qr.mul(60.0).mul(sc).add(vec3(1.9, -4.3, 6.1)), max(nO.sub(5), int(1)), 2.03, 0.55, true).toVar();
+      const hiOn = smoothstep(2.5, 5.0, float(1 / 120).div(sc).div(st));
+      const thin = float(1.0).sub(smoothstep(0.5, 0.85, out));
+      out.mulAssign(mix(float(1.0), mix(hi.mul(0.3).add(1.0), smoothstep(-0.28, 0.3, hi).mul(1.25), thin), hiOn));
       out.mulAssign(eye);
       // cienkie pierzaste smugi (cirrus) — rozciągnięte mocniej strefowo
       const ci = pgFbm(vec3(qw.x, qw.y.mul(2.5), qw.z).mul(7.0).mul(sc), 4);
-      out.assign(max(out, smoothstep(0.25, 0.75, ci).mul(smoothstep(0.3, 0.5, dens)).mul(0.3)));
+      // (w wycinku pod kamerą słabiej: rozciągnięte smugi bez drobnego detalu wyglądają z bliska jak pręgowane łaty)
+      out.assign(max(out, smoothstep(0.25, 0.75, ci).mul(smoothstep(0.3, 0.5, dens)).mul(0.3).mul(float(1.0).sub(hiOn.mul(0.75)))));
     }).ElseIf(style.lessThan(1.5), () => {
       // pokład: ścinanie strefowe (kształt „Y”: długość przesunięta z |φ|), pasma, kołnierz polarny
       const lon = fract(C.u.add(abs(C.lat).mul(U.uCloud2.w)));

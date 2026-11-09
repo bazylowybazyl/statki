@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki assetów gry (assets/…, src/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Planeta z bliska</title>
+<link rel="icon" href="data:,">
+<!--
+  Demo PLANETY Z BLISKA (src/3d/planetGen/: planetGenPatch.js, planetGenSurfaceNear.tsl.js, planetGenPlume.tsl.js):
+  planeta wulkaniczna z generatora w widoku gry (kamera z góry, słońce w płaszczyźnie gry z boku) od całej tarczy do
+  zbliżenia bojowego. Mapa planety (2048 px) niesie kształt, a pod kamerą piecze się WYCINEK tego samego pola w
+  rozdzielczości kadru; lawa płynie w dół stoku i świeci (HDR), erupcja ma pióropusz liczony marszem promienia, z cieniem
+  na gruncie. Post jak w grze (bloom → ACES → sRGB). Serwowanie: `npm run dev` → /dema/planeta-zblizenie.html
+  Parametry: ?styl=popiol|lawa|siarka|terran, ?widok=orbita|gora, ?bryla=0|1 (chmury jako bryła), ?az=&el=&odl=&px=&py=
+  (kamera orbitalna), ?ziarno=N, ?wycinek=2048|4096 (szerokość celu wycinka), ?wycinki=0 (sama mapa
+  planety), ?erupcja=0, ?pora=0…180, ?x=&y=&zoom= (kadr: środek w promieniach planety, px na jednostkę gry),
+  ?test=1 (bez paneli), ?gpu=1 (czas GPU klatki). Harness / konsola: window.__zbl.
+-->
+<style>
+  :root { --ink: #dfe6ee; --muted: #7d8aa0; --line: #5fc8ff26; --panel: #070b10e0; --accent: #ffc23a; --cool: #6fd3ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #gpu { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  #gpu.drag { cursor: grabbing; }
+  #panel { position: fixed; right: 10px; top: 10px; width: 270px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 12px; margin: 0 0 8px; letter-spacing: .1em; font-weight: 600; }
+  #panel h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 10px 0 5px; font-weight: 600; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button { background: #0d141c; color: var(--ink); border: 1px solid #263445; border-radius: 4px; padding: 4px 7px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--cool); }
+  button.on { background: #1d2a12; border-color: var(--accent); color: #fff; }
+  button.big { padding: 6px 10px; font-weight: 600; }
+  .row { display: grid; grid-template-columns: 70px minmax(0, 1fr) 44px; gap: 6px; align-items: center; margin: 3px 0; }
+  .row output { text-align: right; font: 10.5px ui-monospace, Consolas, monospace; color: #b8c8dc; }
+  input[type=range] { width: 100%; }
+  .keys { color: var(--muted); font-size: 10.5px; margin-top: 10px; line-height: 1.7; }
+  .keys kbd { font: 10px ui-monospace, Consolas, monospace; border: 1px solid #344458; border-radius: 3px; padding: 0 3px; color: #cfd8e3; }
+  #scale { position: fixed; left: 14px; bottom: 34px; pointer-events: none; }
+  #scale i { display: block; height: 5px; border: 1px solid #c8d4e2c0; border-top: 0; min-width: 20px; }
+  #scale span { display: block; font: 10.5px ui-monospace, Consolas, monospace; color: #c8d4e2c0; margin-bottom: 2px; }
+  #stat { position: fixed; left: 14px; bottom: 8px; color: #7d8aa0c0; font: 10.5px ui-monospace, Consolas, monospace; pointer-events: none; white-space: pre; }
+  #load { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #9fb0c4; font-size: 13px; letter-spacing: .06em; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 60px; color: #ffc4c4; background: rgba(50, 0, 0, .92); padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  body.test #panel, body.test #stat, body.test #scale, body.hide #panel { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="gpu"></canvas>
+<div id="panel">
+  <h1>PLANETA Z BLISKA</h1>
+  <div class="btns">
+    <button id="b-erupt" class="big" title="erupcja najbliższego wulkanu (E)">Erupcja</button>
+    <button id="b-vent" class="big" title="kadr na następne ciekawe miejsce (V)">Następny wulkan</button>
+    <button id="b-all" title="cała planeta (Home)">Cała planeta</button>
+    <button id="b-view" class="big" title="przełącza widok orbitalny i widok gry z góry (O)">Widok z góry (gra)</button>
+  </div>
+  <h2>Planeta</h2>
+  <div class="btns" id="styles"></div>
+  <div class="btns" style="margin-top:4px"><button id="b-los" title="inna planeta tego stylu (R)">losuj</button></div>
+  <h2>Porównanie</h2>
+  <div class="btns">
+    <button id="t-patch" class="on" title="wycinek mapy pod kamerą (T) — wyłączony: sama mapa planety 2048 px">wycinek pod kamerą</button>
+    <button id="t-lava" class="on" title="żar lawy w materiale (L)">żar lawy</button>
+    <button id="t-clouds" title="chmury albo pył planety (C)">chmury</button>
+    <button id="t-vol" class="on" title="chmury jako bryła liczona marszem promienia; wyłączone — płaska maska z cieniem (B)">chmury bryłą</button>
+    <button id="t-atm" class="on" title="atmosfera liczona po promieniu widzenia">atmosfera</button>
+    <button id="t-aurora" class="on" title="zorza przy biegunach po nocnej stronie (Z)">zorza</button>
+  </div>
+  <h2>Widok</h2>
+  <div class="row"><span>słońce</span><input id="s-pora" type="range" min="0" max="180" step="1"><output id="o-pora"></output></div>
+  <div class="row"><span>doba</span><input id="s-doba" type="range" min="0" max="1" step="0.01"><output id="o-doba"></output></div>
+  <div class="row"><span>tempo lawy</span><input id="s-lava" type="range" min="0" max="4" step="0.1"><output id="o-lava"></output></div>
+  <div class="keys">
+    Widok orbitalny: <kbd>LPM</kbd> obrót · <kbd>PPM</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> kadr · <kbd>kółko</kbd> odległość.<br>
+    Widok z góry: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>LPM</kbd> przesuw · <kbd>kółko</kbd> zbliżenie.<br>
+    <kbd>O</kbd> widok · <kbd>B</kbd> chmury bryłą · <kbd>Z</kbd> zorza · <kbd>C</kbd> chmury · <kbd>E</kbd> erupcja · <kbd>V</kbd> miejsce ·
+    <kbd>T</kbd> wycinek · <kbd>L</kbd> żar · <kbd>Home</kbd> planeta · <kbd>H</kbd> panel
+  </div>
+</div>
+<div id="scale"><span></span><i></i></div>
+<div id="stat"></div>
+<div id="load">wypiek planety…</div>
+<div id="err"></div>
+<script type="module" src="/dema/planeta-zblizenie.js"></script>
+</body>
+</html>

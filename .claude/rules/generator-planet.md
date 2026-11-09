@@ -3,8 +3,12 @@ paths:
   - "src/3d/planetGen/**"
   - "dema/generator-planet.html"
   - "dema/generator-planet.js"
+  - "dema/planeta-zblizenie.html"
+  - "dema/planeta-zblizenie.js"
   - "scripts/webgpu/generator-planet-*.mjs"
+  - "scripts/webgpu/planeta-zblizenie-demo.mjs"
   - "tests/planetGen.test.mjs"
+  - "tests/planetGenNear.test.mjs"
 ---
 
 # Generator planet z ziarna (wypiek map na GPU)
@@ -53,8 +57,44 @@ paths:
   planety; CIEŃ PIERŚCIENI NA TARCZY w haku `'genGas'` (pierścienie równikowe — płaszczyzna y = 0 w układzie kuli,
   `uGgRing` + `ringTexture`). Decyzja użytkownika 2026-11-08: pierścienie wpinane do gry razem z olbrzymami.
 
+## Planeta z bliska (demo `dema/planeta-zblizenie.html`, niewpięte)
+
+- WYCINEK MAPY POD KAMERĄ (`planetGenPatch.js`, opis i liczby: `docs/OPIS-generator-planet.md` § 10): te same grafy
+  wypieku w OKNIE kadru (`bakeCoords` — gałąź okna `uWin` + `uFrX / Y / Z`; `C.lat` / `C.u` to prawdziwa szerokość
+  i długość, odległości tekseli — `C.latGrid`, `C.stE`, `C.stN`). Układ okna = jedna z sześciu ścian sześcianu, siatka
+  stała (teksel mapy planety / 2^poziom, początek co 16 tekseli) — przesunięte okno daje te same teksele. Dwa miejsca
+  A / B z przenikaniem; wypiek W PASACH po kroku na klatkę (`patchSteps`, `bakePatchStep`). Cel pola wypiekacza służy
+  wycinkom — nie wołaj `releaseScratch`, póki wycinki żyją.
+- Materiały: `'genSolidNear'` (`planetGenSurfaceNear.tsl.js`: wycinki, detal na drabinie stałych oktaw, cień terenu
+  po wycinku, żar i dryf lawy, fale i iskrzenie morza, rzeki, cień chmur i pióropusza), `'genCloudsNear'`
+  (`planetGenCloudsNear.tsl.js`: okno mapy chmur, światło z grubości chmur ku słońcu — bez marszu promienia),
+  bryła pióropusza erupcji (`planetGenPlume.tsl.js`: marsz promienia w pętli, ta sama gęstość daje cień na gruncie).
+  Składanie: `planetGenNear.js` (`createGenNearBody`). Dalsze planety zostają na `'genSolid'`.
+- Rodzaj gotowy do okna ma pole ZGODNE MIĘDZY POZIOMAMI: fbm z `full = true` (dzielnik = suma całego szeregu — kolejna
+  oktawa dokłada detal i nie przeskalowuje progów z próby), sufity `pgOctavesFor` ponad mapy planety, obiekty
+  wchodzące bramką z rozmiaru w tekselach (`C.stN`), linie nie węższe niż ~1,3 teksela z zachowaniem energii. Zrobione:
+  `volcanic`, `terran` / `ocean`, chmury.
+- Obiekty w komórkach (wulkany, kaldery, kratery) — pętla po 27 komórkach, każde miejsce dokłada własny profil
+  gasnący w promieniu 1 komórki (`forSites`, wzór `pgCraterOctave`). „Hasz najbliższej komórki × profil odległości”
+  urywa profil na krawędzi komórki — z orbity niewidoczne, z bliska uskoki i wielokąty.
+- Przesunięcie dziedziny szumu (`seedOffset`) zostaje MAŁE (< 7): float32 przy setkach ma krok ~3·10⁻⁵ rad = teksel
+  wycinka. Drobny detal (kłęby chmur, plamistość) w dziedzinie SUROWEJ (kierunek + ziarno): dziedzina odkształcona
+  (`pgWarp`) albo skręcona (cyklony) rozciąga go w smugi.
+- Gałąź z warunkiem z uniformu liczy się także WYŁĄCZONA (kompilator GPU spekulatywnie): `normalize(0)` i
+  `atan2(0, 0)` w gałęzi okna przy zerach w uniformach dały NaN w polu całej planety. Dzielenie przez
+  `max(długość, ε)`, uniformy wyłączonej gałęzi skończone i niezdegenerowane.
+- Nożyce przy rysunku do celu: prostokąt z `renderTarget.scissor`, ale włącza je `renderer.setScissorTest(true)`
+  (flaga celu nic nie robi — pas rysował cały cel); czyszczenie nie zna nożyc (`autoClear = false` na pasy).
+- Szumu pióropusza i chmur nie przesuwaj promieniście o stałą długość (okrąg tego promienia trafia w jeden punkt
+  szumu — współśrodkowe pręgi); ruch w miejscu = przesuw wzdłuż osi przez cienką warstwę.
+- Odcień żaru z palety planety tylko słaby (potęga ~0,12): barwa sRGB lawy to liniowo ~(1; 0,15; 0,01) i mnożenie
+  przez nią zostawia samą czerwień — barwę niesie temperatura.
+
 ## Zasady i pułapki
 
+- Wiersz celu wypieku rośnie ku PÓŁNOCY (piksel y = 0 to v = 0 = biegun S): różnica po y jest pochodną na północ —
+  bez minusa (odwrócona rzeźba N–S nie rzuca się w oczy przy słońcu ze wschodu; próba: słońce z północy, oświetlona
+  ma być ściana krateru zwrócona ku słońcu).
 - Nowy rodzaj z powierzchnią: `field()` + `color(F)` + `uniformsFor(spec, ctx)` w `SOLID_TYPES` (kontrakt kanałów pola,
   `probeQ`, `spec`, `civ`), wygląd w `planetGenSpec.js` (`LOOKS`, `RELIEF` — przesadzenie rzeźby i cienia, detal,
   szorstkość; mgiełka, chmury, noc), id w `planetGenTypes.js` i w mapie gwiezdnej; test `tests/planetGen.test.mjs`
@@ -104,3 +144,7 @@ paths:
   [--mieszane 1 --ziarno 7 --out .tmp/generator-planet/<tag>]`.
 - Czasy i pamięć: `node scripts/webgpu/generator-planet-pomiar.mjs [--roz 1024,2048,4096 --uklad terran,rocky,…]`.
 - Testy: `node --test tests/planetGen.test.mjs`.
+- Planeta z bliska: demo `dema/planeta-zblizenie.html` (`?styl=popiol|lawa|siarka|terran`, `?wycinek=2048|4096`,
+  `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `window.__zbl`: `setView`, `goVent`, `advance(s)`, `measureGpu(n)`,
+  `snapshot()`), zrzuty `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry
+  planeta,daleko,wulkan,blisko,bez-wycinka`, testy `node --test tests/planetGenNear.test.mjs`.

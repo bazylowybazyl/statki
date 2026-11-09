@@ -638,7 +638,10 @@ export function describePlanet(desc) {
   const rngGeo = rngFor(seed, `${type}:domena`);
   const look = { ...LOOKS[type](rngLook), ...(desc.look || {}) };
   const rKm = Number(desc.rKm) || round(rngGeo.range(T.rKm[0], T.rKm[1]), 0);
-  const seedOffset = [round(rngGeo.range(20, 420), 3), round(rngGeo.range(20, 420), 3), round(rngGeo.range(20, 420), 3)];
+  // AGENT: przesunięcie dziedziny MAŁE (|kierunek + przesunięcie| < 8): float32 ma tam krok ~5·10⁻⁷ rad. Przy
+  // przesunięciu rzędu setek krok to ~3·10⁻⁵ rad — tyle, co teksel wycinka pod kamerą (planetGenPatch.js), i rzeźba
+  // wycinka wychodziła w schodkach. Zakres wchodzi do wyglądu każdej planety z ziarna (zmiana = inne planety).
+  const seedOffset = [round(rngGeo.range(1.5, 6.5), 4), round(rngGeo.range(1.5, 6.5), 4), round(rngGeo.range(1.5, 6.5), 4)];
   const atm = atmosphereFor(type, look, rngAtm);
   const clouds = desc.clouds === null ? null : (desc.clouds || cloudsFor(type, look, rngAtm));
   const night = { ...nightFor(type, look, rngAtm), ...(desc.night || {}) };

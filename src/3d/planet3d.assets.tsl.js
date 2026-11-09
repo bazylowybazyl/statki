@@ -494,7 +494,8 @@ const CLOUD_KEYS = {
 };
 
 // `flow.cloud` (rodzaje dopisane `registerPlanetCloudKind` — chmury planet generatora): hak wołany raz po masce,
-// przed gałęziami, z { U, local, mask, lightDir, normal }; zwraca { mask (maska po detalu), shade (mnożnik barwy) }.
+// przed gałęziami, z { U, local, mask, lightDir, normal }; zwraca { mask (maska po detalu), shade (mnożnik barwy),
+// opcjonalnie tintPatch + tintMix (barwa z wycinka mapy pod kamerą i jej waga) }.
 function buildCloudGraph(flow = null) {
   const U = perObjectUniforms(flow ? { ...CLOUD_KEYS, ...flow.keys } : CLOUD_KEYS);
   const worldPos = modelWorldMatrix.mul(vec4(positionLocal, 1.0));
@@ -527,7 +528,9 @@ function buildCloudGraph(flow = null) {
     });
     // Barwa chmury z chromy tekstury (biel — chmury, brąz — pył i burze piaskowe Ziemi przyszłości);
     // jasność niesie maska, więc dawna biała mapa daje barwę (1, 1, 1).
-    const tint = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
+    const tintMap = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
+    // hak chmur z bliska (planetGenCloudsNear.tsl.js): barwa z wycinka mapy pod kamerą (`tintMix` — jego waga)
+    const tint = hook?.tintPatch ? mix(tintMap, hook.tintPatch, hook.tintMix) : tintMap;
     const color = (hook?.shade ? sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint).mul(hook.shade)
       : sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint)).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {

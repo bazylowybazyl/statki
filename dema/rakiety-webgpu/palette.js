@@ -85,8 +85,13 @@ export const NEBULA_COLORS = Object.freeze({
   halpha: lin('#ff2f6a', 1.0),
   oiii: lin('#2ef2d0', 0.9),
   sii: lin('#c01848', 1.0),
-  hot: lin('#b8d6ff', 1.2)
+  hot: lin('#b8d6ff', 1.2),
+  // Dżety pulsara (wiatr relatywistyczny): biało-błękitne, stygną w turkus [O III] (jak w grze).
+  jet: lin('#a9c4ff', 1.15)
 });
+
+// Snopy światła pulsara (reżyser, duszki smug z jądra) — barwa HDR rdzenia snopu (src/3d/rockets/palette.js).
+export const PULSAR_BEAM = Object.freeze([1.1, 1.5, 2.6]);
 
 // Iskry (wygląd SparkSystem3D gry: biel → barwa → stygnięcie, migotanie).
 export const SPARK_COLORS = Object.freeze({
