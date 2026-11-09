@@ -161,7 +161,7 @@ export function createSpalanie({ solver, planeta }) {
     for (let d = 0; d < 6; d++) {
       If(mI.shiftRight(uint(d)).bitAnd(uint(1)).equal(uint(1)), () => {
         const j = uv_(floatBitsToUint(wWiazR.element(uint(36).mul(i).add(uint(2 * d + 1))).z).bitAnd(uint(0xffffff)));
-        const e = v3(wWezR.element(uint(3).mul(j)).xyz.sub(x));
+        const e = v3(wWez.element(uint(3).mul(j)).xyz.sub(x)); // ten sam węzeł bufora co zapis (dwa wiązania jednej nazwy w kernelu to błąd WGSL)
         zasl.assign(max(zasl, dot(e, vh).div(max(length(e), 1e-3))));
       });
     }

@@ -123,22 +123,23 @@ export function createPowierzchniaAtm({ planeta, obraz, spalanie }) {
       kol.mulAssign(float(1).sub(cien.mul(0.55)));
       kol.assign(mix(kol, vec3(0.72, 0.74, 0.78), chm.mul(0.92)));
     } else {
-      // Mars: rdza i ochra, ciemne bazalty, kratery (komórki 25 km i 7 km: misa ciemniejsza, jasny wał).
+      // Mars: rdza i ochra, ciemne bazalty i smugi pyłu, rzadkie kratery różnej wielkości (komórki 40 km i 11 km: misa ciemniejsza, jasny wał, rozmyte brzegi).
       const t = float(0).toVar();
-      t.assign(fbm(km.div(60), 5));
-      kol.assign(mix(vec3(0.3, 0.13, 0.06), vec3(0.5, 0.27, 0.13), smoothstep(0.3, 0.7, t)));
-      kol.assign(mix(kol, vec3(0.13, 0.09, 0.07), smoothstep(0.58, 0.68, fbm(km.div(25).add(11), 4)).mul(0.7)));
-      for (const [skala, moc] of [[25, 1], [7, 0.7]]) {
+      t.assign(fbm(km.div(70), 5));
+      kol.assign(mix(vec3(0.27, 0.12, 0.055), vec3(0.46, 0.25, 0.12), smoothstep(0.3, 0.72, t)));
+      kol.assign(mix(kol, vec3(0.12, 0.08, 0.06), smoothstep(0.6, 0.72, fbm(km.div(28).add(11), 4)).mul(0.65)));
+      kol.mulAssign(fbm(km.div(3.5).add(vec2(fbm(km.div(12), 2).mul(4), 0)), 3).mul(0.35).add(0.83));
+      for (const [skala, moc, prog] of [[40, 1, 0.82], [11, 0.6, 0.88]]) {
         const c = km.div(skala);
         const ic = vec2(0).toVar();
         ic.assign(floor(c));
-        const o = vec2(haszF(ic.add(91)), haszF(ic.add(37))).mul(0.6).add(0.2);
+        const o = vec2(haszF(ic.add(91)), haszF(ic.add(37))).mul(0.5).add(0.25);
         const d = length(fract(c).sub(o));
-        const rk = haszF(ic.add(5)).mul(0.25).add(0.08);
-        const jest = smoothstep(0.55, 0.62, haszF(ic.add(13)));
-        const misa = float(1).sub(smoothstep(rk.mul(0.7), rk, d));
-        const wal = smoothstep(rk.mul(0.75), rk, d).mul(float(1).sub(smoothstep(rk, rk.mul(1.35), d)));
-        kol.mulAssign(float(1).sub(misa.mul(jest).mul(0.3 * moc)).add(wal.mul(jest).mul(0.35 * moc)));
+        const rk = haszF(ic.add(5)).mul(haszF(ic.add(7))).mul(0.3).add(0.05);
+        const jest = smoothstep(prog, prog + 0.04, haszF(ic.add(13)));
+        const misa = float(1).sub(smoothstep(rk.mul(0.55), rk, d));
+        const wal = smoothstep(rk.mul(0.8), rk, d).mul(float(1).sub(smoothstep(rk, rk.mul(1.6), d)));
+        kol.mulAssign(float(1).sub(misa.mul(jest).mul(0.22 * moc)).add(wal.mul(jest).mul(0.2 * moc)));
       }
     }
     // Światło słońca z krzywizną (Lambert) i mgiełka z góry: kamera nad atmosferą, masa powietrza ~ 1 / cos kąta do kamery.

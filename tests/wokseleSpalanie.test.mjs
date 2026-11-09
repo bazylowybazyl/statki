@@ -105,6 +105,9 @@ test('spalanie: kernele i siatki budują się, najwyżej 8 buforów storage, wie
   for (const k of [sp.kernele.kSpal, sp.kernele.kSpalG]) {
     const kod = kodKernela(k);
     assert.ok((kod.match(/var<storage/g) || []).length <= 8, kod.match(/var<storage[^;]*/g)?.join('\n'));
+    // Ten sam bufor do zapisu i do odczytu pod jedną nazwą to dwie deklaracje: Node to buduje, GPU odrzuca moduł (pierwszy przebieg 2026-11-09).
+    const nazwy = [...kod.matchAll(/var<storage[^>]*> (\w+)/g)].map((m) => m[1]);
+    assert.equal(new Set(nazwy).size, nazwy.length, `podwójna deklaracja bufora: ${nazwy.join(', ')}`);
   }
   for (const mesh of [o.mesh, o.kawalki.mesh, ...sp.siatki(), pow.mesh]) {
     const b = zbudujSiatke(mesh, o.scene);
