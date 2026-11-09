@@ -810,6 +810,14 @@
   color: #aeb9c0;
 }
 
+/* Rozgrzewka świata ruchu (D17): „Stabilizacja gospodarki · N%” pod paskiem ładowania. */
+#loading .loading-economy {
+  margin-top: calc(4 * var(--mm-u));
+  color: var(--mm-amber);
+  font-size: calc(11 * var(--mm-u));
+}
+#loading .loading-economy[hidden] { display: none; }
+
 /* przejście przez czerń (start gry z tła menu) */
 #screen-fade {
   position: fixed;

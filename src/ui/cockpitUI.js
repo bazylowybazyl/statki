@@ -15,6 +15,7 @@ import { CAPITAL_SHIP_TEMPLATES, SUPPORT_SHIP_TEMPLATES } from '../data/ships.js
 import { TRAFFIC_HULLS } from '../data/trafficHulls.js';
 import { SUPPORT_FACTIONS } from '../data/supportRoster.js';
 import { DRIVE_RPM_MAX, TRAVEL_SHIFT_RPM } from '../game/flight/driveTransmission.js';
+import { formatTradeDistance, formatTradeSeconds, formatTradeMode, formatTradeProfit } from '../game/tradePartners.js';
 import {
   formatLocalDistance,
   formatNavigationDistance,
@@ -503,8 +504,8 @@ function cockpitMarkup(devMode) {
         <div class="tablet-frame">
           <header class="tablet-head"><div class="tablet-id"><span class="tl-label" id="tabletLabel">Terminal stacji / usługi dokowe</span><strong id="tabletTitle">—</strong><small id="tabletSub">BRAK POŁĄCZENIA</small></div><div class="tablet-link"><span class="link-dot"></span><span id="tabletLinkText">ŁĄCZE AKTYWNE</span></div><button type="button" class="physical-btn tablet-close active" id="tabletClose"><span>Zamknij</span><div class="led-indicator red"></div></button></header>
           <nav class="tablet-tabsbar" id="stationTabsBar"><button type="button" class="tab-arrow" id="tabPrev" title="Poprzednia zakładka">‹</button><div class="tablet-tabs" id="tabletTabs"><div class="screen-content" id="tabletTabTrack"></div><div class="selection-indicator"></div></div><button type="button" class="tab-arrow" id="tabNext" title="Następna zakładka">›</button></nav>
-          <div class="tablet-screen" id="tabletScreen"><div class="screen-glare"></div><div class="tablet-pane active" id="stationPane"><slot name="station-panel"></slot></div><div class="mission-layout" id="missionPane" hidden><aside class="mission-sidebar"><div class="mission-filters" id="missionFilters"><button type="button" class="mission-filter active" data-filter="active">AKTYWNE</button><button type="button" class="mission-filter" data-filter="completed">UKOŃCZONE</button><button type="button" class="mission-filter" data-filter="all">WSZYSTKIE</button></div><div class="mission-list" id="missionList"></div></aside><section class="mission-detail" id="missionDetail"><div class="mission-empty">Wybierz wpis z dziennika misji.</div></section></div></div>
-          <footer class="tablet-foot"><span id="tabletFootLeft">KREDYTY <b id="tabletCredits">0 CR</b></span><span id="tabletFootCenter">TERMINAL GOTOWY</span><span id="tabletFootRight">ŁADOWNIA <b id="tabletCargo">0 / 0</b></span></footer>
+          <div class="tablet-screen" id="tabletScreen"><div class="screen-glare"></div><div class="tablet-pane active" id="stationPane"><slot name="station-panel"></slot></div><div class="mission-layout" id="missionPane" hidden><aside class="mission-sidebar"><div class="mission-filters" id="missionFilters"><button type="button" class="mission-filter active" data-filter="active">AKTYWNE</button><button type="button" class="mission-filter" data-filter="completed">UKOŃCZONE</button><button type="button" class="mission-filter" data-filter="all">WSZYSTKIE</button></div><div class="mission-list" id="missionList"></div></aside><section class="mission-detail" id="missionDetail"><div class="mission-empty">Wybierz wpis z dziennika misji.</div></section></div><div class="mission-layout cargo-layout" id="cargoPane" hidden><aside class="mission-sidebar cargo-sidebar"><div class="cargo-head" id="cargoHead">ŁADOWNIA</div><div class="mission-list" id="cargoList"></div></aside><section class="mission-detail cargo-detail" id="cargoDetail"><div class="mission-empty">Najedź na towar — komputer handlowy pokaże kupców.</div></section></div></div>
+          <footer class="tablet-foot"><span id="tabletFootLeft">KREDYTY <b id="tabletCredits">0 CR</b></span><span id="tabletFootCenter">TERMINAL GOTOWY</span><button type="button" class="tablet-foot-cargo" id="tabletFootRight" title="Ładownia i komputer handlowy: kto ile płaci">ŁADOWNIA <b id="tabletCargo">0 / 0</b></button></footer>
         </div>
       </section>
       <div class="support-tooltip" id="supportTooltip" hidden></div><div class="drag-ghost" id="dragGhost"></div><div class="deployment-reticle" id="deployReticle"></div>
@@ -528,6 +529,10 @@ export class CockpitUI {
     this.missionFilter = 'active';
     this.selectedMissionId = null;
     this.missionOpen = false;
+    // Tablet „Ładownia” (komputer handlowy E23a): towar pod kursorem i podpis ostatniego rysunku kupców.
+    this.cargoOpen = false;
+    this.cargoKey = null;
+    this.cargoSig = '';
     this.commOpen = false;
     this.commBootUntil = 0;
     this.commDirectory = [];
@@ -615,6 +620,7 @@ export class CockpitUI {
       'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText', 'tabletClose', 'stationTabsBar',
       'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane', 'missionFilters', 'missionList',
       'missionDetail', 'tabletCredits', 'tabletCargo', 'tabletFootLeft', 'tabletFootCenter', 'tabletFootRight',
+      'cargoPane', 'cargoHead', 'cargoList', 'cargoDetail',
       'supportTooltip', 'dragGhost', 'deployReticle', 'turretPanel'
     ];
     for (const id of ids) this.els[id] = this.shadow.getElementById(id);
@@ -696,6 +702,16 @@ export class CockpitUI {
     });
 
     this.els.pbMissions?.addEventListener('click', () => this.toggleMissionJournal());
+    // Stopka tabletu „ŁADOWNIA x / y” otwiera kartę ładowni z komputerem handlowym (kto ile płaci).
+    this.els.tabletFootRight?.addEventListener('click', () => this.toggleCargoView());
+    this.els.cargoList?.addEventListener('mouseover', event => {
+      const card = event.target.closest('[data-cargo-key]');
+      if (card && card.dataset.cargoKey !== this.cargoKey) this.selectCargo(card.dataset.cargoKey);
+    });
+    this.els.cargoList?.addEventListener('click', event => {
+      const card = event.target.closest('[data-cargo-key]');
+      if (card) this.selectCargo(card.dataset.cargoKey);
+    });
     this.els.pbShip?.addEventListener('click', () => this.launchRingCityFlight());
     this.els.pbMap?.addEventListener('click', () => this.dispatchGameKey('KeyM', 'm'));
     this.els.scScan?.addEventListener('click', () => this.dispatchGameKey('KeyX', 'x'));
@@ -1102,6 +1118,7 @@ export class CockpitUI {
       this.renderContacts();
       this.renderScanList(now);
       if (this.missionOpen) this.renderMissionJournal();
+      if (this.cargoOpen) this.renderCargoView();
       if (this.commOpen) this.renderComm();
     }
   }
@@ -2230,6 +2247,7 @@ export class CockpitUI {
     if (!open) { this.closeMissionJournal(); return false; }
     if (window.stationUI?.open) window.closeStationUI?.();
     this.closeComm();
+    if (this.cargoOpen) this.closeCargoView();
     this.missionOpen = true;
     this.els.stationTablet?.classList.add('open', 'missions');
     this.els.stationTablet?.setAttribute('data-view', 'missions');
@@ -2288,9 +2306,173 @@ export class CockpitUI {
     this.renderMissionDetail(selected);
     const activeCount = missions.filter(mission => mission.status === 'active').length;
     const completedCount = missions.filter(mission => mission.status === 'completed').length;
-    this.els.tabletFootLeft.innerHTML = `AKTYWNE <b>${activeCount}</b>`;
-    this.els.tabletFootCenter.textContent = `UKOŃCZONE ${completedCount}`;
-    this.els.tabletFootRight.innerHTML = `ŁĄCZNY REWARD <b>${missions.reduce((sum, mission) => sum + (mission.status === 'completed' ? Number(mission.rewardCredits) || 0 : 0), 0).toLocaleString('pl-PL')} CR</b>`;
+    const rewards = missions.reduce((sum, mission) => sum + (mission.status === 'completed' ? Number(mission.rewardCredits) || 0 : 0), 0);
+    this.setTabletFoot(`AKTYWNE <b>${activeCount}</b>`, `UKOŃCZONE ${completedCount} · NAGRODY ${rewards.toLocaleString('pl-PL')} CR`);
+  }
+
+  // Stopka tabletu: lewa i środek zależą od widoku, prawa to zawsze przycisk „ŁADOWNIA x / y” (karta ładowni).
+  // `innerHTML` tylko przy zmianie tekstu.
+  setTabletFoot(leftHtml, centerText) {
+    const cargo = `ŁADOWNIA <b>${window.CockpitBridge?.getCargoLabel?.() || '—'}</b>`;
+    if (this.cache.footLeft !== leftHtml) { this.cache.footLeft = leftHtml; this.els.tabletFootLeft.innerHTML = leftHtml; }
+    if (this.cache.footCenter !== centerText) { this.cache.footCenter = centerText; this.els.tabletFootCenter.textContent = centerText; }
+    if (this.cache.footRight !== cargo) { this.cache.footRight = cargo; this.els.tabletFootRight.innerHTML = cargo; }
+    this.els.tabletFootRight?.classList.toggle('active', !!this.cargoOpen);
+  }
+
+  // ============================================================
+  // KARTA „ŁADOWNIA” — komputer handlowy (E23a, docs/PROPOZYCJA-ekonomia-ukladow.md § 9.5 p. 1)
+  // Lista towarów w ładowni; najechanie (albo klik) na towar pokazuje kupców w układzie: stacja, frakcja i stosunki,
+  // cena skupu z reputacją, ile przyjmie, zysk wobec średniej ceny zakupu, odległość i czas lotu. Dane:
+  // CockpitBridge.tradePartners (index.html → TrafficBridge.findTradePartners, kopia rynku z mostu). Ostatni wiersz —
+  // kontrakty obsady (towar `workforce` z księgi rynku). Przed pierwszym rynkiem z workera — „liczę…”.
+  // ============================================================
+  toggleCargoView(force = null) {
+    const open = force == null ? !this.cargoOpen : !!force;
+    if (!open) { this.closeCargoView(); return false; }
+    this.closeComm();
+    if (this.missionOpen) this.closeMissionJournal();
+    this.cargoOpen = true;
+    this.cargoSig = '';
+    this.els.stationTablet?.classList.add('open', 'cargo');
+    this.els.stationTablet?.setAttribute('data-view', 'cargo');
+    this.els.stationTablet?.setAttribute('aria-hidden', 'false');
+    this.els.stationTabsBar.hidden = true;
+    this.els.stationPane.hidden = true;
+    this.els.missionPane.hidden = true;
+    this.els.cargoPane.hidden = false;
+    this.els.tabletLabel.textContent = 'Ładownia / komputer handlowy';
+    this.els.tabletTitle.textContent = 'KTO ILE PŁACI';
+    this.els.tabletSub.textContent = 'RYNKI UKŁADU · CENY Z REPUTACJĄ';
+    this.els.tabletLinkText.textContent = 'ŁĄCZE HANDLOWE';
+    this.syncTabletOpenClass();
+    this.renderCargoView();
+    return true;
+  }
+
+  closeCargoView() {
+    if (!this.cargoOpen) return;
+    this.cargoOpen = false;
+    this.els.cargoPane.hidden = true;
+    this.els.stationTablet?.classList.remove('cargo');
+    this.els.stationTablet?.removeAttribute('data-view');
+    this.els.tabletFootRight?.classList.remove('active');
+    if (window.stationUI?.open) {
+      // Terminal stacji był pod spodem — wraca (syncTablet przerysuje zakładki i panel).
+      this.lastStationOpen = null;
+      this.lastStationTab = '';
+    } else {
+      this.els.stationTablet?.classList.remove('open');
+      this.els.stationTablet?.setAttribute('aria-hidden', 'true');
+      this.els.stationPane.hidden = false;
+      this.els.stationTabsBar.hidden = false;
+    }
+    this.syncTabletOpenClass();
+  }
+
+  selectCargo(key) {
+    this.cargoKey = key || null;
+    this.renderCargoView(true);
+  }
+
+  renderCargoView(force = false) {
+    if (!this.cargoOpen || !this.els.cargoList || !this.els.cargoDetail) return;
+    const bridge = window.CockpitBridge;
+    const list = bridge?.getCargoList?.() || [];
+    if (!list.some(item => item.key === this.cargoKey)) this.cargoKey = list[0]?.key || null;
+    const selected = list.find(item => item.key === this.cargoKey) || null;
+    const result = selected ? bridge?.tradePartners?.(selected.key, { amount: selected.qty, limit: 5, costBasis: selected.contracts ? selected.cost : undefined }) : null;
+    const credits = window.DevEconomy?.getCredits?.() ?? 0;
+    this.setTabletFoot(`KREDYTY <b>${Math.round(credits).toLocaleString('pl-PL')} CR</b>`, 'KOMPUTER HANDLOWY');
+    const sig = `${list.map(item => `${item.key}:${Math.round(item.qty)}`).join(',')}|${this.cargoKey}|`
+      + `${result?.marketSeq ?? -1}|${result?.pending ? 1 : 0}`;
+    if (!force && sig === this.cargoSig) return;
+    this.cargoSig = sig;
+
+    this.els.cargoHead.textContent = `ŁADOWNIA ${bridge?.getCargoLabel?.() || '—'}`;
+    const root = this.els.cargoList;
+    root.textContent = '';
+    if (!list.some(item => !item.contracts)) {
+      const empty = document.createElement('div'); empty.className = 'mission-empty cargo-empty'; empty.textContent = 'Ładownia pusta.'; root.appendChild(empty);
+    }
+    for (const item of list) {
+      const card = document.createElement('button'); card.type = 'button';
+      card.className = `mission-card cargo-card${item.contracts ? ' cargo-contracts' : ''}`;
+      card.dataset.cargoKey = item.key;
+      card.classList.toggle('selected', item.key === this.cargoKey);
+      const kicker = document.createElement('span'); kicker.className = 'mission-kicker';
+      const short = document.createElement('span'); short.textContent = item.short;
+      const qty = document.createElement('span');
+      qty.textContent = item.contracts && !item.qty ? 'OFERTY RYNKU' : `${Math.round(item.qty).toLocaleString('pl-PL')} ${item.unit}`;
+      kicker.append(short, qty);
+      const title = document.createElement('span'); title.className = 'mission-title'; title.textContent = item.label;
+      const summary = document.createElement('span'); summary.className = 'mission-summary';
+      summary.textContent = item.contracts && !item.qty ? 'Kto płaci za ludzi na kontraktach'
+        : (item.cost ? `kupione po ${Math.round(item.cost).toLocaleString('pl-PL')} CR / szt.` : 'bez ceny zakupu (urobek, łup)');
+      card.append(kicker, title, summary);
+      root.appendChild(card);
+    }
+    this.renderCargoDetail(selected, result);
+  }
+
+  renderCargoDetail(item, result) {
+    const root = this.els.cargoDetail;
+    root.textContent = '';
+    if (!item) {
+      const empty = document.createElement('div'); empty.className = 'mission-empty'; empty.textContent = 'Najedź na towar — komputer handlowy pokaże kupców.'; root.appendChild(empty); return;
+    }
+    const head = document.createElement('div'); head.className = 'mission-detail-head';
+    const eyebrow = document.createElement('div'); eyebrow.className = 'mission-eyebrow';
+    eyebrow.textContent = item.contracts ? 'KOMPUTER HANDLOWY / KONTRAKTY OBSADY' : 'KOMPUTER HANDLOWY / KTO KUPI';
+    const title = document.createElement('h2'); title.className = 'mission-detail-title'; title.textContent = item.label;
+    const status = document.createElement('span'); status.className = 'mission-status';
+    status.textContent = item.contracts && !item.qty ? 'SKUP WORKFORCE · ZA OSOBĘ'
+      : `W ŁADOWNI ${Math.round(item.qty).toLocaleString('pl-PL')} ${item.unit}${item.cost ? ` · KUPIONE PO ${Math.round(item.cost).toLocaleString('pl-PL')} CR` : ''}`;
+    head.append(eyebrow, title, status);
+    const body = document.createElement('div'); body.className = 'mission-detail-body cargo-buyers';
+    if (!result || result.pending) {
+      const wait = document.createElement('div'); wait.className = 'cargo-wait'; wait.textContent = 'LICZĘ… komputer handlowy czeka na rynek'; body.appendChild(wait);
+    } else if (!result.rows.length) {
+      const none = document.createElement('div'); none.className = 'mission-empty'; none.textContent = 'Nikt w układzie tego teraz nie skupuje.'; body.appendChild(none);
+    } else {
+      const table = document.createElement('table'); table.className = 'cargo-buyers-table';
+      const headRow = document.createElement('tr');
+      for (const label of ['Kupiec', 'Cena', item.contracts ? 'Przyjmie' : 'Weźmie', item.cost ? 'Zysk' : 'Przychód', 'Droga']) {
+        const th = document.createElement('th'); th.textContent = label; headRow.appendChild(th);
+      }
+      table.appendChild(headRow);
+      for (const row of result.rows) {
+        const tr = document.createElement('tr'); tr.className = 'cargo-buyer';
+        tr.dataset.stationId = row.stationId;
+        tr.classList.toggle('is-closed', !row.canDock);
+        tr.classList.toggle('is-loss', row.profit < 0);
+        const who = document.createElement('td'); who.className = 'cargo-buyer-name';
+        const name = document.createElement('b'); name.textContent = row.name;
+        const standing = document.createElement('small');
+        standing.textContent = row.standing ? row.standing.label : 'bez właściciela';
+        if (row.standing?.color) standing.style.color = row.standing.color;
+        who.append(name, standing);
+        const price = document.createElement('td'); price.className = 'cargo-num'; price.textContent = `${row.price.toLocaleString('pl-PL')} CR`;
+        const take = document.createElement('td'); take.className = 'cargo-num';
+        take.textContent = !item.qty ? `${row.offer.toLocaleString('pl-PL')} ${item.unit}` : `${Math.round(row.take).toLocaleString('pl-PL')} z ${Math.round(item.qty).toLocaleString('pl-PL')}`;
+        const profit = document.createElement('td'); profit.className = 'cargo-num cargo-profit';
+        profit.textContent = item.cost ? formatTradeProfit(row.profit) : `${Math.round(row.price * row.take).toLocaleString('pl-PL')} CR`;
+        const way = document.createElement('td'); way.className = 'cargo-num cargo-way';
+        way.textContent = row.canDock ? `${formatTradeDistance(row.distance)} · ok. ${formatTradeSeconds(row.seconds)} ${formatTradeMode(row.mode)}` : 'dok zamknięty';
+        tr.append(who, price, take, profit, way);
+        table.appendChild(tr);
+      }
+      body.appendChild(table);
+      const skipped = result.skipped || {};
+      const notes = [];
+      if (skipped.full) notes.push(`ma dość: ${skipped.full}`);
+      if (skipped.notBuying) notes.push(`nie skupuje: ${skipped.notBuying}`);
+      if (skipped.hidden) notes.push(`we mgle wojny: ${skipped.hidden}`);
+      const note = document.createElement('div'); note.className = 'mission-section-title cargo-note';
+      note.textContent = `Kolejność: zysk na minutę lotu z dokowaniem${notes.length ? ' · ' + notes.join(' · ') : ''}`;
+      body.appendChild(note);
+    }
+    root.append(head, body);
   }
 
   renderMissionDetail(mission) {
@@ -2319,17 +2501,21 @@ export class CockpitUI {
 
   syncTablet() {
     const stationUI = window.stationUI;
-    const stationOpen = !!stationUI?.open && !this.missionOpen;
+    const stationOpen = !!stationUI?.open && !this.missionOpen && !this.cargoOpen;
     if (stationOpen !== this.lastStationOpen) {
+      const reopened = this.lastStationOpen === null;
       this.lastStationOpen = stationOpen;
-      this.els.stationTablet?.classList.toggle('open', stationOpen);
-      this.els.stationTablet?.setAttribute('aria-hidden', stationOpen ? 'false' : 'true');
-      this.els.stationTabsBar.hidden = !stationOpen;
-      this.els.stationPane.hidden = !stationOpen;
+      // Dziennik misji i ładownia mają własny widok tabletu — nie gasimy go, gdy terminal stacji schodzi pod spód.
+      this.els.stationTablet?.classList.toggle('open', stationOpen || this.missionOpen || this.cargoOpen);
+      this.els.stationTablet?.setAttribute('aria-hidden', stationOpen || this.missionOpen || this.cargoOpen ? 'false' : 'true');
+      if (!this.cargoOpen && !this.missionOpen) {
+        this.els.stationTabsBar.hidden = !stationOpen;
+        this.els.stationPane.hidden = !stationOpen;
+      }
       if (stationOpen) {
         this.closeComm();
-        this.log(`Terminal stacji otwarty — ${getEntityLabel(stationUI.station, 'Stacja')}`, 'ok');
-      } else if (!this.missionOpen) {
+        if (!reopened) this.log(`Terminal stacji otwarty — ${getEntityLabel(stationUI.station, 'Stacja')}`, 'ok');
+      } else if (!this.missionOpen && !this.cargoOpen) {
         this.log('Terminal stacji zamknięty.', 'warn');
       }
       this.syncTabletOpenClass();
@@ -2346,14 +2532,13 @@ export class CockpitUI {
       this.renderStationTabs(activeTab);
     }
     const credits = window.DevEconomy?.getCredits?.() ?? 0;
-    this.els.tabletCredits.textContent = `${Math.round(credits).toLocaleString('pl-PL')} CR`;
-    this.els.tabletCargo.textContent = window.CockpitBridge?.getCargoLabel?.() || '—';
-    this.els.tabletFootCenter.textContent = `MODUŁ ${STATION_TABS.find(tab => tab.id === activeTab)?.label || activeTab.toUpperCase()}`;
+    this.setTabletFoot(`KREDYTY <b>${Math.round(credits).toLocaleString('pl-PL')} CR</b>`,
+      `MODUŁ ${STATION_TABS.find(tab => tab.id === activeTab)?.label || activeTab.toUpperCase()}`);
   }
 
-  // Otwarty tablet (stacja albo dziennik misji) chowa HUD lotu pod spodem.
+  // Otwarty tablet (stacja, dziennik misji albo ładownia) chowa HUD lotu pod spodem.
   syncTabletOpenClass() {
-    const open = !!(this.missionOpen || this.lastStationOpen);
+    const open = !!(this.missionOpen || this.cargoOpen || this.lastStationOpen);
     if (this.cache.tabletOpen === open) return;
     this.cache.tabletOpen = open;
     this.els.app?.classList.toggle('tablet-open', open);
@@ -2395,7 +2580,8 @@ export class CockpitUI {
   }
 
   closeTablet() {
-    if (this.missionOpen) this.closeMissionJournal();
+    if (this.cargoOpen) this.closeCargoView();
+    else if (this.missionOpen) this.closeMissionJournal();
     else window.closeStationUI?.();
   }
 

@@ -10,6 +10,12 @@
  * Rysunek: ≤ 40 linii, napisy ze stempli (płótno na napis, pieczone raz), panel pieczony przy nowych
  * danych — reguła `radar-cic` (bez `shadowBlur` i gradientów co klatkę).
  *
+ * KUPCY TOWARU (E23a, docs/PROPOZYCJA-ekonomia-ukladow.md § 9.5 p. 3): sekcja panelu z ładownią gracza (i kontraktami
+ * obsady); najechanie kursorem na towar wybiera go, pod spodem najlepsi kupcy w układzie (cena z reputacją, ile
+ * przyjmie, odległość, czas lotu), a na mapie przy ich portach znacznik ceny. Źródło `setPartnerSource({ cargo,
+ * partners })` — w grze `getTradeCargoList` / `queryTradePartners` (kopia rynku z mostu, wynik w pamięci mostu do
+ * następnego bufora rynku). Ładownia i wynik sprawdzane co `partnerPollMs`, panel pieczony tylko przy zmianie.
+ *
  * OBSADA (workforce, E16 W5): trasy pasażerskie własnym kolorem (`CREW_COLOR`; kontrakty linią ciągłą,
  * powroty po kontrakcie przerywaną), porty z obsadą poniżej 80% w bursztynowym pierścieniu, poniżej 50%
  * w czerwonym, w panelu ludzie w drodze; kryjówki z zakładnikami ze znacznikiem — tylko rozpoznane.
@@ -19,6 +25,7 @@
 
 import { RESOURCES, CATEGORY } from '../data/resources.js';
 import { WORKFORCE_UI_WARN_RATIO, WORKFORCE_UI_ALERT_RATIO } from '../data/workforce.js';
+import { describeTradePartnerRow } from '../game/tradePartners.js';
 
 export const CIC_TRADE_TUNE = {
   refreshMs: 2000,
@@ -27,6 +34,10 @@ export const CIC_TRADE_TUNE = {
   /** Ile wierszy tras i okazji w panelu. */
   panelRoutes: 6,
   panelDeals: 5,
+  /** Kupcy towaru: ile towarów z ładowni w panelu, ilu kupców, co ile ms sprawdzać ładownię i wynik. */
+  panelCargo: 6,
+  panelBuyers: 5,
+  partnerPollMs: 400,
   /** Ile tras pasażerskich na mapie i ile portów z brakami obsady w panelu (W5). */
   crewRoutes: 16,
   panelCrewPorts: 4,
@@ -102,6 +113,8 @@ function makeCanvas(w, h) {
 export function createCicTradeLayer(options = {}) {
   /** `() => Promise<summary|null>` — most gry (`TrafficBridge.requestTradeSummary`). */
   let source = typeof options.request === 'function' ? options.request : null;
+  /** `{ cargo: () => [{ key, label, qty, unit, contracts }], partners: (key, qty) => wynik findTradePartners }`. */
+  let partnerSource = null;
   /** `(portId) => bool` — port ukryty mgłą wojny (gra: `SensorSystem.hides` stacji); brak = wszystko widać. */
   let hiddenTest = typeof options.isHidden === 'function' ? options.isHidden : null;
   const state = {
@@ -112,6 +125,17 @@ export function createCicTradeLayer(options = {}) {
     pending: false,
     failed: false,
     version: 0
+  };
+  // Kupcy towaru: wybrany towar, ostatnia ładownia i wynik, wiersze towarów w panelu (do najechania kursorem).
+  const partners = {
+    key: null,
+    cargo: [],
+    result: null,
+    sig: '',
+    polledAt: -Infinity,
+    rows: [],
+    panelX: 0,
+    panelY: 0
   };
   const stamps = new Map();
   const panel = { canvas: null, version: -1, w: 0, h: 0 };
@@ -149,7 +173,30 @@ export function createCicTradeLayer(options = {}) {
     state.version++;
   }
 
+  function pollPartners(nowMs, force = false) {
+    if (!partnerSource) return;
+    if (!force && nowMs - partners.polledAt < CIC_TRADE_TUNE.partnerPollMs) return;
+    partners.polledAt = nowMs;
+    let cargo = [];
+    try { cargo = partnerSource.cargo?.() || []; } catch (error) { cargo = []; }
+    if (!cargo.some(item => item.key === partners.key)) partners.key = cargo[0]?.key || null;
+    const item = cargo.find(entry => entry.key === partners.key) || null;
+    let result = null;
+    if (item) {
+      try { result = partnerSource.partners?.(item.key, item.qty || 0) || null; } catch (error) { result = null; }
+    }
+    const sig = `${cargo.map(entry => `${entry.key}:${Math.round(entry.qty || 0)}`).join(',')}|${partners.key}|`
+      + `${result?.marketSeq ?? -1}|${result?.pending ? 1 : 0}|${result?.rows?.length ?? 0}`;
+    partners.cargo = cargo;
+    partners.result = result;
+    if (sig !== partners.sig) {
+      partners.sig = sig;
+      state.version++;
+    }
+  }
+
   function update(nowMs) {
+    if (state.enabled) pollPartners(nowMs);
     if (!state.enabled || !source || state.pending) return;
     if (nowMs - state.requestedAt < CIC_TRADE_TUNE.refreshMs) return;
     state.requestedAt = nowMs;
@@ -324,8 +371,48 @@ export function createCicTradeLayer(options = {}) {
         if (s) ctx.drawImage(s.canvas, Math.round(p.x - s.w / 2), Math.round(p.y + dy));
       }
     }
+    // Kupcy wybranego towaru: znacznik ceny nad portem (numer w kolejności komputera handlowego).
+    const buyers = partners.result?.rows;
+    if (buyers?.length && partners.key) {
+      for (let i = 0; i < buyers.length && i < CIC_TRADE_TUNE.panelBuyers; i++) {
+        const row = buyers[i];
+        const port = state.portById.get(row.stationId);
+        if (!port) continue;
+        const p = toScreen(port.x, port.y);
+        if (p.x < -60 || p.y < -30 || p.x > W + 60 || p.y > H + 30) continue;
+        const s = stamp(`${i + 1}. ${shortOf(partners.key)} ${formatPrice(row.price)} CR`, '#4ade80', 'bold 10px monospace');
+        if (s) ctx.drawImage(s.canvas, Math.round(p.x - s.w / 2), Math.round(p.y - 18 - s.h));
+      }
+    }
     drawCrewMarks(ctx, W, H, toScreen);
     ctx.restore();
+  }
+
+  /** Linie sekcji „KUPCY TOWARU” (po liniach panelu); `rowsOut` — numery linii z towarami ładowni. */
+  function partnerLines(lines, rowsOut) {
+    if (!partnerSource) return;
+    lines.push(['', null]);
+    lines.push(['KUPCY TOWARU (najedź na towar)', '#4ade80']);
+    const cargo = partners.cargo;
+    if (!cargo.length) lines.push(['ładownia pusta', '#94a3b8']);
+    for (const item of cargo.slice(0, CIC_TRADE_TUNE.panelCargo)) {
+      const selected = item.key === partners.key;
+      const qty = item.contracts ? 'oferty rynku' : `${Math.round(item.qty || 0).toLocaleString('pl-PL')} ${item.unit || 't'}`;
+      rowsOut.push({ key: item.key, line: lines.length });
+      lines.push([`${selected ? '▸' : ' '} ${item.label} · ${qty}`, selected ? '#e2e8f0' : '#94a3b8', selected ? 'bold 10px monospace' : undefined]);
+    }
+    const result = partners.result;
+    if (!partners.key) return;
+    if (!result || result.pending) {
+      lines.push(['  liczę…', '#fb923c']);
+    } else if (!result.rows.length) {
+      lines.push(['  nikt w układzie tego teraz nie skupuje', '#94a3b8']);
+    } else {
+      result.rows.slice(0, CIC_TRADE_TUNE.panelBuyers).forEach((row, i) => {
+        lines.push([`  ${i + 1}. ${describeTradePartnerRow(row)}${row.canDock ? '' : ' · dok zamknięty'}`,
+          row.canDock ? '#bbf7d0' : '#64748b']);
+      });
+    }
   }
 
   function bakePanel(width) {
@@ -374,11 +461,15 @@ export function createCicTradeLayer(options = {}) {
         }
       }
     }
+    const cargoRows = [];
+    partnerLines(lines, cargoRows);
     lines.push(['', null]);
     lines.push(['[H] warstwa handlu  ▼ kupisz tanio  ▲ sprzedasz drogo  ━ ludzie (kontrakty)', '#64748b']);
 
     const lineH = 15;
     const h = 16 + lines.length * lineH;
+    // Pasy towarów do najechania kursorem (y względem panelu).
+    partners.rows = cargoRows.map(({ key, line }) => ({ key, y0: 12 + line * lineH - lineH / 2, y1: 12 + line * lineH + lineH / 2 }));
     if (!panel.canvas || panel.w !== width || panel.h !== h) {
       panel.canvas = makeCanvas(width, h);
       panel.w = width;
@@ -410,8 +501,27 @@ export function createCicTradeLayer(options = {}) {
     const want = state.version + (state.failed ? 0.5 : 0);
     if (!panel.canvas || panel.version !== want || panel.w !== width) bakePanel(width);
     if (!panel.canvas) return y0;
-    ctx.drawImage(panel.canvas, W - width - 16, y0);
+    partners.panelX = W - width - 16;
+    partners.panelY = y0;
+    ctx.drawImage(panel.canvas, partners.panelX, y0);
     return y0 + panel.h;
+  }
+
+  /** Kursor nad CIC (px ekranu): nad towarem w sekcji „KUPCY TOWARU” — wybór towaru. Zwraca true przy zmianie. */
+  function hover(x, y) {
+    if (!state.enabled || !partners.rows.length || !panel.canvas) return false;
+    const lx = x - partners.panelX;
+    const ly = y - partners.panelY;
+    if (lx < 0 || lx > panel.w || ly < 0 || ly > panel.h) return false;
+    for (const row of partners.rows) {
+      if (ly >= row.y0 && ly < row.y1) {
+        if (row.key === partners.key) return false;
+        partners.key = row.key;
+        pollPartners(Infinity, true);
+        return true;
+      }
+    }
+    return false;
   }
 
   return {
@@ -424,6 +534,16 @@ export function createCicTradeLayer(options = {}) {
     },
     toggle() { return this.setEnabled(!state.enabled); },
     setSource(fn) { source = typeof fn === 'function' ? fn : null; state.failed = false; },
+    /** Kupcy towaru: `{ cargo, partners }` albo null (sekcja znika). */
+    setPartnerSource(src) {
+      partnerSource = src && typeof src.cargo === 'function' && typeof src.partners === 'function' ? src : null;
+      partners.sig = '';
+      partners.polledAt = -Infinity;
+      state.version++;
+    },
+    /** Wybór towaru wprost (narzędzia, pad). */
+    selectPartnerKey(key) { partners.key = key || null; pollPartners(Infinity, true); return partners.key; },
+    hover,
     /** Mgła wojny: `(portId) => bool` — port ukryty (bez stempli, pierścieni obsady i tras). */
     setHiddenTest(fn) { hiddenTest = typeof fn === 'function' ? fn : null; state.version++; },
     update,
@@ -436,7 +556,9 @@ export function createCicTradeLayer(options = {}) {
       return {
         enabled: state.enabled, routes: state.summary?.routes?.length || 0, ports: state.portById.size, stamps: stamps.size,
         pending: state.pending, crewRoutes: crew?.routes?.length || 0, crewPeople: crew?.people || 0,
-        crewReturning: crew?.returningPeople || 0, lowCrewPorts: lowCrew, hostages: crew?.hostages || 0
+        crewReturning: crew?.returningPeople || 0, lowCrewPorts: lowCrew, hostages: crew?.hostages || 0,
+        partnerKey: partners.key, partnerRows: partners.result?.rows?.length || 0, partnerPending: !!partners.result?.pending,
+        partners: (partners.result?.rows || []).map(row => ({ id: row.stationId, price: row.price, take: row.take, seconds: Math.round(row.seconds) }))
       };
     }
   };

@@ -7,6 +7,8 @@
 // z zapisu. Gracz (W6): kabiny pasażerskie (WYPOSAŻENIE), kontrakt wzięty w źródle i oddany w rynku pracy przyciskami
 // karty KADRY, zdrada (`PlayerCrew.betray`) → werbunek odmówiony w porcie dawnej frakcji, przyjęty na Marsie,
 // przeładowanie wież z załogi; załoga i kabiny w zapisie gracza po F5.
+// Komputer handlowy E23a: lód w ładowni → karta „Ładownia” w tablecie → najechanie na lód → kupcy (cena jak w terminalu
+// kupca), podpowiedź „lepiej zapłacą” w karcie „Handel”, sekcja „Kupcy towaru” w CIC HANDEL; D17: „Stabilizacja gospodarki”.
 // Zrzuty terminali i CIC, pipeline'y synchroniczne (strona i worker renderu — ma być 0) i błędy.
 //
 //   node scripts/webgpu/rynek-gra.mjs [--out .tmp/rynek] [--stacja earth] [--query renderWorker=1] [--bez-f5 1]
@@ -106,9 +108,33 @@ async function startGame({ wczytaj = false, przedStartem = null } = {}) {
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 900));
   await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
+  // Status „Stabilizacja gospodarki” (D17) na ekranie ładowania — próbki, póki ładowanie trwa.
+  const ekranLadowania = [];
+  for (let i = 0; i < 600; i++) {
+    const s = await ev(`(() => { const l = document.getElementById('loading'); const e = document.getElementById('loading-economy');
+      return { ladowanie: !!l && !l.classList.contains('hidden'), tekst: e && !e.hidden ? e.textContent : null }; })()`);
+    if (s.tekst && !ekranLadowania.includes(s.tekst)) ekranLadowania.push(s.tekst);
+    if (!s.ladowanie && i > 2) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  result.stabilizacjaLadowanie = ekranLadowania.slice(0, 3).concat(ekranLadowania.length > 3 ? [ekranLadowania.at(-1)] : []);
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && (window.__frameId || 0) > 30", 300000, 400)) {
     throw new Error('gra nie ruszyła');
   }
+  // Rozgrzewka trwa po starcie (np. `--query trafficWarmup=36000`) — znacznik w HUD; zrzut i czekanie na koniec.
+  result.stabilizacjaHud = await ev('window.EconomyWarmupStatus?.() ?? null');
+  if (result.stabilizacjaHud?.hud) {
+    await ev('window.__harness.step(5)');
+    await shot('hud-stabilizacja');
+    let koniec = null;
+    for (let i = 0; i < 400 && !koniec; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const s = await ev('window.EconomyWarmupStatus()');
+      if (!s.active) koniec = { poS: Math.round(i / 2), hud: s.hud, dziennik: await ev(`(() => [...(window.cockpitUI?.shadow?.querySelectorAll('#feedLines *') || [])].map((e) => e.textContent).filter((t) => /Gospodarka/.test(t)).slice(-1)[0] || null)()`) };
+    }
+    result.stabilizacjaKoniec = koniec;
+  }
+  console.log('stabilizacja', JSON.stringify({ ladowanie: result.stabilizacjaLadowanie, hud: result.stabilizacjaHud, koniec: result.stabilizacjaKoniec ?? null }));
   const begLog = await ev('window.__harness.frameLog.n');
   if (!await waitFor(cdp, `!!(window.TrafficV2Stats?.()?.ready)`, 120000, 300)) throw new Error('ruch v2 nie wstał');
   for (let i = 0; i < 40; i++) {
@@ -257,6 +283,53 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   await ev('(() => { window.closeStationUI?.(); return true; })()');
   console.log('gracz', JSON.stringify(result.gracz));
 
+  // 2d. Komputer handlowy (E23a): lód w ładowni → tablet „Ładownia” → najechanie na lód → lista kupców.
+  await ev(`(() => { window.closeStationUI?.(); window.PortCargo.devCargo({ ice: 400 }); window.cockpitUI.toggleCargoView(true); return true; })()`);
+  await ev('window.__harness.step(10)');
+  await ev(`(() => { const card = window.cockpitUI.shadow.querySelector('[data-cargo-key="ice"]');
+    card?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); return !!card; })()`);
+  const kupcyDom = `(() => {
+    const root = window.cockpitUI.shadow;
+    const rows = [...root.querySelectorAll('#cargoDetail tr.cargo-buyer')].map((tr) => ({
+      id: tr.dataset.stationId, tekst: [...tr.children].map((td) => td.textContent).join(' | ') }));
+    return { rows, liczy: !!root.querySelector('#cargoDetail .cargo-wait'),
+      towar: root.querySelector('#cargoDetail .mission-detail-title')?.textContent || null,
+      lista: [...root.querySelectorAll('#cargoList [data-cargo-key]')].map((c) => c.dataset.cargoKey) };
+  })()`;
+  let kupcy = await ev(kupcyDom);
+  for (let i = 0; i < 20 && !kupcy.rows.length; i++) { await ev('window.__harness.step(10)'); kupcy = await ev(kupcyDom); }
+  result.komputer = { ...kupcy, zapytanie: await ev(`(() => { const r = window.queryTradePartners('ice', 'buy', { amount: 400 });
+    return { pending: r.pending, wiersze: r.rows.map((w) => ({ id: w.stationId, cena: w.price, weźmie: w.take, s: Math.round(w.seconds), tryb: w.mode })),
+      pominiete: r.skipped }; })()`) };
+  await shot('tablet-ladownia-lod');
+  // Cena u najlepszego kupca = cena skupu w jego terminalu (ta sama kopia rynku).
+  const top = result.komputer.zapytanie.wiersze[0];
+  if (top) {
+    await ev(`(() => { window.cockpitUI.toggleCargoView(false); const st = (window.stations || []).find((s) => s.id === ${JSON.stringify(top.id)});
+      if (st) window.openStationUI(st, 'trade'); return !!st; })()`);
+    await ev('window.__harness.step(10)');
+    result.komputer.terminalKupca = await ev(`(() => {
+      const t = document.querySelector('.trade-market-table tr[data-market-key="ice"] [data-field="buy"]')?.textContent || null;
+      const m = t && t.match(/×\\s*([\\d\\s\\u00a0]+)\\s*CR/);
+      return { skup: t, cena: m ? Number(m[1].replace(/[\\s\\u00a0]/g, '')) : null };
+    })()`);
+    result.komputer.zgodnyZTerminalem = result.komputer.terminalKupca.cena === top.cena;
+  }
+  // Podpowiedź w karcie „Handel” portu startowego: najechanie na lód w ładowni — kto zapłaci lepiej.
+  await ev(`(() => { window.closeStationUI?.(); const st = (window.stations || []).find((s) => s.id === ${JSON.stringify(stationId)});
+    window.openStationUI(st, 'trade'); return true; })()`);
+  await ev('window.__harness.step(10)');
+  result.komputer.podpowiedz = await ev(`(() => {
+    const row = document.querySelector('.trade-market-table tr[data-market-key="ice"]');
+    row?.dispatchEvent(new MouseEvent('mouseenter'));
+    const tip = document.querySelector('.trade-partners-tip');
+    return { widoczna: !!tip && !tip.hidden, tekst: tip?.textContent?.slice(0, 400) || null,
+      wiersze: tip ? tip.querySelectorAll('.trade-partners-row').length : 0 };
+  })()`);
+  await shot(`terminal-podpowiedz-${stationId}`);
+  await ev(`(() => { window.closeStationUI?.(); return true; })()`);
+  console.log('komputer handlowy', JSON.stringify(result.komputer));
+
   // 3. Stacja gracza jako rynek (hak konsoli): encja w grze, rynek w świecie ruchu, budynek, terminal.
   const playerId = await ev(`(() => { window.closeStationUI?.(); return window.DevEconomy.foundStation({ name: 'Przyczółek E7', buildings: ['foundry'] }).id; })()`);
   for (let i = 0; i < 30 && !await ev(`window.TrafficV2.hasStation(${JSON.stringify(playerId)})`); i++) await ev('window.__harness.step(10)');
@@ -279,6 +352,7 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   await ev(`(() => { window.closeStationUI?.(); const C = window.CICDisplay; C.open(); const sun = window.SUN || { x: 0, y: 0 };
     C.setView({ zoom: 0.00009, panX: sun.x - window.ship.pos.x, panY: sun.y - window.ship.pos.y }); C.toggleTrade(); return true; })()`);
   for (let i = 0; i < 20 && !(await ev('window.CICDisplay.tradeStats().routes')); i++) await ev('window.__harness.step(30)');
+  await ev(`window.CICDisplay.selectTradePartnerKey('ice')`);
   await ev('window.__harness.step(20)');
   result.cic = await ev('window.CICDisplay.tradeStats()');
   await shot('cic-handel');

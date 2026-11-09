@@ -523,8 +523,12 @@
       <div class="loading-title">Ładowanie</div>
       <div class="loading-bar"><span id="loading-fill"></span></div>
       <div id="loading-progress" class="loading-progress">0%</div>
+      <!-- rozgrzewka świata ruchu v2 (D17): „Stabilizacja gospodarki” z postępem, póki trwa -->
+      <div id="loading-economy" class="loading-progress loading-economy" hidden></div>
     </div>
   </div>
+  <!-- HUD: rozgrzewka świata ruchu trwa jeszcze po starcie gry (D17) — znika po końcu -->
+  <div id="economy-warmup-hud" class="economy-warmup-hud" hidden></div>
   <!-- przejście przez czerń: tło menu → pierwsza klatka gry (fadeScreen) -->
   <div id="screen-fade" aria-hidden="true"></div>
 
@@ -1169,6 +1173,9 @@
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
+    import {
+      playerTravelDrives, formatTradeDistance, formatTradeSeconds, formatTradeMode
+    } from "./src/game/tradePartners.js";
     import { PLAYER_HOME_BERTHS } from "./src/game/traffic/trafficProtocol.js";
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
@@ -13958,6 +13965,9 @@
         toggleLockedTargetUi(target);
         return true;
       },
+      // Komputer handlowy (E23a): ładownia i kupcy towaru dla tabletu „Ładownia”.
+      getCargoList() { return getTradeCargoList(); },
+      tradePartners(key, opts) { return queryTradePartners(key, 'buy', opts || {}); },
       getCargoLabel() {
         // Ładownia liczy się masą, nie sztukami: tona rudy waży inaczej niż
         // układ scalony (RESOURCES[*].mass).
@@ -14843,6 +14853,9 @@
     const PLAYER = {
       credits: 1200,
       cargo: {},
+      // Średnia cena zakupu partii w ładowni [CR/szt.] (komputer handlowy E23a — zysk wobec ceny zakupu). Kupno
+      // w terminalu uśrednia; towar spoza handlu (urobek, łup) wchodzi po tej samej średniej; pusta ładownia — bez wpisu.
+      cargoCost: {},
       // Stosunek frakcji do gracza. Zmienia ceny, dostęp do doków i to,
       // czy patrole otwierają ogień.
       reputation: previousPlayer.reputation || createInitialReputation(),
@@ -15362,6 +15375,191 @@
       };
     }
 
+    // ============================================================
+    // KOMPUTER HANDLOWY — kto ile płaci (E23a, docs/PROPOZYCJA-ekonomia-ukladow.md § 9; src/game/tradePartners.js)
+    // Tablet „Ładownia” (cockpitUI, CockpitBridge.tradePartners), podpowiedź w karcie „Handel” terminalu i panel
+    // CIC HANDEL pytają tędy. Rachunek na kopii rynku z mostu (ta sama, z której terminal bierze ofertę), wynik
+    // w pamięci mostu do następnego bufora rynku. Rynki ukryte mgłą wojny (`SensorSystem.hides` encji stacji) i kryjówki
+    // pomija. Kontrakty obsady (`workforce`) to oferty tej samej księgi rynku.
+    // ============================================================
+    const TRADE_PARTNER_PENDING = Object.freeze({
+      resourceId: null, side: 'buy', rows: Object.freeze([]), pending: true, considered: 0,
+      skipped: Object.freeze({ full: 0, notBuying: 0, hidden: 0, hostile: 0, hideout: 0 })
+    });
+    const _tradePartnerFilters = {
+      amount: 0, costBasis: null, from: null, reputation: null, hidden: null, positionOf: null,
+      excludeId: null, drives: null, limit: 5
+    };
+    const _tradePartnerDrives = { key: '', drives: null };
+
+    function tradePartnerStation(id) {
+      for (const st of stations) if (st && String(st.id) === id) return st;
+      return null;
+    }
+    // Mgła wojny: rynek bez encji w grze (nie ma czego ukryć) zostaje.
+    function tradePartnerHidden(entry) {
+      const st = tradePartnerStation(String(entry.id));
+      return !!st && SensorSystem.hides(st);
+    }
+    function tradePartnerPosition(id, out) {
+      const st = tradePartnerStation(id);
+      if (!st || !Number.isFinite(st.x) || !Number.isFinite(st.y)) return null;
+      out.x = st.x; out.y = st.y;
+      return out;
+    }
+    // Napędy gracza z tabeli napędów (driveModes.js) — te same, którymi Atlas leci (wyposażenie, kadłub, klasa).
+    function tradePartnerDrives() {
+      const engineId = playerHypercruiseEngineId();
+      const warpId = playerWarpDriveId();
+      const flightClass = driveState.flightSpec?.flightClass || 'supercapital';
+      const key = `${engineId}|${warpId}|${flightClass}`;
+      if (_tradePartnerDrives.key !== key) {
+        _tradePartnerDrives.key = key;
+        _tradePartnerDrives.drives = playerTravelDrives(engineId, warpId, flightClass);
+      }
+      return _tradePartnerDrives.drives;
+    }
+
+    /** Średnia cena zakupu partii (CR/szt.) albo null — towar bez zakupu w terminalu (urobek, łup). */
+    function cargoCostBasis(key) {
+      if (!(Number(PLAYER.cargo?.[key]) > 0)) return null;
+      const cost = Number(PLAYER.cargoCost?.[key]);
+      return cost > 0 ? cost : null;
+    }
+    function noteCargoPurchase(key, heldBefore, amount, price) {
+      const prev = cargoCostBasis(key) ?? 0;
+      const before = Math.max(0, Number(heldBefore) || 0);
+      const total = before + amount;
+      if (total > 0) PLAYER.cargoCost[key] = (prev * before + price * amount) / total;
+    }
+    /** Do zapisu tylko ceny towarów, które są w ładowni (sprzedane do zera — bez wpisu). */
+    function tradeCargoCostForSave() {
+      const out = {};
+      for (const key of Object.keys(PLAYER.cargoCost)) {
+        if (Number(PLAYER.cargo?.[key]) > 0) out[key] = PLAYER.cargoCost[key];
+        else delete PLAYER.cargoCost[key];
+      }
+      return out;
+    }
+
+    /**
+     * Kto skupi (`side = 'buy'`) / sprzeda (`'sell'`) towar `key`: wynik `TrafficBridge.findTradePartners` (wspólny,
+     * tylko do odczytu). `opts`: `amount` (domyślnie ile jest w ładowni), `costBasis` (domyślnie średnia cena zakupu
+     * partii), `excludeId` (port terminalu), `limit`. Przed rynkiem z workera — `pending` („liczę…”).
+     */
+    function queryTradePartners(key, side = 'buy', opts = {}) {
+      if (!trafficV2?.ready || !RESOURCES[key]) return TRADE_PARTNER_PENDING;
+      const f = _tradePartnerFilters;
+      f.amount = opts.amount ?? (side === 'buy' ? Math.floor(Number(PLAYER.cargo?.[key]) || 0) : 0);
+      f.costBasis = opts.costBasis !== undefined ? opts.costBasis : (side === 'buy' ? cargoCostBasis(key) : null);
+      f.from = ship?.pos || null;
+      f.reputation = PLAYER.reputation;
+      f.hidden = tradePartnerHidden;
+      f.positionOf = tradePartnerPosition;
+      f.excludeId = opts.excludeId ?? null;
+      f.drives = tradePartnerDrives();
+      f.limit = opts.limit ?? 5;
+      return trafficV2.findTradePartners(key, side, f);
+    }
+    window.queryTradePartners = queryTradePartners;
+
+    /** Ładownia do kart komputera handlowego: towary (masa malejąco) i na końcu kontrakty obsady. */
+    function getTradeCargoList() {
+      const list = [];
+      for (const key of Object.keys(PLAYER.cargo || {})) {
+        const qty = Number(PLAYER.cargo[key]) || 0;
+        if (!(qty > 0) || !RESOURCES[key]) continue;
+        list.push({
+          key, label: getResourceLabel(key), short: RESOURCES[key].short || key, qty,
+          mass: getResourceMassLocal(key, qty), cost: cargoCostBasis(key), unit: RESOURCES[key].unit || 't'
+        });
+      }
+      list.sort((a, b) => b.mass - a.mass);
+      // Kontrakty obsady (W6): ludzie w kabinach i średnia cena za osobę z kontraktów; bez ludzi — same oferty rynku.
+      if (RESOURCES.workforce) {
+        const aboard = passengersAboard(PLAYER.crew);
+        let paid = 0;
+        for (const c of PLAYER.crew?.contracts || []) paid += (Number(c.units) || 0) * (Number(c.paid) || 0);
+        list.push({ key: 'workforce', label: 'Kontrakty obsady', short: RESOURCES.workforce.short || 'WF', qty: aboard,
+          mass: 0, cost: aboard > 0 && paid > 0 ? paid / aboard : null, unit: RESOURCES.workforce.unit || 'os.', contracts: true });
+      }
+      return list;
+    }
+
+    // Podpowiedź komputera handlowego w karcie „Handel” (§ 9.5 p. 2): najechanie na towar z ładowni — kto zapłaci
+    // lepiej poza tym portem (różnica wobec skupu tutaj); na towar, który port sprzedaje — kto go kupi drożej
+    // (zysk wobec ceny zakupu tutaj, partia na wolne miejsce w ładowni). DOM tylko przy zmianie wyniku.
+    const tradeTipState = { key: null };
+    function renderTradePartnerTip(pane, station) {
+      const tip = pane?.querySelector('.trade-partners-tip');
+      if (!tip) return;
+      const key = tradeTipState.key;
+      const offer = key && station ? getTradeOffer(station, key) : null;
+      const held = key ? Math.floor(Number(PLAYER.cargo?.[key]) || 0) : 0;
+      let res = null;
+      let title = '';
+      let ref = null;
+      if (key && held > 0) {
+        res = queryTradePartners(key, 'buy', { amount: held, excludeId: station?.id ?? null, limit: 3 });
+        ref = offer?.buy > 0 ? offer.bid : null;
+        title = `Lepiej zapłacą za ${getResourceLabel(key)} (${formatTradeUnits(held)} w ładowni)`;
+      } else if (key && offer?.sell > 0) {
+        const mass = Math.max(1e-6, Number(RESOURCES[key]?.mass) || 1);
+        const units = Math.max(0, Math.min(offer.sell, Math.floor(getPlayerCargoFree() / mass)));
+        res = queryTradePartners(key, 'buy', { amount: units, costBasis: offer.ask, excludeId: station?.id ?? null, limit: 3 });
+        title = `Kto kupi drożej: ${getResourceLabel(key)} po ${offer.ask} CR`;
+      }
+      if (!res) {
+        if (!tip.hidden) tip.hidden = true;
+        tip._sig = '';
+        return;
+      }
+      const sig = `${key}|${held}|${res.marketSeq ?? -1}|${res.pending ? 1 : 0}|${ref}|${title}`;
+      if (tip._sig === sig && !tip.hidden) return;
+      tip._sig = sig;
+      tip.hidden = false;
+      tip.textContent = '';
+      const head = document.createElement('div');
+      head.className = 'trade-partners-title';
+      head.textContent = title;
+      tip.appendChild(head);
+      if (res.pending) {
+        const wait = document.createElement('div');
+        wait.className = 'trade-partners-wait';
+        wait.textContent = 'Komputer handlowy liczy…';
+        tip.appendChild(wait);
+        return;
+      }
+      const rows = ref != null ? res.rows.filter(r => r.price > ref) : res.rows;
+      if (!rows.length) {
+        const none = document.createElement('div');
+        none.className = 'trade-partners-wait';
+        none.textContent = ref != null ? 'Nikt w układzie nie zapłaci więcej niż ten port.' : 'Nikt w układzie tego teraz nie skupuje.';
+        tip.appendChild(none);
+        return;
+      }
+      for (const row of rows) {
+        const line = document.createElement('div');
+        line.className = 'trade-partners-row' + (row.canDock ? '' : ' is-closed');
+        const name = document.createElement('span');
+        name.className = 'trade-partners-name';
+        name.textContent = row.name;
+        const price = document.createElement('span');
+        price.className = 'trade-partners-price';
+        price.textContent = ref != null ? `${row.price} CR (+${row.price - ref})` : `${row.price} CR`;
+        const qty = document.createElement('span');
+        qty.className = 'trade-partners-qty';
+        qty.textContent = `przyjmie ${formatTradeUnits(row.offer)}`;
+        const way = document.createElement('span');
+        way.className = 'trade-partners-way';
+        way.textContent = row.canDock
+          ? `${formatTradeDistance(row.distance)} · ok. ${formatTradeSeconds(row.seconds)} ${formatTradeMode(row.mode)}`
+          : 'dok zamknięty (stosunki)';
+        line.append(name, price, qty, way);
+        tip.appendChild(line);
+      }
+    }
+
     // Zmiana zapasu stacji z gry (handel, rozbiórka wraku, zakup broni) — tylko przez most (`stockDelta`):
     // kopia zmienia się od razu, worker po swojej stronie. Stacja bez rynku nic nie przyjmuje.
     function adjustStationStock(station, key, delta) {
@@ -15450,9 +15648,26 @@
         actionCell.appendChild(buyBtn);
         row.appendChild(actionCell);
 
+        // Komputer handlowy: najechanie na wiersz — kupcy poza tym portem (renderTradePartnerTip).
+        row.addEventListener('mouseenter', () => {
+          tradeTipState.key = key;
+          renderTradePartnerTip(stationOverlayDom.panels.trade, stationUI.station);
+          // Okienko pod wierszem (tabela ma ~60 wierszy — na dole karty nie byłoby go widać).
+          const tip = card.querySelector('.trade-partners-tip');
+          if (tip) tip.style.top = `${Math.round(row.getBoundingClientRect().bottom - card.getBoundingClientRect().top + 2)}px`;
+        });
+
         table.appendChild(row);
       }
+      table.addEventListener('mouseleave', () => {
+        tradeTipState.key = null;
+        renderTradePartnerTip(stationOverlayDom.panels.trade, stationUI.station);
+      });
       card.appendChild(table);
+      const tip = document.createElement('div');
+      tip.className = 'trade-partners-tip';
+      tip.hidden = true;
+      card.appendChild(tip);
       return card;
     }
 
@@ -16369,6 +16584,7 @@
           }
         });
       });
+      renderTradePartnerTip(pane, station);
     }
 
     /** Sztuki w tabeli handlu: pełne, z odstępem tysięcy. */
@@ -16426,7 +16642,9 @@
         if (getPlayerCargoFree() < getResourceMassLocal(key, amount)) { toast('Ładownia pełna'); return; }
         PLAYER.credits -= cost;
         adjustStationStock(station, key, -amount);
-        PLAYER.cargo[key] = (Number(PLAYER.cargo[key]) || 0) + amount;
+        const heldBefore = Number(PLAYER.cargo[key]) || 0;
+        PLAYER.cargo[key] = heldBefore + amount;
+        noteCargoPurchase(key, heldBefore, amount, offer.ask);
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
         if (held < amount) return;
@@ -17048,8 +17266,12 @@
           + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
-      bridge.on('warmup', w => console.info(`[ruch v2] rozgrzewka świata: ${Math.round(w.seconds / 60)} min `
-        + `w ${Math.round(w.ms)} ms CPU workera, ${bridge.stats?.active ?? '?'} aktywnych kursów`));
+      bridge.on('warmup', w => {
+        console.info(`[ruch v2] rozgrzewka świata: ${Math.round(w.seconds / 60)} min `
+          + `w ${Math.round(w.ms)} ms CPU workera, ${bridge.stats?.active ?? '?'} aktywnych kursów`);
+        syncEconomyWarmupStatus();
+        if (gameStarted) window.cockpitUI?.log?.('Gospodarka ustabilizowana — rynki i ruch gotowe.', 'ok');
+      });
       // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
       for (const station of stations) registerTrafficV2Market(station, bridge);
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
@@ -17058,6 +17280,42 @@
       });
       return bridge;
     }
+
+    // ============================================================
+    // STABILIZACJA GOSPODARKI (D17, docs/PROPOZYCJA-ekonomia-ukladow.md § 10.2a)
+    // Rozgrzewka świata ruchu v2 (E15: 60 min świata, kilka s CPU workera) — gracz widzi, co się dzieje: wiersz
+    // „Stabilizacja gospodarki · N%” na ekranie ładowania, a jeśli trwa jeszcze po starcie gry — znacznik w HUD, który
+    // znika po końcu (wtedy wpis w dzienniku kokpitu). Postęp z kopii mostu (`trafficV2.warmup`: `seconds` / `total`,
+    // worker publikuje go co 250 ms); sam odczyt — gospodarka bez zmian. Sprawdzane co 250 ms, DOM tylko przy zmianie.
+    // ============================================================
+    const economyWarmupLoadingEl = document.getElementById('loading-economy');
+    const economyWarmupHudEl = document.getElementById('economy-warmup-hud');
+    let economyWarmupPct = -1;
+    let economyWarmupHud = false;
+    function syncEconomyWarmupStatus() {
+      const w = trafficV2?.warmup;
+      const active = !!(w && w.active && w.total > 0);
+      const pct = active ? Math.max(0, Math.min(99, Math.floor(100 * w.seconds / w.total))) : -1;
+      const hud = active && gameStarted && !!loadingEl?.classList.contains('hidden');
+      if (pct === economyWarmupPct && hud === economyWarmupHud) return;
+      economyWarmupPct = pct;
+      economyWarmupHud = hud;
+      const label = active ? `Stabilizacja gospodarki · ${pct}%` : '';
+      if (economyWarmupLoadingEl) {
+        economyWarmupLoadingEl.hidden = !active;
+        economyWarmupLoadingEl.textContent = label;
+      }
+      if (economyWarmupHudEl) {
+        economyWarmupHudEl.hidden = !hud;
+        economyWarmupHudEl.textContent = label;
+      }
+    }
+    setInterval(syncEconomyWarmupStatus, 250);
+    window.EconomyWarmupStatus = () => ({
+      active: economyWarmupPct >= 0, pct: economyWarmupPct, hud: economyWarmupHud,
+      loading: economyWarmupLoadingEl ? !economyWarmupLoadingEl.hidden : false,
+      warmup: trafficV2 ? { ...trafficV2.warmup } : null
+    });
 
     /** Pojemności z budynków gry → worker, gdy się zmienią (sprawdzane co 1 s gry). */
     function syncTrafficV2Capacities(dt) {
@@ -17283,6 +17541,7 @@
           x: spot.x, y: spot.y, angle: spot.angle,
           credits: PLAYER.credits,
           cargo: PLAYER.cargo,
+          cargoCost: tradeCargoCostForSave(),
           miningCharges: PLAYER.miningCharges,
           reputation: PLAYER.reputation,
           progress: PLAYER.progress,
@@ -17370,6 +17629,8 @@
       PLAYER.credits = p.credits;
       for (const key of Object.keys(PLAYER.cargo)) delete PLAYER.cargo[key];
       Object.assign(PLAYER.cargo, p.cargo);
+      for (const key of Object.keys(PLAYER.cargoCost)) delete PLAYER.cargoCost[key];
+      Object.assign(PLAYER.cargoCost, p.cargoCost || {});
       if (PLAYER.miningCharges) {
         for (const id of Object.keys(PLAYER.miningCharges)) PLAYER.miningCharges[id] = Math.floor(Number(p.miningCharges[id]) || 0);
       }
@@ -18298,6 +18559,11 @@
       window.TrafficV2 = trafficV2;
       // Komputer handlowy w CIC (E7): agregat z workera na żądanie.
       CICDisplay.setTradeSource(() => (trafficV2?.ready ? trafficV2.requestTradeSummary() : Promise.resolve(null)));
+      // Kupcy towaru (E23a): ładownia gracza i „kto ile płaci” z kopii rynku mostu.
+      CICDisplay.setTradePartnerSource({
+        cargo: getTradeCargoList,
+        partners: (key, qty) => queryTradePartners(key, 'buy', { amount: qty, limit: 5 })
+      });
       trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed, onHit: onTrafficActorHit });
       window.TrafficBubble = trafficBubble;
       trafficPromotion = createTrafficPromotion();
