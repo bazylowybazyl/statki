@@ -807,11 +807,21 @@ export function createTrafficCore(post, options = {}) {
     if (Number.isFinite(message.piracyPressure)) director.config.piracyPressure = message.piracyPressure;
     if (typeof message.piracyEnabled === 'boolean') director.config.piracyEnabled = message.piracyEnabled;
     if (typeof message.protectObserved === 'boolean') director.config.protectObserved = message.protectObserved;
-    // Narzędzia (E24, `zlomiarze-gra.mjs`): krótszy postój złomiarzy przy wraku — cięcie i zaczepienie w kadrze filmu.
+    // Narzędzia i scena holowania (E24): krótszy postój złomiarzy, bez pierwszeństwa gracza, każdy wrak gry wart lotu
+    // (`minProfit` może być ujemny) — tylko narzędzia i `?scena=holowanie`.
     const sc = message.scrappers;
     const cfg = core.world?.scrappers?.config;
     if (sc && cfg) {
       for (const key of ['cutSeconds', 'hookSeconds', 'gameReserve', 'gameWreckDelay']) if (Number.isFinite(sc[key]) && sc[key] >= 0) cfg[key] = sc[key];
+      if (Number.isFinite(sc.minProfit)) cfg.minProfit = sc.minProfit;
+    }
+    // Prędkość holu w bańce (`?hol=` gry): 0 — bez limitu (prędkość trybu), liczba — sufit [j./s], `'model'` — prędkość,
+    // z której rekord kursu liczy przelot z wrakiem (`cruiseSpeed / towSpeedPenalty` złomiarzy świata).
+    const bc = message.bubble;
+    const flight = core.bubble?.bubble?.config;
+    if (bc && flight) {
+      if (bc.towHaulSpeed === 'model' && cfg) flight.towHaulSpeed = cfg.cruiseSpeed / Math.max(1, cfg.towSpeedPenalty);
+      else if (Number.isFinite(bc.towHaulSpeed) && bc.towHaulSpeed >= 0) flight.towHaulSpeed = bc.towHaulSpeed;
     }
   }
 

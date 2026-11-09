@@ -205,6 +205,8 @@ export function dispatchScrappers(scrappers, options = {}) {
       fuelCapacity: 0
     }) : null;
     if (registry && !course) continue;
+    // Bańka (E24): holownik w przelocie powrotnym ciągnie wrak — limit prędkości holu (`towHaulSpeed`) i obraz liny.
+    if (course) course.salvageMode = ocena.mode;
 
     wreck.claimed = true;
     wPolu.set(station.id, (wPolu.get(station.id) || 0) + 1);
@@ -369,7 +371,9 @@ function gameWreckRecord(war, spec, x, y, now, delay = SCRAPPER_MODEL.gameWreckD
     salvage,
     reportedAt: Number(now) || 0,
     /** Pierwszeństwo gracza: złomiarz nie leci po wrak przed tym czasem świata. */
-    readyAt: (Number(now) || 0) + Math.max(0, Number(delay) || 0)
+    readyAt: (Number(now) || 0) + Math.max(0, Number(delay) || 0),
+    /** Wstrzymany od zgłoszenia (scena „holowanie”: wrak czeka na swoją kolej, puszcza go `wreck-hold` z `on: false`). */
+    held: spec.held === true
   };
 }
 

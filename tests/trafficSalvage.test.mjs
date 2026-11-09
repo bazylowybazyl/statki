@@ -433,3 +433,20 @@ test('gracz pracuje przy wraku (wreck-hold): złomiarze czekają, holownik w dro
   const w = env.war.gameWrecks.get(5);
   assert.ok(w && !w.claimed && env.war.wrecks.includes(w), 'wrak w rejestrze, wolny');
 });
+
+test('zgłoszenie wstrzymane (held, scena „holowanie”): czeka do wreck-hold on:false; kurs holu niesie salvageMode', () => {
+  const env = setup();
+  reportGameWrecks(env.scrappers, env.war, [{ gid: 9, x: 20000, y: 0, classId: 'destroyer', held: true }]);
+  assert.equal(env.war.gameWrecks.get(9)?.held, true);
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  assert.equal(env.scrappers.active.length, 0, 'wstrzymany od zgłoszenia — nikt');
+  holdGameWrecks(env.scrappers, env.war, [9], false);
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  const job = env.scrappers.active[0];
+  assert.ok(job, 'puszczony — holownik');
+  assert.equal(job.mode, 'tow');
+  assert.equal(env.registry.byId.get(job.courseId)?.salvageMode, 'tow', 'kurs zna tryb (limit prędkości holu w bańce)');
+  // zgłoszenie bez `held` — wolne od razu (zachowanie gry bez zmian)
+  reportGameWrecks(env.scrappers, env.war, [{ gid: 10, x: 30000, y: 0, classId: 'frigate' }]);
+  assert.equal(env.war.gameWrecks.get(10)?.held, false);
+});

@@ -84,7 +84,7 @@ export function createTrafficSalvage(bridge, hooks = {}, options = {}) {
     nextGid: 1,
     /** Wraki czekające na zgłoszenie: { wreck, at, spec }. */
     pending: [],
-    /** gid → { wreck, gid, extras: [] } — wraki w rejestrze świata ruchu. */
+    /** gid → { wreck, gid, extras: [], spec } — wraki w rejestrze świata ruchu (`spec` — klasa ze zgłoszenia). */
     reported: new Map(),
     /** wrak → gid (także odłamy ciętego wraku). */
     gidOf: new WeakMap(),
@@ -224,7 +224,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       const gid = ts.nextGid++;
       ts.gidOf.set(w, gid);
       if (w.beamHull?.body) ts.gidOf.set(w.beamHull.body, gid);
-      ts.reported.set(gid, { wreck: w, gid, extras: [], lastX: x, lastY: y });
+      ts.reported.set(gid, { wreck: w, gid, extras: [], lastX: x, lastY: y, spec: p.spec });
       (out || (out = [])).push({ gid, x, y, r: Number(w.radius) || 0, ...p.spec });
       ts.stats.reported++;
       note(ts, `zgloszony:${Math.round(Number(w.radius) || 0)}:${p.from || '-'}${p.body ? ':cialo' : ''}`, gid);

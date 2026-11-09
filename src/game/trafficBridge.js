@@ -439,13 +439,13 @@ export class TrafficBridge {
     this._send({ type: SALVAGE_MSG.WRECK_REPORT, wrecks });
   }
 
-  /** Zgłoszone wraki gry, których już nie ma (zabrał je gracz, przepadły) — złomiarz w drodze wraca pusty. */
   /** Gracz pracuje przy zgłoszonych wrakach (`on`) albo je zostawił — złomiarze ich nie ruszają, dopóki trwa praca gracza. */
   wrecksHold(gids, on = true) {
     if (!Array.isArray(gids) || !gids.length) return;
     this._send({ type: SALVAGE_MSG.WRECK_HOLD, gids, on: !!on });
   }
 
+  /** Zgłoszone wraki gry, których już nie ma (zabrał je gracz, przepadły) — złomiarz w drodze wraca pusty. */
   wrecksGone(gids) {
     if (!Array.isArray(gids) || !gids.length) return;
     this._send({ type: SALVAGE_MSG.WRECK_GONE, gids });

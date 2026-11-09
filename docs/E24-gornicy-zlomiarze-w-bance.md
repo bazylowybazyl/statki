@@ -57,7 +57,8 @@ reguła `wraki`. Tu rozpoznanie, decyzje i pomiary.
 - Odłamy: w pierwszych przebiegach odłamy z cięcia zgłaszały się jako nowe wraki (encja rodzica w haku to jeszcze
   martwy statek) — wiązanie po ciele (`parentBody`). Pozostałe dodatkowe zgłoszenia w przebiegach przy Ziemi to wraki
   frachtowców zestrzelonych przez automatyczne baterie Atlasa w harnessie (rozpad frachtowca kapitałowego na ~20
-  odłamów); próg drobnicy 120 j. odcina odłamy, których cięcie się nie opłaca.
+  odłamów); próg drobnicy 120 j. odcina odłamy, których cięcie się nie opłaca (od 2026-11-09 tylko odłamy — cały kadłub, także fregata
+  o promieniu wraku ~93 j., zgłasza się zawsze; wcześniej wrak fregaty przepadał).
 - Narzędzie `snapshot.work` w pierwszej wersji ucinało listę na 80 kursach — przy ~63 górnikach kurs złomiarza po
   wrak gry był poza listą (przebieg „final”: „brak kursu złomiarza”); limit 600.
 
@@ -70,3 +71,27 @@ reguła `wraki`. Tu rozpoznanie, decyzje i pomiary.
 - Po scaleniu main (W5–W6): bramka 7 / 11 / 23 zaliczona z liczbami main (przechwyty 14,5 / 14,5 / 14,1%, kolejka
   1,48 / 1,42 / 1,85); harness cięcia i holu z pierwszeństwem skróconym do 20 s (`--opoznienie`) — lina 19 s po
   zgłoszeniu, odlot z wrakiem, 0 pipeline'ów synchronicznych, 0 błędów.
+
+## Scena „holowanie” (2026-11-09, prośba orkiestratora: użytkownik nigdy nie widział holowania)
+
+- Adres: `http://localhost:5173/?dev&scena=holowanie` (gra swobodna; scena rusza sekundę po wejściu do gry i rozstawia
+  się po rozgrzewce świata ruchu), prędkość holu `&hol=1200` (dzisiejsza, domyślna) albo `&hol=wolny`. Konsola:
+  `DevScene.holowanie({ angle })`, `holowanieStop()`, `holowanieKadr()`; stan `window.TowScene` (faza, kolejka, dziennik).
+- Plac 70,5 tys. j. od Ziemi w kierunku, w którym żaden inny port nie leży bliżej niż 150 tys. j. (złomiarz leci z portu
+  Ziemi; przy ziarnie 7 — poziomo, na zachód), wraki w linii wzdłuż kierunku holu, Atlas 7,2 km dalej od Ziemi na tej
+  samej linii, dziobem do placu. Kamera floty: lejek ringu, plac i Atlas w ~60% wysokości ekranu, nad kokpitem.
+- Wraki ścieżką gry: niszczyciel, fregata, frachtowiec `freighter-large` — pula HP (`applyDamageToNPC` →
+  `convertToWreck`, wybuch zbiornika); pancernik piratów — stopienie rdzenia `ReactorGame.forceMeltdown(…, 1,2 s,
+  'thirds')`: trzy części (184, 214, 201 j.), wszystkie do cięcia (ułamek kadłuba < 0,6).
+- Punkt zrzutu: holownik kończy kurs na lejku ringu (`funnelR` w `ringRouter.js` — ~64,5 tys. j. od środka Ziemi,
+  zmierzone: holownik znika 64,4–64,5 tys. j. od Ziemi) i znika razem z wrakiem na linie (`usuniety:towed`) —
+  ~5 km od placu, w kadrze. Wyjście z bańki byłoby poza kadrem (bańka portu sięga 180 tys. j.).
+- Kolej (dziennik sceny, oba przebiegi): niszczyciel puszczony po 5,3 s, lina po 14,7 s, odłam po 20,7 s, palniki po
+  32,6 s, fregata po 38,7 s, lina po 44,7 s, frachtowiec po 50,7 s, palniki po 61 s, reszta (2 odłamy) po 67 s.
+- Prędkość holu (`holowanie-gra.mjs`, próbki co 0,5 s gry): `hol=1200` — holownik obraca się o 180° w ~3,5 s, potem
+  do 1200 j./s, wrak 1207 j./s (sprężyna `towFollow`), wrak cały czas za holownikiem (kąt π), zrzut 8,5 s po początku
+  holu; `hol=wolny` — najwyżej 409 j./s (900 / 2,2), wrak 410 j./s, zrzut po 16 s. Pipeline'y synchroniczne: worker
+  0 / 0, strona 0 / 0; błędy strony i workera: 0; tarcza Atlasa 18 000 przed i po (wybuchy go nie sięgają).
+- Próby z placem 68 i 64 tys. j. pokazały, że lejek leży PRZY placu (hol trwał 1–2 km); plac przesunięty na
+  70,5 tys. j. Wraki w dwóch rzędach w poprzek holu dawały kadr za wysoki na ekran 32:9 (niszczyciel ~30 px przy
+  720 px wysokości) — linia wzdłuż holu podnosi zoom ~1,5×.
