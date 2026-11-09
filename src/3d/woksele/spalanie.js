@@ -353,16 +353,18 @@ export function createSpalanie({ solver, planeta }) {
         const e1 = vec2(1, 0).toVar();
         If(ls.greaterThan(1e-3), () => { e1.assign(sd.div(ls)); });
         const e2 = vec2(e1.y.negate(), e1.x);
-        const R = fv(r.mul(float(1.4).add(g.mul(2.8))));
-        const ogon = fv(float(1).add(g.mul(3).mul(clamp(ls.mul(0.12).div(R), 0, 1))));
+        // AGENT: głowice sąsiednich węzłów czoła nakładają się addytywnie (przy R ≈ 2 dx kilkanaście na piksel, płyta setek węzłów dawała biały prostokąt):
+        // jasność jednej głowicy to ułamek docelowej, a pojedynczy odłamek i tak świeci, bo ma rdzeń i minimalny rozmiar w px.
+        const R = fv(r.mul(float(1.1).add(g.mul(1.6))));
+        const ogon = fv(float(1).add(g.mul(2).mul(clamp(ls.mul(0.1).div(R), 0, 1))));
         const px = fv(R.mul(uPxSkala).div(dist));
         const f = fv(max(float(1), float(MIN_PX).div(px)));
         R.mulAssign(f);
         const h = fv(wysokosc(x));
         const tr = v3(przepuszczalnosc(h));
         const jas = fv(uMoc.div(f.mul(f)));
-        vKol.assign(barwaZaru(T).mul(0.8).add(uPlazma.mul(g.mul(5))).mul(tr).mul(jas));
-        vKolB.assign(mix(uPlazmaBrzeg, uPlazma, 0.35).mul(g.mul(2.2).add(barwaZaru(T).x.mul(0.12))).mul(tr).mul(jas));
+        vKol.assign(barwaZaru(T).mul(0.22).add(uPlazma.mul(g.mul(0.9))).mul(tr).mul(jas));
+        vKolB.assign(mix(uPlazmaBrzeg, uPlazma, 0.35).mul(g.mul(0.35).add(barwaZaru(T).x.mul(0.04))).mul(tr).mul(jas));
         const dl = fv(mix(R.mul(ogon), R, step(0, c.x)));
         const P = v3(vec3(vV.xy.add(e1.mul(r.mul(0.25))).add(e1.mul(c.x.mul(dl))).add(e2.mul(c.y.mul(R))), vV.z));
         wy.assign(cameraProjectionMatrix.mul(vec4(P, 1)));
@@ -442,7 +444,7 @@ export function createSpalanie({ solver, planeta }) {
         const jasF = fv(float(1).div(f));
         // 1 plazma: młoda w barwie żaru i białej plazmy, starsza w barwie ogona (powietrze świeci jeszcze chwilę za czołem).
         const pl = fv(plazmaZT(T));
-        const kPl = v3(mix(barwaZaru(T).mul(0.35).add(uPlazma.mul(pl.mul(3))), uPlazmaOgon.mul(pl.mul(2).add(0.15)), smoothstep(0, 0.45, u)).mul(zan.mul(zan)).mul(uMoc));
+        const kPl = v3(mix(barwaZaru(T).mul(0.06).add(uPlazma.mul(pl.mul(0.5))), uPlazmaOgon.mul(pl.mul(0.4).add(0.03)), smoothstep(0, 0.45, u)).mul(zan.mul(zan)).mul(uMoc));
         // 3 błysk: biały, w pomarańcz.
         const kBl = v3(mix(vec3(6, 5.2, 4.2), uPlazmaOgon.mul(3), smoothstep(0, 0.5, u)).mul(moc).mul(zan.mul(zan).mul(zan)).mul(uMoc));
         // 2 dym, 4 pył: światło słońca i otoczenia, przy czole podświetlony żarem.
