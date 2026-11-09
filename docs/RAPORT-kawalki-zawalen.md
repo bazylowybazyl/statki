@@ -104,6 +104,28 @@ Decyzja użytkownika (2026-11-09): demo B1R ma domyślnie szyję ×3 (`mocSzyi`)
 
 Potem (uwaga użytkownika: „szyja wisi w powietrzu”, „wypełnij ją jak wieżowiec”): szyja i szyb mają w środku stropy jak wieżowiec (`szyjaWnetrze` 1, +1061 węzłów, około 1 % sceny), a trzon pod szybem ma pokrywę i dno, więc szyb stoi na pokrywie. Baza bez strzałów stoi (0 zerwanych z 998 510 wiązań przez 6 s), klin: głowa 618 j. w bok w 10 s.
 
+### Skóra z gry, Atlas do taranowania, planetoida pod bazą (2026-11-09)
+
+Prośby użytkownika: „nałóż na demo skórkę”, „dodaj Atlasa latającego po płaszczyźnie gry, żebym mógł testować taranowanie”, „planetę pod bazą, tak jak w grze”. Spalanie odłamków w atmosferze (Ziemia, Mars) robi osobna sesja.
+
+- **Skóra:** baza w demie ma wygląd z misji 1: skórę z wypieku starej bryły, okna, lampy i wnętrza na przełomach. Działa w trybie Woksele i Kawałki, przy świetle dema. Gra bez zmian: WGSL brył, gruzu, kawałków i kerneli bez nowych opcji jest bajt w bajt taki jak przed zmianą (67 porównań z HEAD).
+- **Atlas:** sprite z gry w skali gry (1800 × 806 j.), sterowany z klawiatury w płaszczyźnie gry. Kadłub wchodzi do fizyki wokseli jako bryła kinematyczna: obrys z sprite'a, wypycha węzły, wyrywa kotwice, a pęd oddany bazie zwalnia Atlasa (masa 30 000 mas węzła).
+- **Planetoida:** Hidalgo z gry pod bazą, z polem grawitacji, kontaktem z bryłą skały i kraterami jak w grze. U zrzuca bazę na skałę.
+
+Pomiar bez okna (`--scenariusz atlas` i `--scenariusz planeta`, 960 × 540):
+
+| Chwila | Atlas | Głowa wieży |
+|---|---|---|
+| 2,2 s (dolot, pełny ciąg z dopalaczem) | 1500 j./s, bez styków | stoi |
+| 2,8 s (wejście w szyb) | 1443 j./s, 4392 styki, oddany pęd 1,8 mln | stoi |
+| 3,5 s | 1498 j./s (ciąg nadrabia), pęd 4,5 mln | 11 j. w bok, 85 j. w dół |
+| 5 s | przeszedł przez bazę, pęd 5,0 mln | 31 j. w bok, 950 j. w dół |
+| 10 s | 5,3 mln, razem około 180 j./s straty prędkości | 196 j. ku −y, 3212 j. w dół |
+
+Atlas przy 1500 j./s przechodzi przez szyb habitatu: kadłub wycina szyb w pasie z −150…150, wieża traci podporę i siada w dysk, odchylając się w stronę, z której przyszedł taran (podstawa wypchnięta do przodu, głowa zostaje). Część gruzu szybu i szyi jedzie na pokładzie Atlasa (tarcie na wierzchu kadłuba). Koszt kroku z kadłubem 0,97 ms GPU, rysunek 0,46 ms. Upadek na planetoidę: części puszczają od 3 s po U, pierwsze kratery na skale po około 20 s, po 32 s 153 kratery. Pipeline'y synchroniczne: 0 w obu przebiegach. Kadry: `.tmp/woksele-demo/KAW/atlas-1/arkusz_gora.png`, `arkusz_bok.png`, `.tmp/woksele-demo/KAW/planeta-1/`.
+
+Otwarte: z boku Atlas to stos plastrów sprite'a (z góry wygląda jak w grze). Kamera „Z planetą” w pierwszym przebiegu wpadała w limit orbity 30 km i kadr był pusty, teraz limit przy planecie to 500 km.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.
