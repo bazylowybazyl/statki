@@ -198,6 +198,18 @@ export async function createAtlas({ solver, obraz, camera, sterowanie, kanwa, re
     st.rysX = x; st.rysY = y;
   }
 
+  /**
+   * Pęd oddany węzłom od poprzedniego odczytu (masa węzła 1), moment wokół środka kadłuba, styki i wyrwane kotwice. Odczyt tu, na stronie dema (strażnik szwu renderu):
+   * getArrayBufferAsync wysyła kopię od razu, a zerowanie liczników idzie za nią w kolejce GPU, więc żaden podkrok nie przepada.
+   */
+  async function odczytPedu() {
+    const S = solver.statek;
+    const obietnica = renderer.getArrayBufferAsync(S.atrybut);
+    renderer.compute(S.zeruj);
+    const b = new Int32Array(await obietnica);
+    return { px: b[0] / S.skala.ped, py: b[1] / S.skala.ped, pz: b[2] / S.skala.ped, moment: b[3] / S.skala.moment, styki: b[4], kotwice: b[5] };
+  }
+
   /** Reset sceny: Atlas na starcie, bez prędkości. Aktywny tylko na scenach bazy. */
   function reset(aktywny) {
     st.aktywny = aktywny;
@@ -238,7 +250,7 @@ export async function createAtlas({ solver, obraz, camera, sterowanie, kanwa, re
     if (!st.czyta) {
       st.czyta = true;
       const pok = st.pokolenie;
-      solver.statek.odczyt(renderer).then((r) => {
+      odczytPedu().then((r) => {
         st.czyta = false;
         st.styki = r.styki;
         st.kotwice += r.kotwice;
