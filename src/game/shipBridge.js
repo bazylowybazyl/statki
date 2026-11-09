@@ -268,7 +268,11 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   repair_drone: trafficBridge('Dron naprawczy', '#ffe0b0', { x: 130, y: -40, w: 358.4, h: 204.8, level: 1 }),
   bounty_hunter: trafficBridge('Łowca nagród', '#e4f3ff', { x: 70, y: -5, w: 282.2, h: 147.8, level: 2 }),
   police_cutter: trafficBridge('Kuter policji', '#e4f3ff', { x: 190, y: -5, w: 276, h: 157.7, level: 1 }),
-  rescue_ship: trafficBridge('Statek ratunkowy', '#ffe0b0', { x: 220, y: -5, w: 310.4, h: 162.6, level: 2 })
+  rescue_ship: trafficBridge('Statek ratunkowy', '#ffe0b0', { x: 220, y: -5, w: 310.4, h: 162.6, level: 2 }),
+  // Promy z ludźmi (workforce W7): mostek cywilny kadłuba bazowego (ten sam sprite do PNG z generatora — AGENT: potem ustawić na nowo).
+  crew_shuttle: trafficBridge('Prom rotacyjny', '#ffe0b0', { x: 140, y: -5, w: 385, h: 206.2, level: 1 }),
+  crew_liner: trafficBridge('Liniowiec kontraktowy', '#ffe0b0', { x: 395, y: -12, w: 238.8, h: 125.1, level: 2 }),
+  colony_liner: trafficBridge('Liniowiec dalekiego zasięgu', '#ffe0b0', { x: 290, y: -20, w: 190.5, h: 98.6, level: 3 })
 });
 
 // ---------------------------------------------------------------------------

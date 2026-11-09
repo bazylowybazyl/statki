@@ -181,6 +181,26 @@ export const TRAFFIC_HULLS = Object.freeze({
     sprite: new URL('../../assets/ships/rescue_ship.png', import.meta.url).href,
     png: [1774, 887],
     main: [[-770, -172, 135], [-770, 168, 135]]
+  }),
+  // PROMY Z LUDŹMI (workforce W7, docs/PROPOZYCJA-workforce.md § 4.1): własne kadłuby pasażerskie. Do czasu sprite'ów
+  // z generatora (prompty `assets/ships/<id>.prompt.md` — edycja frachtowca tej samej ładowni) rysują się OBECNYMI
+  // sprite'ami frachtowców bazowych (decyzja użytkownika D14: prom międzystacyjny, kontenerowiec, dalekiego zasięgu),
+  // więc dysze, mostek, rdzeń, zbiornik, lampy i obrys 3D mają liczby kadłuba bazowego.
+  // AGENT: po PNG z generatora (`assets/ships/<id>.prompt.md`, płótno 1774 × 887 jak bazowy) podmienić `sprite` na `assets/ships/<id>.png`, ustawić markery na nowo (mostek, rdzeń, zbiornik, dysze MAIN / SIDE — reguła `ruch-banka`, „Kadłuby ruchu”) i przeliczyć tabele obrazu proxy: `node scripts/rdzenie-auto-ruchu.mjs`, `node scripts/lampy-nawigacyjne.mjs --zapisz` (reguła `ruch-banka`, „MODELE I CIEŃ NA PROXY”).
+  crew_shuttle: Object.freeze({
+    sprite: new URL('../../assets/inter_station_shuttle.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-448, -114, 70], [-448, 104, 70]]
+  }),
+  crew_liner: Object.freeze({
+    sprite: new URL('../../assets/container_ship.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-785, -156, 68], [-814, -12, 90], [-785, 132, 68]]
+  }),
+  colony_liner: Object.freeze({
+    sprite: new URL('../../assets/long_haul_freighter.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-786, -148, 68], [-805, -18, 95], [-786, 114, 68]]
   })
 });
 
@@ -213,11 +233,11 @@ export const TRAFFIC_UNIT_HULLS = Object.freeze({
   // i statek ratunkowy (cywilny, mostek cywilny bez gniazd).
   police: 'police_cutter',
   rescue: 'rescue_ship',
-  // Promy z ludźmi (workforce, E16 W2 — src/data/workforce.js `CREW_CLASS_BY_VAN`): do czasu własnych
-  // sprite'ów (W7: crew_shuttle, crew_liner, colony_liner) kadłuby frachtowców tej samej ładowni.
-  'crew-small': 'inter_station_shuttle',
-  'crew-medium': 'container_ship',
-  'crew-large': 'long_haul_freighter'
+  // Promy z ludźmi (workforce — src/data/workforce.js `CREW_CLASS_BY_VAN`): własne kadłuby pasażerskie (W7) na
+  // obrysie frachtowca tej samej ładowni (te same gabaryty — stanowiska i doki bez zmian).
+  'crew-small': 'crew_shuttle',
+  'crew-medium': 'crew_liner',
+  'crew-large': 'colony_liner'
 });
 
 /** Klasa spoza rejestru: obrys jak w dockLayout.hullFootprint (kontenerowiec). */

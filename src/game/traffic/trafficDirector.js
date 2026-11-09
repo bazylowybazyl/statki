@@ -1707,17 +1707,6 @@ function strikeCourse(director, course, options = {}) {
 }
 
 /**
- * Rozbija kurs z zewnątrz — jego statek zginął w grze (gracz, walka w bańce).
- *
- * Skutki są te same co przy przechwycie: jednostka przepada, ładunek zostaje
- * we wraku, konwój traci członka, a patrol frakcji dowiaduje się o stracie na
- * szlaku. Łup NIE trafia do kryjówki piratów, chyba że `byPirates` — to nie
- * oni go zdobyli. Kurs z przypiętą encją też da się rozbić: to jest właśnie
- * ten przypadek.
- *
- * Zwraca wpis wraku (`director.wrecks`) albo `null`, gdy kurs już nie leci.
- */
-/**
  * POWRÓT LUDZI Z PROMU (workforce W6) — prom z ludźmi zniszczony poza porwaniem (gracz, walka w bańce, zniszczona
  * stacja): ludzie z kontraktu wracają do magazynu źródła, z którego zeszli przy nadaniu; powrót po kontrakcie nie
  * zmienia magazynu (rotacja już zeszła). Bez kontenerów z ludźmi (manifest bańki pomija promy) i bez łupu. Zwraca,
@@ -1732,6 +1721,17 @@ export function returnFerryPassengers(director, course) {
   return back;
 }
 
+/**
+ * Rozbija kurs z zewnątrz — jego statek zginął w grze (gracz, walka w bańce).
+ *
+ * Skutki są te same co przy przechwycie: jednostka przepada, ładunek zostaje
+ * we wraku, konwój traci członka, a patrol frakcji dowiaduje się o stracie na
+ * szlaku. Łup NIE trafia do kryjówki piratów, chyba że `byPirates` — to nie
+ * oni go zdobyli. Kurs z przypiętą encją też da się rozbić: to jest właśnie
+ * ten przypadek.
+ *
+ * Zwraca wpis wraku (`director.wrecks`) albo `null`, gdy kurs już nie leci.
+ */
 export function destroyCourse(director, courseOrId, options = {}) {
   const course = courseOrId && typeof courseOrId === 'object'
     ? courseOrId

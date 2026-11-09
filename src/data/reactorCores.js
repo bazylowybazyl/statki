@@ -53,7 +53,11 @@ export const REACTOR_CORE_MARKERS = Object.freeze({
   repair_drone: marker({ id: 'repair_drone_A', x: -170, y: -60, r: 144, hr: 80, tier: 'R1', model: 'terran' }),
   bounty_hunter: marker({ id: 'bounty_hunter_A', x: -400, y: -5, r: 131, hr: 53.8, tier: 'R2', model: 'terran' }),
   police_cutter: marker({ id: 'police_cutter_A', x: -150, y: -5, r: 192.2, hr: 49.3, tier: 'R1', model: 'terran' }),
-  rescue_ship: marker({ id: 'rescue_ship_A', x: -470, y: -5, r: 144.1, hr: 59.1, tier: 'R2', model: 'terran' })
+  rescue_ship: marker({ id: 'rescue_ship_A', x: -470, y: -5, r: 144.1, hr: 59.1, tier: 'R2', model: 'terran' }),
+  // Promy z ludźmi (workforce W7): rdzeń kadłuba bazowego (ten sam sprite do PNG z generatora — AGENT: potem ustawić na nowo).
+  crew_shuttle: marker({ id: 'crew_shuttle_A', x: -330, y: -10, r: 182.4, hr: 71.5, tier: 'R1', model: 'terran' }),
+  crew_liner: marker({ id: 'crew_liner_A', x: -650, y: -10, r: 110.9, hr: 45.5, tier: 'R2', model: 'terran' }),
+  colony_liner: marker({ id: 'colony_liner_A', x: -580, y: -10, r: 78.8, hr: 46, tier: 'R3', model: 'terran' })
 });
 
 // Barwa plazmy reaktora per frakcja (liniowe RGB „ciała”, jak REACTOR_COLORS dema).
