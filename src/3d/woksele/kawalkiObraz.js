@@ -8,7 +8,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Return, Loop, instanceIndex, storage, uniform, uint, float, vec3, vec4, attribute, select, countOneBits, smoothstep,
-  max, min, mix, dot, length, cross, normalize, sin, cos, abs, positionGeometry, normalGeometry, varyingProperty, cameraViewMatrix,
+  max, min, mix, dot, length, cross, normalize, sin, cos, abs, positionGeometry, normalGeometry, varyingProperty, cameraViewMatrix, step,
 } from 'three/tsl';
 import { BRAK } from './kawalki.js';
 
@@ -24,7 +24,7 @@ const obrocQ = (q, v) => {
 const mnozQ = (a, b) => vec4(b.xyz.mul(a.w).add(a.xyz.mul(b.w)).add(cross(a.xyz, b.xyz)), a.w.mul(b.w).sub(dot(a.xyz, b.xyz)));
 
 export function createKawalkiObraz(ctx) {
-  const { MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM, spalanie = null } = ctx;
+  const { MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM, vKawS = null, spalanie = null } = ctx;
   const MAXK = MAX; // kawałek ma co najmniej 2 węzły na poziom, więc kawałków obu poziomów jest najwyżej n
   const MAXD = MAX; // prętów na wiązania osiowe granic, zwykle około n / 10
 
@@ -216,6 +216,11 @@ export function createKawalkiObraz(ctx) {
       vK.assign(Kol);
       vP.assign(P0);
       vE.assign(eE);
+      if (vKawS) {
+        // Skóra w demie (obraz.js, skora): uszkodzenie węzła, ściana przełomu, węzeł fasady (rodzaj 2: okna na ścianach).
+        const kdS = fv(float(uv_(uint(wDaneR.element(uint(2).mul(v).add(uint(1))).w)).shiftRight(uint(2)).bitAnd(uint(7))));
+        vKawS.assign(vec3(wRamaR.element(v3i).w, float(id.bitAnd(uint(1))), step(1.5, kdS).mul(step(kdS, 2.5))));
+      }
     }
     return P;
   })();

@@ -8,6 +8,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Continue, Return, instanceIndex, instancedArray, storage, uniform, uniformArray, uint, int, float, vec3, vec4,
   countOneBits, floatBitsToUint, sqrt, max, min, clamp, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad, texture, normalize, mix,
+  vec2, sin, cos,
 } from 'three/tsl';
 import { ND, STRONA, N0X, N0Y, N0Z, KLASA_NAZWY, PARAMETRY } from './budowa.js';
 
@@ -52,7 +53,10 @@ const KULA_PAS_TLUM = 12; // [1/s] tempo gaszenia w pasie: zabiera do 2400 j./s 
 // i linie zginania przez nie nie pękają. Bez flagi graf kerneli jest ten sam co dotąd, a wypiek bez klas ≥ 12 liczy się bit w bit tak samo także z flagą.
 // AGENT: `limityF0` (demo kawałków; druga opinia 2026-11-08): twarde limity rozciągania i ściskania także w gałęzi sprężenia. Bez flagi wiązanie z F0
 // mogło się rozciągnąć ponad R0 · (1 + rozcHard) bez zerwania, póki siła z F0 mieściła się w limicie (Continue omijał oba limity). Gra jest bez flagi.
-export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false } = {}) {
+// AGENT: `statek` (demo bazy, prośba użytkownika 2026-11-09: Atlas latający w płaszczyźnie gry do testu taranowania): kadłub jako bryła kinematyczna w osobnym kernelu po kI
+// w każdym podkroku (kStatekTakt + kStatek, wzór niżej). Bez flagi kerneli, buforów i list kroku nie ma: gra i reszta dema liczą jak dotąd.
+export const STATEK_SDF = Object.freeze({ szer: 256, wys: 128 });
+export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false, statek = false } = {}) {
   const MAX = maxNodes;
   const ILE_T = ciagliwe ? ILE_TAB + 6 : ILE_TAB;
   const N_KOM = par.nKom;
@@ -989,9 +993,117 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     wWez.element(i3.add(uint(1))).assign(vec4(vv.xyz.add(cross(uPcOm, p.xyz.sub(uPcPiv))), vv.w));
   })().compute(MAX).setName('wokPuscCzesc');
 
-  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, kGinieZeruj, kGinieLicz, kPusc, kPuscCzesc };
+  // ── Statek (demo, flaga `statek`) ── Kadłub: obrys z pola odległości (sprite, ujemne wewnątrz) wyciągnięty w z o ±uStH.z; środek uStC, kurs uStTh, prędkość uStV, obrót uStOm wokół z.
+  // Pozę w podkroku liczy kernel z licznika podkroków (wStatek[ST_TAKT], kStatekTakt): kadłub jedzie ciągle, a nie skokiem co krok 1/60 s (przy 1500 j./s to 25 j., ponad pół komórki).
+  // Węzeł w kadłubie: wypchnięty najkrótszą drogą (obrys albo wierzch / spód, najwyżej ST_PCH_MAX · dx na podkrok), prędkość wchodząca w kadłub zdjęta (zderzenie nieelastyczne), tarcie styczne uStMu.
+  // Kotwica pod kadłubem puszcza: kadłub wyrywa węzeł z fundamentu. Zmiana prędkości węzłów (masa 1) idzie atomikami do wStatek: [0..2] Σ Δv, [3] Σ moment z, [4] styki, [5] wyrwane kotwice;
+  // strona oddaje to kadłubowi (−Σ Δv / masa) po odczycie (odczytStatku, kopia przed zerowaniem w kolejce GPU).
+  const ST_N = 8, ST_TAKT = 6, ST_KROK = 7;
+  const ST_SKALA = 16; // Δv w 1/16 j./s: pchanie ciężkiej bryły to małe Δv na podkrok, a suma klatki mieści się w i32
+  const ST_SKALA_M = 1 / 64; // moment: d [j.] · Δv · ST_SKALA / 64
+  const ST_PCH_MAX = 0.5; // najdalsze wypchnięcie w podkroku, w dx: statek postawiony w budowli wypycha ją stopniowo
+  const aStatek = statek ? new THREE.StorageInstancedBufferAttribute(new Uint32Array(ST_N), 1) : null;
+  const wStatekA = statek ? storage(aStatek, 'uint', ST_N).setName('wokStatek').toAtomic() : null;
+  const wStatekW = statek ? storage(aStatek, 'uint', ST_N).setName('wokStatek') : null;
+  const sdfDane = statek ? new Uint16Array(STATEK_SDF.szer * STATEK_SDF.wys).fill(THREE.DataUtils.toHalfFloat(1000)) : null;
+  const sdfTex = statek ? new THREE.DataTexture(sdfDane, STATEK_SDF.szer, STATEK_SDF.wys, THREE.RedFormat, THREE.HalfFloatType) : null;
+  if (sdfTex) {
+    sdfTex.minFilter = THREE.LinearFilter;
+    sdfTex.magFilter = THREE.LinearFilter;
+    sdfTex.generateMipmaps = false;
+    sdfTex.needsUpdate = true;
+  }
+  const uStAkt = uniform(0).setName('uStAkt');
+  const uStC = uniform(new THREE.Vector3()).setName('uStC');
+  const uStTh = uniform(0).setName('uStTh');
+  const uStH = uniform(new THREE.Vector3(900, 400, 150)).setName('uStH'); // pół długości i szerokości prostokąta pola odległości, pół wysokości kadłuba
+  const uStV = uniform(new THREE.Vector3()).setName('uStV');
+  const uStOm = uniform(0).setName('uStOm');
+  const uStMu = uniform(0.3).setName('uStMu');
+  const uStKrok = uniform(0, 'uint').setName('uStKrok');
+  const kStatekTakt = statek ? Fn(() => {
+    If(instanceIndex.greaterThanEqual(uint(1)), () => { Return(); });
+    If(wStatekW.element(uint(ST_KROK)).notEqual(uStKrok), () => {
+      wStatekW.element(uint(ST_KROK)).assign(uStKrok);
+      wStatekW.element(uint(ST_TAKT)).assign(uint(1));
+    }).Else(() => {
+      wStatekW.element(uint(ST_TAKT)).assign(wStatekW.element(uint(ST_TAKT)).add(uint(1)));
+    });
+  })().compute(1).setName('wokStatekTakt') : null;
+  const kStatekZeruj = statek ? Fn(() => {
+    If(instanceIndex.greaterThanEqual(uint(ST_TAKT)), () => { Return(); });
+    wStatekW.element(instanceIndex).assign(uint(0));
+  })().compute(ST_TAKT).setName('wokStatekZeruj') : null;
+  const kStatek = statek ? Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN).or(uStAkt.lessThan(0.5)), () => { Return(); });
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWez.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    const t = fv(float(atomicLoad(wStatekA.element(uint(ST_TAKT)))).mul(uH));
+    const th = fv(uStTh.add(uStOm.mul(t)));
+    const c = fv(cos(th));
+    const s = fv(sin(th));
+    const d = v3(p.xyz.sub(uStC.add(uStV.mul(t))));
+    const lx = fv(d.x.mul(c).add(d.y.mul(s)));
+    const ly = fv(d.y.mul(c).sub(d.x.mul(s)));
+    const r = fv(p.w);
+    If(lx.abs().greaterThan(uStH.x.add(r)).or(ly.abs().greaterThan(uStH.y.add(r))).or(d.z.abs().greaterThan(uStH.z.add(r))), () => { Return(); });
+    const uu = fv(lx.div(uStH.x.mul(2)).add(0.5));
+    const vv = fv(ly.div(uStH.y.mul(2)).add(0.5));
+    const sd = fv(texture(sdfTex, vec2(uu, vv)).level(0).r);
+    const penXY = fv(r.sub(sd));
+    If(penXY.lessThanEqual(0), () => { Return(); });
+    const penZ = fv(uStH.z.add(r).sub(d.z.abs()));
+    const n = v3(vec3(0, 0, 1));
+    const gl = fv(penXY);
+    If(penZ.lessThan(penXY), () => {
+      n.assign(vec3(0, 0, select(d.z.lessThan(0), float(-1), float(1))));
+      gl.assign(penZ);
+    }).Else(() => {
+      // Gradient pola różnicą środkową, w j. (teksel to 2·hx / szer w x i 2·hy / wys w y): normalna obrysu w układzie kadłuba, potem obrót do układu węzłów.
+      const kx = float(1 / STATEK_SDF.szer), ky = float(1 / STATEK_SDF.wys);
+      const gx = fv(texture(sdfTex, vec2(uu.add(kx), vv)).level(0).r.sub(texture(sdfTex, vec2(uu.sub(kx), vv)).level(0).r).mul(STATEK_SDF.szer / 4).div(uStH.x));
+      const gy = fv(texture(sdfTex, vec2(uu, vv.add(ky))).level(0).r.sub(texture(sdfTex, vec2(uu, vv.sub(ky))).level(0).r).mul(STATEK_SDF.wys / 4).div(uStH.y));
+      const gd = fv(sqrt(gx.mul(gx).add(gy.mul(gy))));
+      const nx = fv(gx.div(max(gd, 1e-6)));
+      const ny = fv(gy.div(max(gd, 1e-6)));
+      // Środek grubego kadłuba (gradient zerowy): na bok, najbliższą burtą.
+      If(gd.lessThan(1e-3), () => { nx.assign(0); ny.assign(select(ly.lessThan(0), float(-1), float(1))); });
+      n.assign(vec3(nx.mul(c).sub(ny.mul(s)), nx.mul(s).add(ny.mul(c)), 0));
+    });
+    const vi = v3(wWez.element(i3.add(uint(1))).xyz);
+    const vs = v3(uStV.add(vec3(d.y.mul(uStOm).negate(), d.x.mul(uStOm), 0)));
+    const rel = v3(vi.sub(vs));
+    const vn = fv(dot(rel, n));
+    const vN = v3(vi);
+    If(vn.lessThan(0), () => {
+      vN.subAssign(n.mul(vn));
+      const tg = v3(rel.sub(n.mul(vn)));
+      const tl = fv(length(tg));
+      If(tl.greaterThan(1e-3), () => { vN.subAssign(tg.mul(min(float(1), uStMu.mul(vn.negate()).div(tl)))); });
+    });
+    // Kotwica pod kadłubem: wyrwana z fundamentu (bit 0 flag, jak kPuscCzesc).
+    const iFl = uv(uN.mul(uint(2)).add(uint(2).mul(i)).add(uint(1)));
+    const fl = uv(uint(wStan.element(iFl).w));
+    If(fl.bitAnd(uint(1)).notEqual(uint(0)), () => {
+      wStan.element(iFl).w.assign(float(fl.sub(uint(1))));
+      atomicAdd(wStatekA.element(uint(5)), uint(1));
+    });
+    const dv = v3(vN.sub(vi));
+    wWez.element(i3).assign(vec4(p.xyz.add(n.mul(min(gl, uDxP.mul(2 * ST_PCH_MAX)))), p.w));
+    wWez.element(i3.add(uint(1))).assign(vec4(vN, wWez.element(i3.add(uint(1))).w));
+    atomicAdd(wStatekA.element(uint(0)), uint(int(round(dv.x.mul(ST_SKALA)))));
+    atomicAdd(wStatekA.element(uint(1)), uint(int(round(dv.y.mul(ST_SKALA)))));
+    atomicAdd(wStatekA.element(uint(2)), uint(int(round(dv.z.mul(ST_SKALA)))));
+    atomicAdd(wStatekA.element(uint(3)), uint(int(round(d.x.mul(dv.y).sub(d.y.mul(dv.x)).mul(ST_SKALA * ST_SKALA_M)))));
+    atomicAdd(wStatekA.element(uint(4)), uint(1));
+  })().compute(MAX).setName('wokStatek') : null;
+
+  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, kGinieZeruj, kGinieLicz, kPusc, kPuscCzesc,
+    ...(statek ? { kStatekTakt, kStatek, kStatekZeruj } : {}) };
   // Kernele o stałej liczbie wywołań: nie po węzłach, więc wczytanie sceny nie zmienia im liczby.
-  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch, kGinieZeruj]);
+  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch, kGinieZeruj, ...(statek ? [kStatekTakt, kStatekZeruj] : [])]);
 
   // ── Listy § 2.4, zbudowane raz ── Na krok: lista kontaktów co RYTM podkroków, reszta F + I.
   // AGENT: lista zależy tylko od podkroków i rytmu sceny (dx, materiał), a kernele są te same: nowa kombinacja to tablica w JS, bez nowego pipeline'u. Wczytanie sceny wybiera listę.
@@ -1004,6 +1116,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
       for (let s = 0; s < podkroki; s++) {
         if (s % rytm === 0) sek.push(['kWstaw', kWstaw], ['kLista', kLista], ['kZerujPo', kZerujPo]);
         sek.push(['kF', kF], ['kI', kI]);
+        if (statek) sek.push(['kStatekTakt', kStatekTakt], ['kStatek', kStatek]);
       }
       l = { sekwencja: sek, lista: sek.map((e) => e[1]) };
       listyKroku.set(klucz, l);
@@ -1361,6 +1474,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     atrybuty.zar.array.fill(0);
     aGinie.array.fill(0);
     aGinie.needsUpdate = true;
+    if (aStatek) { aStatek.array.fill(0); aStatek.needsUpdate = true; }
     for (const k of Object.values(atrybuty)) k.needsUpdate = true;
     for (const k of Object.values(kernele)) if (!STALA_LICZBA.has(k)) k.setCount(n);
     resetPlanu();
@@ -1407,8 +1521,37 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
    */
   function krok(renderer) {
     zdarzeniaKlatki(renderer);
+    if (statek) uStKrok.value = fKlatka;
     renderer.compute(listaKroku);
     fKlatka++;
+  }
+
+  /** Demo, statek: poza kadłuba na początek kroku (środek [x, y, z], kurs [rad], prędkość [j./s], obrót [rad/s]), połowy wymiarów [hx, hy, hz], tarcie. Kernel sam przesuwa kadłub w podkrokach. */
+  function ustawStatek({ aktywny = true, c = null, kurs = null, v = null, om = null, h = null, mu = null } = {}) {
+    uStAkt.value = aktywny ? 1 : 0;
+    if (c) uStC.value.set(c[0], c[1], c[2]);
+    if (kurs !== null) uStTh.value = kurs;
+    if (v) uStV.value.set(v[0], v[1], v[2]);
+    if (om !== null) uStOm.value = om;
+    if (h) uStH.value.set(h[0], h[1], h[2]);
+    if (mu !== null) uStMu.value = mu;
+  }
+
+  /** Demo, statek: pole odległości obrysu kadłuba [j., ujemne wewnątrz], STATEK_SDF.szer × wys, kolumna 0 to rufa (lx = −hx), wiersz 0 to ly = −hy. */
+  function ustawKsztaltStatku(pole) {
+    for (let k = 0; k < sdfDane.length; k++) sdfDane[k] = THREE.DataUtils.toHalfFloat(pole[k]);
+    sdfTex.needsUpdate = true;
+  }
+
+  /**
+   * Demo, statek: pęd oddany węzłom od poprzedniego odczytu (masa węzła 1), moment wokół środka kadłuba, styki i wyrwane kotwice. Liczniki od zera po kopii:
+   * getArrayBufferAsync wysyła kopię od razu, a zerowanie idzie za nią w kolejce GPU, więc żaden podkrok nie przepada.
+   */
+  async function odczytStatku(renderer) {
+    const obietnica = renderer.getArrayBufferAsync(aStatek);
+    renderer.compute(kStatekZeruj);
+    const b = new Int32Array(await obietnica);
+    return { px: b[0] / ST_SKALA, py: b[1] / ST_SKALA, pz: b[2] / ST_SKALA, moment: b[3] / (ST_SKALA * ST_SKALA_M), styki: b[4], kotwice: b[5] };
   }
 
   /** Jeden przebieg kLista + kF bez całkowania: to, co porównuje test § 8. Wynik: odczyt(renderer). */
@@ -1477,6 +1620,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     maxNodes: MAX, ciagliwe, limityF0, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, puscCzesc, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     gPole: gNaWezle, // pole grawitacji w punkcie, dla gruzu obrazu (wklejane, woła się tylko w Fn)
+    statek: statek ? { ustaw: ustawStatek, ksztalt: ustawKsztaltStatku, odczyt: odczytStatku } : null,
     get wypiek() { return wypiek; },
     get strzalCzeka() { return strzalCzeka !== null; },
     get fKlatka() { return fKlatka; },
