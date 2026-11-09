@@ -100,6 +100,8 @@ Uwaga użytkownika: „wieżowce, jak je podetnę klinem, potrafią spaść w bo
 
 Wniosek: pustka w szyi nie jest przyczyną. Głowa waży cztery razy tyle co szyja (6688 węzłów wobec 1618), a wytrzymałość wiązania to wielokrotność siły, którą niesie w spoczynku. Po klinie reszta przekroju jest przeciążona i miażdży się od dołu, a przechył od grawitacji rusza powoli (wieża 1,4 km). Mocniejsza szyja wytrzymuje, ale wtedy tłumienie „stoi albo pęka” z gry gasi powolny początek przechyłu. Wieżowiec jest prawie lity (stropy grube na dwie komórki co trzy warstwy) i nie ma ciężkiej głowy, więc klin go przechyla. Arkusze: `.tmp/woksele-demo/KAW/arkusz_klin.png`, `arkusz_klin_m3_ukos.png`.
 
+Decyzja użytkownika (2026-11-09): demo B1R ma domyślnie szyję ×3 (`mocSzyi`) i bez tłumienia. Na tych ustawieniach baza bez strzałów stoi (0 zerwanych wiązań przez 6 s), a wieża podcięta klinem kładzie się ku klinowi (głowa 612 j. w bok w 10 s). Powrót: `?baza={"mocSzyi":1}&tlumienie=1`.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

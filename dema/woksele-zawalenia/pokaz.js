@@ -45,7 +45,8 @@ const SCENY = {
   B1: { nazwa: 'Baza piratów', miasto: true, baza: true, pomin: 0, cienZapas: 1.05 },
   // Baza bez skryptu: niszczy użytkownik (?kawalki=1, narzędzia). Start z kamery z góry jak w misji 1, pył jak B1.
   // jakWGrze: fala łamiąca z prędkości względnej w bryle oderwanej od kotwic i tłumienie stojącej konstrukcji do progu fali, jak wGrze.zaladuj (?jakWGrze=0: dawne demo).
-  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true },
+  // tlumienie: false (decyzja użytkownika 2026-11-09): tłumienie „stoi albo pęka” gasiło powolny początek przewracania wieży podciętej klinem.
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true, tlumienie: false },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
@@ -196,9 +197,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const jakWGrze = !!opis.jakWGrze && adres.get('jakWGrze') !== '0';
     const uS = solver.uniformy;
     uS.uFalaWzgl.value = jakWGrze ? 1 : 0;
-    // ?tlumienie=0: bez tłumienia „stoi albo pęka” (fala względna zostaje). Tłumienie gasi też powolny początek przewracania: wieża z klinem przy mocniejszej
-    // szyi (mocSzyi 3) stoi pod nim, a bez niego przechyla się ku klinowi (pomiar 2026-11-09, docs/RAPORT-kawalki-zawalen.md).
-    if (jakWGrze && adres.get('tlumienie') !== '0' && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
+    // Tłumienie „stoi albo pęka” z opisu sceny (B1R: bez), ?tlumienie=1|0 nadpisuje; fala względna zostaje. Tłumienie gasi też powolny początek przewracania:
+    // wieża z klinem przy mocniejszej szyi (mocSzyi 3) stoi pod nim, a bez niego przechyla się ku klinowi (pomiar 2026-11-09, docs/RAPORT-kawalki-zawalen.md).
+    const tlum = jakWGrze && (adres.has('tlumienie') ? adres.get('tlumienie') !== '0' : opis.tlumienie !== false);
+    if (tlum && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (obraz.kawalki) {
