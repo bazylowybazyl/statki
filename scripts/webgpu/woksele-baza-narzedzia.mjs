@@ -5,6 +5,8 @@
 //   node scripts/webgpu/woksele-baza-narzedzia.mjs [--out .tmp/woksele-demo/KAW/baza] [--rozmiar 1280x720] [--port 5432] [--zbrojenie 1]
 //        [--kruchosc 0|1|2] [--baza '{"giecieSzyi":8}'] [--scenariusz szyja]
 // --scenariusz szyja: dwa kratery z boku u podstawy szyi (z ≈ 300), głowa przechyla się. Kadry z boku: czy szyja gnie się jak guma, czy pęka (zgłoszenie 2026-11-08).
+// --scenariusz spalanie --planeta ziemia|mars [--spalT '6,14,18,21,24,30']: baza nad planetą z atmosferą, U (upadek), kadry z góry jak w misji 1 i z boku
+//   na słup atmosfery, liczba żywych węzłów (spalone i rozbite o grunt giną), drobin gruzu i odcinków smug (2026-11-09).
 // --scenariusz klin: klin kraterami od +y u podstawy szyi, przesunięcie środka głowy w bok i w dół (czy wieża przewraca się jak wieżowiec, 2026-11-09).
 import os from 'node:os';
 os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
@@ -45,7 +47,7 @@ const Z_GORY = { az: 0, el: 88, cel: [1200, 200, 0], odl: 9800 };
 
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc !== undefined ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}${args.zap ? `&${args.zap}` : ''}`; // --zap 'limityF0=0&jakWGrze=0': dodatkowe pola adresu do A/B
+  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc !== undefined ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}${args.planeta ? `&planeta=${args.planeta}` : ''}${args.zap ? `&${args.zap}` : ''}`; // --zap 'limityF0=0&jakWGrze=0': dodatkowe pola adresu do A/B
   await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zap}` });
   await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
   if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.gotowe || window.__wok.blad))', 600000, 200)) throw new Error('strona nie wstała');
@@ -82,6 +84,30 @@ try {
       const st = await ev('window.__wok.pokaz.statKawalki()');
       console.log(`stoi t = ${t}: zerwanych wiązań ${a.zerwanych} z ${a.zerwanych + a.zywych}, NaN ${a.nan}, pękło L0 ${st.peklo[0]}/${st.K0}`);
       await kadr('stoi', t);
+    }
+  } else if (args.scenariusz === 'spalanie') {
+    const BOK = await ev('window.__wok.pokaz.kameraBoku()');
+    if (!BOK) throw new Error('strona bez planety z atmosferą (--planeta ziemia|mars)');
+    const stan = `(async () => { const w = window.__wok.pokaz.solver.wypiek; const r = await window.__wok.odczyt(); let zywe = 0, nizej = 0, zMin = 1e9; for (let i = 0; i < w.n; i++) { if (r.poz[3 * i] !== r.poz[3 * i]) continue; const zy = r.aktywny ? r.aktywny[i] : 1; if (!zy) continue; zywe++; const z = r.poz[3 * i + 2]; if (z < -2000) nizej++; if (z < zMin) zMin = z; } return { n: w.n, zywe, nizej, zMin: Math.round(zMin) }; })()`;
+    const kadrS = async (nazwa, t) => {
+      for (const [kam, k] of [['gora', Z_GORY], ['bok', BOK]]) {
+        await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+        await ev('window.__wok.pokaz.przerysuj()');
+        const plik = `${nazwa}_t${t.toFixed(1)}_${kam}.png`;
+        await screenshotPng(cdp, join(wyDir, plik));
+        raport.kadry.push(plik);
+      }
+      const st = await ev(stan);
+      raport.stan.push({ nazwa, t, ...st });
+      console.log(`${nazwa} t = ${t}: żywe węzły ${st.zywe}/${st.n}, poniżej bazy ${st.nizej}, najniżej z = ${st.zMin}`);
+      zapisz();
+    };
+    await ev('window.__wok.pokaz.doChwili(0.5)');
+    await kadrS('s0', 0.5);
+    await ev(`${N}.uzyj('upadek')`);
+    for (const t of String(args.spalT || '6,12,16,19,22,25,30').split(',').map(Number)) {
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrS('s', t);
     }
   } else if (args.scenariusz === 'szyja') {
     // Kamera po skosie (+x, −y): wieżowce W-1 i W-2 stoją na osi x, więc z boku zasłaniały szyję.

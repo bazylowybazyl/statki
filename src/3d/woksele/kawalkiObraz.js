@@ -24,7 +24,7 @@ const obrocQ = (q, v) => {
 const mnozQ = (a, b) => vec4(b.xyz.mul(a.w).add(a.xyz.mul(b.w)).add(cross(a.xyz, b.xyz)), a.w.mul(b.w).sub(dot(a.xyz, b.xyz)));
 
 export function createKawalkiObraz(ctx) {
-  const { MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM } = ctx;
+  const { MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM, spalanie = null } = ctx;
   const MAXK = MAX; // kawałek ma co najmniej 2 węzły na poziom, więc kawałków obu poziomów jest najwyżej n
   const MAXD = MAX; // prętów na wiązania osiowe granic, zwykle około n / 10
 
@@ -206,10 +206,13 @@ export function createKawalkiObraz(ctx) {
         const kolP = v3(mix(d1, vec3(PYLK[0], PYLK[1], PYLK[2]), 0.28).mul(czesc(hv, 4, 63).mul(0.16).add(1.0)));
         Kol.assign(mix(d1, kolP, przel).mul(ton));
       }
+      // AGENT: hak spalania (spalanie.js): narożniki węzła cofają się do jego środka z ubytkiem czoła.
+      if (spalanie) P.assign(spalanie.pozycja(P, pw.xyz.add(wWezR.element(v3i.add(uint(1))).xyz.mul(uTau)), wZarR.element(v)));
     });
     if (varyingi) {
       const eE = v3(vec3(0));
       zarWezla(v, eE);
+      if (spalanie) eE.addAssign(spalanie.emisja(wZarR.element(v))); // AGENT: hak spalania
       vK.assign(Kol);
       vP.assign(P0);
       vE.assign(eE);

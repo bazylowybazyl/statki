@@ -8,6 +8,9 @@ import { DX_MIASTA, POJEMNOSC_MIASTA } from '../../src/3d/woksele/scenaMiasta.js
 import { DX_BAZY, POJEMNOSC_BAZY } from '../../src/3d/woksele/scenaBazy.js';
 import { wypiekZeZbrojeniem, statystykaKawalkow, KRUCHOSC } from '../../src/3d/woksele/kawalki.js';
 import { createNarzedzia, NARZEDZIA } from './narzedzia.js';
+import { PLANETY_ATM, planetaZAdresu } from '../../src/3d/woksele/atmosfera.js';
+import { createSpalanie } from '../../src/3d/woksele/spalanie.js';
+import { createPowierzchniaAtm } from './powierzchniaAtm.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -94,7 +97,14 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   camera.up.set(0, 0, 1);
 
   const KAWALKI = adres.get('kawalki') === '1';
-  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI });
+  // AGENT: hak spalania (spalanie.js, powierzchniaAtm.js): planeta pod bazą z adresu (?planeta=hidalgo|ziemia|mars, demo kawałków). Z atmosferą: odłamki płoną,
+  // grunt sceny znika, pod bazą krzywa powierzchnia 60–110 km niżej, dalsza płaszczyzna cięcia kamery. Hidalgo: wszystko jak dotąd (bez modułu).
+  const PLANETA = KAWALKI ? planetaZAdresu(adres.get('planeta')) : PLANETY_ATM.hidalgo;
+  const spalanie = PLANETA.atmosfera ? createSpalanie({ solver, planeta: PLANETA }) : null;
+  if (spalanie) { camera.far = 4e6; camera.updateProjectionMatrix(); }
+  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI, spalanie: spalanie?.hak ?? null });
+  spalanie?.polacz(obraz);
+  if (spalanie) createPowierzchniaAtm({ planeta: PLANETA, obraz, spalanie });
   // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
   // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
   const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa, budynki: () => stan.miasto?.budynki ?? null }) : null;
@@ -110,7 +120,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const sterowanie = new OrbitControls(camera, kanwa);
   sterowanie.enableDamping = true;
   sterowanie.dampingFactor = 0.12;
-  sterowanie.maxDistance = 30000;
+  sterowanie.maxDistance = spalanie ? 1.5e6 : 30000;
   sterowanie.minDistance = 60;
   sterowanie.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   sterowanie.zoomToCursor = true;
@@ -121,6 +131,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
     narz?.krok(renderer);
     solver.krok(renderer);
+    spalanie?.krok(renderer); // AGENT: hak spalania
     dalekie?.krok(stan.krok + 1);
     if (stan.pierwszyKrok) { obraz.krokBezLimitu(renderer); stan.pierwszyKrok = false; } else obraz.krok(renderer);
     stan.krok++;
@@ -209,6 +220,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       stan.trybSceny = trybSceny;
     }
     dalekie?.wczytaj(miasto?.dalekie ?? null);
+    spalanie?.wczytaj(w); // AGENT: hak spalania: bez gruntu sceny, stan od zera
     if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
     stan.miasto = miasto;
@@ -371,13 +383,33 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     dodaj(panelNarzedzi, 'Upadek (HP 0)', () => narz.uzyj('upadek'), 'n:upadek');
     panelNarzedzi.hidden = false;
   }
+  // AGENT: hak spalania: planeta pod bazą (przeładowanie z ?planeta, bo solver Ziemi i Marsa ma inny sufit prędkości), kamera z boku na słup atmosfery.
+  const panelPlanety = nowaGrupa('panelPlaneta');
+  if (KAWALKI) {
+    for (const p of ['hidalgo', 'ziemia', 'mars']) {
+      dodaj(panelPlanety, PLANETY_ATM[p].nazwa, () => {
+        if (p === PLANETA.id) return;
+        const q = new URLSearchParams(location.search);
+        q.set('planeta', p);
+        q.set('scena', stan.scena);
+        location.search = q.toString();
+      }, `p:${p}`);
+    }
+    if (spalanie) dodaj(panelPlanety, 'Z boku', () => ustawKamere(camera, sterowanie, kameraBoku()), 'p:bok');
+    panelPlanety.hidden = false;
+  }
+  /** Kamera z boku na słup atmosfery: cała droga od bazy do gruntu w kadrze. */
+  function kameraBoku() {
+    const h0 = PLANETA.wysBazy ?? 0;
+    return { az: 20, el: 6, cel: [0, 0, -0.5 * h0], odl: (0.75 * h0) / Math.tan((camera.fov * Math.PI) / 360) };
+  }
   const panelGestosci = nowaGrupa('panelGestosc');
   for (const n of Object.keys(KAM_MIASTA)) dodaj(panelKamer, KAM_MIASTA[n].nazwa, () => kameraMiasta(n), `k:${n}`);
   for (const dx of Object.keys(POJEMNOSC_MIASTA).map(Number).sort((a, b) => b - a)) dodaj(panelGestosci, `dx ${dx}`, () => { if (dx !== dxMiasta) przeladujMiasto(stan.scena, dx); }, `d:${dx}`);
   stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}`;
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}` || k === `p:${PLANETA.id}`;
       b.classList.toggle('wl', wl);
     }
     bPauza.classList.toggle('wl', stan.pauza);
@@ -406,6 +438,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   await wypiek(scenaStartu);
   ustawScene(scenaStartu, { pomin: false });
   zmienRozmiar();
+  await spalanie?.rozgrzej(renderer); // AGENT: hak spalania: kernele przed pierwszym krokiem
   await obraz.rozgrzej(renderer);
   // Rozgrzewka szła z widocznymi wszystkimi siatkami (bryły, kawałki, druty, narzędzia), dopiero teraz tryb obrazu.
   stan.rozgrzane = true;
@@ -435,6 +468,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     sledzSrodek();
     sterowanie.update();
     if (narz) { narz.serie(teraz); narz.klatka(stan.akum); }
+    spalanie?.klatka(camera, stan.akum, renderer.domElement.height); // AGENT: hak spalania
     if (stan.rysowac !== false) obraz.rysuj(renderer, camera, stan.akum);
     stan.msKlatki = dtMs;
     if (stan.licznik) {
@@ -481,6 +515,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       /** Harness, demo kawałków: tryb obrazu (jak przycisk) i stan kawałków z GPU. */
       tryb(t) { ustawTrybObrazu(t); return { tryb: stan.tryb, trybSceny: stan.trybSceny }; },
       narzedzia: narz,
+      spalanie, // harness: planeta z atmosferą (null: Hidalgo)
+      kameraBoku: () => (spalanie ? kameraBoku() : null),
       solver, // harness: wypiek i odczyt stanu (analiza wiązań, woksele-baza-narzedzia.mjs --scenariusz szyja)
       async statKawalki() {
         const kw = obraz.kawalki, wy = wypieki.get(stan.scena);
