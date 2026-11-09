@@ -41,6 +41,7 @@ import {
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
 import { BELT_MSG } from './trafficProtocol.js';
+import { ferryPodPassengers, landFerryPassengers } from './escapePodTransit.js';
 import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
@@ -132,6 +133,8 @@ export function createTrafficCore(post, options = {}) {
     actorHullsSent: 0,
     actorsSent: 0,
     stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 },
+    // Kapsuły ratunkowe (E22 K4): numer kursu gry → id kursu promu, którego ludzie lecą w kapsułach.
+    podCourses: new Map(),
     /** Zapis ekonomii czekający na rynki dokładane po starcie (E7, `economySave.js`). */
     pendingRestore: null,
     /**
@@ -182,6 +185,7 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.ECONOMY_SAVE: return economySave(message);
         case TRAFFIC_MSG.ECONOMY_RESTORE: return economyRestore(message);
         case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
+        case TRAFFIC_MSG.PODS_LANDED: return podsLanded(message);
         case BELT_MSG.MINED: return beltMined(message);
         default: return undefined;
       }
@@ -561,6 +565,30 @@ export function createTrafficCore(post, options = {}) {
       x: Number(message.x),
       y: Number(message.y)
     });
+    replyFerryPods(world, course, message.course);
+  }
+
+  /**
+   * Kapsuły ratunkowe (E22 K4): prom z ludźmi zniszczony w grze — ludzie czekają na dolot kapsuł (`holdFerryPassengers`
+   * w `destroyCourse`). Gra dostaje cel (port nadania) i liczbę ludzi; numer kursu gry → id kursu na czas lotu (kurs
+   * jest już zamknięty — `resolveCourse` może go nie znaleźć).
+   */
+  function replyFerryPods(world, course, number) {
+    const rec = ferryPodPassengers(world.director, course.id);
+    if (!rec) return;
+    core.podCourses.set(finite(number, NaN), String(course.id));
+    send({ type: TRAFFIC_MSG.PODS_TARGET, course: number, stationId: rec.originId, people: rec.units });
+  }
+
+  /** Kapsuła z ludźmi promu doleciała w grze (w obrazie albo bez) — magazyn stacji dolotu (`landFerryPassengers`). */
+  function podsLanded(message) {
+    const world = core.world;
+    if (!world) return;
+    const num = finite(message.course, NaN);
+    const id = core.podCourses.get(num) ?? core.courseIds.get(num) ?? null;
+    if (!id) return;
+    landFerryPassengers(world.director, id, String(message.stationId || ''), message.people);
+    if (!ferryPodPassengers(world.director, id)) core.podCourses.delete(num);
   }
 
   /** Encja bez kursu przejęta przez grę jako NPC (`on`) albo oddana — `holdBubbleEntity` (E6, taran i ogień). */
@@ -760,6 +788,8 @@ export function createTrafficCore(post, options = {}) {
         agents: summarizeAgents(world.agents),
         log: world.director.log.slice(-30),
         core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size },
+        // Kapsuły ratunkowe bez obrazu (E22): statki z kapsułami, w drodze, doloty.
+        escapePods: world.podTransit ? { ...world.podTransit.stats, pending: world.podTransit.pending.length } : null,
         warmup: { ...warmupInfo(), steps: core.warmup.steps }
       } : null
     });

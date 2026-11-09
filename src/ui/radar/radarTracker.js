@@ -36,7 +36,9 @@ export const RADAR_SRC = Object.freeze({
 export const RADAR_KIND = Object.freeze({
   SHIP: 'ship', FIGHTER: 'fighter', MISSILE: 'missile', STATION: 'station', WRECK: 'wreck', DRONE: 'drone',
   // Kontenery-łup (paczki dryfujące po zniszczonych statkach ruchu — src/game/lootContainers.js).
-  LOOT: 'loot'
+  LOOT: 'loot',
+  // Kapsuły ratunkowe (lecą do stacji po zniszczeniu statku — src/game/escapePods.js).
+  POD: 'pod'
 });
 
 export function normAngle(a) {

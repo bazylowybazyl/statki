@@ -27,6 +27,7 @@ import { TrafficBridge } from '../../src/game/trafficBridge.js';
 import { describeWorkforce, perHourWorld } from '../../src/game/workforce.js';
 import { addMarket, addMarketBuilding } from '../../src/game/traffic/markets.js';
 import { destroyCourse } from '../../src/game/traffic/trafficDirector.js';
+import { ferryPodPassengers, landFerryPassengers } from '../../src/game/traffic/escapePodTransit.js';
 import { buildingCost, getStationIndustry } from '../../src/game/stationEconomy.js';
 import { HABITAT_RATE, WORKFORCE_PER_HABITAT, HABITAT_BUILDING } from '../../src/data/workforce.js';
 import { createSuite, runIfMain } from './harness.mjs';
@@ -296,7 +297,7 @@ export function run() {
   t.check('habitat poza budynkami przemysłu stacji gracza', JSON.stringify(player?.industry?.buildings) === '["foundry"]');
   t.check('koszt budowy habitatu (dane pod interfejs stacji)', buildingCost('habitat') === HABITAT_BUILDING.cost);
 
-  t.section("12. Prom zniszczony poza porwaniem — ludzie wracają do źródła (W6; kapsuły — E22)");
+  t.section("12. Prom zniszczony poza porwaniem — ludzie wracają kapsułami ratunkowymi, w chwili dolotu (W6 → E22 K4)");
   let ferry = null;
   for (let i = 0; i < (40 * 60) / TRAFFIC_STEP_SECONDS && !ferry; i++) {
     stepTrafficWorld(hab);
@@ -307,10 +308,42 @@ export function run() {
     const src = hab.economies.get(ferry.originId);
     const stock0 = src.resources.workforce;
     const room = Math.max(0, src.capacity.workforce - stock0);
+    const rescued0 = hab.director.stats.passengersRescued;
     destroyCourse(hab.director, ferry, { reason: 'player' });
-    t.close(`ludzie wracają do źródła (${ferry.originId}, ${ferry.payload.units} os.)`,
+    t.close('gra zniszczyła prom: magazyn bez zmian do dolotu kapsuł', src.resources.workforce - stock0, 0, 1e-9);
+    const rec = ferryPodPassengers(hab.director, ferry.id);
+    t.check('ludzie czekają w kapsułach (port nadania, liczba z kontraktu)',
+      !!rec && rec.originId === String(ferry.originId) && rec.left === ferry.payload.units);
+    // Gra zgłasza dolot kapsuł (`pods-landed`): dwie kapsuły, druga z resztą.
+    const half = Math.floor(ferry.payload.units / 2);
+    landFerryPassengers(hab.director, ferry.id, ferry.originId, half);
+    landFerryPassengers(hab.director, ferry.id, ferry.originId, ferry.payload.units);
+    t.close(`ludzie wracają do źródła w chwili dolotu (${ferry.originId}, ${ferry.payload.units} os.)`,
       src.resources.workforce - stock0, Math.min(ferry.payload.units, room), 1e-6);
-    t.check('licznik powrotów (stats.passengersRescued)', hab.director.stats.passengersRescued === src.resources.workforce - stock0);
+    t.check('licznik powrotów (stats.passengersRescued)', hab.director.stats.passengersRescued - rescued0 === src.resources.workforce - stock0);
+    t.check('po ostatniej kapsule kurs zamknięty', !ferryPodPassengers(hab.director, ferry.id));
+    t.close('kolejne zgłoszenie nic nie dokłada', landFerryPassengers(hab.director, ferry.id, ferry.originId, 50), 0, 1e-9);
+  }
+  // Prom zniszczony BEZ obrazu (zniszczona stacja): kapsuły w świecie ruchu lecą do portu nadania, ludzie wchodzą do
+  // magazynu po czasie lotu (krok świata — `stepPodTransit`).
+  let ferry2 = null;
+  for (let i = 0; i < (40 * 60) / TRAFFIC_STEP_SECONDS && !ferry2; i++) {
+    stepTrafficWorld(hab);
+    ferry2 = getActiveCourses(hab.registry).find(c => c.payload?.passengers && c.payload.orderId && c.payload.units > 0) || null;
+  }
+  if (ferry2) {
+    const src = hab.economies.get(ferry2.originId);
+    const rescued0 = hab.director.stats.passengersRescued;
+    destroyCourse(hab.director, ferry2, { reason: 'station-destroyed' });
+    const pending0 = ferryPodPassengers(hab.director, ferry2.id)?.left || 0;
+    t.check('bez obrazu: ludzie w kapsułach', pending0 === ferry2.payload.units);
+    stepTrafficWorld(hab);
+    const entry = hab.podTransit.pending.find((e) => e.courseId === ferry2.id);
+    t.check('bez obrazu: kapsuły lecą do portu nadania z ludźmi', !!entry && entry.stationId === String(ferry2.originId) && entry.people === pending0);
+    let guard = 0;
+    while (ferryPodPassengers(hab.director, ferry2.id) && guard++ < 2000) stepTrafficWorld(hab);
+    t.check(`bez obrazu: dolot po ${guard} krokach świata`, guard > 0 && guard < 2000);
+    t.check('bez obrazu: ludzie weszli do magazynu w chwili dolotu (stats.passengersRescued)', hab.director.stats.passengersRescued > rescued0 || src.resources.workforce >= src.capacity.workforce - 1e-6);
   }
 
   return t.results;

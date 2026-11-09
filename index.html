@@ -1194,6 +1194,13 @@
     import {
       LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
     } from "./src/data/lootGear.js";
+    import {
+      createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND,
+      fillEscapePodRenderFrame, escapePodCloakHidden, retargetEscapePods
+    } from "./src/game/escapePods.js";
+    import {
+      createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
+    } from "./src/game/escapePodRoutes.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
     import { PortDockWorld } from "./src/game/portDockWorld.js";
@@ -1204,6 +1211,8 @@
     import { sharedPortCargo3D } from "./src/3d/cargo/portCargo3D.js";
     import { createLootBlock, createLootFrame } from "./src/render/blocks/lootBlock.js";
     import { sharedLootContainers3D } from "./src/3d/cargo/lootContainers3D.js";
+    import { createEscapePodBlock, createEscapePodFrame } from "./src/render/blocks/escapePodBlock.js";
+    import { sharedEscapePods3D } from "./src/3d/escapePods/escapePods3D.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
@@ -1672,7 +1681,7 @@
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
     import { cloakLightGain, entityCloakVisAt } from "./src/game/cloakLook.js";
-    import { stepCloakLooks } from "./src/game/cloakLooks.js";
+    import { stepCloakLooks, CLOAK_LOOK_FRAME } from "./src/game/cloakLooks.js";
     import { RenderPoses } from "./src/game/renderPoses.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
@@ -5216,6 +5225,8 @@
       }
       if (entity.dead || entity.isWreck) return;
       beginBridgeHulk(entity);
+      // Kapsuły ratunkowe (E22): załoga opuszcza okręt bez dowodzenia (hulk), przy wraku drugi raz już nie.
+      launchShipEscapePods(entity);
       // Kadencja wykrywa kill do ~0,1 s po ostatnim trafieniu, a okno zasługi
       // (PLAYER_KILL_CREDIT_WINDOW) to 0,1 s czasu rzeczywistego — trafienie
       // gracza z ostatniej sekundy liczy się jak zabójcze.
@@ -5765,6 +5776,8 @@
       env.coldWrecks = coldWrecks;
       // Kontenery-łup: ramka obrazu (tylko paczki widoczne przez mgłę wojny — D8).
       env.loot = _lootRender;
+      // Kapsuły ratunkowe (E22 K5): ramka obrazu (bez kapsuł ukrytych przez mgłę i maskowanie).
+      env.pods = _podRender;
       env.rockets = window.rocketSystem3D?.rockets || null;
       env.drones = SpotterDroneSystem.getDrones?.() || null;
       env.player2 = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
@@ -17854,6 +17867,8 @@
       triggerReactorBlow3D(x, y, Math.max(120, a.length * 0.45), { vx: a.vx, vy: a.vy });
       // Kontenery-łup: 55% ładunku z manifestu encji w przestrzeń (wybuch w miejscu trafienia).
       spillTrafficCargo(trafficV2?.actorManifests?.get(a.id), a.id, a.cx, a.cy, a.vx, a.vy, a.ca, a.length, a.width, x, y);
+      // Kapsuły ratunkowe (E22 K3): załoga statku ruchu (bez pirackich) po chwili w kapsułach do stacji frakcji.
+      launchTrafficEscapePods(a);
       if (cause === 'player') registerTrafficKill(a);
     }
 
@@ -18165,6 +18180,8 @@
       npc.__trafficCargo = trafficV2?.actorManifests?.get(a.id) || null;
       // Obrys encji — kontakt miękki, dopóki kadłub na belkach się nie zbuduje (stepTrafficSoftContact).
       npc.__trafficLen = a.length;
+      // Kapsuły ratunkowe (E22 K4): prom z ludźmi — kapsuły rodzaju FERRY z numerem kursu (`launchShipEscapePods`).
+      npc.__trafficFerry = String(a.unitClass || '').startsWith('crew-');
       npc.__trafficWid = a.width;
       npc.__trafficPromotedAt = gameTime;
       npc._lastPlayerHit = gameTime;
@@ -18451,6 +18468,261 @@
           x: ship.pos.x + Math.cos(a) * dist, y: ship.pos.y + Math.sin(a) * dist, vx: ship.vel.x, vy: ship.vel.y,
           angle: a, length: 540, width: 200, cargo, mass, seed: (gameTime * 1000) | 0
         });
+      }
+    };
+
+
+    // ============================================================
+    // KAPSUŁY RATUNKOWE (E22, reguła `kapsuly-ratunkowe`) — src/game/escapePods.js (pula, wyrzut, lot, dolot) i
+    // src/game/escapePodRoutes.js (cel, trasa). Zniszczony statek (bez pirackich, myśliwców i dronów) najpierw
+    // „umiera” (wrak, wybuch zbiornika), po ~1,4–2,2 s wystrzeliwuje kapsuły (liczba z długości kadłuba): 100% pędu
+    // kadłuba + impuls z burty, dryf, silnik i lot do najbliższej stacji swojej frakcji (prom — port nadania, K4);
+    // trasa omija bryły doków i płytę ringu (ten sam objazd co bańka ruchu v2). Kapsuła znika w stacji; dalej niż
+    // 40 tys. j. od gracza — rozliczenie bez obrazu (dolot po czasie). Duchy: AI, celowanie i pociski ich nie widzą.
+    // Atlas gracza — bez kapsuł (śmierć gracza kończy grę); hulk mostka — kapsuły przy utracie dowodzenia (załoga
+    // opuszcza okręt), drugi raz przy wraku już nie. Konsola: `EscapePods` (`count`, `stats`, `devLaunch`).
+    // ============================================================
+    const escapePods = createEscapePods();
+    const escapePodRouter = createEscapePodRouter();
+    // Cele kapsuł: id stacji → stały indeks (lista `stations` rośnie w biegu — indeks tablicy nie jest stały).
+    const _podStationIds = [];
+    const _podStationIndex = new Map();
+    const _podInfo = { isPirate: false, factionId: null, hull: '', type: '', fighter: false, drone: false };
+    const _podExtent = { length: 0, width: 0 };
+    const _podEnv = {
+      px: 0, py: 0, hasPlayer: false,
+      route: (i, x, y, target) => routeEscapePodSlot(i, x, y, target),
+      onArrive: (target, people, kind, course, x, y) => onEscapePodArrived(target, people, kind, course, x, y),
+      onLost: null
+    };
+
+    function podStationTarget(stationIndex) {
+      const st = stationIndex >= 0 ? stations[stationIndex] : null;
+      if (!st) return -1;
+      const id = String(st.id);
+      let k = _podStationIndex.get(id);
+      if (k === undefined) {
+        k = _podStationIds.length;
+        _podStationIds.push(id);
+        _podStationIndex.set(id, k);
+      }
+      return k;
+    }
+
+    function podStationById(target) {
+      const id = target >= 0 ? _podStationIds[target] : null;
+      if (id == null) return null;
+      for (let i = 0; i < stations.length; i++) if (String(stations[i]?.id) === id) return stations[i];
+      return null;
+    }
+
+    function syncEscapePodRouterWorld() {
+      syncEscapePodRouter(escapePodRouter, {
+        planets, docks: portDocks.docks, docksVersion: portDocks.version,
+        ports: trafficV2?.tables?.bubblePorts || null
+      });
+    }
+
+    /** Trasa kapsuły `i` (env.route): od miejsca wyrzutu do stacji celu. */
+    function routeEscapePodSlot(i, x, y, target) {
+      const st = podStationById(target);
+      if (!st) return false;
+      syncEscapePodRouterWorld();
+      if (!routeEscapePod(escapePodRouter, escapePodRouter.path, x, y, st)) return false;
+      return setEscapePodRoute(escapePods, i, escapePodRouter.path, POD_PATH_STRIDE) > 0;
+    }
+
+    /**
+     * Dolot kapsuły do stacji (x / y NaN — rozliczenie bez obrazu). Prom (K4): ludzie z kontraktu do magazynu STACJI
+     * DOLOTU w chwili dolotu — `pods-landed` do świata ruchu (`landFerryPassengers`).
+     */
+    function onEscapePodArrived(target, people, kind, course, x, y) {
+      void x; void y;
+      if (kind !== POD_KIND.FERRY || !(people > 0) || course === -1 || !trafficV2) return;
+      const stationId = target >= 0 ? _podStationIds[target] : null;
+      if (stationId != null) trafficV2.podsLanded(course, stationId, people);
+    }
+
+    // PROMY (K4): świat ruchu odpowiada na zniszczenie promu z ludźmi celem kapsuł (port nadania) i liczbą ludzi
+    // (`pods-target`). Nasłuch podpięty leniwie (most powstaje po tym bloku); odpowiedź przed wyrzutem kapsuł (tryb
+    // awaryjny mostu odpowiada od razu) czeka w `_ferryPodReplies` na kapsuły swojego kursu.
+    const _ferryPodReplies = new Map();
+    let _podBridge = null;
+    function bindEscapePodBridge() {
+      if (!trafficV2 || _podBridge === trafficV2) return;
+      _podBridge = trafficV2;
+      trafficV2.on('pods-target', onFerryPodsTarget);
+    }
+    function onFerryPodsTarget(m) {
+      const course = Number(m?.course) | 0;
+      if (applyFerryPodsTarget(course, m.stationId, m.people)) return;
+      _ferryPodReplies.set(course, { stationId: m.stationId, people: m.people });
+      if (_ferryPodReplies.size > 64) _ferryPodReplies.delete(_ferryPodReplies.keys().next().value);
+    }
+    /** Cel i ludzie dla kapsuł promu `course` (zwraca false, gdy tych kapsuł jeszcze nie ma). */
+    function applyFerryPodsTarget(course, stationId, people) {
+      const p = escapePods;
+      let x = NaN;
+      let y = NaN;
+      for (let i = 0; i < p.count; i++) if (p.course[i] === course && p.kind[i] === POD_KIND.FERRY) { x = p.x[i]; y = p.y[i]; break; }
+      let inTransit = false;
+      for (let k = 0; k < p.transit.count; k++) if (p.transit.course[k] === course && p.transit.kind[k] === POD_KIND.FERRY) { inTransit = true; break; }
+      if (!Number.isFinite(x) && !inTransit) return false;
+      // Port nadania, gdy zdatny; zniszczony — najbliższa stacja (od kapsuł).
+      const target = podStationTarget(pickEscapePodStation(stations, Number.isFinite(x) ? x : 0, Number.isFinite(y) ? y : 0, null, stationId));
+      retargetEscapePods(escapePods, course, target, people, _podEnv);
+      return true;
+    }
+    /** Kapsuły promu właśnie wystrzelone — odpowiedź świata, jeśli przyszła wcześniej. */
+    function applyEarlyFerryReply(course) {
+      const r = _ferryPodReplies.get(course);
+      if (!r) return;
+      _ferryPodReplies.delete(course);
+      applyFerryPodsTarget(course, r.stationId, r.people);
+    }
+
+    /** Obrys kadłuba [j.]: dłuższy bok sprite'a = długość (kadłub na belkach — przed zamianą we wrak). */
+    function podHullExtent(e, out) {
+      const h = e?.beamHull;
+      if (h && h.srcWidth) {
+        const a = h.srcWidth * (h.scale || 1);
+        const b = (h.srcHeight || h.srcWidth) * (h.scale || 1);
+        out.length = Math.max(a, b);
+        out.width = Math.min(a, b);
+      } else if (Number(e?.__trafficLen) > 0) {
+        out.length = e.__trafficLen;
+        out.width = Number(e.__trafficWid) || e.__trafficLen * 0.35;
+      } else {
+        const r = Math.max(20, Number(getTargetRadius(e)) || 80);
+        out.length = r * 2;
+        out.width = r * 0.9;
+      }
+      return out;
+    }
+
+    /**
+     * Kapsuły zniszczonego statku (raz na statek). Woła się w chwili śmierci — PRZED zamianą kadłuba we wrak (obrys
+     * z ciała belek); wyrzut idzie po opóźnieniu z puli. Zwraca liczbę kapsuł.
+     */
+    function launchShipEscapePods(e) {
+      if (!e || e.__escapePods) return 0;
+      e.__escapePods = true;
+      // Atlas (i drugi gracz): bez kapsuł — śmierć gracza kończy grę.
+      if (e === ship || e === player2Ship) return 0;
+      const info = _podInfo;
+      info.isPirate = e.isPirate === true;
+      info.factionId = resolveEntityFaction(e);
+      info.hull = e.shipFrame || e.hullId || '';
+      info.type = e.type || '';
+      info.fighter = !!e.fighter;
+      info.drone = !!e.isDrone;
+      if (!escapePodsAllowed(info)) return 0;
+      podHullExtent(e, _podExtent);
+      const x = Number(e.x) || 0;
+      const y = Number(e.y) || 0;
+      const target = podStationTarget(pickEscapePodStation(stations, x, y, info.factionId));
+      const seed = (Math.imul(Math.floor(x), 73856093) ^ Math.imul(Math.floor(y), 19349663) ^ Math.floor(gameTime * 1000)) | 0;
+      // Prom z ruchu po awansie do NPC (K4): kapsuły rodzaju FERRY z numerem kursu — cel i ludzi poda świat ruchu.
+      const ferry = e.__trafficFerry === true && Number.isFinite(Number(e.trafficCourse));
+      const course = ferry ? Number(e.trafficCourse) | 0 : -1;
+      bindEscapePodBridge();
+      const n = launchEscapePods(escapePods, {
+        x, y, vx: Number(e.vx) || 0, vy: Number(e.vy) || 0, angle: Number(e.angle) || 0,
+        length: _podExtent.length, width: _podExtent.width, seed, target, people: 0,
+        kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course
+      }, _podEnv);
+      if (ferry) applyEarlyFerryReply(course);
+      return n;
+    }
+
+    /**
+     * Kapsuły statku ruchu zniszczonego w bańce BEZ awansu (`onTrafficActorDestroyed`): poza i ruch encji, obrys
+     * z bufora, frakcja z bufora; piraci (frakcja albo kadłub rajdera / przemytnika — jak `isPirate` awansowanego NPC)
+     * bez kapsuł. Awansowany NPC ma kapsuły z `applyDamageToNPC`. Prom (klasa `crew-*`) — rodzaj FERRY (ludzie: K4).
+     */
+    function launchTrafficEscapePods(a) {
+      if (!a) return 0;
+      const def = trafficNpcDef(a.hullId);
+      const info = _podInfo;
+      info.isPirate = a.factionId === FACTION.PIRATES || !!def?.pirate;
+      info.factionId = a.factionId || null;
+      info.hull = a.hullId || '';
+      info.type = def?.type || '';
+      info.fighter = false;
+      info.drone = false;
+      if (!escapePodsAllowed(info)) return 0;
+      const target = podStationTarget(pickEscapePodStation(stations, a.cx, a.cy, info.factionId));
+      const ferry = String(a.unitClass || '').startsWith('crew-');
+      const seed = (Math.imul(a.id | 0, 0x9e3779b1) ^ Math.floor(gameTime * 1000)) | 0;
+      bindEscapePodBridge();
+      const n = launchEscapePods(escapePods, {
+        x: a.cx, y: a.cy, vx: a.vx, vy: a.vy, angle: a.ca, length: a.length, width: a.width, seed, target,
+        people: 0, kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course: a.id | 0
+      }, _podEnv);
+      // Prom (K4): cel (port nadania) i ludzie z kontraktu przychodzą ze świata ruchu (`pods-target`).
+      if (ferry) applyEarlyFerryReply(a.id | 0);
+      return n;
+    }
+
+    /** Krok fizyki: wyrzut, lot, dolot, rozliczenia bez obrazu (pauza stoi — krok tylko w `physicsStep`). */
+    function stepEscapePodsGame(dt) {
+      bindEscapePodBridge();
+      if (escapePods.count === 0 && escapePods.transit.count === 0) return;
+      const env = _podEnv;
+      env.hasPlayer = !!ship && !ship.destroyed;
+      if (env.hasPlayer) { env.px = ship.pos.x; env.py = ship.pos.y; }
+      stepEscapePods(escapePods, dt, env);
+    }
+
+    // Obraz (K2): ramka klatki dla bloku `pods` (worker) albo rysunku na stronie (off) — pozy w chwili klatki renderu,
+    // tylko kapsuły poza kadłubem, widoczne (mgła wojny) i poza kropkami soczewki skoku. Render niczego o mgle nie wie.
+    const _podRender = createEscapePodFrame();
+    // Mgła wojny i maskowanie (K5): kapsuła w obrysie maskowanego kadłuba gaśnie z nim (`escapePodCloakHidden`; wygląd
+    // maskowania z poprzedniej klatki — `CLOAK_LOOK_FRAME` liczy się w `render()` po ramce kapsuł).
+    const _podVisible = (x, y) => SensorSystem.pointVisible(x, y, 0) && !escapePodCloakHidden(CLOAK_LOOK_FRAME.list, x, y);
+    const _podLensHidden = (x, y) => lensDotAt(x, y);
+    function escapePodRenderFrame(alpha) {
+      // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak paczki łupu).
+      const lag = (PAUSED || StoryGame.worldFrozen) ? 0 : (1 - alpha) * PHYS_DT;
+      return fillEscapePodRenderFrame(escapePods, _podRender, lag, _podVisible, _lensDotsActive ? _podLensHidden : null);
+    }
+
+    window.EscapePods = {
+      get count() { return escapePods.count; },
+      get transit() { return escapePods.transit.count; },
+      get stats() { return { ...escapePods.stats }; },
+      pool: escapePods,
+      router: escapePodRouter,
+      /** Cel kapsuły `target` (indeks puli) → id stacji. */
+      stationId: (target) => (target >= 0 ? _podStationIds[target] ?? null : null),
+      launch: (e) => launchShipEscapePods(e),
+      // Narzędzia (?dev): ślady kapsuł na radarze (zebranie jak w kokpicie, zasięg `range` j.) — { kapsul, sladow }.
+      radar(range = 20000) {
+        if (!_portCargoQuery.has('dev')) return null;
+        const feed = refreshRadarFeed(range);
+        let n = 0;
+        for (let i = 0; i < feed.count; i++) if (feed.targets[i].kind === 'pod') n++;
+        return { kapsul: _podRender.count, sladow: n };
+      },
+      // Narzędzia (?dev): encja bańki ruchu `id` zniszczona od razu (bez awansu) — kapsuły z `onTrafficActorDestroyed`.
+      devKillTraffic(id) {
+        if (!_portCargoQuery.has('dev') || !trafficBubble) return null;
+        const a = trafficBubble.byId.get(id);
+        if (!a || !a.alive) return null;
+        damageTrafficActor(trafficBubble, a, Math.max(1, a.hp) * 10 + 1e6, a.cx, a.cy, 'player');
+        return { alive: a.alive, kapsul: escapePods.count };
+      },
+      // Narzędzia (?dev): kapsuły statku-widma `dist` j. przed graczem — `EscapePods.devLaunch(1040, 3000)`.
+      devLaunch(length = 1040, dist = 3000, factionId = 'terra_nova') {
+        if (!_portCargoQuery.has('dev') || !ship) return 0;
+        const a = ship.angle || 0;
+        const x = ship.pos.x + Math.cos(a) * dist;
+        const y = ship.pos.y + Math.sin(a) * dist;
+        const target = podStationTarget(pickEscapePodStation(stations, x, y, factionId));
+        return launchEscapePods(escapePods, {
+          x, y, vx: ship.vel.x, vy: ship.vel.y, angle: a + Math.PI * 0.5, length, width: length * 0.32,
+          seed: (gameTime * 1000) | 0, target, people: 0, kind: POD_KIND.CREW
+        }, _podEnv);
       }
     };
 
@@ -25646,6 +25918,8 @@
         npc.dead = true;
         npc.respawnTimer = 3 + Math.random() * 6;
         registerFactionKill(npc);
+        // Kapsuły ratunkowe (E22): obrys z kadłuba przed wrakiem, wyrzut po chwili (pula kapsuł).
+        launchShipEscapePods(npc);
         const npcType = String(npc.type || '').toLowerCase();
         const isFighterLike =
           !!npc.fighter ||
@@ -25707,6 +25981,7 @@
         host.respawnTimer = 3 + Math.random() * 6;
         if (host.fleetEntry?.status) host.fleetEntry.status.hull = 0;
         registerFactionKill(host);
+        launchShipEscapePods(host);
       },
       afterHostDetonate: (host) => {
         if (host === ship || host === player2Ship) return;
@@ -29255,6 +29530,8 @@
       stepTrafficRam();
       // Kontenery-łup (K1): dryf paczek, wiązka gniazda ZBIÓRKA, chwyt do ładowni.
       stepLoot(dt);
+      // Kapsuły ratunkowe (E22): wyrzut, lot do stacji, dolot.
+      stepEscapePodsGame(dt);
       // Suchy dok piratów (misja 1): taran bram i ogrodzenia parkingu.
       // Wydobycie skał (zadanie 21b): drony, piła, ładunki, wiązka i fizyka skał w czasie gry.
       stepAsteroidMining(dt);
@@ -31304,6 +31581,7 @@
       if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
       // kontenery-łup (K2): paczki, lampki i wiązka (src/3d/cargo/lootContainers3D.js w workerze)
       if (RW_WORKER) renderSnapshot.addBlock(createLootBlock());
+      if (RW_WORKER) renderSnapshot.addBlock(createEscapePodBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -31498,6 +31776,7 @@
       f.portDocks = RW_WORKER ? _portDockRender : null;
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
       f.loot = RW_WORKER ? _lootRender : null;
+      f.pods = RW_WORKER ? _podRender : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -32676,6 +32955,8 @@
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
       lootRenderFrame(alpha);
+      // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off).
+      escapePodRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -32768,6 +33049,8 @@
           if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           // Kontenery-łup (K2): paczki, lampki i wiązka (worker — z bloku `loot`).
           sharedLootContainers3D().update(_lootRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
+          // Kapsuły ratunkowe (E22): kadłubki, lampy i płomienie (worker — z bloku `pods`).
+          sharedEscapePods3D().update(_podRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
           updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);

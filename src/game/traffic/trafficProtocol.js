@@ -162,6 +162,12 @@ export const TRAFFIC_MSG = Object.freeze({
   TRADE_SUMMARY: 'trade-summary',
   TRADE_SUMMARY_RESULT: 'trade-summary-result',
 
+  // Kapsuły ratunkowe (E22 K4, `escapePodTransit.js`). Świat → gra: cel kapsuł promu zniszczonego w grze
+  // `{ course, stationId, people }` (port nadania, ludzie z kontraktu — gra dzieli ich po kapsułach kursu);
+  // gra → świat: dolot kapsuły z ludźmi `{ course, stationId, people }` (magazyn stacji dolotu, w chwili dolotu).
+  PODS_TARGET: 'pods-target',
+  PODS_LANDED: 'pods-landed',
+
   READY: 'ready',
   TICK: 'tick',
   BUBBLE: 'bubble',
