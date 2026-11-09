@@ -8,6 +8,7 @@ import { DX_MIASTA, POJEMNOSC_MIASTA } from '../../src/3d/woksele/scenaMiasta.js
 import { DX_BAZY, POJEMNOSC_BAZY } from '../../src/3d/woksele/scenaBazy.js';
 import { wypiekZeZbrojeniem, statystykaKawalkow, KRUCHOSC } from '../../src/3d/woksele/kawalki.js';
 import { createNarzedzia, NARZEDZIA } from './narzedzia.js';
+import { createAtlas } from './atlas.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -46,7 +47,9 @@ const SCENY = {
   // Baza bez skryptu: niszczy użytkownik (?kawalki=1, narzędzia). Start z kamery z góry jak w misji 1, pył jak B1.
   // jakWGrze: fala łamiąca z prędkości względnej w bryle oderwanej od kotwic i tłumienie stojącej konstrukcji do progu fali, jak wGrze.zaladuj (?jakWGrze=0: dawne demo).
   // tlumienie: false (decyzja użytkownika 2026-11-09): tłumienie „stoi albo pęka” gasiło powolny początek przewracania wieży podciętej klinem.
-  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true, tlumienie: false },
+  // skora: wygląd z gry (prośba użytkownika 2026-11-09: „nałóż na demo skórkę”): skóra z wypieku starej bryły, wnętrza, okna fasad (skoraDema.js, obraz.js). ?skora=0: barwy dema.
+  // planeta: planetoida Hidalgo pod bazą jak w grze (prośba użytkownika 2026-11-09; planetaDema.js): skała, pole ku niej, kontakt, kratery. ?planeta=0: płaska podłoga dema.
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true, tlumienie: false, skora: true, planeta: true },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
@@ -65,6 +68,8 @@ const KAM_MIASTA = {
   // Kamera misji 1: prawie pionowo z góry (płaszczyzna gry to XY). Atlas przy oddaleniu (0,14 px/j.) i przybliżona (0,4 px/j.) nad habitatem.
   bGra: { nazwa: 'Z góry (gra)', pxNaJ: 0.14, az: 0, el: 88, cel: [1800, 200, 0], lod: { sloty: 2, cien: 1 }, baza: true },
   bGraBlisko: { nazwa: 'Z góry, bliżej', pxNaJ: 0.4, az: 0, el: 88, cel: [600, 0, 200], lod: { sloty: 7, cien: 2 }, baza: true },
+  // Baza i planetoida pod nią (planetaDema.js): z boku, nisko, szczyt skały 40 km pod bazą.
+  bPlaneta: { nazwa: 'Z planetą', pxNaJ: 0.011, az: 20, el: 10, cel: [4000, -4000, -22000], lod: { sloty: 2, cien: 1 }, baza: true },
 };
 const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
 
@@ -94,7 +99,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   camera.up.set(0, 0, 1);
 
   const KAWALKI = adres.get('kawalki') === '1';
-  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI });
+  // Skóra z gry na bazie: wygląd jak w misji 1 przy świetle dema. Obraz z tą opcją ma inny graf, więc decyzja przy starcie strony (scena z adresu albo ?skora=1|0).
+  const SKORA = KAWALKI && (adres.has('skora') ? adres.get('skora') === '1' : !!SCENY[adres.get('scena')]?.skora);
+  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI, skora: SKORA });
   // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
   // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
   const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa, budynki: () => stan.miasto?.budynki ?? null }) : null;
@@ -114,13 +121,22 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   sterowanie.minDistance = 60;
   sterowanie.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   sterowanie.zoomToCursor = true;
+  // Atlas do taranowania (solver z flagą statek, glowny.js ?atlas): siatki w scenie obrazu przed rozgrzewką, sprite i pole obrysu wczytane przed nią.
+  // Błąd Atlasa albo planety zostawia demo bez nich (dziennik konsoli), zamiast całej strony bez obrazu.
+  const atlas = solver.statek ? await createAtlas({ solver, obraz, camera, sterowanie, kanwa, renderer, masa: Number(adres.get('atlasMasa')) || undefined }).catch((e) => { console.error('[woksele] Atlas', e); return null; }) : null;
+  // Planeta pod bazą jak w grze (planetaDema.js). Import dynamiczny, jak skóra: skała gry ciągnie src/3d/core3d.js z hakiem rulonu we wszystkich materiałach.
+  const PLANETA = KAWALKI && (adres.has('planeta') ? adres.get('planeta') !== '0' : !!SCENY[adres.get('scena')]?.planeta);
+  const planeta = PLANETA ? await import('./planetaDema.js').then((m) => m.createPlanetaDema({ solver, obraz, renderer })).catch((e) => { console.error('[woksele] planeta', e); return null; }) : null;
+  const GRUNT_PLANETY = -70000; // planetaDema.js: grunt solvera pod kulą skały (jak GRUNT_GRY w wGrze.js)
 
   const stan = { tryb: KAWALKI ? Number(adres.get('tryb') ?? 1) : 0, scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false, jedzie: false, c0x: 0, c0y: 0, c0z: 0, vcx: 0, vcy: 0, vcz: 0, ocx: 0, ocy: 0, ocz: 0 };
 
   function krokSceny() {
     if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
     narz?.krok(renderer);
+    atlas?.krok();
     solver.krok(renderer);
+    planeta?.krok();
     dalekie?.krok(stan.krok + 1);
     if (stan.pierwszyKrok) { obraz.krokBezLimitu(renderer); stan.pierwszyKrok = false; } else obraz.krok(renderer);
     stan.krok++;
@@ -155,10 +171,21 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}), ...(KRUCH ? { kruchosc: KRUCH } : {}), ...(SZTYW > 1 ? { sztywnosc: SZTYW } : {}) });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? { ...(planeta ? { gruntZ: GRUNT_PLANETY } : {}), ...bazaAdresu } : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}), ...(KRUCH ? { kruchosc: KRUCH } : {}), ...(SZTYW > 1 ? { sztywnosc: SZTYW } : {}) });
     }
     return czekajace.get(id).obietnica;
   }
+  /** Wypiek skóry do bazy z bębnem albo bez (skoraDema.js). Błąd wypieku zostawia barwy bez skóry. */
+  // AGENT: import dynamiczny: bryła starej bazy ciągnie src/3d/core3d.js (hullDamageMap.tsl.js), a ten przy imporcie zakłada hak rulonu warpa we WSZYSTKICH materiałach węzłowych.
+  // Strony dema bez skóry mają zostać bez niego (te same pipeline'y co dotąd).
+  async function wypieczSkore(w, bezBebna) {
+    stan.skoraBezBebna = bezBebna;
+    try {
+      const { wypalSkoreDema } = await import('./skoraDema.js');
+      await wypalSkoreDema({ renderer, obraz, w, bezBebna });
+    } catch (e) { console.error('[woksele] wypiek skóry', e); }
+  }
+
   /** Wejście w scenę z panelu: czeka na budowę, ostatni klik wygrywa. */
   async function wejdz(id, opcje) {
     stan.celScena = id;
@@ -189,6 +216,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     if (opis.miasto && !!KAM_MIASTA[stan.kamMiasta].baza !== !!opis.baza) stan.kamMiasta = opis.baza ? (opis.kamStart ?? 'bAtlas') : 'atlas';
     if (opis.kamStart && kamera) stan.kamMiasta = opis.kamStart;
     narz?.reset();
+    atlas?.reset(!!opis.baza && stan.atlasWl !== false);
+    if (panelAtlasu) panelAtlasu.hidden = !(atlas && opis.baza);
     const bU = przyciski.get('n:upadek');
     if (bU) bU.style.display = opis.baza ? '' : 'none';
     for (const n of Object.keys(KAM_MIASTA)) przyciski.get(`k:${n}`).style.display = !!KAM_MIASTA[n].baza === !!opis.baza ? '' : 'none';
@@ -203,6 +232,13 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     if (tlum && uS.uFalaV2.value < 1e29) uS.uLepV2.value = Math.max(uS.uLepV2.value, uS.uFalaV2.value);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    if (SKORA) {
+      // Koła habitatu jak w grze (wGrze.js ustawKola), promień szyi z opcji sceny. Inne sceny: bez kół i bez skóry (wnętrza zostają).
+      obraz.ustawKola(opis.baza && miasto?.kola ? miasto.kola : []);
+      if (!opis.baza) obraz.ustawSkore({ x0: 0, y0: 0, w: 1, h: 1, gora: 0, zakres: 1, wl: 0 });
+      // Wypiek do tej bazy (z bębnem albo bez): pierwszy przy starcie przed rozgrzewką, kolejne w tle (pipeline'y już są), do tego czasu zostaje poprzednia skóra.
+      else if (stan.rozgrzane && stan.skoraBezBebna !== !!miasto?.bezBebna) wypieczSkore(w, !!miasto?.bezBebna);
+    }
     if (obraz.kawalki) {
       if (kaw && stan.kawScena !== `${id}:${trybSceny === 2}`) { obraz.kawalki.wczytaj(kaw, trybSceny === 2 ? zbr : null, w.n, w.dx); stan.kawScena = `${id}:${trybSceny === 2}`; } else if (kaw) obraz.kawalki.reset();
       if (stan.rozgrzane) obraz.ustawTryb(trybSceny);
@@ -211,6 +247,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     dalekie?.wczytaj(miasto?.dalekie ?? null);
     if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
+    // Planeta po solver.wczytaj (pole sceny od nowa) i obraz.wczytaj (grunt), słońce skały po ustawieniu słońca dema.
+    if (planeta) { planeta.wczytaj(w, !!opis.baza); planeta.slonce(obraz.sun); }
     stan.miasto = miasto;
     if (opis.miasto) { obraz.sun.shadow.bias = CIEN_MIASTA.bias; obraz.sun.shadow.normalBias = CIEN_MIASTA.normalBias; }
     stan.scena = id;
@@ -371,13 +409,30 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     dodaj(panelNarzedzi, 'Upadek (HP 0)', () => narz.uzyj('upadek'), 'n:upadek');
     panelNarzedzi.hidden = false;
   }
+  // Atlas (taran w płaszczyźnie gry): wł./wył., powrót na start, kamera za statkiem. Pod przyciskami klawisze i prędkość.
+  const panelAtlasu = atlas ? nowaGrupa('panelAtlas') : null;
+  let infoAtlasu = null;
+  if (atlas) {
+    const naBazie = () => !!SCENY[stan.scena]?.baza;
+    dodaj(panelAtlasu, 'Atlas', () => { stan.atlasWl = stan.atlasWl === false; atlas.wlacz(stan.atlasWl && naBazie()); zaznacz(); }, 'a:wl');
+    dodaj(panelAtlasu, 'Na start', () => atlas.reset(stan.atlasWl !== false && naBazie()), 'a:start');
+    dodaj(panelAtlasu, 'Kamera za nim (C)', () => { atlas.kameraZa(!atlas.kamera); zaznacz(); }, 'a:kam');
+    const klawisze = document.createElement('div');
+    klawisze.className = 'opis';
+    klawisze.textContent = 'W/S ciąg · A/D obrót · Shift dopalacz · X hamulec · T statek pod kursor';
+    infoAtlasu = document.createElement('div');
+    infoAtlasu.className = 'opis';
+    panelAtlasu.append(klawisze, infoAtlasu);
+    panelAtlasu.hidden = false;
+  }
   const panelGestosci = nowaGrupa('panelGestosc');
   for (const n of Object.keys(KAM_MIASTA)) dodaj(panelKamer, KAM_MIASTA[n].nazwa, () => kameraMiasta(n), `k:${n}`);
   for (const dx of Object.keys(POJEMNOSC_MIASTA).map(Number).sort((a, b) => b - a)) dodaj(panelGestosci, `dx ${dx}`, () => { if (dx !== dxMiasta) przeladujMiasto(stan.scena, dx); }, `d:${dx}`);
   stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}`;
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}`
+        || (k === 'a:wl' && stan.atlasWl !== false) || (k === 'a:kam' && !!atlas?.kamera);
       b.classList.toggle('wl', wl);
     }
     bPauza.classList.toggle('wl', stan.pauza);
@@ -406,6 +461,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   await wypiek(scenaStartu);
   ustawScene(scenaStartu, { pomin: false });
   zmienRozmiar();
+  // Skóra przed rozgrzewką: wypiek kompiluje bryłę na celu skóry i rysuje ją raz, a rozgrzewka obrazu idzie już na grafie ze skórą.
+  if (SKORA && SCENY[scenaStartu]?.baza) await wypieczSkore(wypieki.get(scenaStartu).w, !!wypieki.get(scenaStartu).miasto?.bezBebna);
   await obraz.rozgrzej(renderer);
   // Rozgrzewka szła z widocznymi wszystkimi siatkami (bryły, kawałki, druty, narzędzia), dopiero teraz tryb obrazu.
   stan.rozgrzane = true;
@@ -433,8 +490,14 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       if (stan.akum >= H) stan.akum = H * 0.999; // reszta przepada
     }
     sledzSrodek();
+    atlas?.klatka(stan.akum);
     sterowanie.update();
     if (narz) { narz.serie(teraz); narz.klatka(stan.akum); }
+    if (infoAtlasu && atlas.aktywny && teraz - (stan.tInfoAtlasu || 0) > 250) {
+      stan.tInfoAtlasu = teraz;
+      const a = atlas.stan();
+      infoAtlasu.textContent = `${a.v} j./s · styki ${a.styki} · wyrwane kotwice ${a.kotwice}`;
+    }
     if (stan.rysowac !== false) obraz.rysuj(renderer, camera, stan.akum);
     stan.msKlatki = dtMs;
     if (stan.licznik) {
@@ -481,6 +544,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       /** Harness, demo kawałków: tryb obrazu (jak przycisk) i stan kawałków z GPU. */
       tryb(t) { ustawTrybObrazu(t); return { tryb: stan.tryb, trybSceny: stan.trybSceny }; },
       narzedzia: narz,
+      atlas, // harness: atlas.ustaw({ x, y, kurs, v }), atlas.sterowanie({ w, dop, … }), atlas.stan()
+      planeta, // harness: planeta.stan() (kratery, uderzenia), planeta.skala
       solver, // harness: wypiek i odczyt stanu (analiza wiązań, woksele-baza-narzedzia.mjs --scenariusz szyja)
       async statKawalki() {
         const kw = obraz.kawalki, wy = wypieki.get(stan.scena);

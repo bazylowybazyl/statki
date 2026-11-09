@@ -12,6 +12,9 @@ const PROFIL = parametryAdresu.get('profil') === '1';
 const KAWALKI = parametryAdresu.get('kawalki') === '1';
 // Twarde limity wiązań także w gałęzi sprężenia (solver.js, `limityF0`): w demie kawałków domyślnie tak, ?limityF0=0|1 do A/B. Gra bez tej flagi.
 const LIMITY_F0 = parametryAdresu.has('limityF0') ? parametryAdresu.get('limityF0') === '1' : KAWALKI;
+// ?atlas=1|0: Atlas w płaszczyźnie gry do testu taranowania (atlas.js; solver z flagą `statek`: kernel kadłuba po kI w każdym podkroku). Domyślnie w demie kawałków na scenie bazy.
+// Bez Atlasa w ?test=1 i ?profil=1: tam lista kroku ma być ta sama co dotąd (testy GPU, czasy kerneli po nazwach).
+const ATLAS = !TEST && !PROFIL && (parametryAdresu.has('atlas') ? parametryAdresu.get('atlas') === '1' : KAWALKI && /^B1/.test(parametryAdresu.get('scena') || ''));
 
 const wok = { gotowe: false, blad: null, profil: PROFIL };
 window.__wok = wok;
@@ -81,7 +84,7 @@ async function start() {
 
   // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd. ?nKom=2^k: komórki siatki kontaktów, miasto przy dx = 5 ma więcej zajętych komórek niż domyślne 65 536.
   const nKomAdresu = Number(parametryAdresu.get('nKom')) || 0;
-  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY, ciagliwe: KAWALKI, limityF0: LIMITY_F0 });
+  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY, ciagliwe: KAWALKI, limityF0: LIMITY_F0, statek: ATLAS });
   await solver.rozgrzej(renderer);
 
   const pamiecStatyki = new Map();

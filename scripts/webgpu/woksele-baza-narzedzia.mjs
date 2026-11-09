@@ -178,6 +178,74 @@ try {
       await ev(`window.__wok.pokaz.doChwili(${t})`);
       await kadrBok('k', t);
     }
+  } else if (args.scenariusz === 'atlas') {
+    // Atlas taranuje szyb habitatu (prośba użytkownika 2026-11-09: Atlas w płaszczyźnie gry do testu taranowania): pełny ciąg z dopalaczem od −y ze startu dema.
+    // Kadry z góry i z boku (+x), stan Atlasa (prędkość, styki, pęd oddany węzłom, wyrwane kotwice) i przesunięcie głowy wieży (węzły dalej niż 300 j. od osi).
+    const A = 'window.__wok.pokaz.atlas';
+    const GORA_A = { az: 0, el: 88, cel: [0, -600, 0], odl: 11000 };
+    const BOKX = { az: 90, el: 8, cel: [0, 0, 600], odl: 7000 };
+    const GLOWA = `(async () => {
+      const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt();
+      const cz = window.__wok.pokaz.stan.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T');
+      let n = 0, x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0, zyw = 0;
+      for (let i = cz.start; i < cz.start + cz.n; i++) {
+        if (r.aktywny[i]) zyw++;
+        const x = w.pos[3 * i], y = w.pos[3 * i + 1];
+        if (x * x + y * y < 300 * 300 || !r.aktywny[i]) continue;
+        n++; x0 += x; y0 += y; z0 += w.pos[3 * i + 2]; x1 += r.poz[3 * i]; y1 += r.poz[3 * i + 1]; z1 += r.poz[3 * i + 2];
+      }
+      return { n, zywychWiezy: zyw, dx: (x1 - x0) / n, dy: (y1 - y0) / n, dz: (z1 - z0) / n };
+    })()`;
+    const kadrA = async (nazwa, t, tryby = [1]) => {
+      for (const [kam, k] of [['gora', GORA_A], ['bok', BOKX]]) {
+        await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+        for (const tr of tryby) {
+          await ev(`window.__wok.pokaz.tryb(${tr}); true`);
+          await ev('window.__wok.pokaz.przerysuj()');
+          const plik = `${nazwa}_t${t.toFixed(1)}_${kam}_${['woksele', 'kawalki'][tr]}.png`;
+          await screenshotPng(cdp, join(wyDir, plik));
+          raport.kadry.push(plik);
+        }
+      }
+      const a = await ev(`${A}.stan()`);
+      const g = await ev(GLOWA);
+      (raport.atlas ??= []).push({ t, atlas: a, glowa: g });
+      console.log(`${nazwa} t = ${t}: Atlas y ${a.y}, v ${a.v} j./s, styki ${a.styki}, pęd oddany ${a.ped}, wyrwane kotwice ${a.kotwice}; głowa w bok ${Math.hypot(g.dx, g.dy).toFixed(0)} j. (ku +y ${g.dy.toFixed(0)}), w dół ${(-g.dz).toFixed(0)} j., żywych węzłów wieży ${g.zywychWiezy}`);
+    };
+    if (!await ev(`!!${A}`)) throw new Error('strona bez Atlasa (?atlas=1)');
+    await ev('window.__wok.pokaz.doChwili(0.5)');
+    await kadrA('a0', 0.5, [0, 1]);
+    await ev(`${A}.sterowanie({ w: true, dop: true }); true`);
+    for (const t of String(args.atlasT || '1.5,2.2,2.8,3.5,5,7,10').split(',').map(Number)) { // --atlasT '2,3,4': chwile kadrów
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrA('a', t);
+    }
+    const k = await ev('window.__wok.pokaz.kosztKlatki(8, 9)');
+    raport.koszt = k;
+    console.log(`  koszt: krok + kernele ${k.computeGpuMs.toFixed(2)} ms GPU, rysunek ${k.renderGpuMs.toFixed(2)} ms`);
+  } else if (args.scenariusz === 'planeta') {
+    // Upadek jak przy HP 0 na planetoidę pod bazą (planetaDema.js, prośba użytkownika 2026-11-09: „planetę pod bazą jak w grze”). Kadry z boku z planetą i z góry, kratery na skale.
+    const PLAN = 'window.__wok.pokaz.planeta';
+    if (!await ev(`!!${PLAN}`)) throw new Error('strona bez planety (?planeta=1)');
+    const kadrP = async (nazwa, t) => {
+      for (const kam of ['bPlaneta', 'bGra']) {
+        await ev(`window.__wok.pokaz.kameraMiasta('${kam}'); true`);
+        await ev('window.__wok.pokaz.przerysuj()');
+        const plik = `${nazwa}_t${t.toFixed(1)}_${kam}.png`;
+        await screenshotPng(cdp, join(wyDir, plik));
+        raport.kadry.push(plik);
+      }
+      const p = await ev(`${PLAN}.stan()`);
+      (raport.planeta ??= []).push({ t, ...p });
+      console.log(`${nazwa} t = ${t}: kraterów na skale ${p.kraterow}, stempli ${p.uderzen}, R ${p.R}, mapa kształtu ${p.ksztalt}`);
+    };
+    await ev('window.__wok.pokaz.doChwili(1)');
+    await kadrP('p0', 1);
+    await ev(`${N}.uzyj('upadek')`);
+    for (const t of String(args.planetaT || '6,12,18,24,32').split(',').map(Number)) {
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrP('p', t);
+    }
   } else {
   await ev('window.__wok.pokaz.doChwili(1)');
   await kadr('01-przed', 1);

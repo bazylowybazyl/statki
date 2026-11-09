@@ -584,6 +584,9 @@ export function scenaB1(oo = {}) {
       celBliska: [w1.x, w1.y, 0.5 * (w1.zB + w1.zD)],
       trafien: pl.kratery.length,
       budynkow: b.czesci.length,
+      // Skóra w demie (dema/woksele-zawalenia/skoraDema.js): wypiek starej bryły bez ćwiartek bębna, gdy woksele nie mają bębna; koła habitatu dla obrazu brył.
+      bezBebna: !!o.bezBebna,
+      kola: [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.innerR - Hs.innerW, Hs.innerR, Hs.ringR1, Hs.drumR - Hs.wall, Hs.drumR, Hs.tier2R, Hs.tier1R, Hs.discR],
     },
     czasy: { indeksy: new Int32Array(0), t: new Float64Array(0), rozerwij: new Uint8Array(0), zostawZiarna: false },
   };
