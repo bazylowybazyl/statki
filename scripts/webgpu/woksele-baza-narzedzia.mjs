@@ -89,7 +89,7 @@ try {
     const BOK = await ev('window.__wok.pokaz.kameraBoku()');
     const BLISKO = await ev('window.__wok.pokaz.kameraBoku(true)');
     if (!BOK) throw new Error('strona bez planety z atmosferą (--planeta ziemia|mars)');
-    const stan = `(async () => { const w = window.__wok.pokaz.solver.wypiek; const r = await window.__wok.odczyt(); let zywe = 0, nizej = 0, zMin = 1e9; for (let i = 0; i < w.n; i++) { if (r.poz[3 * i] !== r.poz[3 * i]) continue; const zy = r.aktywny ? r.aktywny[i] : 1; if (!zy) continue; zywe++; const z = r.poz[3 * i + 2]; if (z < -2000) nizej++; if (z < zMin) zMin = z; } return { n: w.n, zywe, nizej, zMin: Math.round(zMin) }; })()`;
+    const stan = `(async () => { const w = window.__wok.pokaz.solver.wypiek; const r = await window.__wok.odczyt(); let zywe = 0, nizej = 0, zMin = 1e9; const zs = []; for (let i = 0; i < w.n; i++) { if (r.poz[3 * i] !== r.poz[3 * i]) continue; const zy = r.aktywny ? r.aktywny[i] : 1; if (!zy) continue; zywe++; const z = r.poz[3 * i + 2]; zs.push(z); if (z < -2000) nizej++; if (z < zMin) zMin = z; } zs.sort((a, b) => a - b); const q = (f) => Math.round(zs[Math.floor(f * (zs.length - 1))] ?? 0); let v = 0; for (let i = 0; i < w.n; i++) if (r.aktywny[i]) v = Math.max(v, Math.hypot(r.vel[3 * i], r.vel[3 * i + 1], r.vel[3 * i + 2])); return { n: w.n, zywe, nizej, zMin: Math.round(zMin), z10: q(0.1), z50: q(0.5), z90: q(0.9), vMax: Math.round(v) }; })()`;
     const kadrS = async (nazwa, t) => {
       for (const [kam, k] of [['gora', Z_GORY], ['bok', BOK], ['blisko', BLISKO]]) {
         await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
@@ -100,7 +100,7 @@ try {
       }
       const st = await ev(stan);
       raport.stan.push({ nazwa, t, ...st });
-      console.log(`${nazwa} t = ${t}: żywe węzły ${st.zywe}/${st.n}, poniżej bazy ${st.nizej}, najniżej z = ${st.zMin}`);
+      console.log(`${nazwa} t = ${t}: żywe węzły ${st.zywe}/${st.n}, poniżej bazy ${st.nizej}, najniżej z = ${st.zMin}, z (10/50/90 %) ${st.z10} / ${st.z50} / ${st.z90}, v maks ${st.vMax}`);
       zapisz();
     };
     await ev('window.__wok.pokaz.doChwili(0.5)');
@@ -110,6 +110,29 @@ try {
       await ev(`window.__wok.pokaz.doChwili(${t})`);
       await kadrS('s', t);
     }
+    // Koszt GPU w chwili --kosztT (domyślnie 23 s, najwięcej płonie): kernele spalania (mediana 7 list) i rysunek obrazu z głowicami i smugami kontra bez nich (mediana 9 klatek).
+    const KOSZT = `(async () => {
+      const P = window.__wok.pokaz, sp = P.spalanie, R = window.__HARNESS_RENDERER__, b = R.backend, o = window.__wok.obraz, cam = window.__wok.camera;
+      const med = (l) => { l.sort((x, y) => x - y); return l[l.length >> 1]; };
+      const k = [];
+      for (let i = 0; i < 7; i++) k.push(await window.__wok.zmierzListe([sp.kernele.kSpal, sp.kernele.kSpalG]));
+      P.stan.rysowac = false;
+      const rys = async () => { const l = []; for (let i = 0; i < 9; i++) { await new Promise((ok) => requestAnimationFrame(ok)); b.trackTimestamp = true; o.rysuj(R, cam, 0); l.push(await R.resolveTimestampsAsync('render')); b.trackTimestamp = false; b.timestampQueryPool?.render?.timestamps?.clear?.(); } return med(l); };
+      const z = await rys();
+      for (const m of sp.siatki()) m.visible = false;
+      const bez = await rys();
+      for (const m of sp.siatki()) m.visible = true;
+      P.stan.rysowac = true;
+      return { kerneleMs: med(k), rysunekMs: z, rysunekBezSpalaniaMs: bez };
+    })()`;
+    await ev(`window.__wok.pokaz.doChwili(${Number(args.kosztT || 23)})`);
+    for (const [kam, k] of [['gora', Z_GORY], ['blisko', BLISKO]]) {
+      await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+      const kz = await ev(KOSZT);
+      raport[`koszt_${kam}`] = kz;
+      console.log(`koszt (${kam}, t = ${args.kosztT || 23}): kernele spalania ${kz.kerneleMs.toFixed(3)} ms, rysunek ${kz.rysunekMs.toFixed(2)} ms, bez głowic i smug ${kz.rysunekBezSpalaniaMs.toFixed(2)} ms`);
+    }
+    zapisz();
   } else if (args.scenariusz === 'szyja') {
     // Kamera po skosie (+x, −y): wieżowce W-1 i W-2 stoją na osi x, więc z boku zasłaniały szyję.
     const BOK = { az: 45, el: 8, cel: [0, 0, 900], odl: 4800 };
