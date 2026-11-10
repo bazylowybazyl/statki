@@ -26,6 +26,7 @@ Stan: **KONTAKT wybrany (OBŁOK); NAMIAR → CZUJKA na PPM (struna + błona) —
   myszka gracz … misja 1: gracz zrobi PPM na lewo od statku, a piraci są po prawej — struna prawie ani drgnie; na prawo
   będzie się kręcić do prawej, podczas przechodzenia zacznie drgać, w stronę piratów mocniej, i te trójkąciki się będą
   pojawiały”. WACHLARZ odpada (zostaje w demie jako wariant 0 do porównania).
+- 2026-11-10: czujka działa **tylko przy trzymanym PPM** (puszczenie — gaśnie), nie zostaje po kliknięciu.
 
 ## 1. Co obraz ma oddać
 
@@ -231,5 +232,6 @@ statków i budowli), ciała niebieskie układu (kierunek, odległość, promień
 τ, wyłonienia) po stronie widoku; oko — nakładka 2D kursora.
 
 Decyzje: (7) oko — tylko grupa w namiarze czy „ktokolwiek mnie widzi”; (8) czy błona pokazuje też gwiazdę układu (dziś tak);
-(9) wejście czujki w grze (PPM zajęte przez menu rozkazów); (10) czy czujka trzyma się tylko w trakcie PPM, czy zostaje na
-kilka sekund po kliknięciu.
+(9) wejście czujki w grze (PPM zajęte przez menu rozkazów — skoro czujka żyje tylko przy trzymaniu, naturalny podział:
+krótki klik = menu rozkazów, przytrzymanie = czujka; do potwierdzenia przy wpięciu). Decyzja (10) zapadła: tylko przy
+trzymanym PPM.
