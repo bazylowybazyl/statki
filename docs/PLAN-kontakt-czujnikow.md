@@ -5,7 +5,7 @@ w gałęzi prototypu). Prośba użytkownika: „osobna sesja, żeby wykorzystał
 fajnych elementów — jakichś nieznajomych morfujących kształtów / chmurek”. W Starsectorze kontakt to małe i duże
 trójkąty; w HULLFALL ma być coś własnego.
 
-Stan: **KONTAKT wybrany; namiar (wachlarz / struna / błona) — druga runda propozycji.** Gra bez zmian.
+Stan: **KONTAKT wybrany (OBŁOK); NAMIAR → CZUJKA na PPM (struna + błona) — trzecia runda w demie, czeka na ocenę.** Gra bez zmian.
 
 ## 0. Decyzje użytkownika
 
@@ -14,6 +14,18 @@ Stan: **KONTAKT wybrany; namiar (wachlarz / struna / błona) — druga runda pro
 - 2026-11-04, ocena wachlarzy PULS / FALA / ISKRY: odrzucone, bo brief był błędny — „kompletnie nie podobają mi się
   wachlarze … miałem na myśli wachlarz ode mnie i OD przeciwnika, w sensie że przeciwnik też ma swój wachlarz, a nie że ja
   mam dwa”. Układ dwóch połówek przy okręcie gracza znika.
+- 2026-11-10, ocena drugiej rundy (słowa użytkownika, skrót): „i struna, i błona są spoko, ale trzeba je dopracować;
+  struna zbyt agresywnie wibruje”; „w grze gracz będzie klikał PPM i wtedy pojawi się czujka radaru”; wykrywamy
+  statki / budowle oraz planety — „do ciał niebieskich będzie błona, a do technologicznych struna”; struna „nie musi się
+  przebijać na pół, jak ktoś cię widzi”, za to trójkąty na niej w stronę przeciwnika / bazy — „dużo trójkątów mniejszych
+  (statki), większe (budowla) będzie oznaczało dużo wrogów (np. misja 1: gracz wychodzi z warpu, nie widzi stacji, będzie
+  klikał PPM)”; „fakt wykrycia będzie oznaczany zmianą koloru i wykrzyknikiem … na myszce — oko zamknięte / otwarte”.
+  Doprecyzowanie: „błona do planet — jest nowe demo, gdzie będzie wiele układów; wlecisz do układu i będzie wszystko
+  puste, wtedy gracz odpala PPM i widzi na błonie, gdzie są planety; bliżej planety błona rośnie, dalej maleje …
+  pokazywać od razu wszystkie planety w układzie — chyba tak”; „błona jest 360 stopni, struna w stronę, w którą pokazuje
+  myszka gracz … misja 1: gracz zrobi PPM na lewo od statku, a piraci są po prawej — struna prawie ani drgnie; na prawo
+  będzie się kręcić do prawej, podczas przechodzenia zacznie drgać, w stronę piratów mocniej, i te trójkąciki się będą
+  pojawiały”. WACHLARZ odpada (zostaje w demie jako wariant 0 do porównania).
 
 ## 1. Co obraz ma oddać
 
@@ -171,5 +183,53 @@ rysować całość w poście. BŁONA dotyczy tylko mojego okrętu — kwad w pas
 workera (`P.fans`, poza gracza), stan zdarzeń (rozbłysk, szczelina, wiek, τ) po stronie widoku; refrakcja — siatka na
 `FX_DISTORT_LAYER` zgłaszana z kroku efektów. Napisy zostają na kanwie 2D.
 
-Decyzje: (4) która propozycja (albo połączenie, np. WACHLARZ przy wrogu + STRUNA przy mnie); (5) czy pęknięcie ma mieć dźwięk
-i komunikat („WYKRYTY”); (6) czy błona ma pokazywać też `me`.
+Decyzje drugiej rundy rozstrzygnęła trzecia (§ 6).
+
+## 6. Czujka na PPM: struna + błona (trzecia runda, 2026-11-10)
+
+Demo: tryb W (`?tryb=namiar`), wariant 1 CZUJKA (`?namiar=czujka` — struna i błona razem; 2 STRUNA, 3 BŁONA osobno,
+0 WACHLARZ z drugiej rundy), sceny `?scena=misja|uklad|przelot` (klawisz S). PPM na kanwie przejmuje sterowanie od skryptu:
+trzymasz PPM — czujka działa, struna celuje w myszkę; puszczasz — gaśnie (S — scena od nowa, znowu skrypt).
+
+- **Kiedy:** czujka żyje, póki gracz trzyma PPM: błona nadyma się w ~0,15 s, puszczenie — gaśnie w ~0,3 s. W chwili PPM
+  impuls: fala w kształcie błony biegnie na zewnątrz (z refrakcją tła — warstwa DIST), ciała niebieskie wyłaniają się po
+  echu (opóźnienie 0,12 + 0,1·log₂(1 + d / 10 km) s — bliższe pierwsze) ze sprężyną (lekki przerzut).
+- **BŁONA (ciała niebieskie, 360°):** jedna zamknięta błona wokół mojego okrętu, język OBŁOKU (kłęby fBm, pasma
+  interferencji, rzadki śnieg); promień bazowy = mój ślad (cisza kurczy i przygasza, ciąg nadyma i rozjaśnia). W stronę
+  KAŻDEGO ciała układu wybrzuszenie: wysokość z bliskości `c` = 1 − log₁₀(d / 8 km) / 2,4 (8 km → 1, ~2000 km → 0;
+  wysokość = promień × (0,18 + 0,6·c²) — najdalsze też widać), szerokość z rozmiaru ciała (0,13 + 1,8·R / d rad), barwa
+  wierzchołka = rodzaj ciała (skalista — rdza, gazowy olbrzym — ochra, lodowa / wodna — błękit, gwiazda — złoto). Bez
+  czerwieni i pękania (planety nie wykrywają).
+- **STRUNA (technologia: statki, budowle — w stronę myszki):** jeden łuk (pół kąta 0,52 rad) poza błoną, obraca się za
+  myszką z ograniczeniem prędkości (do 5,5 rad/s, τ 0,09 s — jak antena). Sygnał = Σ dopasowanie kąta
+  exp(−(Δ / 0,36)²) × `me` grupy; amplituda 0,35 + 5,2·sygnał^1,5 px (najwyżej ~5,5 px; w drugiej rundzie ±20 px —
+  „za agresywnie”), wyższe harmoniczne dochodzą z sygnałem, szarpnięcie (+7 px, zanik 0,38 s), gdy grupa wchodzi w namiar.
+  W pustym kierunku prawie prosta. Bez pękania.
+- **Trójkąty:** grupa w namiarze (|Δ| < 0,95 pół kąta i dopasowanie > 0,3) wyłania się na łuku DOKŁADNIE w miejscu
+  wskazującym grupę — ile wrogów, tyle trójkątów: budowla — duży (pół podstawy 9 px, wysokość 16,5 px), statek — mały
+  (4,6 / 8,5 px); duże w środku, mniejsze na boki, więc gromada rośnie ku środkowi i wskazuje grupę jak grot. Pojawiają się
+  po kolei od środka (z przerzutem), lekka fala wielkości biegnie ku środkowi. Przy obrocie struny gromada przesuwa się po
+  łuku i znika za jego końcem. `est` (radar zgadnięty) — trójkąty puste, słabsze.
+- **Wykrycie:** grupa w namiarze z `them` ≥ 1 (histereza 0,975) — struna i jej trójkąty czerwienieją (~0,2 s), nad gromadą
+  „!” (błysk przy wykryciu, potem puls), oko przy kursorze się otwiera (czerwone; zamknięte — szare). Oko pokazuje stan
+  grupy, w którą celuję, nie całej mapy (do decyzji).
+- **Sceny:** MISJA 1 (pętla 13 s: po warpie, baza piratów + 6 statków 41 km za kadrem obok Hidalgo; PPM w lewo — pusto,
+  przeciągnięcie przez dół na patrol (2 statki, nie widzą mnie) i na bazę (widzi mnie — czerwień, „!”, oko), odjazd,
+  puszczenie), UKŁAD (pętla 16 s: pusty układ, 6 ciał, planeta Kora zbliża się 60 → 14 km i oddala, struna obiega okrąg,
+  nad stacją 70 km jeden duży trójkąt), PRZELOT (pętla 27 s: celuję we wroga — trzy trójkąty, sygnał rośnie; wykrycie;
+  cicha praca — oni nie widzą, kolor wraca; ciąg — znowu).
+
+Zrzuty (`.tmp/kontakty/czujka/`): `8k-czujka-<scena>-<chwila>`, `9k-<propozycja>-<scena>`; animacje 60 kl/s z
+`--film-namiar 1`: `80-czujka-misja.webp`, `81-czujka-uklad.webp`, `82-czujka-przelot.webp` (pełne pętle, skala 0,75),
+`83-struna-zblizenie.webp` (przy Atlasie, piksel w piksel). Pipeline'y synchroniczne 0, błędy konsoli 0. Koszt
+(1600 × 900, MISJA 1, struna + błona, pojedyncza próbka zegara GPU — orientacyjnie): 0,17 ms na klatkę przy pustej 0,065 ms.
+
+Wpięcie (po ocenie): PPM w grze otwiera dziś menu rozkazów / autopilot (`index.html`, „Menu rozkazów”) — czujka musi dostać
+inne wejście albo podział (np. przytrzymanie vs klik) — decyzja sesji głównej / użytkownika. Struna i błona są przy moim
+okręcie (w zasięgu wzroku) — kwad w passie gry; dane: grupy z obrazu czujników (`P.fans`: kierunek, `me`, `them`, liczba
+statków i budowli), ciała niebieskie układu (kierunek, odległość, promień, rodzaj), stan czujki (celowanie, szarpnięcie,
+τ, wyłonienia) po stronie widoku; oko — nakładka 2D kursora.
+
+Decyzje: (7) oko — tylko grupa w namiarze czy „ktokolwiek mnie widzi”; (8) czy błona pokazuje też gwiazdę układu (dziś tak);
+(9) wejście czujki w grze (PPM zajęte przez menu rozkazów); (10) czy czujka trzyma się tylko w trakcie PPM, czy zostaje na
+kilka sekund po kliknięciu.
