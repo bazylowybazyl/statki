@@ -24,6 +24,8 @@
 //
 // Listy są posortowane: od dziobu, przy tym samym x — lewa burta (y < 0) pierwsza.
 
+import { sampleHullField } from './hullDesignGeometry.js';
+
 const r4 = (v) => { const q = Math.round(v * 1e4) / 1e4; return q === 0 ? 0 : q; };   // bez −0
 const byBowThenPort = (a, b) => (b[0] - a[0]) || (a[1] - b[1]);
 
@@ -34,13 +36,39 @@ function alongAcross(m) {
 }
 
 /**
+ * Pudło SYLWETKI kadłuba [j.] dokładniej niż `field.bounds` (to pudło komórek siatki pola z zapasem teksela): przejście
+ * pola ramy przez zero szukane bisekcją w pasie przy każdej krawędzi pudła siatki. Zwraca { minX, maxX, minY, maxY }.
+ */
+export function hullSilhouetteBox(field, samples = 240) {
+  const b = field.bounds, inv = 1 / field.grid.res;
+  const d = (x, y) => sampleHullField(field, 0, x, y);
+  // skrajny punkt wzdłuż osi `ax` ('x' | 'y') w kierunku `dir` (±1)
+  const edge = (ax, dir) => {
+    const far = ax === 'x' ? (dir > 0 ? b.maxX : b.minX) : (dir > 0 ? b.maxY : b.minY);
+    const t0 = ax === 'x' ? b.minY : b.minX, t1 = ax === 'x' ? b.maxY : b.maxX;
+    const at = (v, t) => (ax === 'x' ? d(v, t) : d(t, v));
+    let best = far - dir * 3 * inv;
+    for (let k = 0; k <= samples; k++) {
+      const t = t0 + (t1 - t0) * k / samples;
+      let lo = far - dir * 3 * inv, hi = far + dir * inv;        // lo — wewnątrz, hi — na zewnątrz
+      if (at(lo, t) > 0 || at(hi, t) <= 0) continue;
+      for (let i = 0; i < 14; i++) { const mid = (lo + hi) * 0.5; if (at(mid, t) <= 0) lo = mid; else hi = mid; }
+      if ((lo - best) * dir > 0) best = lo;
+    }
+    return best;
+  };
+  return { minX: edge('x', -1), maxX: edge('x', 1), minY: edge('y', -1), maxY: edge('y', 1) };
+}
+
+/**
  * Osprzęt roboczy projektu. `field` — buildHullField(projekt) (sylwetka `bounds`, moduły rozwinięte). Zwraca obiekt
  * z polami opisanymi w nagłówku (ułamki L, 4 miejsca po przecinku) albo sam { L, W, front }, gdy projekt nie ma
  * żadnego osprzętu roboczego. `hasWorkRig(rig)` — czy ma.
  */
 export function hullDesignWorkRig(field) {
-  const b = field.bounds;
-  const L = b.maxX - b.minX, cx = (b.minX + b.maxX) * 0.5, cy = (b.minY + b.maxY) * 0.5;
+  const b = hullSilhouetteBox(field);
+  // oś okrętu z lustrem to y = 0 projektu (pudło sylwetki z siatki pola bywa o ułamek teksela niesymetryczne)
+  const L = b.maxX - b.minX, cx = (b.minX + b.maxX) * 0.5, cy = field.expanded.design.mirror ? 0 : (b.minY + b.maxY) * 0.5;
   const fx = (x) => r4((x - cx) / L), fy = (y) => r4((y - cy) / L), fl = (v) => r4(v / L);
   const pt = (m) => [fx(m.x), fy(m.y)];
   const dir = (m) => [r4(Math.cos(m.rot || 0)), r4(Math.sin(m.rot || 0))];

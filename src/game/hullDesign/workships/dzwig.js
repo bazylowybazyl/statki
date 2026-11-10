@@ -60,7 +60,7 @@ function make() {
     workStripe(-98, -98, -98, 98, 4, { mirror: false }),
     workStripe(98, -98, 98, 98, 4, { mirror: false })
   ];
-  return workship('Dźwig', 99, 0.32, { grid: 4, shapes, modules, castles, decals, cargoLoad: 0.55 });
+  return workship('Dźwig', 99, 0.32, { grid: 4, shapes, modules, castles, decals });
 }
 
 export default { key: 'dzwig', label: 'Roboczy · Dźwig', cls: [4, 4], make };

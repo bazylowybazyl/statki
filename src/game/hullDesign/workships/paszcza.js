@@ -23,7 +23,7 @@ function make() {
     // ── RAMA ──
     frameBlk(STERN, -H_STERN, NECK, H_STERN, { c: [20, 0, 0, 20] }),
     frameBlk(NECK, -H_BODY, HEAD, H_BODY),
-    frameBlk(HEAD, -H_HEAD, BOW, H_HEAD, { c: [16, 44, 44, 16] }),
+    frameBlk(HEAD, -H_HEAD, BOW, 0, { c: [16, 44, 14, 0] }),          // głowa: połówka = szczęka (wcięcie V na osi dziobu)
 
     // ── RUFA: pawęż, rów T1, pokład z nadbudówką (mostek IV), pasy burt ──
     blk('rect', STERN, -H_STERN, -352, H_STERN, 1, { c: [14, 0, 0, 14] }),
@@ -36,7 +36,7 @@ function make() {
     blk('rect', NECK, ROOF, HEAD - 8, -ROOF, 1, { c: [6, 6, 6, 6] }),
     blk('rect', NECK, -H_BODY, HEAD - 8, -94),
     // ── GŁOWA: pokład szczęk, policzki z siłownikami ──
-    blk('rect', HEAD, -H_HEAD, BOW, H_HEAD, 1, { c: [16, 44, 44, 16] }),
+    blk('rect', HEAD, -H_HEAD, BOW, 0, 1, { c: [16, 44, 14, 0], gap: 0 }),
     blk('rect', 166, -H_HEAD, 222, -102, 2, { c: [8, 0, 0, 0] })
   ];
   for (const x of RIBS) shapes.push(blk('rect', x, -H_BODY, x + 24, -98, 2));
