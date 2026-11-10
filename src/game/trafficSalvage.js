@@ -15,8 +15,15 @@
  *     w `MiningView`), złomiarz tnie (palniki, iskry, odłamki), holuje (wiązka przy linie).
  * Kontenery-łup zniszczonego statku ruchu to osobne paczki (`lootContainers.js`) — złomiarz ich nie bierze.
  *
+ * CIĘCIE JAKO PROCES (reguła `zlomowanie`): z hakami `hooks.scrap` złomiarz nie zdejmuje węzłów od krawędzi, tylko
+ * prowadzi pracę z `scrapProcess.js` — wiązki podają wrak do dziobu, wysięgniki tną go rzazem na sekcje, paszcza
+ * je miele. Bez tych haków (testy przepływu) zostaje dawne zdejmowanie węzłów (`hooks.cut`).
+ *
  * Czysty moduł: bez three, DOM i `window`; gra podaje most, bańkę i haki.
  */
+
+import { SCRAP_TUNE, stepScrapJob, releaseScrapJob, estimateScrapSeconds } from './scrapProcess.js';
+import { SCRAP_RIG_DEFAULT } from '../data/scrapRigs.js';
 
 export const TRAFFIC_SALVAGE_TUNE = {
   /** Wrak idzie do rejestru po tylu sekundach gry: uspokaja się, a strata garnizonu (`destroyed`) idzie pierwsza. */
@@ -81,6 +88,8 @@ export function createTrafficSalvage(bridge, hooks = {}, options = {}) {
     bridge,
     hooks,
     tune: { ...TRAFFIC_SALVAGE_TUNE, ...(options.tune || {}) },
+    /** Nastawy procesu złomowania (`scrapProcess.js`) — strojenie na żywo: `TrafficSalvage.scrapTune`. */
+    scrapTune: { ...SCRAP_TUNE, ...(options.scrapTune || {}) },
     nextGid: 1,
     /** Wraki czekające na zgłoszenie: { wreck, at, spec }. */
     pending: [],
@@ -99,7 +108,7 @@ export function createTrafficSalvage(bridge, hooks = {}, options = {}) {
     /** Dziennik zdarzeń (narzędzia) i czas mostu ostatniego kroku. */
     log: [],
     clock: 0,
-    stats: { reported: 0, gone: 0, cutNodes: 0, removed: 0, ropes: 0, towed: 0 }
+    stats: { reported: 0, gone: 0, cutNodes: 0, removed: 0, ropes: 0, towed: 0, scrapJobs: 0 }
   };
 }
 
@@ -141,7 +150,7 @@ export function onTrafficSalvageTaken(ts, list) {
 
 function removeReported(ts, gid, reason) {
   const rec = ts.reported.get(gid);
-  if (!rec) return;
+  if (!rec) { ts.taken.delete(gid); return; }
   ts.reported.delete(gid);
   ts.taken.delete(gid);
   const remove = ts.hooks.remove;
@@ -181,7 +190,25 @@ function promoteExtra(ts, rec) {
 function dropJob(ts, id, job) {
   if (job.rope && ts.hooks.detachRope) ts.hooks.detachRope(job.rope);
   if (job.wreck) job.wreck.noWreckSleep = false;
+  haltScrap(job);
+  releaseScrapJob(job);
   ts.jobs.delete(id);
+}
+
+/** Praca przerwana (gracz zajął wrak, holownik odleciał): kawałki wraku stają — wiązki już ich nie prowadzą. */
+function haltScrap(job) {
+  const S = job.scrap;
+  if (!S) return;
+  for (const w of [S.stock, S.section]) {
+    if (!w || w.dead) continue;
+    w.vx = 0;
+    w.vy = 0;
+    if (w.vel) { w.vel.x = 0; w.vel.y = 0; }
+    w.angVel = 0;
+  }
+  S.grip = 0;
+  S.maw = 0;
+  for (const arm of S.arms) arm.torch = 0;
 }
 
 /**
@@ -225,7 +252,11 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       ts.gidOf.set(w, gid);
       if (w.beamHull?.body) ts.gidOf.set(w.beamHull.body, gid);
       ts.reported.set(gid, { wreck: w, gid, extras: [], lastX: x, lastY: y, spec: p.spec });
-      (out || (out = [])).push({ gid, x, y, r: Number(w.radius) || 0, ...p.spec });
+      // Cięcie jako proces: czas pracy z wielkości wraku — świat ruchu daje złomiarzowi taki postój przy cięciu.
+      const work = H.scrap && H.nodes ? estimateScrapSeconds({
+        nodes: H.nodes(w), cellSize: H.scrap.cellSize(w), radius: Number(w.radius) || 0
+      }, ts.scrapTune) : 0;
+      (out || (out = [])).push({ gid, x, y, r: Number(w.radius) || 0, ...p.spec, ...(work > 0 ? { work: Math.round(work) } : null) });
       ts.stats.reported++;
       note(ts, `zgloszony:${Math.round(Number(w.radius) || 0)}:${p.from || '-'}${p.body ? ':cialo' : ''}`, gid);
     }
@@ -261,8 +292,10 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
     ts.reported.delete(gid);
     const hooked = ts.taken.delete(gid);
     const far = (rec.lastX - px) ** 2 + (rec.lastY - py) ** 2 > far2;
-    note(ts, hooked ? 'zniknal-na-haku' : far ? 'zniknal-daleko' : rec.playerHold ? 'gracz-zabral' : 'zniknal', gid);
-    if (hooked || far) continue;
+    // Cięcie jako proces: wrak zmielony do końca przed końcem postoju to praca wykonana, nie „wrak przepadł”.
+    const loaded = rec.loaded === true;
+    note(ts, hooked ? 'zniknal-na-haku' : loaded ? 'zmielony' : far ? 'zniknal-daleko' : rec.playerHold ? 'gracz-zabral' : 'zniknal', gid);
+    if (hooked || far || loaded) continue;
     (gone || (gone = [])).push(gid);
     ts.stats.gone++;
   }
@@ -281,6 +314,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
         const held = ts.jobs.get(rec.id);
         if (held) {
           if (held.rope) { H.detachRope?.(held.rope); held.rope = null; }
+          if (held.active) haltScrap(held);
           held.active = false;
         }
         continue;
@@ -299,11 +333,18 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       const dx = wreckX(w) - a.cx;
       const dy = wreckY(w) - a.cy;
       const near = dx * dx + dy * dy <= T.workRange * T.workRange;
+      const was = job.active;
       job.active = at && near;
-      if (!job.active) continue;
+      if (!job.active) { if (was) haltScrap(job); continue; }
       if (w.isCold && H.thaw && !H.thaw(w)) { job.active = false; continue; }
-      if (rec.kind === 'cut') stepCut(ts, job, w, rec, time);
-      else stepTow(ts, job, w, a, dt, rec.phase === 'haul');
+      if (rec.kind === 'cut') {
+        if (H.scrap) {
+          if (!job.scrap) ts.stats.scrapJobs++;
+          const S = stepScrapJob(ts, job, entry, rec, a, time, dt);
+          // Reszta wraku jest już w paszczy: gdy zniknie do końca, to praca wykonana (nie „wrak przepadł”).
+          if (S.phase === 'done' || (S.last && !S.stock)) entry.loaded = true;
+        } else stepCut(ts, job, w, rec, time);
+      } else stepTow(ts, job, w, a, dt, rec.phase === 'haul');
     }
   }
   // 4. Koniec pracy z workera i holowniki, które zniknęły z bańki.
@@ -417,14 +458,55 @@ function towFollow(job, w, a, T) {
 /** Wraki, których dotyka praca złomiarza (lina, cięcie) — gra stempluje je w `markColdWreckReferences`. */
 export function forEachTrafficSalvageWreck(ts, fn) {
   if (!ts) return;
-  for (const job of ts.jobs.values()) if (job.active || job.rope) fn(job.wreck);
+  for (const job of ts.jobs.values()) {
+    if (!job.active && !job.rope) continue;
+    fn(job.wreck);
+    // Cięcie jako proces: reszta wraku, sekcja w paszczy i kolejka sekcji to osobne encje tej samej pracy.
+    const S = job.scrap;
+    if (!S) continue;
+    if (S.stock && S.stock !== job.wreck) fn(S.stock);
+    if (S.section && S.section !== job.wreck) fn(S.section);
+    for (let i = 0; i < S.queue.length; i++) if (S.queue[i] !== job.wreck) fn(S.queue[i]);
+  }
 }
 
 /**
  * Ramka obrazu pracy w chwili klatki renderu `t` (czas mostu): górnik przy polu, złomiarz tnie (punkt cięcia na
  * brzegu wraku od strony holownika), holuje (rufa → wrak). Rekordy: { kind, id, x, y, angle, length, tx, ty, tr,
- * k (0–1 postęp), haul }. `poseAt(a, t, out)` — poza encji w chwili klatki (`trafficActorPoseAt`).
+ * k (0–1 postęp), haul, scrap, aux }. `poseAt(a, t, out)` — poza encji w chwili klatki (`trafficActorPoseAt`).
+ * Cięcie jako proces (`scrap` = true): `aux` niesie pozy w UKŁADZIE STATKU (`TRAFFIC_WORK_AUX`) — głowice i podstawy
+ * wysięgników, palniki, długość członu, zaczepy wiązek trzymających wrak, paszczę.
  */
+export const TRAFFIC_WORK_AUX = Object.freeze({
+  /** Wysięgnik i (0, 1): od `ARM + i · ARM_STRIDE` — głowica x, y, palnik 0–1, podstawa x, y. */
+  ARM: 0, ARM_STRIDE: 5, HX: 0, HY: 1, TORCH: 2, MX: 3, MY: 4,
+  SEG: 10,
+  /** Wiązki trzymające: cel na wraku (2 × x, y), siła 0–1, emitery na dziobie (2 × x, y). */
+  G0X: 11, G0Y: 12, G1X: 13, G1Y: 14, GRIP: 15, E0X: 16, E0Y: 17, E1X: 18, E1Y: 19,
+  /** Paszcza: punkt x, y i praca 0–1. */
+  MAW_X: 20, MAW_Y: 21, MAW: 22,
+  COUNT: 24
+});
+
+function fillScrapAux(aux, S, rig, L) {
+  const A = TRAFFIC_WORK_AUX;
+  for (let i = 0; i < 2; i++) {
+    const arm = S.arms[i];
+    const o = A.ARM + i * A.ARM_STRIDE;
+    aux[o + A.HX] = arm.hx;
+    aux[o + A.HY] = arm.hy;
+    aux[o + A.TORCH] = arm.torch;
+    aux[o + A.MX] = rig.mounts[i][0] * L;
+    aux[o + A.MY] = rig.mounts[i][1] * L;
+  }
+  aux[A.SEG] = S.seg > 0 ? S.seg : rig.segMin * L;
+  aux[A.G0X] = S.g0x; aux[A.G0Y] = S.g0y; aux[A.G1X] = S.g1x; aux[A.G1Y] = S.g1y;
+  aux[A.GRIP] = S.grip;
+  aux[A.E0X] = rig.grapples[0][0] * L; aux[A.E0Y] = rig.grapples[0][1] * L;
+  aux[A.E1X] = rig.grapples[1][0] * L; aux[A.E1Y] = rig.grapples[1][1] * L;
+  aux[A.MAW_X] = rig.maw[0] * L; aux[A.MAW_Y] = rig.maw[1] * L;
+  aux[A.MAW] = S.maw;
+}
 export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
   const out = ts.frame;
   out.count = 0;
@@ -437,6 +519,7 @@ export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
     let tx = rec.x;
     let ty = rec.y;
     let tr = 0;
+    let scrap = null;
     if (rec.kind === 'mine') {
       if (rec.phase !== 'work' || a.phase !== 'station') continue;
       kind = TRAFFIC_WORK_KIND.MINE;
@@ -450,10 +533,14 @@ export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
       tx = wreckX(w);
       ty = wreckY(w);
       tr = Number(w.radius) || 200;
+      if (kind === TRAFFIC_WORK_KIND.CUT && job.scrap && job.active) scrap = job.scrap;
     }
     let r = out.list[out.count];
     if (!r) {
-      r = { kind: 0, id: 0, x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN, length: 0, tx: 0, ty: 0, tr: 0, k: 0, haul: false };
+      r = {
+        kind: 0, id: 0, x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN, length: 0, tx: 0, ty: 0, tr: 0, k: 0,
+        haul: false, scrap: false, aux: new Float32Array(TRAFFIC_WORK_AUX.COUNT)
+      };
       out.list[out.count] = r;
     }
     if (poseAt) poseAt(a, t, r);
@@ -466,6 +553,11 @@ export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
     r.tr = tr;
     r.k = rec.dur > 0 ? Math.min(1, Math.max(0, (t - rec.t0) / rec.dur)) : 1;
     r.haul = rec.phase === 'haul';
+    r.scrap = !!scrap;
+    if (scrap) {
+      const rig = (ts.hooks.scrap?.rig && ts.hooks.scrap.rig(a)) || SCRAP_RIG_DEFAULT;
+      fillScrapAux(r.aux, scrap, rig, r.length);
+    }
     out.count++;
   }
   return out;

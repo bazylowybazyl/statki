@@ -112,7 +112,7 @@ export function assessWreck(wreck, station, config = SCRAPPER_MODEL) {
   const towCost = tow ? dist * config.costPerUnit
     * (1 + config.towSpeedPenalty + tow.mass / config.towMassScale) : Infinity;
 
-  const cutTime = lot * 2 + config.cutSeconds;
+  const cutTime = lot * 2 + cutWorkSeconds(wreck, config);
   const towTime = lot * (1 + config.towSpeedPenalty) + config.hookSeconds;
 
   const cutProfit = cut.value - cutCost;
@@ -180,7 +180,7 @@ export function dispatchScrappers(scrappers, options = {}) {
     if (!best) continue;
 
     const { station, ocena } = best;
-    const praca = ocena.mode === 'cut' ? config.cutSeconds : config.hookSeconds;
+    const praca = ocena.mode === 'cut' ? cutWorkSeconds(wreck, config) : config.hookSeconds;
     const spot = workSpot(wreck, station);
     const lot = ocena.distance / config.cruiseSpeed;
     const powrot = ocena.mode === 'tow' ? lot * config.towSpeedPenalty : lot;
@@ -232,6 +232,15 @@ export function dispatchScrappers(scrappers, options = {}) {
  * (palniki, zaczep liny). Czasy kursu liczą się z odległości do wraku jak dawniej.
  */
 const WORK_STANDOFF = 420;
+
+/**
+ * Czas cięcia wraku na miejscu. Wrak gry (E24) z szacunkiem pracy ze zgłoszenia (`work` — cięcie jako proces,
+ * `src/game/scrapProcess.js`: czas z wielkości wraku) stoi tyle, ile trwa praca w grze; pozostałe — stałe `cutSeconds`
+ * (wraki wojen w tle: symulacja bez zmian).
+ */
+function cutWorkSeconds(wreck, config) {
+  return wreck.game != null && wreck.work > 0 ? wreck.work : config.cutSeconds;
+}
 function workSpot(wreck, station) {
   if (wreck.game == null) return { x: wreck.x, y: wreck.y };
   const dx = (station.x || 0) - wreck.x;
@@ -366,6 +375,8 @@ function gameWreckRecord(war, spec, x, y, now, delay = SCRAPPER_MODEL.gameWreckD
     x, y,
     /** Promień wraku gry [j.] — złomiarz staje przed nim (`workSpot`), nie w środku. */
     r: Math.max(0, Number(spec.r) || 0),
+    /** Szacunek czasu cięcia z gry [s] (0 — stałe `cutSeconds`). */
+    work: Math.max(0, Number(spec.work) || 0),
     claimed: false,
     game: spec.gid,
     salvage,
@@ -398,11 +409,11 @@ export function reportGameWrecks(scrappers, war, list, options = {}) {
       const readyAt = (Number(options.now) || 0) + config.gameWreckDelay;
       const linked = war.wrecks.find(w => w.source === source && w.game == null);
       if (linked) {
-        bindGameWreck(war, linked, { gid, x, y, r: spec.r, readyAt }, scrappers);
+        bindGameWreck(war, linked, { gid, x, y, r: spec.r, work: spec.work, readyAt }, scrappers);
         continue;
       }
       if (typeof options.isLossSource === 'function' && options.isLossSource(source)) {
-        war.gameWreckLinks.set(source, { gid, x, y, r: spec.r, classId: spec.classId, at: Number(options.now) || 0, readyAt });
+        war.gameWreckLinks.set(source, { gid, x, y, r: spec.r, work: spec.work, classId: spec.classId, at: Number(options.now) || 0, readyAt });
         continue;
       }
     }
@@ -427,6 +438,7 @@ export function bindGameWreck(war, wreck, link, scrappers = null) {
   wreck.x = link.x;
   wreck.y = link.y;
   wreck.r = Math.max(0, Number(link.r) || 0);
+  wreck.work = Math.max(0, Number(link.work) || 0);
   wreck.readyAt = Number(link.readyAt) || 0;
   war.gameWrecks.set(link.gid, wreck);
   if (scrappers) scrappers.stats.gameLinked++;
@@ -493,7 +505,7 @@ function expireGameWrecks(scrappers, war, now) {
     if (!(now - link.at > 60)) continue;
     war.gameWreckLinks.delete(source);
     if (war.gameWrecks.has(link.gid) || war.gameWrecks.size >= config.maxGameWrecks) continue;
-    const wreck = gameWreckRecord(war, { gid: link.gid, classId: link.classId, r: link.r }, link.x, link.y, link.at, config.gameWreckDelay);
+    const wreck = gameWreckRecord(war, { gid: link.gid, classId: link.classId, r: link.r, work: link.work }, link.x, link.y, link.at, config.gameWreckDelay);
     war.wrecks.unshift(wreck);
     war.gameWrecks.set(link.gid, wreck);
     scrappers.stats.gameReported++;
