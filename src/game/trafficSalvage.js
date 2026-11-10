@@ -191,27 +191,62 @@ function promoteExtra(ts, rec) {
 }
 
 function dropJob(ts, id, job) {
-  if (job.rope && ts.hooks.detachRope) ts.hooks.detachRope(job.rope);
-  if (job.wreck) job.wreck.noWreckSleep = false;
-  haltScrap(job);
-  releaseScrapJob(job);
+  const H = ts.hooks;
+  if (job.rope && H.detachRope) H.detachRope(job.rope);
+  const busy = H.playerBusy || null;
+  if (job.wreck && !(busy && busy(job.wreck))) job.wreck.noWreckSleep = false;
+  haltScrap(ts, job);
+  releaseScrapJob(job, busy);
+  // Praca skończyła się bez końca postoju (holownik stracony, wyszedł z bańki): wrak wraca do puli jako zwykły wrak —
+  // „reszta w paszczy” przestaje obowiązywać, a każdy kawałek tej pracy może znów zasnąć.
+  const entry = ts.reported.get(job.gid);
+  if (entry && !ts.taken.has(job.gid)) {
+    entry.loaded = false;
+    freeSleep(entry.wreck, busy);
+    for (let i = 0; i < entry.extras.length; i++) freeSleep(entry.extras[i], busy);
+  }
   ts.jobs.delete(id);
 }
 
-/** Praca przerwana (gracz zajął wrak, holownik odleciał): kawałki wraku stają — wiązki już ich nie prowadzą. */
-function haltScrap(job) {
+function freeSleep(w, busy) {
+  if (w && !w.dead && !(busy && busy(w))) w.noWreckSleep = false;
+}
+
+function stopPiece(w, busy) {
+  if (!w || w.dead || (busy && busy(w))) return;
+  w.vx = 0;
+  w.vy = 0;
+  if (w.vel) { w.vel.x = 0; w.vel.y = 0; }
+  w.angVel = 0;
+}
+
+/**
+ * Praca przerwana (gracz zajął wrak, holownik odleciał): kawałki wraku stają — wiązki już ich nie prowadzą. Kawałka,
+ * przy którym pracuje gracz (hol, cięcie), nie rusza.
+ */
+function haltScrap(ts, job) {
   const S = job.scrap;
   if (!S) return;
-  for (const w of [S.stock, S.section]) {
-    if (!w || w.dead) continue;
-    w.vx = 0;
-    w.vy = 0;
-    if (w.vel) { w.vel.x = 0; w.vel.y = 0; }
-    w.angVel = 0;
-  }
+  const busy = ts.hooks.playerBusy || null;
+  stopPiece(S.stock, busy);
+  stopPiece(S.section, busy);
+  stopPiece(S.keep, busy);
+  // Kawałek w kolejce do paszczy niesie prędkość z podawania — też staje.
+  for (let i = 0; i < S.queue.length; i++) stopPiece(S.queue[i], busy);
   S.grip = 0;
   S.maw = 0;
-  for (const arm of S.arms) arm.torch = 0;
+  for (let i = 0; i < S.arms.length; i++) S.arms[i].torch = 0;
+}
+
+/** Gracz pracuje przy którymkolwiek kawałku wraku (reszta, sekcja, odłam) — pierwszeństwo dotyczy całej pracy. */
+function entryBusy(H, rec) {
+  if (!H.playerBusy) return false;
+  if (rec.wreck && !rec.wreck.dead && H.playerBusy(rec.wreck)) return true;
+  for (let i = 0; i < rec.extras.length; i++) {
+    const w = rec.extras[i];
+    if (w && !w.dead && H.playerBusy(w)) return true;
+  }
+  return false;
 }
 
 /**
@@ -277,7 +312,13 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       // potem wypada — bez `wreck-gone`. Zwykle zdejmuje go wcześniej `salvage-taken`.
       let held = false;
       for (const job of ts.jobs.values()) if (job.gid === gid) { held = true; break; }
-      if (!held) { ts.reported.delete(gid); ts.taken.delete(gid); }
+      if (!held) {
+        // Praca przepadła bez końca postoju (holownik stracony): wraku już nie ma — worker nie wyśle po niego drugiego.
+        ts.reported.delete(gid);
+        const done = ts.taken.delete(gid);
+        const away = (rec.lastX - px) ** 2 + (rec.lastY - py) ** 2 > far2;
+        if (!done && !away) { (gone || (gone = [])).push(gid); ts.stats.gone++; note(ts, 'zmielony-bez-pracy', gid); }
+      }
       continue;
     }
     let w = rec.wreck;
@@ -289,9 +330,11 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
     }
     if (!lost) {
       // Gracz ma pierwszeństwo: tnie, holuje albo zbiera łup — złomiarze czekają (`wreck-hold`), wrak zostaje w rejestrze.
-      const busy = !!(H.playerBusy && H.playerBusy(w));
+      const busy = entryBusy(H, rec);
       if (busy !== !!rec.playerHold) {
         rec.playerHold = busy;
+        // Gracz wziął wrak (albo jego kawałek): to, co zniknie, zabrał on — nie paszcza złomiarza.
+        if (busy) rec.loaded = false;
         if (busy) (holdOn || (holdOn = [])).push(gid);
         else (holdOff || (holdOff = [])).push(gid);
         note(ts, busy ? 'gracz-pracuje' : 'gracz-zostawil', gid);
@@ -329,7 +372,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
         const held = ts.jobs.get(rec.id);
         if (held) {
           if (held.rope) { H.detachRope?.(held.rope); held.rope = null; }
-          if (held.active) haltScrap(held);
+          if (held.active) haltScrap(ts, held);
           held.active = false;
         }
         continue;
@@ -350,7 +393,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       const near = dx * dx + dy * dy <= T.workRange * T.workRange;
       const was = job.active;
       job.active = at && near;
-      if (!job.active) { if (was) haltScrap(job); continue; }
+      if (!job.active) { if (was) haltScrap(ts, job); continue; }
       if (w.isCold && !w.dead && H.thaw && !H.thaw(w)) { job.active = false; continue; }
       if (rec.kind === 'cut') {
         if (H.scrap) {
@@ -367,7 +410,11 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
     const a = tb?.byId?.get(id);
     const present = !!(a && a.alive);
     const rec = works?.get(id);
-    if (!rec) job.active = false;
+    if (!rec) {
+      // Rekord pracy zniknął (koniec postoju dochodzi osobną wiadomością): wiązki puszczają kawałki od razu.
+      if (job.active) haltScrap(ts, job);
+      job.active = false;
+    }
     if (!ts.reported.has(job.gid)) { dropJob(ts, id, job); continue; }
     // Holownik zestrzelony albo awansowany do NPC: kurs w workerze przepada, wrak wraca do puli — zostaje w grze.
     const lostTug = !present && (tb?.dead?.has(id) || tb?.promoted?.has(id));

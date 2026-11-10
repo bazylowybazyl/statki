@@ -219,3 +219,121 @@ test('moduł złomiarzy: zgłoszenie niesie czas pracy, ramka obrazu — pozy wy
   assert.equal(window.wrecks.filter((w) => !w.dead && nodesOf(w) > 0).length, 0, 'po pracy nie zostaje żaden kawałek');
   assert.equal(ts.jobs.size, 0);
 });
+
+/** Moduł złomiarzy na prawdziwym silniku: wrak zgłoszony, złomiarz (kurs 7) w postoju przy nim. */
+function moduleSetup(wreck, opts = {}) {
+  const calls = { reports: [], gone: [], hold: [] };
+  const works = new Map();
+  const bridge = {
+    actorWorks: works,
+    reportWrecks: (l) => calls.reports.push(...l),
+    wrecksGone: (l) => calls.gone.push(...l),
+    wrecksHold: (l, on) => calls.hold.push({ gids: l.slice(), on })
+  };
+  const busy = { piece: null };
+  const ts = createTrafficSalvage(bridge, {
+    alive: (w) => !w.dead,
+    nodes: nodesOf,
+    remove: (w) => { w.dead = true; },
+    playerBusy: (w) => w === busy.piece,
+    scrap: scrapHooks()
+  });
+  HullBodies.onWreckSpawned = (w, parent, parentBody) => noteTrafficWreck(ts, w, null, 0, parent, parentBody);
+  noteTrafficWreck(ts, wreck, { classId: 'frigate', scale: 1, towable: false }, 0);
+  stepTrafficSalvage(ts, null, 3, DT, 0, 0);
+  const gid = calls.reports[0].gid;
+  const a = { id: 7, cx: 0, cy: 0, ca: 0, length: 700, vx: 0, vy: 0, alive: true, phase: 'station' };
+  const tb = { byId: new Map([[7, a]]), dead: new Set(), promoted: new Set() };
+  works.set(7, { id: 7, kind: 'cut', phase: 'work', x: wreck.x, y: wreck.y, t0: 3, dur: opts.dur || calls.reports[0].work, gid });
+  const env = { ts, tb, a, works, calls, busy, gid, time: 3 };
+  env.run = (until, limit = 60 * 300) => {
+    for (let k = 0; k < limit; k++) {
+      stepTrafficSalvage(ts, tb, env.time, DT, 0, 0);
+      if (until(ts.jobs.get(7), ts.reported.get(gid))) return true;
+      worldStep();
+      env.time += DT;
+    }
+    return false;
+  };
+  return env;
+}
+
+test('pierwszeństwo gracza obejmuje każdy kawałek pracy: zajęty odłam wstrzymuje złomiarza i zostaje nietknięty', () => {
+  window.wrecks.length = 0;
+  const env = moduleSetup(makeWreck(1500, 0, 0.3));
+  const { ts, calls, busy, gid } = env;
+  // Do mielenia pierwszej sekcji: wpis rejestru ma wtedy co najmniej dwa kawałki (reszta wraku i sekcja).
+  assert.ok(env.run((job) => job?.scrap?.phase === 'chew' && job.scrap.section && job.scrap.stock), 'doszło do mielenia sekcji');
+  const job = ts.jobs.get(7);
+  const entry = ts.reported.get(gid);
+  // Gracz bierze kawałek, który NIE jest wrakiem wpisu rejestru.
+  const piece = job.scrap.stock !== entry.wreck ? job.scrap.stock : job.scrap.section;
+  assert.notEqual(piece, entry.wreck);
+  busy.piece = piece;
+  piece.vx = 33;
+  piece.noWreckSleep = true;
+  stepTrafficSalvage(ts, env.tb, env.time, DT, 0, 0);
+  assert.deepEqual(calls.hold, [{ gids: [gid], on: true }], 'wreck-hold dla całej pracy');
+  assert.equal(job.active, false);
+  assert.equal(piece.vx, 33, 'wiązki nie ruszają kawałka gracza');
+  assert.equal(entry.loaded, false);
+  // Holownik odlatuje (rekord pracy znika, encja wychodzi z bańki): kawałek gracza zostaje obudzony i w ruchu.
+  env.works.delete(7);
+  env.tb.byId.delete(7);
+  stepTrafficSalvage(ts, env.tb, env.time + DT, DT, 0, 0);
+  assert.equal(ts.jobs.size, 0);
+  assert.equal(piece.vx, 33);
+  assert.equal(piece.noWreckSleep, true, 'lina gracza trzyma kawałek obudzony');
+  assert.equal(calls.gone.length, 0);
+});
+
+test('złomiarz stracony z resztą wraku w paszczy: wrak wraca do puli, a gdy zniknie — idzie wreck-gone', () => {
+  window.wrecks.length = 0;
+  const env = moduleSetup(makeWreck(900, -200, -0.4, 240, 150));
+  const { ts, calls, gid, tb } = env;
+  assert.ok(env.run((job, rec) => rec?.loaded === true && job?.scrap?.phase === 'chew'), 'reszta wraku w paszczy');
+  const entry = ts.reported.get(gid);
+  const piece = ts.jobs.get(7).scrap.section || entry.wreck;
+  // Holownik zestrzelony: praca przepada bez końca postoju.
+  tb.dead.add(7);
+  tb.byId.delete(7);
+  env.works.delete(7);
+  stepTrafficSalvage(ts, tb, env.time, DT, 0, 0);
+  assert.equal(ts.jobs.size, 0);
+  assert.equal(entry.loaded, false, '„reszta w paszczy” nie przeżywa pracy');
+  assert.equal(entry.wreck.noWreckSleep, false, 'kawałki mogą znów zasnąć');
+  assert.ok(ts.reported.has(gid), 'wrak zostaje w rejestrze');
+  assert.equal(piece.vx, 0);
+  // Wrak potem przepada (ostrzał) — worker musi się o tym dowiedzieć.
+  for (const w of [entry.wreck, ...entry.extras]) w.dead = true;
+  stepTrafficSalvage(ts, tb, env.time + DT, DT, 0, 0);
+  assert.deepEqual(calls.gone, [gid]);
+  assert.equal(ts.reported.size, 0);
+});
+
+test('wznowienie pracy nowym złomiarzem planuje największy kawałek, nie mały wrak wpisu rejestru', () => {
+  window.wrecks.length = 0;
+  const env = moduleSetup(makeWreck(1500, 0, 0.3));
+  const { ts, gid, tb } = env;
+  assert.ok(env.run((job) => job?.scrap?.phase === 'chew' && job.scrap.section && job.scrap.stock), 'sekcja odcięta');
+  const entry = ts.reported.get(gid);
+  const big = ts.jobs.get(7).scrap.stock;
+  // Wpis rejestru wskazuje sekcję, reszta wraku jest odłamem (tak bywa po rozpadzie ciała).
+  if (entry.wreck === big) {
+    const small = ts.jobs.get(7).scrap.section;
+    entry.extras.splice(entry.extras.indexOf(small), 1, big);
+    entry.wreck = small;
+  }
+  // Pierwszy złomiarz stracony, przylatuje drugi (kurs 8).
+  tb.dead.add(7);
+  tb.byId.delete(7);
+  env.works.delete(7);
+  stepTrafficSalvage(ts, tb, env.time, DT, 0, 0);
+  const b = { id: 8, cx: 0, cy: 0, ca: 0, length: 700, vx: 0, vy: 0, alive: true, phase: 'station' };
+  tb.byId.set(8, b);
+  env.works.set(8, { id: 8, kind: 'cut', phase: 'work', x: 0, y: 0, t0: env.time, dur: 200, gid });
+  stepTrafficSalvage(ts, tb, env.time + DT, DT, 0, 0);
+  const job = ts.jobs.get(8);
+  assert.ok(job?.scrap, 'druga praca ruszyła');
+  assert.equal(job.scrap.stock, big, 'plan z największego kawałka');
+});

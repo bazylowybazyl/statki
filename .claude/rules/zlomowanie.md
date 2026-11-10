@@ -43,6 +43,10 @@ paths:
 
 - Proces rusza encje wraków (prędkość, obrót), nigdy węzły ani `body.pos`; węzły giną tylko przez `HullBodies` (`cutSegment`, `cutNearest`).
 - Kawałek, który proces prowadzi, nie może zasnąć (`noWreckSleep`, `_wreckSleeping = false`) — uśpiony wypada z kroku i wiązki go nie ruszą; koniec albo przerwanie pracy (`releaseScrapJob`, `haltScrap`) zdejmuje flagę i zeruje prędkość, inaczej kawałek dryfuje dalej.
+- PIERWSZEŃSTWO GRACZA obejmuje każdy kawałek pracy (`entryBusy`: wrak wpisu i żywe odłamy): zajęty kawałek wstrzymuje całą pracę (`wreck-hold`), a przerwanie i koniec pracy (`haltScrap`, `releaseScrapJob`, `dropJob`) nie ruszają jego prędkości ani `noWreckSleep`.
+- `entry.loaded` („reszta wraku w paszczy”) żyje tylko z pracą: zeruje je strata pracy bez `salvage-taken` (`dropJob`) i zajęcie wraku przez gracza. Wpis `milled`, który stracił pracę bez końca postoju, wysyła `wreck-gone` (inaczej worker posłałby drugiego złomiarza w puste miejsce).
+- Wznowiona praca (drugi złomiarz, powrót do bańki) planuje NAJWIĘKSZY żywy kawałek, nie wrak wpisu rejestru (bywa małą sekcją).
+- Bez domknięć i tablic tworzonych co krok w `stepScrapJob` (krok fizyki); tłumienia w czasie (`exp(−k · dt)`), nie „na krok”.
 - Praca stempluje w `markColdWreckReferences` wszystkie swoje kawałki (`forEachTrafficSalvageWreck`: reszta wraku, sekcja w paszczy, kolejka).
 - Rzaz woła się co `cutStepCells` drogi głowicy (nie co krok): każde wywołanie to rekord mapy ran i przegląd węzłów pasa.
 - Odłam poniżej `splitMinNodes` (4) silnik zamienia w odłamki — mielona sekcja kruszy się na okruchy; licznik „zdjęte przez palniki i paszczę” jest przez to mniejszy niż liczba węzłów wraku (test: ≥ 70%).

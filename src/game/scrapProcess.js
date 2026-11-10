@@ -42,6 +42,8 @@ export const SCRAP_TUNE = {
   alignHold: 0.4,
   /** Sekcja do paszczy: prędkość podawania [j./s]; mielenie [j.² powierzchni / s], zasięg zębów [komórki]. */
   pullSpeed: 70,
+  /** Gaśnięcie obrotu sekcji w wiązce [1/s]. */
+  spinDamp: 6,
   chewArea: 6000,
   chewReachCells: 1.6,
   /** Kawałek objął paszczę i materiału w zasięgu zębów brak — po tylu sekundach zęby biorą najbliższy węzeł. */
@@ -79,7 +81,7 @@ export function createScrapState(time = 0) {
   return {
     phase: 'plan', startedAt: time,
     plan: null, cs: 0, line: 0, sNear: 0, sRef: 0, tries: 0, widen: 1,
-    stock: null, section: null, queue: [], last: false,
+    stock: null, section: null, keep: null, queue: [], last: false,
     arms: [makeArm(), makeArm()], seg: 0, segNow: 0,
     grip: 0, g0x: 0, g0y: 0, g1x: 0, g1y: 0,
     maw: 0, mawX: 0, mawY: 0,
@@ -150,18 +152,33 @@ export function estimateScrapSeconds(info, tune = SCRAP_TUNE) {
 
 /** Odłamy pracy, których proces jeszcze nie zna (rozpad sekcji w paszczy, odprysk przy cięciu) → kolejka mielenia. */
 function adoptPieces(S, entry, H) {
-  const take = (w) => {
-    if (!isAlive(H, w) || w === S.stock || w === S.section || S.queue.indexOf(w) !== -1) return;
-    S.queue.push(w);
-  };
-  take(entry.wreck);
-  for (let i = 0; i < entry.extras.length; i++) take(entry.extras[i]);
+  adoptPiece(S, H, entry.wreck);
+  for (let i = 0; i < entry.extras.length; i++) adoptPiece(S, H, entry.extras[i]);
 }
 
-/** Plan z komórek wraku, bliski koniec = ten bliżej paszczy. */
-function buildPlan(S, entry, H, T, rig, a, c, s, time, rec) {
-  const stock = entry.wreck;
-  const n = isAlive(H, stock) ? H.cells(stock, _cells) : 0;
+function adoptPiece(S, H, w) {
+  if (!isAlive(H, w) || w === S.stock || w === S.section || w === S.keep || S.queue.indexOf(w) !== -1) return;
+  S.queue.push(w);
+}
+
+function ease(from, to, k) {
+  return from + (to - from) * (k > 1 ? 1 : k);
+}
+
+/**
+ * Plan z komórek wraku, bliski koniec = ten bliżej paszczy. Planuje się NAJWIĘKSZY żywy kawałek pracy: przy
+ * wznowieniu (drugi złomiarz, powrót do bańki) wpis rejestru wskazuje bywa małą sekcję, a reszta wraku jest odłamem.
+ */
+function buildPlan(S, entry, H, T, rig, a, c, s, time, rec, nodesOf) {
+  let stock = isAlive(H, entry.wreck) ? entry.wreck : null;
+  let most = stock ? nodesOf(stock) : 0;
+  for (let i = 0; i < entry.extras.length; i++) {
+    const w = entry.extras[i];
+    if (!isAlive(H, w)) continue;
+    const k = nodesOf(w);
+    if (k > most) { most = k; stock = w; }
+  }
+  const n = stock ? H.cells(stock, _cells) : 0;
   const cs = n ? Number(H.cellSize(stock)) || 0 : 0;
   if (!(n > 0) || !(cs > 0)) { S.phase = 'done'; return; }
   const L = Number(a.length) || 0;
@@ -409,7 +426,8 @@ function stepChew(S, entry, H, T, rig, a, c, s, dt, nodesOf) {
   let sp = bite ? 0 : T.pullSpeed * S.rate;
   if (dt > 0 && sp * dt > d) sp = d / dt;
   const k = d > 1e-6 ? sp / d : 0;
-  setVel(w, (Number(a.vx) || 0) + ex * k, (Number(a.vy) || 0) + ey * k, (Number(w.angVel) || 0) * 0.9);
+  // Obrót sekcji gaśnie w czasie (stała 1/s — nie „na krok”, żeby zmiana kroku fizyki nie zmieniała gry).
+  setVel(w, (Number(a.vx) || 0) + ex * k, (Number(a.vy) || 0) + ey * k, (Number(w.angVel) || 0) * Math.exp(-T.spinDamp * dt));
   if (bite) S.starve = 0;
   else {
     // Kawałek objął paszczę (środek masy już na miejscu, a w zasięgu zębów pusto): po chwili biorą najbliższy węzeł.
@@ -443,18 +461,18 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
   const S = job.scrap || (job.scrap = createScrapState(time));
   const rig = (H.rig && H.rig(a)) || SCRAP_RIG_DEFAULT;
   const c = Math.cos(Number(a.ca) || 0), s = Math.sin(Number(a.ca) || 0);
-  const nodesOf = ts.hooks.nodes || (() => 1);
-  const gripTo = (v) => { S.grip += (v - S.grip) * Math.min(1, 3 * dt); };
+  const nodesOf = ts.hooks.nodes || one;
+  const gk = 3 * dt;
   // Człon wysięgnika wysuwa się płynnie do długości potrzebnej na bieżącą linię.
   const segWant = S.seg > 0 ? S.seg : rig.segMin * (Number(a.length) || 0);
   S.segNow = S.segNow > 0 ? S.segNow + (segWant - S.segNow) * Math.min(1, 2.5 * dt) : segWant;
 
-  if (S.phase === 'plan') buildPlan(S, entry, H, T, rig, a, c, s, time, rec);
+  if (S.phase === 'plan') buildPlan(S, entry, H, T, rig, a, c, s, time, rec, nodesOf);
   S.mawX = rig.maw[0] * (Number(a.length) || 0);
   S.mawY = rig.maw[1] * (Number(a.length) || 0);
 
   // Reszta wraku przepadła (ostrzał, rozpad): wszystko, co zostało, idzie do paszczy.
-  if (S.phase !== 'plan' && S.phase !== 'done' && S.stock && !isAlive(H, S.stock)) {
+  if ((S.phase === 'feed' || S.phase === 'cut' || (S.phase !== 'plan' && S.phase !== 'done' && S.stock)) && !isAlive(H, S.stock)) {
     S.stock = null;
     S.last = true;
     adoptPieces(S, entry, H);
@@ -463,7 +481,7 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
 
   if (S.phase === 'feed') {
     stowArms(S, T, rig, a, dt);
-    gripTo(1);
+    S.grip = ease(S.grip, 1, gk);
     S.maw = 0;
     holdStock(S, H, T, rig, a, c, s);
     if (S.posErr <= T.alignPos && S.angErr <= T.alignAng) S.hold += dt * S.rate; else S.hold = 0;
@@ -482,7 +500,7 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
       }
     }
   } else if (S.phase === 'cut') {
-    gripTo(1);
+    S.grip = ease(S.grip, 1, gk);
     holdStock(S, H, T, rig, a, c, s);
     let done = true;
     for (let i = 0; i < 2; i++) {
@@ -491,14 +509,19 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
     }
     if (done) { S.wait = T.settle; S.phase = 'settle'; }
   } else if (S.phase === 'settle') {
-    gripTo(1);
+    S.grip = ease(S.grip, 1, gk);
     if (isAlive(H, S.stock)) holdStock(S, H, T, rig, a, c, s);
     S.wait -= dt;
     if (S.wait <= 0) {
       if (sortPieces(S, entry, H, T)) {
-        S.phase = S.queue.length ? 'chew' : 'feed';
-        if (S.phase === 'feed') S.sRef = S.sNear;
-        if (!S.stock) S.last = true;
+        if (!S.stock) {
+          // Za linią nic nie zostało (okruchy, ostrzał): to, co jest w kolejce, to już końcówka pracy.
+          S.last = true;
+          S.phase = 'chew';
+        } else {
+          S.phase = S.queue.length ? 'chew' : 'feed';
+          if (S.phase === 'feed') S.sRef = S.sNear;
+        }
       } else {
         startLine(S, H, rig, a, c, s, true);
         S.phase = 'cut';
@@ -506,7 +529,7 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
     }
   } else if (S.phase === 'chew') {
     stowArms(S, T, rig, a, dt);
-    gripTo(isAlive(H, S.stock) ? 1 : 0);
+    S.grip = ease(S.grip, isAlive(H, S.stock) ? 1 : 0, gk);
     // Reszta wraku czeka w miejscu cięcia, aż sekcja zejdzie z drogi.
     if (isAlive(H, S.stock)) holdStock(S, H, T, rig, a, c, s);
     if (!stepChew(S, entry, H, T, rig, a, c, s, dt, nodesOf)) {
@@ -515,7 +538,7 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
     }
   } else if (S.phase === 'done') {
     stowArms(S, T, rig, a, dt);
-    gripTo(0);
+    S.grip = ease(S.grip, 0, gk);
     S.maw = 0;
     // Ostatni okruch trzymany w paszczy.
     if (S.keep && isAlive(H, S.keep)) setVel(S.keep, Number(a.vx) || 0, Number(a.vy) || 0, 0);
@@ -523,14 +546,22 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
   return S;
 }
 
-/** Koniec pracy (holownik odleciał, zestrzelony, wrak zabrany): kawałki wraku wracają do zwykłego usypiania. */
-export function releaseScrapJob(job) {
+function one() { return 1; }
+
+function freePiece(w, busy) {
+  if (w && !(busy && busy(w))) w.noWreckSleep = false;
+}
+
+/**
+ * Koniec pracy (holownik odleciał, zestrzelony, wrak zabrany): kawałki wraku wracają do zwykłego usypiania.
+ * `busy(w)` — kawałek, przy którym pracuje gracz (jego lina trzyma go obudzonego) — zostaje bez zmian.
+ */
+export function releaseScrapJob(job, busy = null) {
   const S = job?.scrap;
   if (!S) return;
-  const free = (w) => { if (w) w.noWreckSleep = false; };
-  free(S.stock);
-  free(S.section);
-  free(S.keep);
-  for (const w of S.queue) free(w);
+  freePiece(S.stock, busy);
+  freePiece(S.section, busy);
+  freePiece(S.keep, busy);
+  for (let i = 0; i < S.queue.length; i++) freePiece(S.queue[i], busy);
   job.scrap = null;
 }
