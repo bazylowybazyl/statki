@@ -24,6 +24,9 @@
 
 import { SCRAP_TUNE, stepScrapJob, releaseScrapJob, estimateScrapSeconds } from './scrapProcess.js';
 import { SCRAP_RIG_DEFAULT } from '../data/scrapRigs.js';
+import { TRAFFIC_WORK_AUX, makeTrafficWorkRecord } from '../render/blocks/trafficWorkBlock.js';
+
+export { TRAFFIC_WORK_AUX };
 
 export const TRAFFIC_SALVAGE_TUNE = {
   /** Wrak idzie do rejestru po tylu sekundach gry: uspokaja się, a strata garnizonu (`destroyed`) idzie pierwsza. */
@@ -470,24 +473,7 @@ export function forEachTrafficSalvageWreck(ts, fn) {
   }
 }
 
-/**
- * Ramka obrazu pracy w chwili klatki renderu `t` (czas mostu): górnik przy polu, złomiarz tnie (punkt cięcia na
- * brzegu wraku od strony holownika), holuje (rufa → wrak). Rekordy: { kind, id, x, y, angle, length, tx, ty, tr,
- * k (0–1 postęp), haul, scrap, aux }. `poseAt(a, t, out)` — poza encji w chwili klatki (`trafficActorPoseAt`).
- * Cięcie jako proces (`scrap` = true): `aux` niesie pozy w UKŁADZIE STATKU (`TRAFFIC_WORK_AUX`) — głowice i podstawy
- * wysięgników, palniki, długość członu, zaczepy wiązek trzymających wrak, paszczę.
- */
-export const TRAFFIC_WORK_AUX = Object.freeze({
-  /** Wysięgnik i (0, 1): od `ARM + i · ARM_STRIDE` — głowica x, y, palnik 0–1, podstawa x, y. */
-  ARM: 0, ARM_STRIDE: 5, HX: 0, HY: 1, TORCH: 2, MX: 3, MY: 4,
-  SEG: 10,
-  /** Wiązki trzymające: cel na wraku (2 × x, y), siła 0–1, emitery na dziobie (2 × x, y). */
-  G0X: 11, G0Y: 12, G1X: 13, G1Y: 14, GRIP: 15, E0X: 16, E0Y: 17, E1X: 18, E1Y: 19,
-  /** Paszcza: punkt x, y i praca 0–1. */
-  MAW_X: 20, MAW_Y: 21, MAW: 22,
-  COUNT: 24
-});
-
+/** Pozy osprzętu złomiarza do pola `aux` rekordu pracy (układ statku). */
 function fillScrapAux(aux, S, rig, L) {
   const A = TRAFFIC_WORK_AUX;
   for (let i = 0; i < 2; i++) {
@@ -499,7 +485,7 @@ function fillScrapAux(aux, S, rig, L) {
     aux[o + A.MX] = rig.mounts[i][0] * L;
     aux[o + A.MY] = rig.mounts[i][1] * L;
   }
-  aux[A.SEG] = S.seg > 0 ? S.seg : rig.segMin * L;
+  aux[A.SEG] = S.segNow > 0 ? S.segNow : rig.segMin * L;
   aux[A.G0X] = S.g0x; aux[A.G0Y] = S.g0y; aux[A.G1X] = S.g1x; aux[A.G1Y] = S.g1y;
   aux[A.GRIP] = S.grip;
   aux[A.E0X] = rig.grapples[0][0] * L; aux[A.E0Y] = rig.grapples[0][1] * L;
@@ -507,6 +493,13 @@ function fillScrapAux(aux, S, rig, L) {
   aux[A.MAW_X] = rig.maw[0] * L; aux[A.MAW_Y] = rig.maw[1] * L;
   aux[A.MAW] = S.maw;
 }
+/**
+ * Ramka obrazu pracy w chwili klatki renderu `t` (czas mostu): górnik przy polu, złomiarz tnie (punkt cięcia na
+ * brzegu wraku od strony holownika), holuje (rufa → wrak). Rekordy: { kind, id, x, y, angle, length, tx, ty, tr,
+ * k (0–1 postęp), haul, scrap, aux }. `poseAt(a, t, out)` — poza encji w chwili klatki (`trafficActorPoseAt`).
+ * Cięcie jako proces (`scrap` = true): `aux` niesie pozy w UKŁADZIE STATKU (`TRAFFIC_WORK_AUX`) — głowice i podstawy
+ * wysięgników, palniki, długość członu, zaczepy wiązek trzymających wrak, paszczę.
+ */
 export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
   const out = ts.frame;
   out.count = 0;
@@ -537,10 +530,7 @@ export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
     }
     let r = out.list[out.count];
     if (!r) {
-      r = {
-        kind: 0, id: 0, x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN, length: 0, tx: 0, ty: 0, tr: 0, k: 0,
-        haul: false, scrap: false, aux: new Float32Array(TRAFFIC_WORK_AUX.COUNT)
-      };
+      r = makeTrafficWorkRecord();
       out.list[out.count] = r;
     }
     if (poseAt) poseAt(a, t, r);

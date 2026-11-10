@@ -9,7 +9,8 @@
  *   maw      — punkt mielenia: tu sekcja znika w kadłubie,
  *   front    — dziób: przed nim (o `gap`) staje bliski koniec wraku,
  *   mounts   — podstawy dwóch wysięgników (lewy y < 0, prawy y > 0),
- *   stow     — głowice w spoczynku (ramię złożone przy burcie),
+ *   stow     — głowice w spoczynku: tuż przy podstawie, lekko na zewnątrz — ramię składa się wtedy łokciem
+ *              DO TYŁU, wzdłuż burty (scyzoryk), nie sterczy w bok,
  *   grapples — emitery wiązek trzymających wrak,
  *   section  — długość odcinanej sekcji,
  *   segMin / segMax — długość członu wysięgnika (dwa człony; wysuwany — dobierany do szerokości wraku).
@@ -19,7 +20,7 @@ export const SCRAP_RIG_DEFAULT = Object.freeze({
   front: 0.5,
   gap: 0.085,
   mounts: Object.freeze([Object.freeze([0.33, -0.105]), Object.freeze([0.33, 0.105])]),
-  stow: Object.freeze([Object.freeze([0.47, -0.2]), Object.freeze([0.47, 0.2])]),
+  stow: Object.freeze([Object.freeze([0.345, -0.165]), Object.freeze([0.345, 0.165])]),
   grapples: Object.freeze([Object.freeze([0.44, -0.07]), Object.freeze([0.44, 0.07])]),
   section: 0.3,
   segMin: 0.22,
@@ -37,8 +38,9 @@ export function scrapRigFor(hullId) {
 
 /**
  * Łokieć ramienia z dwóch równych członów `seg` między podstawą (mx, my) a głowicą (hx, hy) — układ statku.
- * `side` (±1) — strona zgięcia: łokieć odchodzi od osi statku (lewy wysięgnik w lewo, prawy w prawo). Głowica dalej
- * niż 2 · seg — ramię proste (łokieć w połowie). Wynik w `out` { x, y }.
+ * `side` (±1) — strona zgięcia: łokieć odchodzi od osi statku (lewy wysięgnik w lewo, prawy w prawo), a przy głowicy
+ * dokładnie w bok od podstawy — do tyłu (złożone ramię leży wzdłuż burty; przejście między pozami jest ciągłe).
+ * Głowica dalej niż 2 · seg — ramię proste (łokieć w połowie). Wynik w `out` { x, y }.
  */
 export function scrapArmElbow(mx, my, hx, hy, seg, side, out) {
   const dx = hx - mx;
@@ -52,7 +54,7 @@ export function scrapArmElbow(mx, my, hx, hy, seg, side, out) {
   // Prostopadła do osi podstawa → głowica; zwrot: składowa y po stronie `side`.
   let px = -dy / d;
   let py = dx / d;
-  if (py * side < 0 || (py === 0 && px * side > 0)) { px = -px; py = -py; }
+  if (py * side < 0 || (py === 0 && px > 0)) { px = -px; py = -py; }
   out.x = cx + px * h;
   out.y = cy + py * h;
   return out;

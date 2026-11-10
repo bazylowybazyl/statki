@@ -181,6 +181,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
+| `zlomowanie` | Złomowanie jako proces: komputer złomiarski (plan cięć z komórek kadłuba), podawanie wraku do dziobu, wysięgniki z laserami tnącymi, sekcje jako ciała belek, paszcza; decyzje użytkownika i etapy do zrobienia |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `kapsuly-ratunkowe` | Kapsuły ratunkowe: wyrzut po śmierci statku (bez pirackich), lot do stacji (objazd ringu i doków), obraz, radar, rozliczenie bez obrazu w workerze ruchu |
 | `mgla-wojny` | Mgła wojny |

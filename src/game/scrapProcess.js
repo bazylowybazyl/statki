@@ -40,9 +40,9 @@ export const SCRAP_TUNE = {
   alignAng: 0.025,
   alignHold: 0.4,
   /** Sekcja do paszczy: prędkość [j./s], wzmocnienie [1/s]; mielenie [j.² powierzchni / s], zasięg zębów [komórki]. */
-  pullSpeed: 85,
+  pullSpeed: 70,
   pullGain: 1.2,
-  chewArea: 9000,
+  chewArea: 6000,
   chewReachCells: 1.6,
   /** Po końcu linii: tyle sekund na rozpad ciała w kroku silnika, zanim odłamy idą do sortowania. */
   settle: 0.12,
@@ -78,7 +78,7 @@ export function createScrapState(time = 0) {
     phase: 'plan', startedAt: time,
     plan: null, cs: 0, line: 0, sNear: 0, sRef: 0, tries: 0, widen: 1,
     stock: null, section: null, queue: [], last: false,
-    arms: [makeArm(), makeArm()], seg: 0,
+    arms: [makeArm(), makeArm()], seg: 0, segNow: 0,
     grip: 0, g0x: 0, g0y: 0, g1x: 0, g1y: 0,
     maw: 0, mawX: 0, mawY: 0,
     rate: 1, hold: 0, wait: 0, chewDebt: 0,
@@ -247,6 +247,12 @@ function holdStock(S, H, T, rig, a, c, s) {
   scrapPlanPoint(plan, S.sRef + 1.2, plan.tMid + span, _g);
   const a1 = H.cellWorld(w, _g.x, _g.y, _q);
   if (a1) { S.g1x = c * (a1.x - a.cx) + s * (a1.y - a.cy); S.g1y = -s * (a1.x - a.cx) + c * (a1.y - a.cy); }
+  // Lewy emiter trzyma zaczep po lewej burcie (wiązki się nie krzyżują, gdy wrak leży odwrotnie).
+  if (S.g0y > S.g1y) {
+    const tx0 = S.g0x, ty0 = S.g0y;
+    S.g0x = S.g1x; S.g0y = S.g1y;
+    S.g1x = tx0; S.g1y = ty0;
+  }
 }
 
 /** Początek linii: przydział końców do wysięgników (lewy bierze koniec po swojej burcie) i długość członów. */
@@ -428,6 +434,9 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
   const c = Math.cos(Number(a.ca) || 0), s = Math.sin(Number(a.ca) || 0);
   const nodesOf = ts.hooks.nodes || (() => 1);
   const gripTo = (v) => { S.grip += (v - S.grip) * Math.min(1, 3 * dt); };
+  // Człon wysięgnika wysuwa się płynnie do długości potrzebnej na bieżącą linię.
+  const segWant = S.seg > 0 ? S.seg : rig.segMin * (Number(a.length) || 0);
+  S.segNow = S.segNow > 0 ? S.segNow + (segWant - S.segNow) * Math.min(1, 2.5 * dt) : segWant;
 
   if (S.phase === 'plan') buildPlan(S, entry, H, T, rig, a, c, s, time, rec);
 
