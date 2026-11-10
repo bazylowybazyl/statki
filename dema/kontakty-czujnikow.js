@@ -59,14 +59,14 @@ const DESC = {
 const NAM_VARIANTS = ['wachlarz', 'czujka', 'struna', 'blona', 'tafla', 'przyboj', 'swiatlo'];
 const NAM_TITLES = {
   czujka: '1 · CZUJKA', struna: '2 · STRUNA', blona: '3 · BŁONA', wachlarz: '0 · WACHLARZ (2. runda)',
-  tafla: '4 · TAFLA + podświetlenie', przyboj: '5 · PRZYBÓJ + podświetlenie', swiatlo: '6 · PODŚWIETLENIE'
+  tafla: '4 · TAFLA (wybrana)', przyboj: '5 · PRZYBÓJ + podświetlenie (odrzucony)', swiatlo: '6 · PODŚWIETLENIE (odrzucone)'
 };
 const NAM_DESC = {
   czujka: '<b>Czujka (PPM) = struna + błona.</b> Trzymasz PPM: błona wokół okrętu pokazuje wszystkie ciała niebieskie układu (bliżej = większe wybrzuszenie), struna obraca się za myszką i drga, gdy w tym kierunku jest coś technologicznego — nad grupą wyrastają trójkąty (ile wrogów, tyle trójkątów; mały = statek, duży = budowla). Grupa w namiarze widzi mnie: czerwień, „!”, oko przy kursorze się otwiera. PPM na kanwie — własna ręka (S — od nowa).',
   struna: '<b>Struna</b> — sama część technologiczna czujki: łuk w stronę myszki, drganie z siły sygnału, trójkąty nad grupami, czerwień i „!” przy wykryciu.',
   blona: '<b>Błona</b> — sama część niebieska czujki: 360°, wybrzuszenia w stronę planet i gwiazdy (bliżej = większe, większe ciało = szersze, barwa = rodzaj ciała), impuls PPM z refrakcją.',
   wachlarz: '<b>Wachlarz</b> (druga runda, do porównania) — jeden na okręt: przy mnie niebieski z mojego zasięgu, przy wrogu czerwony z ich zasięgu.',
-  tafla: '<b>Tafla graniczna + podświetlenie.</b> Granica ich wzroku (promień = ich czujniki × mój ślad) widoczna tylko w pobliżu okrętu: przezroczysta tafla pola siłowego z refrakcją, zmarszczki od punktu najbliższego mnie. Ciąg pcha ją na mnie, cicha praca odsuwa. Przejście: błysk i zmarszczka obiega całe koło (do środka czerwień, na zewnątrz błękit). W zasięgu kadłub jest oświetlony od strony wroga. Scena GRANICA (S).',
+  tafla: '<b>Tafla graniczna (wybrana, bez podświetlenia).</b> Granica ich wykrycia (promień = ich czujniki × mój ślad) widoczna tylko w pobliżu okrętu: przezroczysta tafla pola siłowego z refrakcją, zmarszczki od punktu najbliższego mnie. Ciąg pcha ją na mnie, cicha praca odsuwa. Przejście: błysk i zmarszczka obiega całe koło (do środka czerwień, na zewnątrz błękit). Scena GRANICA (S).',
   przyboj: '<b>Przybój + podświetlenie.</b> Od wroga biegną słabe fale (jego czujniki) i łamią się na granicy jego zasięgu — linia piany wybiega za granicę i cofa się; widać ją tylko w pobliżu okrętu. W zasięgu fale obmywają kadłub, a skan na kadłubie idzie grzbietami tych fal. Scena GRANICA (S).',
   swiatlo: '<b>Samo podświetlenie (zamiast oka przy kursorze).</b> Gdy grupa mnie widzi, kadłub jest oświetlony od jej strony: czerwone światło z płaskorzeźbą paneli, świecąca krawędź od strony wroga, linie skanu, słaby snop w przestrzeni. Bez granicy — tylko „już mnie widzą i skąd”.'
 };

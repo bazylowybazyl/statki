@@ -23,8 +23,9 @@ const ENEMY_LEN = 1200;           // pancernik piratów (src/data/ships.js: pira
 const KM = 1000;
 const OFF = 99;
 export const NAMIAR_SCENES = Object.freeze(['misja', 'uklad', 'przelot', 'granica']);
-/** Pomysły granicy wykrycia (czwarta runda) → kwady: tafla i przybój z podświetleniem kadłuba, samo podświetlenie. */
-const GRANICA_OF = { tafla: ['tafla', 'swiatlo'], przyboj: ['przyboj', 'swiatlo'], swiatlo: ['swiatlo'] };
+/** Pomysły granicy wykrycia (czwarta runda) → kwady. Decyzja użytkownika 2026-11-10: „tafla, ale bez podświetlenia, nie
+ *  podoba mi się” — TAFLA sama; przybój i podświetlenie zostają do porównania. */
+const GRANICA_OF = { tafla: ['tafla'], przyboj: ['przyboj', 'swiatlo'], swiatlo: ['swiatlo'] };
 export const GRANICA_VARIANTS = Object.freeze(Object.keys(GRANICA_OF));
 const WIN_NEAR = 3 * 1000;        // okno granicy wokół okrętu [j.]: pełna do 3 km, zero od 12 km
 const WIN_FAR = 12 * 1000;
@@ -602,8 +603,9 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       }
     }
     const border = !!GRANICA_OF[variant];
-    if (!border && atlasImg?.complete && atlasImg.naturalWidth) {
-      // w pomysłach granicy Atlasa rysuje shader podświetlenia (granicaTSL.js), tu — nakładka 2D
+    const hullShader = !!GRANICA_OF[variant]?.includes('swiatlo');
+    if (!hullShader && atlasImg?.complete && atlasImg.naturalWidth) {
+      // z podświetleniem Atlasa rysuje shader (granicaTSL.js), inaczej — nakładka 2D
       const L = ATLAS_LEN * cam.zoom;
       ctx.save();
       ctx.globalAlpha = 0.97;
@@ -665,7 +667,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       ctx.moveTo(cx, cy - 7); ctx.lineTo(cx, cy - 2.5);
       ctx.moveTo(cx, cy + 2.5); ctx.lineTo(cx, cy + 7);
       ctx.stroke();
-      if (!border) drawEye(ctx, cx + 30, cy + 22, st.eye, st.time);   // w pomysłach granicy oko zastępuje podświetlenie kadłuba
+      if (!border) drawEye(ctx, cx + 30, cy + 22, st.eye, st.time);   // w pomysłach granicy bez oka (użytkownik: „nie podoba mi się trochę”)
       ctx.restore();
     }
   }

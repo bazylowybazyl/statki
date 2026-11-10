@@ -35,6 +35,9 @@ Stan: **KONTAKT = obłok szarych X-ów; CZUJKA na PPM (struna z kolcami + błona
   to widzi cię enemy; niby znacznik oka, ale nie podoba mi się trochę to rozwiązanie … obecne to tak naprawdę markery, zmiana
   koloru nie pokazuje ci, gdzie przeciwnicy widzą, a po prostu koło ogromne pokazujące zasięg wzroku enemy jest suche”.
   Zaproponowane trzy pomysły (tafla graniczna, przybój, podświetlenie kadłuba zamiast oka) — „zrób demo z tymi trzema” (§ 7).
+- 2026-11-10, ocena czwartej rundy: „tafla, ale bez podświetlenia, nie podoba mi się” — granica = TAFLA (wariant 4, sama),
+  przybój i podświetlenie odpadają (zostają w demie do porównania). Pytanie użytkownika: „pozostają jeszcze zasięg —
+  nie wiadomo kto — zasięg objawienie kto; jak to rozwiązać?” — dwa poziomy modelu (KONTAKT i IDENTYFIKACJA), § 7a.
 
 ## 1. Co obraz ma oddać
 
@@ -303,6 +306,22 @@ który liczy `them`), tylko dla grup, które znam (kontakt bez identyfikacji —
 (jak kontakt). Podświetlenie w grze to światło w materiale kadłuba (oświetlenie kadłubów v2 — światło per kadłub z kierunku
 grupy, bez nowego światła sceny w biegu), nie kwad ze sprite'em.
 
-Decyzje: (11) tafla czy przybój (albo oba: tafla jako linia, przybój jako „żywe” tło przy niej); (12) podświetlenie zamiast
-oka — czy przy kursorze zostaje cokolwiek; (13) okno 3–12 km — szersze / węższe, czy przy PPM (czujka) pokazywać całe koło
-grup w namiarze; (14) granica dla kontaktów bez identyfikacji (dziś w kreskach) czy tylko dla grup znanych.
+Decyzje: (11) i (12) zapadły — TAFLA, bez podświetlenia (wariant 4 to sama tafla, Atlas z nakładki, bez oka przy kursorze).
+Otwarte: (13) okno 3–12 km — szersze / węższe, czy przy PPM (czujka) pokazywać całe koło grup w namiarze; (14) granica dla
+kontaktów bez identyfikacji (dziś w kreskach) czy tylko dla grup znanych; (15) dwa poziomy — kontakt i identyfikacja (§ 7a).
+
+### 7a. Dwa poziomy: kontakt („nie wiadomo kto”) i identyfikacja („objawienie kto”) — propozycja, 2026-11-10
+
+Model prototypu (`src/game/sensorDetection.js`, reguła `zasieg-czujnikow`) ma dwa poziomy na obserwatora: KONTAKT —
+odległość ≤ czujniki × sygnatura celu × osłona (ruchomy: mój ślad); IDENTYFIKACJA — odległość ≤ zasięg wzroku (stały, nie
+zależy od sygnatury — wzrok widzi niezależnie). Zwykle wzrok < wykrycie, ale w cichej pracy promień wykrycia potrafi zejść
+poniżej wzroku — wtedy liczy się tylko wzrok. Dzisiejsza tafla to granica KONTAKTU.
+
+- **Oni mnie — dwie tafle w tym samym oknie przy okręcie:** zewnętrzna KONTAKT (wiedzą, że coś jest, nie wiedzą co) —
+  szara, ziarnista, linia z drobnych szarych X-ów, ten sam język co mój nieznany kontakt („tak cię teraz widzą: obłok
+  X-ów”), jedzie z moim śladem; wewnętrzna IDENTYFIKACJA (wiedzą, że to Atlas) — czerwona tafla jak dziś, STOI (cisza jej nie
+  odsuwa). Przejścia: szara → szara zmarszczka wokół koła i „?” w miejscu przejścia; czerwona → czerwona; wyjścia — błękit.
+  Cisza zsuwa szarą taflę do środka; gdy zejdzie poniżej czerwonej, zlewa się z nią i znika (zostaje sam wzrok).
+- **Ja ich — granic nie rysujemy, „objawienie” pokazuje kontakt:** obłok X-ów zagęszcza się, im bliżej mojego wzroku (błąd
+  miejsca maleje do 0 na granicy wzroku — model już tak liczy), a w chwili identyfikacji X-y zbiegają się w obrys kadłuba i
+  wyłania się sylwetka (~0,4 s); wyjście z wzroku — odwrotnie (kadłub rozsypuje się w X-y).
