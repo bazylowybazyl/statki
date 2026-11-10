@@ -275,7 +275,7 @@ stan i scena — `namiarDemo.js`. Czujka (PPM) działa także tu (własna ręka)
 - **TAFLA:** cienka linia (rdzeń ~0,85 px, poświata 7 px) z lekkim falowaniem od punktu granicy najbliższego mnie; po stronie
   wroga tafla pola siłowego — kaustyka z szumu zakotwiczonego w grupie (nie płynie z kamerą), gaśnie w głąb (~26 px); refrakcja
   na warstwie DIST (brzeg szyby −x·e^(−x²) rozsuwa tło po obu stronach linii, zmarszczki, przejście). Tafla w ruchu (ciąg,
-  cisza) zostawia smugę za sobą. `est` (radar zgadnięty) — linia szersza i w kreskach.
+  cisza) zostawia za sobą słabe prążki ruchu (pełna smuga przy szybkiej tafli była czerwoną płytą). `est` (radar zgadnięty) — linia szersza i w kreskach.
 - **PRZYBÓJ:** od wroga biegną fale (długość 34 px, 26 px/s): cienkie grzbiety, zgięte szumem; przy granicy piętrzą się
   (węższe, jaśniejsze) i łamią — piana wybiega za granicę (do ~0,5 długości fali) i cofa się; każdy grzbiet dochodzi w innym
   miejscu. Piana: gładkie smugi wzdłuż granicy + drobiny w komórkach 3 px migoczące 9 razy na sekundę (szum o skali kilku
@@ -292,8 +292,9 @@ stan i scena — `namiarDemo.js`. Czujka (PPM) działa także tu (własna ręka)
   za niego (13,8 s), skrada się pod samą granicę (0,7 km), zawraca, powrót do zwykłej pracy znów go odsłania (21,3 s),
   ucieka (wyjście 24,6 s). Podpis u góry: ile do granicy albo ile do wyjścia.
 
-Zrzuty (`.tmp/kontakty/granica4/`): `60-tafla-<t>-<chwila>`, `61-przyboj-…`, zbliżenia kadłuba w kadrze 15 km `7k-…`;
-animacje 60 kl/s z `--film-granica 1`: pełne pętle tafli i przyboju (skala 0,75), zbliżenia przy kadłubie (7,5–14,5 s).
+Zrzuty (`.tmp/kontakty/granica5/`): `60-tafla-<t>-<chwila>`, `61-przyboj-…`, zbliżenia kadłuba w kadrze 15 km `7k-…`;
+animacje 60 kl/s z `--film-granica 1`: `90-granica-tafla.webp`, `91-granica-przyboj.webp` (pełne pętle, skala 0,75),
+`92-tafla-zblizenie.webp`, `93-przyboj-zblizenie.webp` (kadr 15 km przy kadłubie, 7,5–14,5 s).
 Pipeline'y synchroniczne 0, błędy konsoli 0. Koszt (1600 × 900, pojedyncze próbki zegara GPU — orientacyjnie): cała klatka
 z taflą i podświetleniem ~0,11 ms, z przybojem ~0,09 ms (pusta klatka dema 0,065 ms).
 
