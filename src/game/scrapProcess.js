@@ -40,9 +40,8 @@ export const SCRAP_TUNE = {
   alignPos: 9,
   alignAng: 0.025,
   alignHold: 0.4,
-  /** Sekcja do paszczy: prędkość [j./s], wzmocnienie [1/s]; mielenie [j.² powierzchni / s], zasięg zębów [komórki]. */
+  /** Sekcja do paszczy: prędkość podawania [j./s]; mielenie [j.² powierzchni / s], zasięg zębów [komórki]. */
   pullSpeed: 70,
-  pullGain: 1.2,
   chewArea: 6000,
   chewReachCells: 1.6,
   /** Kawałek objął paszczę i materiału w zasięgu zębów brak — po tylu sekundach zęby biorą najbliższy węzeł. */
@@ -61,9 +60,9 @@ export const SCRAP_TUNE = {
   rateMax: 3.5,
   lead: 10,
   /** Szacunek bez statku przy wraku (zgłoszenie): ustawianie wraku [s], długość sekcji [j.], zapas. */
-  alignTime: 12,
+  alignTime: 16,
   sectionLen: 210,
-  estimateSlack: 1.15
+  estimateSlack: 1.25
 };
 
 const _cells = [];
@@ -402,14 +401,15 @@ function stepChew(S, entry, H, T, rig, a, c, s, dt, nodesOf) {
   wake(w);
   const ex = mx - px(w), ey = my - py(w);
   const d = Math.sqrt(ex * ex + ey * ey);
-  let vx = T.pullGain * ex, vy = T.pullGain * ey;
-  const v = Math.sqrt(vx * vx + vy * vy);
-  const vMax = T.pullSpeed * S.rate;
-  if (v > vMax) { vx *= vMax / v; vy *= vMax / v; }
-  setVel(w, (Number(a.vx) || 0) + vx, (Number(a.vy) || 0) + vy, (Number(w.angVel) || 0) * 0.9);
   // Zęby mielą tylko materiał, którego sięgają (sonda żywych węzłów przy paszczy; bez haka — promień kawałka).
   const reach = Math.max(T.chewReachCells * S.cs, (Number(rig.mawR) || 0) * L);
   const bite = H.touch ? H.touch(w, mx, my, reach) : d <= (Number(w.radius) || 0) + reach;
+  // Podawanie do paszczy: stała prędkość, póki zęby nie sięgają materiału; w czasie gryzienia kawałek stoi i wsuwa
+  // się dalej, gdy zęby zjedzą to, co mają w zasięgu (jak pręt w rozdrabniarce).
+  let sp = bite ? 0 : T.pullSpeed * S.rate;
+  if (dt > 0 && sp * dt > d) sp = d / dt;
+  const k = d > 1e-6 ? sp / d : 0;
+  setVel(w, (Number(a.vx) || 0) + ex * k, (Number(a.vy) || 0) + ey * k, (Number(w.angVel) || 0) * 0.9);
   if (bite) S.starve = 0;
   else {
     // Kawałek objął paszczę (środek masy już na miejscu, a w zasięgu zębów pusto): po chwili biorą najbliższy węzeł.
