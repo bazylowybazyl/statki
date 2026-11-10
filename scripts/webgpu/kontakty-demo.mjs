@@ -6,8 +6,8 @@
 //   node scripts/webgpu/kontakty-demo.mjs [--out .tmp/kontakty/demo] [--rozmiar 1600x900]
 //     [--tylko porownanie,echo,oblok,wir,roj,ruch,dzis,namiar,namiar-szybko] (część zrzutów — szybkie strojenie)
 //     [--film 1] (klatki porównania kontaktów co 0,1 s w skali 0,5 → <out>/film/NNN.png — do animacji)
-//     [--film-namiar 1] (klatki 60 kl/s: <out>/film-namiar/ — porównanie, pełna pętla 27 s w skali 0,75;
-//        <out>/film-<propozycja>/ — zbliżenie przy Atlasie, skala 1, przelot przez próg; czas: kilka minut)
+//     [--film-namiar 1|misja|uklad|przelot|zblizenie] (klatki 60 kl/s czujki: <out>/film-<scena>/ — pełna pętla sceny
+//        w skali 0,75; <out>/film-zblizenie/ — struna przy Atlasie w misji 1, piksel w piksel; czas: kilka minut)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -111,68 +111,68 @@ try {
     await set({ variant: 'dzis', clean: false });
     await gpuMedian('bez kontaktów (dziś)');
   }
-  // NAMIAR (tryb W): porównanie trzech propozycji w chwilach przelotu, każda osobno: stany, przelot, grupy
+  // NAMIAR (tryb W) — CZUJKA na PPM: chwile scen MISJA 1, UKŁAD, PRZELOT; struna i błona osobno; wachlarz z 2. rundy
   if (want('namiar') || want('namiar-szybko')) {
     const quick = !want('namiar');
-    const MOMENTS = [[3, 'daleko'], [7.3, 'przed-progiem'], [7.62, 'pekniecie'], [10.2, 'wykryty'], [14, 'cicha'], [19.5, 'ciag']];
-    await set({ mode: 'namiar', variant: 'porownanie', clean: true, time: 0, labels: true });
-    let now = 0;
-    for (const [tm, name] of MOMENTS) {
-      await run(Math.round((tm - now) * 60));
-      now = tm;
-      await shot(`60-namiar-porownanie-${name}`, `Porównanie, t = ${tm} s: ${name}`, 1);
-    }
+    const SHOTS = {
+      misja: [[1.8, 'lewo-pusto'], [5.0, 'patrol'], [7.6, 'baza-wykryli'], [9.9, 'odjazd']],
+      uklad: [[2.5, 'start'], [8.0, 'planeta-blisko'], [12.0, 'stacja']],
+      przelot: [[4.0, 'daleko'], [8.3, 'wykryli'], [13.5, 'cicha'], [19.0, 'ciag']]
+    };
     let k = 1;
-    for (const st of ['wachlarz', 'struna', 'blona']) {
-      await set({ variant: st, scene: 'stany', time: 0, clean: true });
-      await run(120);
-      await shot(`7${k}-${st}-stany`, `${st}: daleko, tuż przed progiem, wykryty`);
-      if (!quick) await gpuMedian(`namiar ${st} stany`);
-      await set({ scene: 'grupy', time: 0 });
-      await run(150);
-      await shot(`7${k}-${st}-grupy`, `${st}: 3 grupy — blisko, kontakt bez identyfikacji (OBŁOK, est), poza kadrem`);
-      if (!quick) {
-        await set({ scene: 'przelot', time: 0 });
-        now = 0;
-        for (const [tm, name] of MOMENTS) {
-          await run(Math.round((tm - now) * 60));
-          now = tm;
-          await shot(`7${k}-${st}-przelot-${name}`, `${st}, przelot, t = ${tm} s: ${name}`, 1);
-        }
+    for (const [scene, list] of Object.entries(SHOTS)) {
+      if (quick && scene === 'przelot') continue;
+      await set({ mode: 'namiar', variant: 'czujka', scene, time: 0, clean: true, labels: true });
+      let now = 0;
+      for (const [tm, name] of list) {
+        await run(Math.round((tm - now) * 60));
+        now = tm;
+        await shot(`8${k}-czujka-${scene}-${name}`, `Czujka, ${scene}, t = ${tm} s: ${name}`, 1);
       }
+      if (!quick && scene === 'misja') {
+        await set({ time: 0 });
+        await run(Math.round(7.0 * 60));
+        await gpuMedian('czujka misja');
+      }
+      k++;
+    }
+    for (const [st, scene, tm] of [['struna', 'misja', 7.6], ['blona', 'uklad', 8.0], ['wachlarz', 'misja', 7.6]]) {
+      await set({ mode: 'namiar', variant: st, scene, time: 0, clean: true });
+      await run(Math.round(tm * 60));
+      await shot(`9${k}-${st}-${scene}`, `${st} osobno, ${scene}, t = ${tm} s`, 1);
       k++;
     }
     await set({ mode: 'kontakty' });
   }
   if (args['film-namiar']) {
-    const fn = String(args['film-namiar']);    // 1 — wszystko; albo porownanie | wachlarz | struna | blona
-    // porównanie: pełna pętla 27 s, 60 kl/s, skala 0,75
-    if (fn === '1' || fn === 'porownanie') {
-      await set({ mode: 'namiar', variant: 'porownanie', clean: true, time: 0, labels: true });
-      const dir = join(out, 'film-namiar');
+    const fn = String(args['film-namiar']);
+    const PER = { misja: 13, uklad: 16, przelot: 27 };
+    for (const scene of ['misja', 'uklad', 'przelot']) {
+      if (fn !== '1' && fn !== scene) continue;
+      await set({ mode: 'namiar', variant: 'czujka', scene, time: 0, clean: true, labels: true });
+      const dir = join(out, `film-${scene}`);
       mkdirSync(dir, { recursive: true });
-      const clipC = { x: 0, y: 0, width: W, height: H, scale: 0.75 };
-      for (let i = 0; i < 27 * 60; i++) {
+      const clip = { x: 0, y: 0, width: W, height: H, scale: 0.75 };
+      for (let i = 0; i < PER[scene] * 60; i++) {
         await run(1);
-        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: clipC });
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip });
         writeFileSync(join(dir, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
-        if (i % 240 === 0) console.log('film-namiar', i);
       }
+      console.log('film', scene);
     }
-    // zbliżenie przy Atlasie (piksel w piksel), przelot przez próg: 4,5–12,5 s (rozbieg 0,1 s od początku pętli do startu)
-    const clipZ = { x: 0, y: 300, width: 680, height: 382, scale: 1 };
-    for (const st of ['wachlarz', 'struna', 'blona']) {
-      if (fn !== '1' && fn !== st) continue;
-      await set({ mode: 'namiar', variant: st, scene: 'przelot', time: 0, clean: true });
-      await run(Math.round(4.5 * 60));
-      const dz = join(out, `film-${st}`);
+    if (fn === '1' || fn === 'zblizenie') {
+      // struna przy Atlasie w misji 1 (4–9,6 s: patrol, baza), piksel w piksel
+      await set({ mode: 'namiar', variant: 'czujka', scene: 'misja', time: 0, clean: true, labels: true });
+      await run(4 * 60);
+      const dz = join(out, 'film-zblizenie');
       mkdirSync(dz, { recursive: true });
-      for (let i = 0; i < 8 * 60; i++) {
+      const clipZ = { x: 180, y: 310, width: 700, height: 420, scale: 1 };
+      for (let i = 0; i < Math.round(5.6 * 60); i++) {
         await run(1);
         const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: clipZ });
         writeFileSync(join(dz, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
       }
-      console.log('film', st);
+      console.log('film zbliżenie');
     }
     await set({ mode: 'kontakty' });
   }

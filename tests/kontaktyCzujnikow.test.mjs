@@ -46,7 +46,7 @@ test('propozycje kontaktu: WGSL w Node, bez pow, wspólny blok kontaktów', () =
   assert.ok(bg.mesh.layers.isEnabled(1));
 });
 
-test('namiar: WGSL trzech propozycji (i warstwy DIST fali pęknięcia) w Node, bez pow, blok o stałej nazwie', () => {
+test('namiar: WGSL trzech propozycji (i warstwy DIST impulsu błony) w Node, bez pow, blok o stałej nazwie', () => {
   const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
   const renderer = new THREE.WebGPURenderer({ canvas });
   renderer.hasFeature = () => false;
@@ -62,7 +62,7 @@ test('namiar: WGSL trzech propozycji (i warstwy DIST fali pęknięcia) w Node, b
       assert.match(b.fragmentShader, /namiarCzujnikow/, `${m.name}: blok o stałej nazwie`);
       assert.ok(ms < 2000, `${m.name}: budowa ${ms.toFixed(0)} ms`);
     }
-    assert.equal(!!dist, style !== 'wachlarz', `${style}: warstwa DIST tylko przy pękaniu`);
+    assert.equal(!!dist, style === 'blona', `${style}: warstwa DIST tylko dla impulsu błony`);
     if (dist) assert.ok(dist.layers.isEnabled(10));
   }
 });

@@ -8,8 +8,8 @@
 //
 // Serwowanie: `npm run dev` → /dema/kontakty-czujnikow.html
 //   ?wariant=0..4|porownanie   ?scena=plansza|gra   ?podpisy=0   ?daleko=1   ?clean=1 (bez paneli)
-//   ?tryb=namiar (klawisz W): NAMIAR „kto kogo widzi” — Atlas i wróg w jednym kadrze: 1 WACHLARZ, 2 STRUNA, 3 BŁONA,
-//     5 porównanie; ?namiar=wachlarz|struna|blona|porownanie; ?scena=stany|przelot|grupy (klawisz S)
+//   ?tryb=namiar (klawisz W): CZUJKA na PPM — 1 CZUJKA (struna + błona), 2 STRUNA, 3 BŁONA, 0 WACHLARZ (druga runda);
+//     ?namiar=czujka|struna|blona|wachlarz; ?scena=misja|uklad|przelot (klawisz S); PPM na kanwie — własna ręka
 //   ?test=1 (klatki tylko z __kontakty.runFrames — zrzuty: scripts/webgpu/kontakty-demo.mjs)
 import { Core3D } from '../src/3d/core3d.js';
 import {
@@ -51,14 +51,14 @@ const DESC = {
   porownanie: 'Wszystkie cztery naraz: w każdej ćwiartce cztery rozmiary (MAŁY → OGROMNY), flota pięciu i para, która się zbliża i rozchodzi.'
 };
 
-// NAMIAR (tryb W): dane na grupę — them (≥ 1: wykryli mnie), me (≥ 1: ja wykrywam ich), est (ich czujniki zgadnięte).
-const NAM_VARIANTS = [null, 'wachlarz', 'struna', 'blona', null, 'porownanie'];
-const NAM_TITLES = { wachlarz: '1 · WACHLARZ', struna: '2 · STRUNA', blona: '3 · BŁONA', porownanie: 'PORÓWNANIE' };
+// NAMIAR (tryb W) — CZUJKA na PPM: struna (technologia, w stronę myszki) + błona (ciała niebieskie, 360°).
+const NAM_VARIANTS = ['wachlarz', 'czujka', 'struna', 'blona', null, null];
+const NAM_TITLES = { czujka: '1 · CZUJKA', struna: '2 · STRUNA', blona: '3 · BŁONA', wachlarz: '0 · WACHLARZ (2. runda)' };
 const NAM_DESC = {
-  wachlarz: '<b>Wachlarz — jeden na okręt.</b> Przy mnie niebieski w stronę wroga (długość = mój zasięg względem nich), przy wrogu czerwony w stronę mnie (długość = ich zasięg względem mnie). Oba na jednej prostej, naprzeciw siebie; łuki stoją, biegnie po nich tylko jasność. Pełna długość z grotem = sięga. Wróg poza kadrem — wachlarz przy krawędzi ekranu.',
-  struna: '<b>Struna.</b> Gładki łuk przy moim okręcie w stronę grupy, końce nieruchome jak węzły. Daleko prawie prosty i spokojny; im bliżej wykrycia, tym mocniej drga, dochodzą wyższe harmoniczne, napięcie bieleje. Przy them = 1 struna PĘKA: bicz, rozbłysk, fala uderzeniowa, dwa czerwone rozedrgane końce; poniżej progu zrasta się. Słabsza struna przy wrogu drga z mojego zasięgu.',
-  blona: '<b>Błona.</b> Jedna zamknięta, organiczna błona wokół mojego okrętu (język obłoków). Promień = mój ślad sygnałowy (ciąg nadyma, cisza kurczy), w stronę każdej grupy wybrzuszenie rosnące z ich zasięgu. Wiele grup = jeden kształt, zero osobnych znaczników. Przy them ≥ 1 błona w tym miejscu czerwienieje i pęka.',
-  porownanie: 'Trzy propozycje w trzech pasach, ten sam przelot: wróg się zbliża, przekracza próg, potem cicha praca (×0,5), ciąg (×1,35), wróg odchodzi. Pętla 27 s.'
+  czujka: '<b>Czujka (PPM) = struna + błona.</b> Trzymasz PPM: błona wokół okrętu pokazuje wszystkie ciała niebieskie układu (bliżej = większe wybrzuszenie), struna obraca się za myszką i drga, gdy w tym kierunku jest coś technologicznego — nad grupą wyrastają trójkąty (ile wrogów, tyle trójkątów; mały = statek, duży = budowla). Grupa w namiarze widzi mnie: czerwień, „!”, oko przy kursorze się otwiera. PPM na kanwie — własna ręka (S — od nowa).',
+  struna: '<b>Struna</b> — sama część technologiczna czujki: łuk w stronę myszki, drganie z siły sygnału, trójkąty nad grupami, czerwień i „!” przy wykryciu.',
+  blona: '<b>Błona</b> — sama część niebieska czujki: 360°, wybrzuszenia w stronę planet i gwiazdy (bliżej = większe, większe ciało = szersze, barwa = rodzaj ciała), impuls PPM z refrakcją.',
+  wachlarz: '<b>Wachlarz</b> (druga runda, do porównania) — jeden na okręt: przy mnie niebieski z mojego zasięgu, przy wrogu czerwony z ich zasięgu.'
 };
 
 // Model miejsca kontaktu jak w prototypie (sensorDetection.js: contactErrFrac 0,07, contactJitterSec 2,5; wzrok 18 km
@@ -72,8 +72,8 @@ const DETECT_R = 58500;
 
 const S = {
   mode: params.get('tryb') === 'namiar' ? 'namiar' : 'kontakty',
-  namVariant: Math.max(1, NAM_VARIANTS.indexOf(params.get('namiar') || 'struna')),
-  namScene: NAMIAR_SCENES.includes(params.get('scena')) ? params.get('scena') : 'przelot',
+  namVariant: Math.max(0, NAM_VARIANTS.indexOf(params.get('namiar') || 'czujka')),
+  namScene: NAMIAR_SCENES.includes(params.get('scena')) ? params.get('scena') : 'misja',
   variant: Math.max(0, VARIANTS.indexOf(params.get('wariant') || 'echo')),
   scene: params.get('scena') === 'gra' ? 'gra' : 'plansza',
   time: Number(params.get('t')) || 0,
@@ -228,7 +228,7 @@ function setScene() {
       S.contacts.push(c);
       return c;
     };
-    namiar.setScene(S.namScene, S.namVariant === 5, S.cam, W, H, makeContact);
+    namiar.setScene(S.namScene, S.cam, W, H, makeContact, S.time);
     return;
   }
   const sc = S.variant === 5 ? scenePorownanie() : (S.scene === 'gra' ? sceneGra() : scenePlansza());
@@ -293,7 +293,7 @@ function setVariant(v) {
 function syncPanel() {
   const nam = S.mode === 'namiar';
   const v = nam ? S.namVariant : S.variant;
-  const names = nam ? ['', '1 · WACHLARZ', '2 · STRUNA', '3 · BŁONA', '', 'Porównanie (przelot)']
+  const names = nam ? ['0 · Wachlarz (2. runda)', '1 · CZUJKA', '2 · STRUNA', '3 · BŁONA', '', '']
     : ['Dziś (prototyp)', '1 · ECHO', '2 · OBŁOK', '3 · WIR', '4 · RÓJ', 'Porównanie 2 × 2'];
   for (let i = 0; i <= 5; i++) {
     const b = $(`v${i}`);
@@ -321,7 +321,6 @@ function setMode(mode) {
 function setSceneName(name) {
   if (S.mode === 'namiar') {
     S.namScene = name;
-    if (S.namVariant === 5) S.namVariant = 2;
     setScene();
     syncPanel();
     return;
@@ -578,7 +577,7 @@ function updateHud() {
   const v = nam ? NAM_VARIANTS[S.namVariant] : VARIANTS[S.variant];
   const lines = [];
   lines.push(`<b>${(1000 / Math.max(1, S.frameMs)).toFixed(0)} FPS</b> · CPU ${S.cpuMs.toFixed(2)} ms · GPU ${(Number(Core3D.gpuFrameMs) || 0).toFixed(2)} ms · draw ${info.drawCalls ?? info.calls ?? 0}${S.paused ? ' · <span class="warn">PAUZA</span>' : ''}`);
-  lines.push(nam ? `<b>NAMIAR · ${NAM_TITLES[v]}</b> · scena ${v === 'porownanie' ? 'przelot' : S.namScene} · kadr ${(W / S.cam.zoom / 1000).toFixed(0)} km`
+  lines.push(nam ? `<b>NAMIAR · ${NAM_TITLES[v]}</b> · scena ${S.namScene}${namiar.st.manual ? ' · własna ręka' : ''} · kadr ${(W / S.cam.zoom / 1000).toFixed(0)} km`
     : `<b>${TITLES[v]}</b> · scena ${v === 'porownanie' ? 'porównanie' : S.scene} · kontakty ${S.contacts.length} · kadr ${(W / S.cam.zoom / 1000).toFixed(0)} km`);
   lines.push(`pipeline'y synchr. w klatkach: <b>${S.syncPipes}</b>${S.syncNames.length ? ` (${S.syncNames.slice(0, 2).join(', ')})` : ''}`);
   $('hud').innerHTML = lines.join('\n');
@@ -608,13 +607,19 @@ function bindInput() {
   for (const n of NAMIAR_SCENES) $(`s-${n}`).addEventListener('click', () => setSceneName(n));
   const map = { 'b-labels': 'l', 'b-truth': 't', 'b-pause': ' ', 'b-far': 'z', 'b-clean': 'h' };
   for (const [id, k] of Object.entries(map)) $(id).addEventListener('click', () => ACTIONS[k]());
+  canvas2d.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas2d.addEventListener('mousedown', (e) => {
+    if (e.button === 2 && S.mode === 'namiar') { namiar.mouse('down', e.clientX, e.clientY); e.preventDefault(); return; }
     if (e.button !== 0) return;
     S.drag = { x: e.clientX, y: e.clientY };
     canvas2d.classList.add('drag');
   });
-  window.addEventListener('mouseup', () => { S.drag = null; canvas2d.classList.remove('drag'); });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 2 && namiar) namiar.mouse('up', e.clientX, e.clientY);
+    S.drag = null; canvas2d.classList.remove('drag');
+  });
   window.addEventListener('mousemove', (e) => {
+    if (namiar) namiar.mouse('move', e.clientX, e.clientY);
     if (!S.drag) return;
     S.offX -= (e.clientX - S.drag.x) / S.cam.zoom;
     S.offY -= (e.clientY - S.drag.y) / S.cam.zoom;
@@ -709,7 +714,8 @@ window.__kontakty = {
   stats() {
     return {
       tryb: S.mode, namiar: NAM_VARIANTS[S.namVariant], scenaNamiaru: S.namScene, distLive: namiar?.distLive ?? false,
-      grupy: S.mode === 'namiar' ? namiar.st.views.flatMap((w) => w.groups.map((g) => ({ them: +g.them.toFixed(3), me: +g.me.toFixed(3), gap: +g.gapThem.toFixed(2), wiek: +g.ageThem.toFixed(2) }))) : null,
+      grupy: S.mode === 'namiar' && namiar.st.view ? namiar.st.view.groups.map((g) => ({ them: +g.them.toFixed(3), me: +g.me.toFixed(3), wNamiarze: +g.reveal.toFixed(2), wykrycie: +g.det.toFixed(2) })) : null,
+      oko: S.mode === 'namiar' ? +namiar.st.eye.toFixed(2) : null,
       wariant: VARIANTS[S.variant], scena: S.variant === 5 ? 'porownanie' : S.scene, czas: +S.time.toFixed(2),
       kontakty: S.contacts.length, zoom: +S.cam.zoom.toFixed(5), syncPipes: S.syncPipes, syncNames: S.syncNames.slice(),
       gpuMs: +(Number(Core3D.gpuFrameMs) || 0).toFixed(3),
@@ -738,10 +744,10 @@ window.__kontakty = {
     namiar = createNamiarDemo(Core3D, FX_DISTORT_LAYER);
     for (const m of [...namiar.meshes, ...namiar.dists]) Core3D.scene.add(m);
     // warstwę DIST zgłasza się z kroku efektów (flagę kasuje start klatki efektów — wzór hullCloak.js)
-    Core3D.addFxStep({ name: 'namiar: fala pęknięcia (demo)', update() { if (namiar.distLive) Core3D.setDistortLayerActive(true); } });
+    Core3D.addFxStep({ name: 'namiar: impuls czujki (demo)', update() { if (namiar.distLive) Core3D.setDistortLayerActive(true); } });
     Core3D.warmup.add({ name: 'kontakty czujników (4 propozycje, tło)', objects: () => [backdrop.mesh, ...meshes] });
     Core3D.warmup.add({ name: 'namiar czujników (3 propozycje)', objects: () => namiar.warmupObjects() });
-    Core3D.warmup.add({ name: 'namiar: fala pęknięcia (warstwa DIST)', objects: () => namiar.dists.slice(), layer: FX_DISTORT_LAYER });
+    Core3D.warmup.add({ name: 'namiar: impuls czujki (warstwa DIST)', objects: () => namiar.dists.slice(), layer: FX_DISTORT_LAYER });
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });
     hookPipelines();
     bindInput();
