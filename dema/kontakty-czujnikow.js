@@ -66,7 +66,7 @@ const NAM_DESC = {
   struna: '<b>Struna</b> — sama część technologiczna czujki: łuk w stronę myszki, drganie z siły sygnału, trójkąty nad grupami, czerwień i „!” przy wykryciu.',
   blona: '<b>Błona</b> — sama część niebieska czujki: 360°, wybrzuszenia w stronę planet i gwiazdy (bliżej = większe, większe ciało = szersze, barwa = rodzaj ciała), impuls PPM z refrakcją.',
   wachlarz: '<b>Wachlarz</b> (druga runda, do porównania) — jeden na okręt: przy mnie niebieski z mojego zasięgu, przy wrogu czerwony z ich zasięgu.',
-  tafla: '<b>Tafla graniczna (wybrana, bez podświetlenia).</b> Granica ich wykrycia (promień = ich czujniki × mój ślad) widoczna tylko w pobliżu okrętu: przezroczysta tafla pola siłowego z refrakcją, zmarszczki od punktu najbliższego mnie. Ciąg pcha ją na mnie, cicha praca odsuwa. Przejście: błysk i zmarszczka obiega całe koło (do środka czerwień, na zewnątrz błękit). Scena GRANICA (S).',
+  tafla: '<b>Tafla graniczna (wybrana, bez podświetlenia) — dwa poziomy.</b> Szara tafla z X-ów = ich KONTAKT („coś tam jest, nie wiedzą kto”; promień = ich czujniki × mój ślad — ciąg pcha ją na mnie, cisza odsuwa). Czerwona tafla = ich WZROK („wiedzą, że to Atlas”; stoi — cisza nie pomaga). Widać tylko kawałek przy okręcie; przejście: zmarszczka obiega koło, „?” albo „!” nad miejscem przejścia, wyjście — błękit. Ja ich: poza moim wzrokiem patrol to obłok X-ów, w moim wzroku X-y zwijają się w kadłuby (objawienie). Scena GRANICA (S).',
   przyboj: '<b>Przybój + podświetlenie.</b> Od wroga biegną słabe fale (jego czujniki) i łamią się na granicy jego zasięgu — linia piany wybiega za granicę i cofa się; widać ją tylko w pobliżu okrętu. W zasięgu fale obmywają kadłub, a skan na kadłubie idzie grzbietami tych fal. Scena GRANICA (S).',
   swiatlo: '<b>Samo podświetlenie (zamiast oka przy kursorze).</b> Gdy grupa mnie widzi, kadłub jest oświetlony od jej strony: czerwone światło z płaskorzeźbą paneli, świecąca krawędź od strony wroga, linie skanu, słaby snop w przestrzeni. Bez granicy — tylko „już mnie widzą i skąd”.'
 };
@@ -279,9 +279,11 @@ function stepContacts(dt) {
   for (const c of S.contacts) {
     c.move(S.time, c);
     if (S.time - c.last >= REFRESH_SEC || S.time < c.last) refreshShown(c, false);
-    c.mx += (c.sx - c.mx) * k;
-    c.my += (c.sy - c.my) * k;
-    c.alpha = Math.max(0, Math.min(1, (S.time - c.born) / 1.2));
+    // objawienie (namiar, scena GRANICA) steruje kontaktem: szybsze dojście do miejsca, przygaszenie, zwinięcie obłoku
+    const kc = c.followTau ? 1 - Math.exp(-dt / c.followTau) : k;
+    c.mx += (c.sx - c.mx) * kc;
+    c.my += (c.sy - c.my) * kc;
+    c.alpha = Math.max(0, Math.min(1, (S.time - c.born) / 1.2)) * (c.alphaMul ?? 1);
   }
 }
 
@@ -395,7 +397,7 @@ function packBlock(A, quad) {
     const c = S.contacts[i];
     if (quad >= 0 && c.quad !== quad) continue;
     const sz = SIZE[c.cls];
-    const R = Math.max(sz.R, sz.minPx / cam.zoom);
+    const R = Math.max(sz.R, sz.minPx / cam.zoom) * (c.Rk ?? 1);
     A[KONTAKT_HDR + 2 * n].set(c.mx - cam.x, -(c.my - cam.y), R, c.err);
     A[KONTAKT_HDR + 2 * n + 1].set(c.cls, sz.mass, c.seed, c.alpha);
     n++;
@@ -433,7 +435,8 @@ function frame(dt) {
   stepContacts(S.paused ? 0 : dt);
   if (S.mode === 'namiar') namiar.step(S.time, S.paused ? 0 : dt);
   const cam = S.cam;
-  const anchor = S.mode === 'namiar' ? namiar.camAnchor() : null;   // scena GRANICA: kamera jedzie za okrętem
+  // scena GRANICA: kamera jedzie za okrętem; `camFix` (harness) — kamera stoi w punkcie świata
+  const anchor = S.camFix ? { x: S.camFix[0], y: S.camFix[1] } : (S.mode === 'namiar' ? namiar.camAnchor() : null);
   cam.x = (anchor ? anchor.x : 0) + S.offX;
   cam.y = (anchor ? anchor.y : 0) + S.offY;
   syncMeshes();
@@ -710,6 +713,7 @@ window.__kontakty = {
     if (o.time !== undefined) { S.time = o.time; if (S.mode === 'namiar') setScene(); }
     if (o.kadrKm !== undefined) { S.kadrKm = Number(o.kadrKm) || 0; applyZoom(); }
     if (o.off) { S.offX = Number(o.off[0]) || 0; S.offY = Number(o.off[1]) || 0; }
+    if (o.camFix !== undefined) S.camFix = o.camFix;
     if (S.mode === 'namiar') {
       if (o.labels !== undefined) { S.labels = !!o.labels; $('b-labels').classList.toggle('on', S.labels); }
       if (o.clean !== undefined) document.body.classList.toggle('clean', !!o.clean);

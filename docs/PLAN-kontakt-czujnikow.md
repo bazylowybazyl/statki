@@ -37,7 +37,8 @@ Stan: **KONTAKT = obłok szarych X-ów; CZUJKA na PPM (struna z kolcami + błona
   Zaproponowane trzy pomysły (tafla graniczna, przybój, podświetlenie kadłuba zamiast oka) — „zrób demo z tymi trzema” (§ 7).
 - 2026-11-10, ocena czwartej rundy: „tafla, ale bez podświetlenia, nie podoba mi się” — granica = TAFLA (wariant 4, sama),
   przybój i podświetlenie odpadają (zostają w demie do porównania). Pytanie użytkownika: „pozostają jeszcze zasięg —
-  nie wiadomo kto — zasięg objawienie kto; jak to rozwiązać?” — dwa poziomy modelu (KONTAKT i IDENTYFIKACJA), § 7a.
+  nie wiadomo kto — zasięg objawienie kto; jak to rozwiązać?” — dwa poziomy modelu (KONTAKT i IDENTYFIKACJA), § 7a;
+  na propozycję: „zbuduj oba” (dwie tafle i objawienie kontaktu — w demie).
 
 ## 1. Co obraz ma oddać
 
@@ -310,7 +311,7 @@ Decyzje: (11) i (12) zapadły — TAFLA, bez podświetlenia (wariant 4 to sama t
 Otwarte: (13) okno 3–12 km — szersze / węższe, czy przy PPM (czujka) pokazywać całe koło grup w namiarze; (14) granica dla
 kontaktów bez identyfikacji (dziś w kreskach) czy tylko dla grup znanych; (15) dwa poziomy — kontakt i identyfikacja (§ 7a).
 
-### 7a. Dwa poziomy: kontakt („nie wiadomo kto”) i identyfikacja („objawienie kto”) — propozycja, 2026-11-10
+### 7a. Dwa poziomy: kontakt („nie wiadomo kto”) i identyfikacja („objawienie kto”) — w demie, 2026-11-10
 
 Model prototypu (`src/game/sensorDetection.js`, reguła `zasieg-czujnikow`) ma dwa poziomy na obserwatora: KONTAKT —
 odległość ≤ czujniki × sygnatura celu × osłona (ruchomy: mój ślad); IDENTYFIKACJA — odległość ≤ zasięg wzroku (stały, nie
@@ -325,3 +326,35 @@ poniżej wzroku — wtedy liczy się tylko wzrok. Dzisiejsza tafla to granica KO
 - **Ja ich — granic nie rysujemy, „objawienie” pokazuje kontakt:** obłok X-ów zagęszcza się, im bliżej mojego wzroku (błąd
   miejsca maleje do 0 na granicy wzroku — model już tak liczy), a w chwili identyfikacji X-y zbiegają się w obrys kadłuba i
   wyłania się sylwetka (~0,4 s); wyjście z wzroku — odwrotnie (kadłub rozsypuje się w X-y).
+
+W demie (wariant 4 TAFLA, scena GRANICA — pętla 29 s; `granicaTSL.js` → `taflaLook`, stan w `namiarDemo.js`):
+
+- **Poziomy:** KONTAKT — `them` ≥ 1 (histereza 1 / 0,975, ta sama co czerwień struny), WZROK — d ≤ Rv (histereza ×1,02),
+  wzrok wygrywa. Przejście = zmiana poziomu; koło przejścia — wzroku, gdy po którejś stronie jest poziom 2, inaczej
+  kontaktu; zapamiętany kąt i promień w chwili przejścia. Rv grupy bez danych = 0,62 × Rt (sceny MISJA, PRZELOT).
+- **Szara tafla (kontakt):** X-y w komórkach 6 px w układzie (łuk od punktu najbliższego mnie × odległość od granicy),
+  rzędy przy linii gęsto (P = 0,85·e^(−(f/7 px)²)), każdy żyje 0,7–1,6 s — ten sam język co obłok kontaktu; pod spodem
+  cienka szara linia; gdy jedzie (ciąg, cisza) — prążki ruchu; słaba refrakcja. Zlewanie z czerwoną: widoczność =
+  (Rc − Rv) / 0,9 km.
+- **Czerwona tafla (wzrok):** tafla z § 7 (linia, kaustyka, zmarszczki, refrakcja), bez smugi — stoi.
+- **Znaki przejść:** „?” (szary — mają kontakt) i „!” (czerwony — wiedzą, kto) nad miejscem przejścia, nad obrysem kadłuba
+  (kadłub z nakładki 2D leży nad warstwą 3D i zakrywał znak), ~2 s z „wyskokiem”; wyjście — błękitny błysk; zmarszczka
+  obiega koło w barwie poziomu (szara / czerwona / błękit).
+- **Objawienie (ja ich):** przed moim wzrokiem obłok X-ów gęstnieje (błąd miejsca 0,07·d·t, t od granicy wzroku do granicy
+  wykrycia); w chwili identyfikacji obłok zwija się (promień ×0,4, gaśnie) w ~0,55 s, a kadłuby wyłaniają się komórkami
+  ~4 px w kolejności z haszu — na froncie szare X-y tylko w komórkach kadłuba (X-y „stają się” kadłubem), okręty jeden po
+  drugim; utrata wzroku — odwrotnie (kadłub rozsypuje się w X-y, obłok wraca).
+- **Scena GRANICA:** patrol (3 statki): ich kontakt 14 km × mój ślad, ich wzrok 9 km; mój wzrok 18 km, moje wykrycie
+  34 km × moje czujniki. Objawienie patrolu (7,6 s), ciąg — szara przechodzi przez Atlasa, „?” (8,6 s), cisza — szara się
+  cofa i zlewa z czerwoną (13,8 s), skradanie — wejście w ich wzrok mimo ciszy, „!” (14,6 s), zawrót, zwykła praca — szara
+  wraca spod czerwonej, ucieczka: wyjście ze wzroku (21,9 s), z kontaktu (24,6 s), utrata mojego wzroku — patrol znów
+  X-ami (26,6 s). Napis u góry: POZA ZASIĘGIEM / KONTAKT / W ICH WZROKU z odległościami do granic.
+- Zrzuty i animacje: `.tmp/kontakty/granica8/` (`6NN-tafla-<chwila>`, zbliżenia `7k-…`, odrzucone `8k-…`; `94-granica-tafla.webp`
+  — pełna pętla, `95-tafla-zblizenie.webp` — kadłub w kadrze 15 km, `96-objawienie.webp`, `97-utrata.webp` — kamera na
+  patrolu w kadrze 20 km). Pipeline'y synchroniczne 0, błędy 0. Koszt (1600 × 900, pojedyncze próbki): cała klatka z dwiema
+  taflami ~0,12 ms (pusta 0,065 ms).
+
+Wpięcie: obie granice z modelu (`detectR` = czujniki × sygnatura × osłona — szara; `ident` = wzrok — czerwona;
+`computeDetectionPicture` liczy obie strony), objawienie = przejście `level` KONTAKT → IDENTYFIKACJA w wiedzy gracza
+(`knowList`); w grze kadłub odsłania się w materiale kadłuba (maska komórek z haszu, jak przy maskowaniu), nie clipem 2D.
+Decyzje: (15) dwie tafle (szara z X-ów, czerwona) — czy tak; (16) objawienie — tempo (~0,55 s) i wygląd.

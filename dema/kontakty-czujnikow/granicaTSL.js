@@ -4,7 +4,8 @@
 // użytkownika: „jakiś znacznik pokazujący zasięg graniczny — że jak przez niego lecisz, to widzi cię enemy … zmiana koloru
 // nie pokazuje ci, gdzie przeciwnicy widzą, a po prostu koło ogromne pokazujące zasięg wzroku enemy jest suche”.
 // Granica to okrąg wokół grupy o promieniu R = ich czujniki × MÓJ ślad — ciąg (×1,35) pcha ją na mnie, cicha praca (×0,5)
-// ją odsuwa. Trzy pomysły w jednym demie:
+// ją odsuwa. Decyzja użytkownika: „tafla, ale bez podświetlenia” — TAFLA zostaje, i to w dwóch poziomach modelu (§ 7a):
+// szara KONTAKTU („nie wiadomo kto”, jedzie z moim śladem) i czerwona WZROKU („objawienie kto”, stoi). Trzy pomysły w demie:
 //  TAFLA — granicę widać tylko w pobliżu mojego okrętu: przezroczysta tafla pola siłowego (refrakcja na warstwie DIST,
 //     kaustyka po stronie wroga), zmarszczki od punktu granicy najbliższego mnie, smuga, gdy tafla jedzie. Przejście:
 //     błysk w miejscu przejścia, a zmarszczka obiega raz CAŁE koło (przez chwilę widać całą strefę) — do środka czerwień,
@@ -17,19 +18,20 @@
 //     snop w przestrzeni. Atlas rysuje tu shader (sprite jako tekstura), nie nakładka 2D.
 // Blok `namiarCzujnikow` (nagłówek i kotwice jak w namiarTSL.js; px bufora, y od góry, kąt jak canvas `arc`):
 //   TAFLA / PRZYBÓJ: A0 = (sx, sy, pół długości okrętu, widoczność), A1 = (okno: pełne, zero [px], długość fali [px],
-//     prędkość fal [px/s]); znacznik = grupa: M0 = (cx, cy, promień granicy R [px], widoczność), M1 = (wiek przejścia [s]
-//     albo −1, kierunek +1 do środka / −1 na zewnątrz, kąt miejsca przejścia, ziarno), M2 = (est, prędkość granicy
-//     [px/s, + = rośnie], kąt mojego okrętu od środka grupy, jestem w środku 0..1)
+//     prędkość fal [px/s]); znacznik = grupa: M0 = (cx, cy, promień KONTAKTU Rc [px], widoczność), M1 = przejście granicy
+//     kontaktu (wiek [s] albo −1, kierunek +1 do środka / −1 na zewnątrz, kąt miejsca przejścia, Rc w chwili przejścia),
+//     M2 = (est, prędkość granicy kontaktu [px/s, + = rośnie], kąt mojego okrętu od środka grupy, promień WZROKU Rv [px]),
+//     M3 = przejście granicy wzroku (wiek, kierunek, kąt, widoczność szarej tafli — 0, gdy Rc ≤ Rv)
 //   PODŚWIETLENIE: A0 = (sx, sy, długość okrętu [px], kurs), A1 = (poziom mipmapy, fale przyboju 0/1, długość fali,
 //     prędkość fal), A2 = (wysokość / długość sprite'a, widoczność); znacznik = grupa, która mnie widzi:
 //     M0 = (cx, cy, światło 0..1, wiek włączenia [s]), M1 = (ziarno, —)
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, float, int, vec2, vec3, vec4, uniform, screenCoordinate, texture, texture3D,
+  Fn, If, float, int, uint, vec2, vec3, vec4, uniform, screenCoordinate, texture, texture3D,
   exp, sin, cos, atan, length, mix, smoothstep, clamp, max, min, abs, fract, floor, step, dot, normalize
 } from 'three/tsl';
 import { fxNoise } from '../../src/3d/fx/noise.js';
-import { tv, u01, uOf, hash3 } from './kontaktyTSL.js';
+import { tv, pcg, u01, uOf, hash2, hash3 } from './kontaktyTSL.js';
 import { header, anchorAt, markLoop, baseMaterial, rectMask, gauss, wrapAngle, c3, BLUE, RED, PI } from './namiarTSL.js';
 
 export const GRANICA_STYLES = Object.freeze(['tafla', 'przyboj', 'swiatlo']);
@@ -57,7 +59,59 @@ function crossing(px, C, R, th, f, M1, pxs) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// 1. TAFLA
+// 1. TAFLA — dwa poziomy (plan § 7a): szara tafla KONTAKTU (wiedzą, że coś jest — granica jedzie z moim śladem) i czerwona
+//    tafla WZROKU (wiedzą, kto — stoi, wzrok nie zależy od śladu). Gdy cisza zsunie szarą pod czerwoną, szara zlewa się
+//    z nią i znika (`M3.w`). Przejścia: szara / czerwona zmarszczka wokół koła, „?” albo „!” nad miejscem przejścia,
+//    wyjście — błękit.
+const GRAY = [0.42, 0.44, 0.47];          // szarość kontaktu (jak obłok X-ów), liniowo
+
+const segD = (p, a, b) => {
+  const pa = p.sub(a), ba = b.sub(a);
+  const h = clamp(dot(pa, ba).div(dot(ba, ba)), 0.0, 1.0);
+  return length(pa.sub(ba.mul(h)));
+};
+// Glify w jednostkach glifu (y w dół), SDF (< 0 — w kresce): „?” — mają kontakt, „!” — wiedzą kto.
+function glyphQuestion(q) {
+  const c = vec2(0.0, -3.0);
+  const d = q.sub(c);
+  const a = atan(d.y, d.x);
+  const gap = step(0.6, a).mul(step(a, 3.1));                 // dolny łuk od prawej do lewej — przerwa haczyka
+  const e1 = vec2(2.0634, -1.5884);                           // c + 2,5·(cos 0,6, sin 0,6)
+  const e2 = vec2(-2.5, -3.0);
+  const arc = mix(abs(length(d).sub(2.5)), min(length(q.sub(e1)), length(q.sub(e2))), gap);
+  const stem = min(segD(q, e1, vec2(0.0, 0.4)), segD(q, vec2(0.0, 0.4), vec2(0.0, 1.4)));
+  return min(min(arc, stem).sub(0.75), length(q.sub(vec2(0.0, 3.7))).sub(0.95));
+}
+function glyphBang(q) {
+  const bar = length(q.sub(vec2(0.0, clamp(q.y, -5.6, 1.0)))).sub(0.85);
+  return min(bar, length(q.sub(vec2(0.0, 3.7))).sub(1.0));
+}
+
+// Znak przejścia nad miejscem przejścia (pionowo na ekranie, `lift` = nad obrysem kadłuba — kadłub z nakładki 2D leży nad
+// warstwą 3D i zakrywał znak) i krótki błysk: ev = (wiek, kierunek, kąt, promień przejścia). `kind` 0 — kontakt („?”,
+// szarość), 1 — wzrok („!”, czerwień); wyjście — sam błękitny błysk.
+function crossMark(px, C, ev, pxs, kind, lift) {
+  const out = vec3(0).toVar();
+  const age = ev.x;
+  If(age.greaterThanEqual(0.0).and(age.lessThan(2.2)), () => {
+    const Pc = tv('v2', C.add(vec2(cos(ev.z), sin(ev.z)).mul(ev.w)));
+    const dp = tv('v2', px.sub(Pc));
+    If(length(dp).lessThan(lift.add(pxs.mul(70.0))), () => {
+      const into = tv('f', step(0.0, ev.y));
+      const flash = gauss(length(dp), pxs.mul(age.mul(40.0).add(10.0))).mul(exp(age.div(0.2).negate()));
+      const pop = float(1.0).add(exp(age.div(0.1).negate()).mul(0.6));
+      const q = tv('v2', dp.add(vec2(0.0, lift)).div(pxs.mul(1.8).mul(pop)));
+      const sd = tv('f', kind === 0 ? glyphQuestion(q) : glyphBang(q));
+      const gl = float(1.0).sub(smoothstep(-0.45, 0.45, sd));
+      const gh = gauss(max(sd, 0.0), float(3.5)).mul(0.25);
+      const ga = smoothstep(0.0, 0.06, age).mul(float(1.0).sub(smoothstep(1.3, 2.1, age))).mul(into);
+      const col = kind === 0 ? mix(c3(GRAY), vec3(1.0), 0.35) : mix(c3(RED), vec3(1.0), 0.25);
+      out.assign(mix(c3(BLUE), col, into).mul(flash.mul(1.5)).add(col.mul(gl.mul(1.6).add(gh)).mul(ga)));
+    });
+  });
+  return out;
+}
+
 function taflaLook(B, px, noiseTex) {
   const { count, t, pxs } = header(B);
   const rgb = vec3(0).toVar('tfRgb');
@@ -65,97 +119,153 @@ function taflaLook(B, px, noiseTex) {
   const S = A0.xy;
   const wNear = A1.x, wFar = A1.y;
   If(A0.w.greaterThan(0.001), () => {
-    markLoop(B, int(0), count, 'tg', ({ M0, M1, M2 }) => {
+    markLoop(B, int(0), count, 'tg', ({ M0, M1, M2, M3 }) => {
       const C = tv('v2', M0.xy);
-      const R = tv('f', M0.z);
+      const vis = tv('f', M0.w);
+      const Rc = tv('f', M0.z);
+      const Rv = tv('f', M2.w);
+      const gvis = tv('f', M3.w.mul(vis));
+      const rate = tv('f', M2.y);
+      const est = M2.x;
       const dv = tv('v2', px.sub(C));
       const r = tv('f', length(dv));
-      const f = tv('f', r.sub(R));                        // > 0 — poza ich zasięgiem, < 0 — w zasięgu
-      const rate = tv('f', M2.y);
-      const band = pxs.mul(95.0).add(abs(rate).mul(0.22));
-      If(abs(f).lessThan(band).and(M0.w.greaterThan(0.001)), () => {
+      const dS0 = tv('f', length(S.sub(C)));             // odległość mojego okrętu od środka grupy
+      // ── WZROK: czerwona tafla (stoi) ──────────────────────────────────────────────────────────────────────────
+      const fV = tv('f', r.sub(Rv));                      // > 0 — poza ich wzrokiem, < 0 — widzą, kto to
+      If(Rv.greaterThan(1.0).and(vis.greaterThan(0.001)).and(abs(fV).lessThan(pxs.mul(95.0))), () => {
         const nrm = tv('v2', dv.div(max(r, 1.0)));
         const th = tv('f', atan(dv.y, dv.x));
-        // okno: punkt granicy na tym promieniu blisko mojego okrętu
-        const dS = tv('f', length(C.add(nrm.mul(R)).sub(S)));
-        const win = tv('f', float(1.0).sub(smoothstep(wNear, wFar, dS)));
-        const gapS = tv('f', length(S.sub(C)).sub(R));
-        const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(gapS))));
-        const est = M2.x;
-        const X = crossing(px, C, R, th, f, M1, pxs);
-        const V = tv('f', max(win, X.trail.mul(0.85)).mul(M0.w));
+        const win = tv('f', float(1.0).sub(smoothstep(wNear, wFar, length(C.add(nrm.mul(Rv)).sub(S)))));
+        const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(dS0.sub(Rv)))));
+        const X = crossing(px, C, Rv, th, fV, M3, pxs);
+        const V = tv('f', max(win, X.trail.mul(0.85)).mul(vis));
         // zmarszczki od punktu granicy najbliższego mnie
-        const Pn = C.add(vec2(cos(M2.z), sin(M2.z)).mul(R));
+        const Pn = C.add(vec2(cos(M2.z), sin(M2.z)).mul(Rv));
         const dn = tv('f', length(px.sub(Pn)));
         const ripPh = tv('f', dn.div(pxs.mul(15.0)).sub(t.mul(5.0)));
         const ripK = tv('f', exp(dn.div(pxs.mul(240.0)).negate()).mul(prox));
         const q = tv('v2', dv.div(pxs));                  // szum zakotwiczony w grupie — nie płynie z kamerą
-        const n1 = tv('v4', texture3D(noiseTex, vec3(q.div(170.0).add(M1.w), t.mul(0.04))).level(0));
+        const n1 = tv('v4', texture3D(noiseTex, vec3(q.div(170.0).add(0.37), t.mul(0.04))).level(0));
         const n2 = tv('v4', texture3D(noiseTex, vec3(q.div(55.0).add(0.31), t.mul(0.09))).level(0));
-        const fe = tv('f', f.add(sin(ripPh).mul(ripK).mul(pxs.mul(1.3))).add(n2.x.sub(0.5).mul(pxs.mul(1.6))));
+        const fe = tv('f', fV.add(sin(ripPh).mul(ripK).mul(pxs.mul(1.3))).add(n2.x.sub(0.5).mul(pxs.mul(1.6))));
         // linia: rdzeń + poświata; est (radar zgadnięty) — szersza, w kreskach
         const lw = tv('f', pxs.mul(mix(float(0.85), float(2.4), est)));
-        const dash = mix(float(1.0), step(0.45, fract(wrapAngle(th.sub(M2.z)).mul(R).div(pxs.mul(9.0)))), est);
+        const dash = mix(float(1.0), step(0.45, fract(wrapAngle(th.sub(M2.z)).mul(Rv).div(pxs.mul(9.0)))), est);
         const core = gauss(fe, lw).mul(dash);
         const halo = gauss(fe, pxs.mul(7.0)).mul(0.2);
         // tafla po stronie wroga: kaustyka pola siłowego, gaśnie w głąb
-        const sheetK = tv('f', exp(min(f, 0.0).div(pxs.mul(26.0))).mul(step(f, 0.0)));
+        const sheetK = tv('f', exp(min(fV, 0.0).div(pxs.mul(26.0))).mul(step(fV, 0.0)));
         const caus = smoothstep(0.5, 0.85, n1.x.mul(0.65).add(n2.y.mul(0.35)));
         const sheet = sheetK.mul(caus.mul(0.55).add(0.1)).mul(0.3);
-        const rip = smoothstep(0.7, 1.0, sin(ripPh)).mul(ripK).mul(gauss(f, pxs.mul(8.0))).mul(0.22);
-        // tafla w ruchu: smuga za nią — prążki w kierunku ruchu, słaba (pełna smuga przy szybkiej tafli była czerwoną płytą)
-        const sg = tv('f', step(0.0, rate).mul(2.0).sub(1.0));
-        const fm = tv('f', f.mul(sg).negate());
-        const smW = tv('f', abs(rate).mul(0.07).add(pxs));
-        const arcR = tv('f', wrapAngle(th.sub(M2.z)).mul(R).div(pxs));
-        const ns = tv('v4', texture3D(noiseTex, vec3(arcR.div(7.0).add(0.17), fm.div(smW.mul(2.5)), t.mul(0.3))).level(0));
-        const smear = step(0.0, fm).mul(exp(fm.div(smW).negate()))
-          .mul(smoothstep(pxs.mul(25.0), pxs.mul(160.0), abs(rate))).mul(smoothstep(0.45, 0.8, ns.x).mul(0.8).add(0.08)).mul(0.22);
-        const I = tv('f', prox.mul(0.65).add(0.35).mul(M2.w.mul(0.25).add(1.0)));
+        const rip = smoothstep(0.7, 1.0, sin(ripPh)).mul(ripK).mul(gauss(fV, pxs.mul(8.0))).mul(0.22);
+        const I = tv('f', prox.mul(0.65).add(0.35).mul(step(dS0, Rv).mul(0.25).add(1.0)));
         rgb.addAssign(mix(c3(RED), vec3(1.0), 0.3).mul(core.mul(1.4).add(halo)).mul(I).mul(V));
-        rgb.addAssign(c3(RED).mul(sheet.add(rip).add(smear)).mul(I).mul(win).mul(M0.w));
-        rgb.addAssign(X.col.mul(gauss(f, pxs.mul(3.0)).mul(2.4).add(gauss(f, pxs.mul(12.0)).mul(0.35)).mul(X.ripple)
-          .add(X.flash.mul(1.7))).mul(M0.w));
+        rgb.addAssign(c3(RED).mul(sheet.add(rip)).mul(I).mul(win).mul(vis));
+        rgb.addAssign(X.col.mul(gauss(fV, pxs.mul(3.0)).mul(2.4).add(gauss(fV, pxs.mul(12.0)).mul(0.35)).mul(X.ripple)).mul(vis));
       });
+      // ── KONTAKT: szara tafla z X-ów (jedzie z moim śladem) ────────────────────────────────────────────────────
+      const fC = tv('f', r.sub(Rc));
+      If(gvis.greaterThan(0.001).and(abs(fC).lessThan(pxs.mul(60.0).add(abs(rate).mul(0.22)))), () => {
+        const nrm = tv('v2', dv.div(max(r, 1.0)));
+        const th = tv('f', atan(dv.y, dv.x));
+        const win = tv('f', float(1.0).sub(smoothstep(wNear, wFar, length(C.add(nrm.mul(Rc)).sub(S)))));
+        const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(dS0.sub(Rc)))));
+        const X = crossing(px, C, Rc, th, fC, M1, pxs);
+        const V = tv('f', max(win, X.trail.mul(0.85)).mul(gvis));
+        // X-y w komórkach 6 px (łuk od punktu najbliższego mnie × odległość od granicy): rzędy przy linii gęsto, dalej
+        // rzadko; każdy żyje 0,7–1,6 s i odradza się w innym miejscu komórki — ten sam język co obłok kontaktu
+        const arcPx = tv('f', wrapAngle(th.sub(M2.z)).mul(Rc).div(pxs));
+        const fpx = tv('f', fC.div(pxs));
+        const gq = tv('v2', vec2(arcPx, fpx).div(6.0));
+        const ci = floor(gq);
+        const fr = tv('v2', fract(gq));
+        const key = tv('u', hash3(uOf(ci.x.add(65536.0)), uOf(ci.y.add(65536.0)), uint(41)));
+        const life = u01(pcg(key.add(uint(1)))).mul(0.9).add(0.7);
+        const ph = tv('f', t.div(life).add(u01(pcg(key.add(uint(2))))));
+        const k2 = tv('u', hash2(key, uOf(ph)));
+        const lp = fract(ph);
+        const fcR = ci.y.add(0.5).mul(6.0);
+        const P = exp(fcR.mul(fcR).div(49.0).negate()).mul(0.85);
+        const alive = step(u01(pcg(k2.add(uint(1)))), P);
+        const env = smoothstep(0.0, 0.14, lp).mul(float(1.0).sub(smoothstep(0.66, 1.0, lp)));
+        const cx = u01(pcg(k2.add(uint(2)))).mul(0.5).add(0.25);
+        const cy = u01(pcg(k2.add(uint(3)))).mul(0.5).add(0.25);
+        const qx = tv('v2', fr.sub(vec2(cx, cy)).mul(pxs.mul(6.0)));
+        const arm = tv('f', pxs.mul(u01(pcg(k2.add(uint(4)))).mul(0.6).add(1.3)).mul(1.4142));
+        const xa = qx.x.add(qx.y).mul(0.7071);
+        const xb = qx.x.sub(qx.y).mul(0.7071);
+        const dX = min(length(vec2(xb, max(abs(xa).sub(arm), 0.0))), length(vec2(xa, max(abs(xb).sub(arm), 0.0))));
+        const xI = tv('f', float(1.0).sub(smoothstep(pxs.mul(0.35), pxs.mul(1.05), dX)).mul(alive).mul(env));
+        const core = gauss(fC, pxs.mul(0.9)).mul(0.2);
+        // tafla w ruchu: prążki za nią (ciąg pcha ją na mnie, cisza odsuwa)
+        const sg = tv('f', step(0.0, rate).mul(2.0).sub(1.0));
+        const fm = tv('f', fC.mul(sg).negate());
+        const smW = tv('f', abs(rate).mul(0.07).add(pxs));
+        const ns = tv('v4', texture3D(noiseTex, vec3(arcPx.div(7.0).add(0.17), fm.div(smW.mul(2.5)), t.mul(0.3))).level(0));
+        const smear = step(0.0, fm).mul(exp(fm.div(smW).negate()))
+          .mul(smoothstep(pxs.mul(25.0), pxs.mul(160.0), abs(rate))).mul(smoothstep(0.45, 0.8, ns.x).mul(0.8).add(0.08)).mul(0.3);
+        const I = tv('f', prox.mul(0.65).add(0.35));
+        rgb.addAssign(c3(GRAY).mul(xI.mul(1.5).add(core)).mul(I).mul(V));
+        rgb.addAssign(c3(GRAY).mul(smear).mul(I).mul(win).mul(gvis));
+        rgb.addAssign(mix(c3(BLUE), vec3(0.78, 0.8, 0.84), step(0.0, M1.y))
+          .mul(gauss(fC, pxs.mul(3.0)).mul(1.8).add(xI.mul(2.0))).mul(X.ripple).mul(gvis));
+      });
+      // znaki przejść: „?” (kontakt) i „!” (wzrok), wyjście — błękitny błysk
+      const lift = A0.z.mul(0.45).add(pxs.mul(24.0));        // pół wysokości kadłuba + odstęp
+      rgb.addAssign(crossMark(px, C, M1, pxs, 0, lift).mul(vis));
+      rgb.addAssign(crossMark(px, C, vec4(M3.xyz, Rv), pxs, 1, lift).mul(vis));
     });
   });
   return rgb;
 }
 
-// Refrakcja tafli: warstwa DIST — RG = przesunięcie [px bufora, osie sceny].
+// Refrakcja tafli: warstwa DIST — RG = przesunięcie [px bufora, osie sceny]. Czerwona (wzrok) wyraźnie, szara słabo.
 function taflaDisp(B, px) {
   const { count, t, pxs } = header(B);
   const disp = vec2(0).toVar('tfDisp');
   const [A0, A1] = anchorAt(B, int(0));
   const S = A0.xy;
   If(A0.w.greaterThan(0.001), () => {
-    markLoop(B, int(0), count, 'td', ({ M0, M1, M2 }) => {
+    markLoop(B, int(0), count, 'td', ({ M0, M1, M2, M3 }) => {
       const C = tv('v2', M0.xy);
-      const R = tv('f', M0.z);
+      const vis = tv('f', M0.w);
+      const Rc = tv('f', M0.z);
+      const Rv = tv('f', M2.w);
       const dv = tv('v2', px.sub(C));
       const r = tv('f', length(dv));
-      const f = tv('f', r.sub(R));
-      If(abs(f).lessThan(pxs.mul(70.0)).and(M0.w.greaterThan(0.001)), () => {
+      const dS0 = tv('f', length(S.sub(C)));
+      const fV = tv('f', r.sub(Rv));
+      If(Rv.greaterThan(1.0).and(abs(fV).lessThan(pxs.mul(70.0))).and(vis.greaterThan(0.001)), () => {
         const nrm = tv('v2', dv.div(max(r, 1.0)));
         const th = tv('f', atan(dv.y, dv.x));
-        const dS = tv('f', length(C.add(nrm.mul(R)).sub(S)));
-        const win = tv('f', float(1.0).sub(smoothstep(A1.x, A1.y, dS)));
-        const gapS = tv('f', length(S.sub(C)).sub(R));
-        const prox = tv('f', float(1.0).sub(smoothstep(A1.x.mul(0.35), A1.y, abs(gapS))));
-        const X = crossing(px, C, R, th, f, M1, pxs);
+        const win = tv('f', float(1.0).sub(smoothstep(A1.x, A1.y, length(C.add(nrm.mul(Rv)).sub(S)))));
+        const prox = tv('f', float(1.0).sub(smoothstep(A1.x.mul(0.35), A1.y, abs(dS0.sub(Rv)))));
+        const X = crossing(px, C, Rv, th, fV, M3, pxs);
         // brzeg szyby: −x·e^(−x²) rozsuwa obraz po obu stronach linii
-        const xl = tv('f', f.div(pxs.mul(12.0)));
+        const xl = tv('f', fV.div(pxs.mul(12.0)));
         const lens = xl.negate().mul(exp(xl.mul(xl).negate()));
         const amp = pxs.mul(6.0).mul(win.mul(prox.mul(0.6).add(0.4)).add(X.trail.mul(0.5)));
-        const along = nrm.mul(lens.mul(amp).add(gauss(f, pxs.mul(14.0)).mul(X.ripple).mul(pxs.mul(7.0))));
+        const along = nrm.mul(lens.mul(amp).add(gauss(fV, pxs.mul(14.0)).mul(X.ripple).mul(pxs.mul(7.0))));
         // zmarszczki od punktu najbliższego mnie
-        const Pn = C.add(vec2(cos(M2.z), sin(M2.z)).mul(R));
+        const Pn = C.add(vec2(cos(M2.z), sin(M2.z)).mul(Rv));
         const dnv = tv('v2', px.sub(Pn));
         const dn = tv('f', length(dnv));
         const ripK = exp(dn.div(pxs.mul(240.0)).negate()).mul(prox).mul(win);
         const rip = dnv.div(max(dn, 1.0)).mul(cos(dn.div(pxs.mul(15.0)).sub(t.mul(5.0)))).mul(ripK)
-          .mul(gauss(f, pxs.mul(20.0))).mul(pxs.mul(2.2));
-        const o = tv('v2', along.add(rip).mul(M0.w));
+          .mul(gauss(fV, pxs.mul(20.0))).mul(pxs.mul(2.2));
+        const o = tv('v2', along.add(rip).mul(vis));
+        disp.addAssign(vec2(o.x, o.y.negate()));
+      });
+      const gvis = tv('f', M3.w.mul(vis));
+      const fC = tv('f', r.sub(Rc));
+      If(gvis.greaterThan(0.001).and(abs(fC).lessThan(pxs.mul(50.0))), () => {
+        const nrm = tv('v2', dv.div(max(r, 1.0)));
+        const th = tv('f', atan(dv.y, dv.x));
+        const win = tv('f', float(1.0).sub(smoothstep(A1.x, A1.y, length(C.add(nrm.mul(Rc)).sub(S)))));
+        const X = crossing(px, C, Rc, th, fC, M1, pxs);
+        const xl = tv('f', fC.div(pxs.mul(9.0)));
+        const lens = xl.negate().mul(exp(xl.mul(xl).negate()));
+        const o = tv('v2', nrm.mul(lens.mul(pxs.mul(2.5)).mul(win).add(gauss(fC, pxs.mul(10.0)).mul(X.ripple).mul(pxs.mul(4.0)))).mul(gvis));
         disp.addAssign(vec2(o.x, o.y.negate()));
       });
     });
@@ -179,7 +289,7 @@ function przybojLook(B, px, noiseTex) {
       const r = tv('f', length(dv));
       const f = tv('f', r.sub(R));
       const dPS = tv('f', length(px.sub(S)));
-      const ins = M2.w;
+      const ins = tv('f', step(length(S.sub(C)), R));
       const nearShip = dPS.lessThan(shipR.mul(3.6)).and(ins.greaterThan(0.01));
       const inBand = f.greaterThan(lam.mul(-7.5)).and(f.lessThan(lam.mul(1.3).add(pxs.mul(30.0))));
       If(inBand.or(nearShip).and(M0.w.greaterThan(0.001)), () => {
@@ -190,7 +300,7 @@ function przybojLook(B, px, noiseTex) {
         const gapS = tv('f', length(S.sub(C)).sub(R));
         const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(gapS))));
         const q = tv('v2', dv.div(pxs));
-        const nb = tv('v4', texture3D(noiseTex, vec3(q.div(260.0).add(M1.w), t.mul(0.03))).level(0));
+        const nb = tv('v4', texture3D(noiseTex, vec3(q.div(260.0).add(0.37), t.mul(0.03))).level(0));
         const arcPx = tv('f', wrapAngle(th.sub(M2.z)).mul(R).div(pxs));    // px wzdłuż granicy od punktu najbliższego mnie
         const fpx = tv('f', f.div(pxs));
         const nf = tv('v4', texture3D(noiseTex, vec3(arcPx.div(46.0).add(0.53), fpx.div(14.0).add(t.mul(0.35)), t.mul(0.2))).level(0));

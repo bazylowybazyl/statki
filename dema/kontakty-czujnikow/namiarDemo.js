@@ -57,7 +57,12 @@ function group(x, y, Rt, Rm, extra = {}) {
   return {
     id, x, y, Rt, Rm, est: 0, nBig: 0, nSmall: 1, sprites: 0, name: '', seed: hash01(id, 31, 7),
     them: 0, me: 0, d: 0, bearing: 0, m: 0, reveal: 0, det: 0, detOn: false, flashAge: OFF,
-    R: 0, Rprev: null, rate: 0, inPrev: null, crossAge: OFF, crossDir: 1, crossAng: 0, lit: 0, litAge: OFF, ins: 0, ...extra
+    R: 0, Rprev: null, rate: 0, lit: 0, litAge: OFF,
+    // dwa poziomy (plan § 7a): Rv — ich wzrok (stały; domyślnie 0,62 × Rt), lvl 0 / 1 kontakt / 2 wzrok, przejścia granic
+    Rvis: undefined, Rv: 0, lvl: null, gvis: 1,
+    cC: { age: OFF, dir: 1, ang: 0, R: 0 }, cV: { age: OFF, dir: 1, ang: 0, R: 0 },
+    // objawienie (ja ich): objaw — grupa widziana najpierw jako kontakt (obłok X-ów), myVis — mój wzrok, idP 0..1
+    objaw: false, myVis: 0, myIdOn: false, idP: 1, meA: 0, ...extra
   };
 }
 /** Ciało niebieskie: R — promień [j.], rodzaj 0 skalista, 1 gazowa, 2 lodowa / wodna, 3 gwiazda. */
@@ -77,7 +82,8 @@ function flyby(T) {
 }
 
 // GRANICA: prędkość Atlasa [km/s] w czasie (pętla 27 s) — droga całkowana raz (tablica co 1/240 s), bez szarpnięć kamery.
-const BORDER_V = [[0, 1.2], [8, 1.2], [9, 2.0], [11, 2.0], [13, 0.5], [14, 0.3], [19, 0.3], [20, 0], [21, -0.8], [22, -2.0], [27, -2.0]];
+const BORDER_T = 29;
+const BORDER_V = [[0, 1.2], [8, 1.2], [9, 2.0], [11, 2.0], [13, 0.5], [14, 0.3], [19, 0.3], [20, 0], [21, -0.8], [22, -2.0], [BORDER_T, -2.0]];
 const BORDER_X0 = -27000;
 const BORDER_DT = 1 / 240;
 function linTab(tab, T) {
@@ -91,7 +97,7 @@ function linTab(tab, T) {
   return tab[tab.length - 1][1];
 }
 const BORDER_X = (() => {
-  const n = Math.ceil(27 / BORDER_DT) + 2;
+  const n = Math.ceil(BORDER_T / BORDER_DT) + 2;
   const a = new Float64Array(n);
   a[0] = BORDER_X0;
   for (let i = 1; i < n; i++) a[i] = a[i - 1] + 0.5 * (linTab(BORDER_V, (i - 1) * BORDER_DT) + linTab(BORDER_V, i * BORDER_DT)) * KM * BORDER_DT;
@@ -104,17 +110,13 @@ function borderX(T) {
 }
 /** Ślad: zwykła praca 1, ciąg ×1,35 (8–9 s), cicha praca ×0,5 (13–14 s), powrót do zwykłej (21–22 s). */
 const borderSig = (T) => 1 + 0.35 * ss(8, 9, T) - 0.85 * ss(13, 14, T) + 0.5 * ss(21, 22, T);
-function borderCaption(T) {
-  if (T < 8) return 'ZWYKŁA PRACA — zbliżam się do granicy';
-  if (T < 8.6) return 'CIĄG — granica jedzie na mnie';
-  if (T < 13) return 'CIĄG — granica przeskoczyła, widzą mnie';
-  if (T < 14) return 'CICHA PRACA — granica się cofa';
-  if (T < 19) return 'CICHA PRACA — skradam się pod granicę';
-  if (T < 21) return 'ZAWRACAM';
-  if (T < 21.3) return 'ZWYKŁA PRACA — granica rośnie';
-  if (T < 22.4) return 'ZWYKŁA PRACA — znów mnie widzą';
-  if (T < 24.6) return 'UCIEKAM';
-  return 'POZA ICH ZASIĘGIEM';
+/** Podpis sceny GRANICA ze stanu: tryb pracy · co oni wiedzą o mnie · co ja wiem o nich. */
+function borderCaption(v, T) {
+  const g = v.groups[0];
+  const mode = T >= 19 && T < 21 ? 'ZAWRACAM' : v.sig > 1.2 ? 'CIĄG' : v.sig < 0.7 ? 'CICHA PRACA' : 'ZWYKŁA PRACA';
+  const they = g.lvl === 2 ? 'oni: wiedzą, że to Atlas' : g.lvl === 1 ? 'oni: mają kontakt, nie wiedzą kto' : 'oni: nic';
+  const me = g.idP > 0.5 ? 'ja: widzę patrol' : 'ja: kontakt (X-y)';
+  return `${mode} · ${they} · ${me}`;
 }
 
 const SCENES = {
@@ -185,15 +187,24 @@ const SCENES = {
       return { on: T >= 0.4 && T < 26.6, aim: -0.1 + 0.05 * Math.sin(T * 0.7), caption: flyby(T).phase };
     }
   },
-  // GRANICA (czwarta runda): Atlas leci na patrol (3 statki, granica ich wzroku 14 km przy zwykłej pracy). Podchodzi pod
-  // granicę, ciąg przerzuca ją przez niego (widzą go), cicha praca cofa ją za niego, skrada się pod samą granicę, zawraca,
-  // powrót do zwykłej pracy znów go odsłania, ucieka. Kamera jedzie za okrętem (patrol w kadrze).
+  // GRANICA (czwarta runda, dwa poziomy — plan § 7a): Atlas leci na patrol (3 statki): ich KONTAKT 14 km × mój ślad
+  // (szara tafla), ich WZROK 9 km (czerwona, stoi); mój wzrok 18 km — dalej widzę patrol jako obłok X-ów. Objawienie (ja
+  // ich, ~7,5 s), ciąg przerzuca szarą przez Atlasa („?”), cicha praca cofa ją i zlewa z czerwoną, skradanie wchodzi w ich
+  // wzrok mimo ciszy („!”), zawrót, ucieczka: wyjście ze wzroku, z kontaktu, utrata mojego wzroku (patrol znów X-ami).
   granica: {
-    period: 27,
+    period: BORDER_T,
     cam: { x: 8000, y: 0 },
-    build() {
+    build(makeContact) {
       const v = { x: BORDER_X0, y: 2200, sig: 1, sens: 1, heading: 0 };
-      v.groups = [group(0, 0, 14000, 26000, { nSmall: 3, sprites: 3, name: 'patrol, 3 statki' })];
+      const g = group(0, 0, 14000, 34000, {
+        nSmall: 3, sprites: 3, name: 'patrol, 3 statki', Rvis: 9000, objaw: true, myVis: 18000, idP: 0
+      });
+      const c = makeContact ? makeContact(2, 0, 0) : null;
+      if (c) {
+        c.move = (t, cc) => { cc.tx = g.x; cc.ty = g.y; };
+        g.contact = c;
+      }
+      v.groups = [g];
       v.planets = [body('Mars', 0, 7000, 150 * KM, 2.3), body('Jowisz', 1, 32000, 700 * KM, -2.5), body('Słońce', 3, 60000, 2200 * KM, 1.0)];
       return v;
     },
@@ -202,8 +213,9 @@ const SCENES = {
       v.heading = Math.PI * ss(19, 21, T);
       v.sig = borderSig(T);
       v.sens = 1 - 0.4 * ss(13, 14, T) * (1 - ss(21, 22, T));
-      return { on: false, aim: v.heading, caption: borderCaption(T) };
-    }
+      return { on: false, aim: v.heading, caption: null };
+    },
+    caption: borderCaption
   }
 };
 
@@ -276,7 +288,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       } else if (g.far) {
         g.x = v.x + Math.cos(g.far.bearing) * g.far.d;
         g.y = v.y + Math.sin(g.far.bearing) * g.far.d;
-      } else if (g.contact) {
+      } else if (g.contact && !g.objaw) {
         g.x = g.contact.mx; g.y = g.contact.my;
       }
       const dx = g.x - v.x, dy = g.y - v.y;
@@ -302,22 +314,48 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       g.R = g.Rt * v.sig;
       if (dt > 0 && g.Rprev !== null) g.rate = approach(g.rate, (g.R - g.Rprev) / dt, dt, 0.08);
       g.Rprev = g.R;
-      if (g.inPrev === null) g.inPrev = g.detOn;
-      else if (g.detOn !== g.inPrev) {
-        g.inPrev = g.detOn;
-        g.crossAge = 0;
-        g.crossDir = g.detOn ? 1 : -1;
-        g.crossAng = Math.atan2(v.y - g.y, v.x - g.x);
-        if (g.detOn) g.litAge = 0;
+      // dwa poziomy (plan § 7a): KONTAKT — them ≥ 1 (histereza struny), WZROK — d ≤ Rv (wygrywa niezależnie od śladu);
+      // przejście = zmiana poziomu; które koło — wzroku, gdy poziom 2 po którejś stronie, inaczej kontaktu
+      g.Rv = g.Rvis ?? g.Rt * 0.62;
+      const inV = g.lvl === 2 ? g.d <= g.Rv * 1.02 : g.d <= g.Rv;
+      const lvl = inV ? 2 : g.detOn ? 1 : 0;
+      if (g.lvl === null) g.lvl = lvl;
+      else if (lvl !== g.lvl) {
+        const ev = lvl === 2 || g.lvl === 2 ? g.cV : g.cC;
+        ev.age = 0;
+        ev.dir = lvl > g.lvl ? 1 : -1;
+        ev.ang = Math.atan2(v.y - g.y, v.x - g.x);
+        ev.R = ev === g.cV ? g.Rv : g.R;
+        g.lvl = lvl;
       }
-      g.crossAge = Math.min(OFF, g.crossAge + dt);
+      g.cC.age = Math.min(OFF, g.cC.age + dt);
+      g.cV.age = Math.min(OFF, g.cV.age + dt);
+      g.gvis = Math.max(0, Math.min(1, (g.R - g.Rv) / 900));     // szara pod czerwoną (cisza) zlewa się z nią i znika
+      if (g.detOn && g.lit < 0.01) g.litAge = 0;
       g.litAge = Math.min(OFF, g.litAge + dt);
       g.lit = approach(g.lit, g.detOn ? 1 : 0, dt, 0.1, 0.5);
-      g.ins = approach(g.ins, g.detOn ? 1 : 0, dt, 0.15);
+      // objawienie (ja ich): w moim wzroku obłok X-ów zwija się w kadłuby (~0,55 s), poza nim kadłuby rozsypują się w X-y;
+      // przed wzrokiem obłok gęstnieje (błąd miejsca → 0 na granicy wzroku, jak contactOffset prototypu)
+      if (g.objaw) {
+        g.myIdOn = g.myIdOn ? g.d <= g.myVis * 1.02 : g.d <= g.myVis;
+        if (dt > 0) g.idP = Math.max(0, Math.min(1, g.idP + (g.myIdOn ? 1 : -1) * dt / 0.55));
+        else g.idP = g.myIdOn ? 1 : 0;
+        g.meA = approach(g.meA, g.me >= 1 ? 1 : 0, dt, 0.3);
+        const c = g.contact;
+        if (c) {
+          const detR = g.Rm * v.sens;
+          const tt = Math.max(0, Math.min(1, (g.d - g.myVis) / Math.max(1, detR - g.myVis)));
+          c.err = 0.07 * g.d * tt * (1 - g.idP) + 60;
+          c.Rk = 1 - 0.6 * ss(0, 0.75, g.idP);
+          c.alphaMul = (1 - ss(0.3, 0.85, g.idP)) * (dt > 0 ? g.meA : (g.me >= 1 ? 1 : 0));
+          c.followTau = g.idP > 0 && g.idP < 1 ? 0.12 : 0.45;
+        }
+      }
       if (v.on) signal += Math.min(1.4, g.me) * g.m;
       detBeam = Math.max(detBeam, g.det * g.reveal);
       eye = Math.max(eye, g.det * g.reveal);
     }
+    if (sc.caption) st.caption = sc.caption(v, T);
     const sg = Math.min(1, signal);
     const ampT = 0.35 + 5.2 * sg * Math.sqrt(sg);
     v.amp = approach(v.amp, ampT, dt, 0.35, 0.5);
@@ -399,9 +437,9 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       const [cx, cy] = toS(cam, W, H, g.x, g.y);
       const o = NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * n;
       A[o].set(cx * pxs, cy * pxs, g.R * z, 1);
-      A[o + 1].set(g.crossAge < 2.8 ? g.crossAge : -1, g.crossDir, g.crossAng, g.seed);
-      A[o + 2].set(g.est, g.rate * z, Math.atan2(v.y - g.y, v.x - g.x), g.ins);
-      A[o + 3].set(0, 0, 0, 0);
+      A[o + 1].set(g.cC.age < 2.8 ? g.cC.age : -1, g.cC.dir, g.cC.ang, g.cC.R * z);
+      A[o + 2].set(g.est, g.rate * z, Math.atan2(v.y - g.y, v.x - g.x), g.Rv * z);
+      A[o + 3].set(g.cV.age < 2.8 ? g.cV.age : -1, g.cV.dir, g.cV.ang, g.gvis);
       n++;
     }
     const a = NAMIAR_HDR;
@@ -579,6 +617,56 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
     ctx.restore();
   }
 
+  // OBJAWIENIE kadłuba: komórki ~4 px odsłaniają się w kolejności z haszu (postęp p), a na froncie — w komórkach, gdzie
+  // jest kadłub — stoją szare X-y (ten sam język co obłok kontaktu): X-y „stają się” kadłubem; przy p malejącym odwrotnie.
+  const REVEAL_CELL = 4;
+  const alphaGrids = new Map();
+  function alphaGrid(nx, ny) {
+    const key = nx * 4096 + ny;
+    let m = alphaGrids.get(key);
+    if (m) return m;
+    const cv = document.createElement('canvas');
+    cv.width = nx; cv.height = ny;
+    const c2 = cv.getContext('2d', { willReadFrequently: true });
+    c2.drawImage(enemyImg, 0, 0, nx, ny);
+    const px = c2.getImageData(0, 0, nx, ny).data;
+    m = new Uint8Array(nx * ny);
+    for (let i = 0; i < nx * ny; i++) m[i] = px[i * 4 + 3] > 50 ? 1 : 0;
+    alphaGrids.set(key, m);
+    return m;
+  }
+  function drawRevealed(ctx, w, h, p, salt) {
+    const nx = Math.max(1, Math.ceil(w / REVEAL_CELL)), ny = Math.max(1, Math.ceil(h / REVEAL_CELL));
+    const cw = w / nx, ch = h / ny, x0 = -w / 2, y0 = -h / 2;
+    const mask = alphaGrid(nx, ny);
+    ctx.save();
+    ctx.beginPath();
+    for (let iy = 0; iy < ny; iy++) {
+      for (let ix = 0; ix < nx; ix++) {
+        if (hash01(ix, iy, salt) < p) ctx.rect(x0 + ix * cw - 0.25, y0 + iy * ch - 0.25, cw + 0.5, ch + 0.5);
+      }
+    }
+    ctx.clip();
+    ctx.drawImage(enemyImg, x0, y0, w, h);
+    ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(176, 182, 192, 0.92)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const r = Math.min(cw, ch) * 0.42;
+    for (let iy = 0; iy < ny; iy++) {
+      for (let ix = 0; ix < nx; ix++) {
+        const hh = hash01(ix, iy, salt);
+        if (!mask[iy * nx + ix] || hh < p || hh > p + 0.22) continue;
+        const cx = x0 + (ix + 0.5) * cw, cy = y0 + (iy + 0.5) * ch;
+        ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
+        ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawPlanet(ctx, x, y, r, kind) {
     const cols = [['150, 120, 100', '40, 30, 26'], ['200, 170, 120', '60, 45, 30'], ['120, 170, 210', '20, 35, 55'], ['255, 230, 160', '200, 120, 40']][kind];
     const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
@@ -615,19 +703,24 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       ctx.restore();
     }
     for (const g of v.groups) {
-      if (!g.sprites) continue;
+      if (!g.sprites || (g.objaw && g.idP <= 0)) continue;
       const [ex, ey] = toS(cam, W, H, g.x, g.y);
       if (ex < -40 || ex > W + 40 || ey < -40 || ey > H + 40 || !enemyImg.complete || !enemyImg.naturalWidth) continue;
       const L = ENEMY_LEN * cam.zoom;
       const asp = enemyImg.naturalHeight / enemyImg.naturalWidth;
       const a = Math.atan2(sy - ey, sx - ex);
       for (let s = 0; s < g.sprites; s++) {
-        const ox = s === 0 ? 0 : (s === 1 ? 26 : -22), oy = s === 0 ? 0 : (s === 1 ? 24 : 30);
+        // rozstaw w świecie (przy kadrze 45 km ≈ 26 / 24 px i −22 / 30 px), żeby zbliżenie nie zlepiało okrętów
+        const ox = (s === 0 ? 0 : (s === 1 ? 730 : -620)) * cam.zoom, oy = (s === 0 ? 0 : (s === 1 ? 675 : 845)) * cam.zoom;
         const sc = s === 0 ? 1 : 0.5;
+        // objawienie: każdy okręt trochę po poprzednim (0,12 postępu)
+        const ps = g.objaw ? Math.max(0, Math.min(1, (g.idP - 0.12 * s) / 0.76)) : 1;
+        if (ps <= 0) continue;
         ctx.save();
         ctx.translate(ex + ox, ey + oy);
         ctx.rotate(a);
-        ctx.drawImage(enemyImg, -L * sc / 2, -L * sc * asp / 2, L * sc, L * sc * asp);
+        if (ps >= 1) ctx.drawImage(enemyImg, -L * sc / 2, -L * sc * asp / 2, L * sc, L * sc * asp);
+        else drawRevealed(ctx, L * sc, L * sc * asp, ps, 7 * g.id + s);
         ctx.restore();
       }
     }
@@ -641,14 +734,15 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
         : 'CZUJKA · w namiarze nic technologicznego') : 'PPM — czujka';
       let red = best && best.det > 0.5;
       if (border && !v.on) {
-        // granica najbliższa mnie: ile do niej (poza zasięgiem) albo ile do wyjścia (w zasięgu)
+        // grupa najbliższa mojej granicy: co o mnie wiedzą i ile do najbliższej granicy (dalej / wyjścia)
         let nb = null;
-        for (const g of v.groups) if (!nb || Math.abs(g.d - g.R) < Math.abs(nb.d - nb.R)) nb = g;
+        for (const g of v.groups) if (!nb || Math.min(Math.abs(g.d - g.R), Math.abs(g.d - g.Rv)) < Math.min(Math.abs(nb.d - nb.R), Math.abs(nb.d - nb.Rv))) nb = g;
         if (nb) {
-          const gap = (nb.d - nb.R) / KM;
-          head = nb.detOn ? `W ZASIĘGU: ${nb.name} — widzą mnie · do wyjścia ${(-gap).toFixed(1).replace('.', ',')} km`
-            : `GRANICA: ${nb.name} · ${gap.toFixed(1).replace('.', ',')} km do granicy`;
-          red = nb.detOn;
+          const km = (x) => (x / KM).toFixed(1).replace('.', ',');
+          head = nb.lvl === 2 ? `W ICH WZROKU: ${nb.name} — wiedzą, że to Atlas · do wyjścia ze wzroku ${km(nb.Rv - nb.d)} km`
+            : nb.lvl === 1 ? `KONTAKT: ${nb.name} — wiedzą, że coś tu jest · do ich wzroku ${km(nb.d - nb.Rv)} km · do wyjścia ${km(nb.R - nb.d)} km`
+              : `POZA ZASIĘGIEM: ${nb.name} · do kontaktu ${km(nb.d - Math.max(nb.R, nb.Rv))} km`;
+          red = nb.lvl === 2;
         }
       }
       text(head, W / 2, 16, red ? '255, 150, 140' : '220, 230, 240', 0.88, 12);
