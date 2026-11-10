@@ -9,14 +9,17 @@
 // Serwowanie: `npm run dev` → /dema/kontakty-czujnikow.html
 //   ?wariant=0..4|porownanie   ?scena=plansza|gra   ?podpisy=0   ?daleko=1   ?clean=1 (bez paneli)
 //   ?tryb=namiar (klawisz W): CZUJKA na PPM — 1 CZUJKA (struna + błona), 2 STRUNA, 3 BŁONA, 0 WACHLARZ (druga runda);
-//     ?namiar=czujka|struna|blona|wachlarz; ?scena=misja|uklad|przelot (klawisz S); PPM na kanwie — własna ręka
+//     granica wykrycia (czwarta runda) — 4 TAFLA, 5 PRZYBÓJ (obie z podświetleniem kadłuba), 6 samo PODŚWIETLENIE;
+//     ?namiar=czujka|struna|blona|wachlarz|tafla|przyboj|swiatlo; ?scena=misja|uklad|przelot|granica (klawisz S);
+//     PPM na kanwie — własna ręka; ?kadr=<km> — szerokość kadru (domyślnie 45)
 //   ?test=1 (klatki tylko z __kontakty.runFrames — zrzuty: scripts/webgpu/kontakty-demo.mjs)
+import * as THREE from 'three/webgpu';
 import { Core3D } from '../src/3d/core3d.js';
 import {
   createContactBlock, createContactMesh, createSpaceBackdrop, KONTAKT_STYLES, KONTAKT_MAX, KONTAKT_HDR,
   KONTAKT_NOISE_TILE, wrap01
 } from './kontakty-czujnikow/kontaktyTSL.js';
-import { createNamiarDemo, NAMIAR_SCENES } from './kontakty-czujnikow/namiarDemo.js';
+import { createNamiarDemo, NAMIAR_SCENES, GRANICA_VARIANTS } from './kontakty-czujnikow/namiarDemo.js';
 import { FX_DISTORT_LAYER } from '../src/3d/fx/fxFrame.js';
 
 const params = new URLSearchParams(location.search);
@@ -53,13 +56,19 @@ const DESC = {
 };
 
 // NAMIAR (tryb W) — CZUJKA na PPM: struna (technologia, w stronę myszki) + błona (ciała niebieskie, 360°).
-const NAM_VARIANTS = ['wachlarz', 'czujka', 'struna', 'blona', null, null];
-const NAM_TITLES = { czujka: '1 · CZUJKA', struna: '2 · STRUNA', blona: '3 · BŁONA', wachlarz: '0 · WACHLARZ (2. runda)' };
+const NAM_VARIANTS = ['wachlarz', 'czujka', 'struna', 'blona', 'tafla', 'przyboj', 'swiatlo'];
+const NAM_TITLES = {
+  czujka: '1 · CZUJKA', struna: '2 · STRUNA', blona: '3 · BŁONA', wachlarz: '0 · WACHLARZ (2. runda)',
+  tafla: '4 · TAFLA + podświetlenie', przyboj: '5 · PRZYBÓJ + podświetlenie', swiatlo: '6 · PODŚWIETLENIE'
+};
 const NAM_DESC = {
   czujka: '<b>Czujka (PPM) = struna + błona.</b> Trzymasz PPM: błona wokół okrętu pokazuje wszystkie ciała niebieskie układu (bliżej = większe wybrzuszenie), struna obraca się za myszką i drga, gdy w tym kierunku jest coś technologicznego — nad grupą wyrastają trójkąty (ile wrogów, tyle trójkątów; mały = statek, duży = budowla). Grupa w namiarze widzi mnie: czerwień, „!”, oko przy kursorze się otwiera. PPM na kanwie — własna ręka (S — od nowa).',
   struna: '<b>Struna</b> — sama część technologiczna czujki: łuk w stronę myszki, drganie z siły sygnału, trójkąty nad grupami, czerwień i „!” przy wykryciu.',
   blona: '<b>Błona</b> — sama część niebieska czujki: 360°, wybrzuszenia w stronę planet i gwiazdy (bliżej = większe, większe ciało = szersze, barwa = rodzaj ciała), impuls PPM z refrakcją.',
-  wachlarz: '<b>Wachlarz</b> (druga runda, do porównania) — jeden na okręt: przy mnie niebieski z mojego zasięgu, przy wrogu czerwony z ich zasięgu.'
+  wachlarz: '<b>Wachlarz</b> (druga runda, do porównania) — jeden na okręt: przy mnie niebieski z mojego zasięgu, przy wrogu czerwony z ich zasięgu.',
+  tafla: '<b>Tafla graniczna + podświetlenie.</b> Granica ich wzroku (promień = ich czujniki × mój ślad) widoczna tylko w pobliżu okrętu: przezroczysta tafla pola siłowego z refrakcją, zmarszczki od punktu najbliższego mnie. Ciąg pcha ją na mnie, cicha praca odsuwa. Przejście: błysk i zmarszczka obiega całe koło (do środka czerwień, na zewnątrz błękit). W zasięgu kadłub jest oświetlony od strony wroga. Scena GRANICA (S).',
+  przyboj: '<b>Przybój + podświetlenie.</b> Od wroga biegną słabe fale (jego czujniki) i łamią się na granicy jego zasięgu — linia piany wybiega za granicę i cofa się; widać ją tylko w pobliżu okrętu. W zasięgu fale obmywają kadłub, a skan na kadłubie idzie grzbietami tych fal. Scena GRANICA (S).',
+  swiatlo: '<b>Samo podświetlenie (zamiast oka przy kursorze).</b> Gdy grupa mnie widzi, kadłub jest oświetlony od jej strony: czerwone światło z płaskorzeźbą paneli, świecąca krawędź od strony wroga, linie skanu, słaby snop w przestrzeni. Bez granicy — tylko „już mnie widzą i skąd”.'
 };
 
 // Model miejsca kontaktu jak w prototypie (sensorDetection.js: contactErrFrac 0,07, contactJitterSec 2,5; wzrok 18 km
@@ -74,7 +83,9 @@ const DETECT_R = 58500;
 const S = {
   mode: params.get('tryb') === 'namiar' ? 'namiar' : 'kontakty',
   namVariant: Math.max(0, NAM_VARIANTS.indexOf(params.get('namiar') || 'czujka')),
-  namScene: NAMIAR_SCENES.includes(params.get('scena')) ? params.get('scena') : 'misja',
+  namScene: NAMIAR_SCENES.includes(params.get('scena')) ? params.get('scena')
+    : (GRANICA_VARIANTS.includes(params.get('namiar')) ? 'granica' : 'misja'),
+  kadrKm: Number(params.get('kadr')) || 0,
   variant: Math.max(0, VARIANTS.indexOf(params.get('wariant') || 'iksy')),
   scene: params.get('scena') === 'gra' ? 'gra' : 'plansza',
   time: Number(params.get('t')) || 0,
@@ -278,14 +289,21 @@ function stepContacts(dt) {
 // Wariant, kamera
 
 function applyZoom() {
-  S.cam.zoom = W / (S.far ? 180000 : 45000);
+  S.cam.zoom = W / (S.kadrKm > 0 ? S.kadrKm * 1000 : (S.far ? 180000 : 45000));
 }
 
 function setVariant(v) {
-  const nam = S.mode === 'namiar';
-  if (nam && !NAM_VARIANTS[v]) return;
-  const wasCmp = (nam ? S.namVariant : S.variant) === 5;
-  if (nam) S.namVariant = v; else S.variant = v;
+  if (S.mode === 'namiar') {
+    if (!NAM_VARIANTS[v]) return;
+    // pierwszy wybór pomysłu granicy przenosi do sceny GRANICA (potem S — dowolna scena)
+    const toBorder = GRANICA_VARIANTS.includes(NAM_VARIANTS[v]) && !GRANICA_VARIANTS.includes(NAM_VARIANTS[S.namVariant]);
+    S.namVariant = v;
+    if (toBorder && S.namScene !== 'granica') { S.namScene = 'granica'; setScene(); }
+    syncPanel();
+    return;
+  }
+  const wasCmp = S.variant === 5;
+  S.variant = v;
   if ((v === 5) !== wasCmp) setScene();
   syncPanel();
 }
@@ -294,7 +312,7 @@ function setVariant(v) {
 function syncPanel() {
   const nam = S.mode === 'namiar';
   const v = nam ? S.namVariant : S.variant;
-  const names = nam ? ['0 · Wachlarz (2. runda)', '1 · CZUJKA', '2 · STRUNA', '3 · BŁONA', '', '']
+  const names = nam ? ['0 · Wachlarz (2. runda)', '1 · CZUJKA', '2 · STRUNA', '3 · BŁONA', '4 · TAFLA', '5 · PRZYBÓJ', '6 · PODŚWIETLENIE']
     : ['Dziś (prototyp)', '1 · ECHO', '2 · OBŁOK', '3 · WIR', '4 · RÓJ', 'Porównanie 2 × 2', '6 · X-Y (wybrany)'];
   for (let i = 0; i <= 6; i++) {
     const b = $(`v${i}`);
@@ -415,7 +433,9 @@ function frame(dt) {
   stepContacts(S.paused ? 0 : dt);
   if (S.mode === 'namiar') namiar.step(S.time, S.paused ? 0 : dt);
   const cam = S.cam;
-  cam.x = S.offX; cam.y = S.offY;
+  const anchor = S.mode === 'namiar' ? namiar.camAnchor() : null;   // scena GRANICA: kamera jedzie za okrętem
+  cam.x = (anchor ? anchor.x : 0) + S.offX;
+  cam.y = (anchor ? anchor.y : 0) + S.offY;
   syncMeshes();
   const cmp = VARIANTS[S.variant] === 'porownanie';
   for (let i = 0; i < meshes.length; i++) {
@@ -688,6 +708,8 @@ window.__kontakty = {
       if (o.scene || o.variant !== undefined) { setScene(); syncPanel(); }
     }
     if (o.time !== undefined) { S.time = o.time; if (S.mode === 'namiar') setScene(); }
+    if (o.kadrKm !== undefined) { S.kadrKm = Number(o.kadrKm) || 0; applyZoom(); }
+    if (o.off) { S.offX = Number(o.off[0]) || 0; S.offY = Number(o.off[1]) || 0; }
     if (S.mode === 'namiar') {
       if (o.labels !== undefined) { S.labels = !!o.labels; $('b-labels').classList.toggle('on', S.labels); }
       if (o.clean !== undefined) document.body.classList.toggle('clean', !!o.clean);
@@ -742,13 +764,18 @@ window.__kontakty = {
       Core3D.scene.add(m);
       return m;
     });
-    namiar = createNamiarDemo(Core3D, FX_DISTORT_LAYER);
+    // sprite Atlasa jako tekstura (podświetlenie kadłuba w pomysłach granicy rysuje okręt w shaderze; mipmapy — okręt ma ~100 px)
+    const hullTex = await new THREE.TextureLoader().loadAsync('../assets/capital_ship_rect_v1.png');
+    hullTex.colorSpace = THREE.SRGBColorSpace;
+    hullTex.flipY = false;
+    hullTex.needsUpdate = true;
+    namiar = createNamiarDemo(Core3D, FX_DISTORT_LAYER, hullTex);
     for (const m of [...namiar.meshes, ...namiar.dists]) Core3D.scene.add(m);
     // warstwę DIST zgłasza się z kroku efektów (flagę kasuje start klatki efektów — wzór hullCloak.js)
     Core3D.addFxStep({ name: 'namiar: impuls czujki (demo)', update() { if (namiar.distLive) Core3D.setDistortLayerActive(true); } });
     Core3D.warmup.add({ name: 'kontakty czujników (5 propozycji, tło)', objects: () => [backdrop.mesh, ...meshes] });
-    Core3D.warmup.add({ name: 'namiar czujników (3 propozycje)', objects: () => namiar.warmupObjects() });
-    Core3D.warmup.add({ name: 'namiar: impuls czujki (warstwa DIST)', objects: () => namiar.dists.slice(), layer: FX_DISTORT_LAYER });
+    Core3D.warmup.add({ name: 'namiar czujników (3 propozycje + granica wykrycia)', objects: () => namiar.warmupObjects() });
+    Core3D.warmup.add({ name: 'namiar: impuls czujki i tafla (warstwa DIST)', objects: () => namiar.dists.slice(), layer: FX_DISTORT_LAYER });
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });
     hookPipelines();
     bindInput();

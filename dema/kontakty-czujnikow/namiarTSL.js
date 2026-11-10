@@ -453,3 +453,6 @@ export function createNamiarMeshes(style, block, distLayer) {
   }
   return { mesh, dist, rect };
 }
+
+// pomocniki wspólne z granicą wykrycia (granicaTSL.js)
+export { header, anchorAt, markLoop, baseMaterial, rectMask, gauss, wrapAngle, c3, BLUE, RED, PI, TAU };

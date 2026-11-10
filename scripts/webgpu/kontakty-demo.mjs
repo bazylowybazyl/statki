@@ -4,11 +4,13 @@
 // pipeline'y synchroniczne, błędy konsoli. Headless Chrome — nie uruchamiać, gdy użytkownik gra.
 //
 //   node scripts/webgpu/kontakty-demo.mjs [--out .tmp/kontakty/demo] [--rozmiar 1600x900]
-//     [--tylko porownanie,echo,oblok,wir,roj,iksy,ruch,dzis,namiar,namiar-szybko] (część zrzutów — szybkie strojenie)
+//     [--tylko porownanie,echo,oblok,wir,roj,iksy,ruch,dzis,namiar,namiar-szybko,granica] (część zrzutów — szybkie strojenie)
 //     [--film-iksy 1] (klatki 60 kl/s obłoku X-ów na planszy, 6 s, skala 0,75 → <out>/film-iksy/)
 //     [--film 1] (klatki porównania kontaktów co 0,1 s w skali 0,5 → <out>/film/NNN.png — do animacji)
 //     [--film-namiar 1|misja|uklad|przelot|zblizenie] (klatki 60 kl/s czujki: <out>/film-<scena>/ — pełna pętla sceny
 //        w skali 0,75; <out>/film-zblizenie/ — struna przy Atlasie w misji 1, piksel w piksel; czas: kilka minut)
+//     [--film-granica 1|tafla|przyboj|zblizenie] (granica wykrycia, scena GRANICA 27 s, 60 kl/s w skali 0,75 →
+//        <out>/film-granica-<pomysł>/; zbliżenie — kadr 15 km przy Atlasie, tafla, 7,5–14,5 s, piksel w piksel)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -26,6 +28,9 @@ const logs = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 180000) => evaluate(cdp, e, t);
 const report = { zrzuty: {}, gpu: {} };
+// scena GRANICA w kadrze 15 km: okręt w kadrze (kamera jedzie za nim z przesunięciem 8 km w stronę patrolu)
+const GRANICA_BLISKO = { kadrKm: 15, off: [-6500, 2200] };
+const GRANICA_CLIP = { x: 300, y: 230, width: 820, height: 440, scale: 1 };
 
 async function shot(name, opis, frames = 3) {
   await ev(`window.__kontakty.runFrames(${frames}, 60)`);
@@ -142,6 +147,72 @@ try {
       await run(Math.round(tm * 60));
       await shot(`9${k}-${st}-${scene}`, `${st} osobno, ${scene}, t = ${tm} s`, 1);
       k++;
+    }
+    await set({ mode: 'kontakty' });
+  }
+  // GRANICA WYKRYCIA (czwarta runda): tafla, przybój (oba z podświetleniem kadłuba), samo podświetlenie
+  if (want('granica')) {
+    const SHOTS = [[5.0, 'zblizam'], [7.8, 'tuz-przed'], [8.75, 'przejscie'], [9.3, 'obieg'], [11.0, 'w-zasiegu'],
+      [13.95, 'cicha-wyjscie'], [18.5, 'pod-granica'], [22.0, 'znow-widza']];
+    let k = 0;
+    for (const st of ['tafla', 'przyboj']) {
+      await set({ mode: 'namiar', variant: st, scene: 'granica', time: 0, clean: true, labels: true });
+      let now = 0;
+      for (const [tm, name] of SHOTS) {
+        await run(Math.round((tm - now) * 60));
+        now = tm;
+        await shot(`6${k}-${st}-${String(tm).replace('.', '_')}-${name}`, `${st}, granica, t = ${tm} s: ${name}`, 1);
+      }
+      await set({ time: 0 });
+      await run(Math.round(10.5 * 60));
+      await gpuMedian(`${st} w zasięgu`, 120);
+      await set({ time: 0 });
+      await run(Math.round(18 * 60));
+      await gpuMedian(`${st} pod granicą`, 120);
+      k++;
+    }
+    // zbliżenie kadłuba: kadr 15 km
+    for (const [st, tm, name] of [['tafla', 11.0, 'kadlub-skan'], ['przyboj', 11.0, 'kadlub-fale'], ['swiatlo', 11.0, 'kadlub-same'],
+      ['tafla', 18.5, 'pod-granica'], ['przyboj', 18.5, 'pod-granica']]) {
+      await set({ mode: 'namiar', variant: st, scene: 'granica', time: 0, clean: true, labels: true });
+      await set(GRANICA_BLISKO);
+      await run(Math.round(tm * 60));
+      await shot(`7${k}-${st}-blisko-${name}`, `${st}, kadr 15 km, t = ${tm} s`, 1);
+      k++;
+    }
+    await set({ kadrKm: 0 });
+    await set({ mode: 'kontakty' });
+  }
+  if (args['film-granica']) {
+    const fg = String(args['film-granica']);
+    for (const st of ['tafla', 'przyboj']) {
+      if (fg !== '1' && fg !== st) continue;
+      await set({ mode: 'namiar', variant: st, scene: 'granica', time: 0, clean: true, labels: true });
+      const dir = join(out, `film-granica-${st}`);
+      mkdirSync(dir, { recursive: true });
+      const clip = { x: 0, y: 0, width: W, height: H, scale: 0.75 };
+      for (let i = 0; i < 27 * 60; i++) {
+        await run(1);
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip });
+        writeFileSync(join(dir, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
+      }
+      console.log('film granica', st);
+    }
+    if (fg === '1' || fg === 'zblizenie') {
+      for (const st of ['tafla', 'przyboj']) {
+        await set({ mode: 'namiar', variant: st, scene: 'granica', time: 0, clean: true, labels: true });
+        await set(GRANICA_BLISKO);
+        await run(Math.round(7.5 * 60));
+        const dz = join(out, `film-granica-zblizenie-${st}`);
+        mkdirSync(dz, { recursive: true });
+        for (let i = 0; i < 7 * 60; i++) {
+          await run(1);
+          const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: GRANICA_CLIP });
+          writeFileSync(join(dz, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
+        }
+        console.log('film granica zbliżenie', st);
+      }
+      await set({ kadrKm: 0 });
     }
     await set({ mode: 'kontakty' });
   }

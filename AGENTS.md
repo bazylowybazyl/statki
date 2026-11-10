@@ -160,7 +160,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `mgla-wojny` | Mgła wojny |
-| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany obłok szarych X-ów, ECHO = skały) i CZUJKI na PPM (struna w stronę myszki — statki i budowle, błona 360° — ciała niebieskie): demo w TSL na Core3D, zasady pod wpięcie |
+| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany obłok szarych X-ów, ECHO = skały), CZUJKI na PPM (struna w stronę myszki — statki i budowle, błona 360° — ciała niebieskie) i GRANICY WYKRYCIA (tafla / przybój, podświetlenie kadłuba): demo w TSL na Core3D, zasady pod wpięcie |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |

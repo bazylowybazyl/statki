@@ -7,18 +7,30 @@
 // mnie widzi (them ≥ 1): struna czerwienieje, „!”, oko przy kursorze się otwiera.
 // Sceny (świat gry, j. = m; kadr 45 km, Atlas 3 km): MISJA 1 (po warpie, baza piratów poza kadrem — gracz celuje w lewo,
 // potem przeciąga w prawo przez patrol na bazę), UKŁAD (pusty układ, same planety; jedna się zbliża), PRZELOT (wróg
-// się zbliża, wykrycie, cicha praca, ciąg). Własna ręka: PPM na kanwie przejmuje sterowanie od skryptu (S — od nowa).
-// Model jak w prototypie: them = ich czujniki × moja sygnatura / d, me = moje czujniki × ich sygnatura / d.
+// się zbliża, wykrycie, cicha praca, ciąg), GRANICA (czwarta runda: Atlas leci na patrol — ciąg przerzuca granicę ich
+// wzroku przez niego, cicha praca ją odsuwa; kamera jedzie za okrętem). Własna ręka: PPM na kanwie przejmuje sterowanie
+// od skryptu (S — od nowa).
+// Model jak w prototypie: them = ich czujniki × moja sygnatura / d, me = moje czujniki × ich sygnatura / d. Granica wykrycia
+// grupy = okrąg them = 1, czyli promień R = Rt × mój ślad (granicaTSL.js: TAFLA, PRZYBÓJ, PODŚWIETLENIE kadłuba).
 import {
   createNamiarBlock, createNamiarMeshes, NAMIAR_STYLES, NAMIAR_ANCH, NAMIAR_ANCH_VEC, NAMIAR_MARKS, NAMIAR_HDR,
   NAMIAR_MARK_BASE, NAMIAR_MARK_VEC, NAMIAR_GEOM
 } from './namiarTSL.js';
+import { createGranicaMeshes, GRANICA_STYLES, HULL_ASPECT } from './granicaTSL.js';
 
 const ATLAS_LEN = 3000;
 const ENEMY_LEN = 1200;           // pancernik piratów (src/data/ships.js: pirate_battleship)
 const KM = 1000;
 const OFF = 99;
-export const NAMIAR_SCENES = Object.freeze(['misja', 'uklad', 'przelot']);
+export const NAMIAR_SCENES = Object.freeze(['misja', 'uklad', 'przelot', 'granica']);
+/** Pomysły granicy wykrycia (czwarta runda) → kwady: tafla i przybój z podświetleniem kadłuba, samo podświetlenie. */
+const GRANICA_OF = { tafla: ['tafla', 'swiatlo'], przyboj: ['przyboj', 'swiatlo'], swiatlo: ['swiatlo'] };
+export const GRANICA_VARIANTS = Object.freeze(Object.keys(GRANICA_OF));
+const WIN_NEAR = 3 * 1000;        // okno granicy wokół okrętu [j.]: pełna do 3 km, zero od 12 km
+const WIN_FAR = 12 * 1000;
+const WAVE_LEN = 34;              // przybój: długość fali [px CSS], prędkość [px CSS/s]
+const WAVE_V = 26;
+const HULL_TEX_W = 3747;
 const STR_HALF = 0.52;            // pół kąta struny [rad]
 const BEAM_SIGMA = 0.36;          // szerokość „wiązki” czujki [rad]
 const AIM_TAU = 0.09;             // struna goni myszkę (s), najwyżej AIM_MAX rad/s
@@ -43,7 +55,8 @@ function group(x, y, Rt, Rm, extra = {}) {
   const id = gid++;
   return {
     id, x, y, Rt, Rm, est: 0, nBig: 0, nSmall: 1, sprites: 0, name: '', seed: hash01(id, 31, 7),
-    them: 0, me: 0, d: 0, bearing: 0, m: 0, reveal: 0, det: 0, detOn: false, flashAge: OFF, ...extra
+    them: 0, me: 0, d: 0, bearing: 0, m: 0, reveal: 0, det: 0, detOn: false, flashAge: OFF,
+    R: 0, Rprev: null, rate: 0, inPrev: null, crossAge: OFF, crossDir: 1, crossAng: 0, lit: 0, litAge: OFF, ins: 0, ...extra
   };
 }
 /** Ciało niebieskie: R — promień [j.], rodzaj 0 skalista, 1 gazowa, 2 lodowa / wodna, 3 gwiazda. */
@@ -60,6 +73,47 @@ function flyby(T) {
   const sens = 1 - 0.4 * ss(10.5, 11.5, T) * (1 - ss(16, 17, T));
   const phase = T < 9 ? 'WRÓG SIĘ ZBLIŻA' : T < 10.5 ? 'WRÓG BLISKO' : T < 16 ? 'CICHA PRACA' : T < 20.5 ? 'CIĄG' : T < 23 ? 'WRÓG BLISKO' : 'WRÓG ODCHODZI';
   return { d, sig, sens, phase };
+}
+
+// GRANICA: prędkość Atlasa [km/s] w czasie (pętla 27 s) — droga całkowana raz (tablica co 1/240 s), bez szarpnięć kamery.
+const BORDER_V = [[0, 1.2], [8, 1.2], [9, 2.0], [11, 2.0], [13, 0.5], [14, 0.3], [19, 0.3], [20, 0], [21, -0.8], [22, -2.0], [27, -2.0]];
+const BORDER_X0 = -27000;
+const BORDER_DT = 1 / 240;
+function linTab(tab, T) {
+  if (T <= tab[0][0]) return tab[0][1];
+  for (let i = 1; i < tab.length; i++) {
+    if (T <= tab[i][0]) {
+      const [t0, a] = tab[i - 1], [t1, b] = tab[i];
+      return a + (b - a) * (T - t0) / (t1 - t0);
+    }
+  }
+  return tab[tab.length - 1][1];
+}
+const BORDER_X = (() => {
+  const n = Math.ceil(27 / BORDER_DT) + 2;
+  const a = new Float64Array(n);
+  a[0] = BORDER_X0;
+  for (let i = 1; i < n; i++) a[i] = a[i - 1] + 0.5 * (linTab(BORDER_V, (i - 1) * BORDER_DT) + linTab(BORDER_V, i * BORDER_DT)) * KM * BORDER_DT;
+  return a;
+})();
+function borderX(T) {
+  const f = T / BORDER_DT;
+  const i = Math.max(0, Math.min(BORDER_X.length - 2, Math.floor(f)));
+  return BORDER_X[i] + (BORDER_X[i + 1] - BORDER_X[i]) * (f - i);
+}
+/** Ślad: zwykła praca 1, ciąg ×1,35 (8–9 s), cicha praca ×0,5 (13–14 s), powrót do zwykłej (21–22 s). */
+const borderSig = (T) => 1 + 0.35 * ss(8, 9, T) - 0.85 * ss(13, 14, T) + 0.5 * ss(21, 22, T);
+function borderCaption(T) {
+  if (T < 8) return 'ZWYKŁA PRACA — zbliżam się do granicy';
+  if (T < 8.6) return 'CIĄG — granica jedzie na mnie';
+  if (T < 13) return 'CIĄG — granica przeskoczyła, widzą mnie';
+  if (T < 14) return 'CICHA PRACA — granica się cofa';
+  if (T < 19) return 'CICHA PRACA — skradam się pod granicę';
+  if (T < 21) return 'ZAWRACAM';
+  if (T < 21.3) return 'ZWYKŁA PRACA — granica rośnie';
+  if (T < 22.4) return 'ZWYKŁA PRACA — znów mnie widzą';
+  if (T < 24.6) return 'UCIEKAM';
+  return 'POZA ICH ZASIĘGIEM';
 }
 
 const SCENES = {
@@ -129,12 +183,34 @@ const SCENES = {
     script(v, T) {
       return { on: T >= 0.4 && T < 26.6, aim: -0.1 + 0.05 * Math.sin(T * 0.7), caption: flyby(T).phase };
     }
+  },
+  // GRANICA (czwarta runda): Atlas leci na patrol (3 statki, granica ich wzroku 14 km przy zwykłej pracy). Podchodzi pod
+  // granicę, ciąg przerzuca ją przez niego (widzą go), cicha praca cofa ją za niego, skrada się pod samą granicę, zawraca,
+  // powrót do zwykłej pracy znów go odsłania, ucieka. Kamera jedzie za okrętem (patrol w kadrze).
+  granica: {
+    period: 27,
+    cam: { x: 8000, y: 0 },
+    build() {
+      const v = { x: BORDER_X0, y: 2200, sig: 1, sens: 1, heading: 0 };
+      v.groups = [group(0, 0, 14000, 26000, { nSmall: 3, sprites: 3, name: 'patrol, 3 statki' })];
+      v.planets = [body('Mars', 0, 7000, 150 * KM, 2.3), body('Jowisz', 1, 32000, 700 * KM, -2.5), body('Słońce', 3, 60000, 2200 * KM, 1.0)];
+      return v;
+    },
+    script(v, T) {
+      v.x = borderX(T);
+      v.heading = Math.PI * ss(19, 21, T);
+      v.sig = borderSig(T);
+      v.sens = 1 - 0.4 * ss(13, 14, T) * (1 - ss(21, 22, T));
+      return { on: false, aim: v.heading, caption: borderCaption(T) };
+    }
   }
 };
 
-export function createNamiarDemo(core, distLayer) {
-  const blocks = NAMIAR_STYLES.map(() => createNamiarBlock());
-  const parts = NAMIAR_STYLES.map((style, i) => createNamiarMeshes(style, blocks[i], distLayer));
+export function createNamiarDemo(core, distLayer, hullTex = null) {
+  const STYLES = [...NAMIAR_STYLES, ...GRANICA_STYLES];
+  const blocks = STYLES.map(() => createNamiarBlock());
+  const parts = STYLES.map((style, i) => (NAMIAR_STYLES.includes(style)
+    ? createNamiarMeshes(style, blocks[i], distLayer) : createGranicaMeshes(style, blocks[i], distLayer, hullTex)));
   const meshes = parts.map((p) => p.mesh);
   const dists = parts.map((p) => p.dist).filter(Boolean);
   for (const m of [...meshes, ...dists]) m.visible = false;
@@ -151,6 +227,7 @@ export function createNamiarDemo(core, distLayer) {
     st.view = SCENES[st.scene].build(makeContact);
     const v = st.view;
     Object.assign(v, { phi: Math.PI, on: false, onAge: OFF, vis: 0, amp: 0, pluck: 0, tau: 7.3, harm: 0, det: 0 });
+    v.heading = v.heading || 0;
     st.t0 = time;
     st.manual = false;
     st.eye = 0;
@@ -219,6 +296,23 @@ export function createNamiarDemo(core, distLayer) {
       g.det = approach(g.det, g.detOn && g.reveal > 0.05 ? 1 : 0, dt, 0.18, 0.3);
       if (detPrev < 0.1 && g.det >= 0.1) g.flashAge = 0;
       g.flashAge = Math.min(OFF, g.flashAge + dt);
+      // granica wykrycia: promień R = Rt × mój ślad (okrąg them = 1); przejście = zmiana wykrycia (z histerezą),
+      // światło na kadłubie, gdy mnie widzą (niezależnie od czujki)
+      g.R = g.Rt * v.sig;
+      if (dt > 0 && g.Rprev !== null) g.rate = approach(g.rate, (g.R - g.Rprev) / dt, dt, 0.08);
+      g.Rprev = g.R;
+      if (g.inPrev === null) g.inPrev = g.detOn;
+      else if (g.detOn !== g.inPrev) {
+        g.inPrev = g.detOn;
+        g.crossAge = 0;
+        g.crossDir = g.detOn ? 1 : -1;
+        g.crossAng = Math.atan2(v.y - g.y, v.x - g.x);
+        if (g.detOn) g.litAge = 0;
+      }
+      g.crossAge = Math.min(OFF, g.crossAge + dt);
+      g.litAge = Math.min(OFF, g.litAge + dt);
+      g.lit = approach(g.lit, g.detOn ? 1 : 0, dt, 0.1, 0.5);
+      g.ins = approach(g.ins, g.detOn ? 1 : 0, dt, 0.15);
       if (v.on) signal += Math.min(1.4, g.me) * g.m;
       detBeam = Math.max(detBeam, g.det * g.reveal);
       eye = Math.max(eye, g.det * g.reveal);
@@ -293,6 +387,55 @@ export function createNamiarDemo(core, distLayer) {
     A[0].set(n, st.time % 600, pxs, 1);
   }
 
+  // GRANICA (TAFLA / PRZYBÓJ): okrąg them = 1 każdej grupy, okno wokół mojego okrętu, przejścia
+  function packGranica(A, cam, W, H, pxs) {
+    const v = st.view;
+    const [sx, sy] = toS(cam, W, H, v.x, v.y);
+    const z = cam.zoom * pxs;
+    let n = 0;
+    for (const g of v.groups) {
+      if (n >= NAMIAR_MARKS) break;
+      const [cx, cy] = toS(cam, W, H, g.x, g.y);
+      const o = NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * n;
+      A[o].set(cx * pxs, cy * pxs, g.R * z, 1);
+      A[o + 1].set(g.crossAge < 2.8 ? g.crossAge : -1, g.crossDir, g.crossAng, g.seed);
+      A[o + 2].set(g.est, g.rate * z, Math.atan2(v.y - g.y, v.x - g.x), g.ins);
+      A[o + 3].set(0, 0, 0, 0);
+      n++;
+    }
+    const a = NAMIAR_HDR;
+    A[a].set(sx * pxs, sy * pxs, ATLAS_LEN * 0.5 * z, 1);
+    A[a + 1].set(WIN_NEAR * z, WIN_FAR * z, WAVE_LEN * pxs, WAVE_V * pxs);
+    A[a + 2].set(0, 0, 0, 0);
+    A[a + 3].set(0, 0, 0, 0);
+    A[0].set(n, st.time % 600, pxs, 1);
+  }
+
+  // PODŚWIETLENIE: Atlas z tekstury + światło od grup, które mnie widzą (`waves` — skan grzbietami fal przyboju)
+  function packSwiatlo(A, cam, W, H, pxs, waves) {
+    const v = st.view;
+    const [sx, sy] = toS(cam, W, H, v.x, v.y);
+    const L = ATLAS_LEN * cam.zoom * pxs;
+    let n = 0;
+    for (const g of v.groups) {
+      if (g.lit < 0.002 || n >= NAMIAR_MARKS) continue;
+      const [cx, cy] = toS(cam, W, H, g.x, g.y);
+      const o = NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * n;
+      A[o].set(cx * pxs, cy * pxs, g.lit, g.litAge);
+      A[o + 1].set(g.seed, 0, 0, 0);
+      A[o + 2].set(0, 0, 0, 0);
+      A[o + 3].set(0, 0, 0, 0);
+      n++;
+    }
+    const a = NAMIAR_HDR;
+    const texW = hullTex?.image?.width || HULL_TEX_W;
+    A[a].set(sx * pxs, sy * pxs, L, v.heading || 0);
+    A[a + 1].set(Math.max(0, Math.log2(texW / Math.max(1, L)) - 0.3), waves, WAVE_LEN * pxs, WAVE_V * pxs);
+    A[a + 2].set(HULL_ASPECT, 1, 0, 0);
+    A[a + 3].set(0, 0, 0, 0);
+    A[0].set(n, st.time % 600, pxs, 1);
+  }
+
   // WACHLARZ (druga runda, do porównania): przy mnie niebieski z `me`, przy wrogu (albo przy krawędzi ekranu) czerwony z `them`.
   function packWachlarz(A, cam, W, H, pxs) {
     const v = st.view;
@@ -329,7 +472,22 @@ export function createNamiarDemo(core, distLayer) {
     return { x: sx + dx * k, y: sy + dy * k, edge: true };
   }
 
-  /** `variant`: czujka (struna + błona) | struna | blona | wachlarz. */
+  /** Czy kwad `style` rysuje się w wariancie `variant`: czujka = struna + błona; pomysły granicy — swoje kwady, a czujka
+   *  tylko przy trzymanym PPM (własna ręka). */
+  function styleOn(variant, style, v) {
+    if (GRANICA_OF[variant]) return GRANICA_OF[variant].includes(style) || ((style === 'struna' || style === 'blona') && v.vis > 0.001);
+    if (variant === 'czujka') return style === 'struna' || style === 'blona';
+    return variant === style;
+  }
+
+  /** Kamera sceny jadącej za okrętem (GRANICA): środek kadru = okręt + przesunięcie; inne sceny — null (kadr stoi). */
+  function camAnchor() {
+    const c = SCENES[st.scene]?.cam;
+    const v = st.view;
+    return c && v ? { x: v.x + c.x, y: c.y } : null;
+  }
+
+  /** `variant`: czujka (struna + błona) | struna | blona | wachlarz | tafla | przyboj | swiatlo. */
   function sync(variant, cam, W, H, on) {
     const pxs = core.pxScale || core.pixelRatio || 1;
     const bw = core.composerTarget?.width || W * pxs;
@@ -338,8 +496,8 @@ export function createNamiarDemo(core, distLayer) {
     const v = st.view;
     if (v) { const [sx, sy] = toS(cam, W, H, v.x, v.y); v.sx = sx; v.sy = sy; }
     for (let i = 0; i < meshes.length; i++) {
-      const style = NAMIAR_STYLES[i];
-      const vis = !!on && !!v && (variant === style || (variant === 'czujka' && style !== 'wachlarz'));
+      const style = STYLES[i];
+      const vis = !!on && !!v && styleOn(variant, style, v);
       meshes[i].visible = vis;
       parts[i].rect.value.set(-1, -1, 1e9, 1e9);
       if (parts[i].dist) {
@@ -350,7 +508,9 @@ export function createNamiarDemo(core, distLayer) {
       const A = blocks[i].array;
       if (style === 'struna') packStruna(A, cam, W, H, pxs);
       else if (style === 'blona') packBlona(A, cam, W, H, pxs);
-      else packWachlarz(A, cam, W, H, pxs);
+      else if (style === 'wachlarz') packWachlarz(A, cam, W, H, pxs);
+      else if (style === 'swiatlo') packSwiatlo(A, cam, W, H, pxs, variant === 'przyboj' ? 1 : 0);
+      else packGranica(A, cam, W, H, pxs);
       A[1].set(bw, bh, 0, 0);
     }
     // kursor: własna ręka — myszka; skrypt — punkt 250 px od okrętu w kierunku celowania
@@ -441,11 +601,15 @@ export function createNamiarDemo(core, distLayer) {
         if (labels) text(p.name, px, py + r + 6, '170, 190, 205', 0.7, 10);
       }
     }
-    if (atlasImg?.complete && atlasImg.naturalWidth) {
+    const border = !!GRANICA_OF[variant];
+    if (!border && atlasImg?.complete && atlasImg.naturalWidth) {
+      // w pomysłach granicy Atlasa rysuje shader podświetlenia (granicaTSL.js), tu — nakładka 2D
       const L = ATLAS_LEN * cam.zoom;
       ctx.save();
       ctx.globalAlpha = 0.97;
-      ctx.drawImage(atlasImg, sx - L / 2, sy - L * 1677 / 3747 / 2, L, L * 1677 / 3747);
+      ctx.translate(sx, sy);
+      ctx.rotate(v.heading || 0);
+      ctx.drawImage(atlasImg, -L / 2, -L * 1677 / 3747 / 2, L, L * 1677 / 3747);
       ctx.restore();
     }
     for (const g of v.groups) {
@@ -470,10 +634,22 @@ export function createNamiarDemo(core, distLayer) {
       // co jest w namiarze (podpis do oceny — w grze nie musi być)
       let best = null;
       for (const g of v.groups) if (g.reveal > 0.5 && (!best || g.m > best.m)) best = g;
-      const head = v.on ? (best
+      let head = v.on ? (best
         ? `CZUJKA · w namiarze: ${best.name} · ${(best.d / KM).toFixed(0)} km · oni ${(best.them * 100).toFixed(0)}%${best.det > 0.5 ? ' · WYKRYLI MNIE' : ''}`
         : 'CZUJKA · w namiarze nic technologicznego') : 'PPM — czujka';
-      text(head, W / 2, 16, best && best.det > 0.5 ? '255, 150, 140' : '220, 230, 240', 0.88, 12);
+      let red = best && best.det > 0.5;
+      if (border && !v.on) {
+        // granica najbliższa mnie: ile do niej (poza zasięgiem) albo ile do wyjścia (w zasięgu)
+        let nb = null;
+        for (const g of v.groups) if (!nb || Math.abs(g.d - g.R) < Math.abs(nb.d - nb.R)) nb = g;
+        if (nb) {
+          const gap = (nb.d - nb.R) / KM;
+          head = nb.detOn ? `W ZASIĘGU: ${nb.name} — widzą mnie · do wyjścia ${(-gap).toFixed(1).replace('.', ',')} km`
+            : `GRANICA: ${nb.name} · ${gap.toFixed(1).replace('.', ',')} km do granicy`;
+          red = nb.detOn;
+        }
+      }
+      text(head, W / 2, 16, red ? '255, 150, 140' : '220, 230, 240', 0.88, 12);
       if (st.caption) text(`${st.caption} · mój ślad ×${v.sig.toFixed(2).replace('.', ',')}`, W / 2, 34, '200, 214, 226', 0.75, 11);
     }
     // kursor: celownik + oko (zamknięte — nie widzą mnie; otwarte — grupa w namiarze widzi mnie)
@@ -489,13 +665,13 @@ export function createNamiarDemo(core, distLayer) {
       ctx.moveTo(cx, cy - 7); ctx.lineTo(cx, cy - 2.5);
       ctx.moveTo(cx, cy + 2.5); ctx.lineTo(cx, cy + 7);
       ctx.stroke();
-      drawEye(ctx, cx + 30, cy + 22, st.eye, st.time);
+      if (!border) drawEye(ctx, cx + 30, cy + 22, st.eye, st.time);   // w pomysłach granicy oko zastępuje podświetlenie kadłuba
       ctx.restore();
     }
   }
 
   return {
-    meshes, dists, st, setScene, step, sync, drawOverlay, mouse,
+    meshes, dists, st, setScene, step, sync, drawOverlay, mouse, camAnchor,
     warmupObjects: () => meshes.slice(),
     get distLive() { return st.distLive; }
   };

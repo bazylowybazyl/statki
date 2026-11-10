@@ -31,6 +31,10 @@ Stan: **KONTAKT = obłok szarych X-ów; CZUJKA na PPM (struna z kolcami + błona
   X-ów szarych” (wariant 6 IKSY zastępuje OBŁOK); „struna — niech trójkąty «wychodzą» ze struny, czyli niech robią się na
   strunie” + szkic: linia struny w miejscu grupy wybija się w ostre zęby na zewnątrz i wraca (podpis szkicu: „gdy widzi
   ciebie przeciwnik”) — trójkąty to kolce samej struny, nie osobne kształty nad nią.
+- 2026-11-10, prośba po trzeciej rundzie: „jeszcze jakiś znacznik pokazujący zasięg graniczny — że jak przez niego lecisz,
+  to widzi cię enemy; niby znacznik oka, ale nie podoba mi się trochę to rozwiązanie … obecne to tak naprawdę markery, zmiana
+  koloru nie pokazuje ci, gdzie przeciwnicy widzą, a po prostu koło ogromne pokazujące zasięg wzroku enemy jest suche”.
+  Zaproponowane trzy pomysły (tafla graniczna, przybój, podświetlenie kadłuba zamiast oka) — „zrób demo z tymi trzema” (§ 7).
 
 ## 1. Co obraz ma oddać
 
@@ -252,3 +256,52 @@ szerszy, rzadszy, postrzępiony; flota = jeden obłok. Szary (liniowo 0,34–0,3
 miała X-y w ~5% komórek całego ekranu (próg prawdopodobieństwa z marginesem ±0,06 przepuszczał P = 0) i zbyt gęstą kratkę
 („haft krzyżykowy”). Zrzuty: `15-iksy-plansza`, `25-iksy-gra`, animacja `84-iksy.webp` (6 s, 60 kl/s). Koszt (1600 × 900,
 plansza, pojedyncza próbka): 0,139 ms przy pustej 0,065 ms.
+
+## 7. Granica wykrycia: tafla, przybój, podświetlenie (czwarta runda, 2026-11-10)
+
+Demo: tryb W, warianty 4 TAFLA, 5 PRZYBÓJ (oba z podświetleniem kadłuba), 6 samo PODŚWIETLENIE (`?namiar=tafla|przyboj|swiatlo`),
+scena GRANICA (`?scena=granica`; pierwszy wybór pomysłu granicy przełącza na nią sam). Shadery `dema/kontakty-czujnikow/granicaTSL.js`,
+stan i scena — `namiarDemo.js`. Czujka (PPM) działa także tu (własna ręka). `?kadr=<km>` — szerokość kadru (zbliżenie kadłuba: 15).
+
+- **Model granicy:** okrąg `them` = 1 wokół grupy — promień R = Rt × mój ślad (Rt = ich czujniki × moja sygnatura przy
+  śladzie 1). Granica jest ruchoma: ciąg (×1,35) pcha ją na mnie, cicha praca (×0,5) odsuwa w stronę wroga — widać, że to moje
+  zachowanie ją przesuwa. Przejście = zmiana wykrycia z histerezą 1 / 0,975 (ta sama co czerwień struny), zapamiętany kąt
+  miejsca przejścia (od środka grupy do mnie).
+- **Gdzie widać:** tylko kawałek przy moim okręcie — okno po odległości punktu granicy od okrętu: pełne do 3 km, zero od
+  12 km; jasność rośnie, gdy jestem blisko granicy (z obu stron — w zasięgu widać, dokąd uciec). Całe koło widać tylko przez
+  chwilę po przejściu: zmarszczka biegnie od miejsca przejścia w obie strony i spotyka się po drugiej stronie po ~1,4 s, za nią
+  gasnący ślad; do środka czerwień, na zewnątrz błękit. Krótki błysk w miejscu przejścia (przy samej linii — szeroki i długi
+  wypełniał pas liczenia shadera i wychodził jako łuk z twardymi brzegami).
+- **TAFLA:** cienka linia (rdzeń ~0,85 px, poświata 7 px) z lekkim falowaniem od punktu granicy najbliższego mnie; po stronie
+  wroga tafla pola siłowego — kaustyka z szumu zakotwiczonego w grupie (nie płynie z kamerą), gaśnie w głąb (~26 px); refrakcja
+  na warstwie DIST (brzeg szyby −x·e^(−x²) rozsuwa tło po obu stronach linii, zmarszczki, przejście). Tafla w ruchu (ciąg,
+  cisza) zostawia smugę za sobą. `est` (radar zgadnięty) — linia szersza i w kreskach.
+- **PRZYBÓJ:** od wroga biegną fale (długość 34 px, 26 px/s): cienkie grzbiety, zgięte szumem; przy granicy piętrzą się
+  (węższe, jaśniejsze) i łamią — piana wybiega za granicę (do ~0,5 długości fali) i cofa się; każdy grzbiet dochodzi w innym
+  miejscu. Piana: gładkie smugi wzdłuż granicy + drobiny w komórkach 3 px migoczące 9 razy na sekundę (szum o skali kilku
+  px dawał kratkę — „siatkę”). Fale widać w pasie ~7 długości fali przed granicą, w oknie przy mnie; gdy jestem w zasięgu —
+  także wokół kadłuba.
+- **PODŚWIETLENIE (zamiast oka przy kursorze):** grupa, która mnie widzi, oświetla kadłub od swojej strony: czerwone światło
+  z płaskorzeźbą paneli (normalne z jasności sprite'a), strona kadłuba od wroga jaśniej, świecąca krawędź od strony wroga
+  (z błyskiem przy wykryciu), linie skanu biegnące od wroga przez kadłub (przy przyboju — grzbiety jego fal, te same co na
+  ekranie), przemiatanie co 1,9 s, słaby szeroki snop i poświata krawędzi w przestrzeni. Atlas rysuje w tych wariantach shader
+  (sprite jako tekstura z mipmapami, poziom z rozmiaru na ekranie), nie nakładka 2D. Oko przy kursorze znika; „!” na strunie
+  czujki zostaje.
+- **Scena GRANICA (pętla 27 s):** Atlas leci na patrol (3 statki, granica 14 km przy zwykłej pracy), kamera jedzie za okrętem.
+  Zbliża się (granica wyłania się w oknie), ciąg — granica przeskakuje przez niego (8,6 s, widzą go), cicha praca — cofa się
+  za niego (13,8 s), skrada się pod samą granicę (0,7 km), zawraca, powrót do zwykłej pracy znów go odsłania (21,3 s),
+  ucieka (wyjście 24,6 s). Podpis u góry: ile do granicy albo ile do wyjścia.
+
+Zrzuty (`.tmp/kontakty/granica4/`): `60-tafla-<t>-<chwila>`, `61-przyboj-…`, zbliżenia kadłuba w kadrze 15 km `7k-…`;
+animacje 60 kl/s z `--film-granica 1`: pełne pętle tafli i przyboju (skala 0,75), zbliżenia przy kadłubie (7,5–14,5 s).
+Pipeline'y synchroniczne 0, błędy konsoli 0. Koszt (1600 × 900, pojedyncze próbki zegara GPU — orientacyjnie): cała klatka
+z taflą i podświetleniem ~0,11 ms, z przybojem ~0,09 ms (pusta klatka dema 0,065 ms).
+
+Wpięcie (po wyborze): granica to dane z modelu czujników (Rt grupy z obrazu czujników, mój ślad z bieżącego stanu — ten sam,
+który liczy `them`), tylko dla grup, które znam (kontakt bez identyfikacji — w kreskach); kwad w passie gry PO mgle wojny
+(jak kontakt). Podświetlenie w grze to światło w materiale kadłuba (oświetlenie kadłubów v2 — światło per kadłub z kierunku
+grupy, bez nowego światła sceny w biegu), nie kwad ze sprite'em.
+
+Decyzje: (11) tafla czy przybój (albo oba: tafla jako linia, przybój jako „żywe” tło przy niej); (12) podświetlenie zamiast
+oka — czy przy kursorze zostaje cokolwiek; (13) okno 3–12 km — szersze / węższe, czy przy PPM (czujka) pokazywać całe koło
+grup w namiarze; (14) granica dla kontaktów bez identyfikacji (dziś w kreskach) czy tylko dla grup znanych.
