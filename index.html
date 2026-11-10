@@ -18120,7 +18120,8 @@
           HullDamageEvents.setSource('scrapTorch', 'kerf');
           try { return HullBodies.cutSegment(w, x0, y0, x1, y1, hw); } finally { HullDamageEvents.clearSource(); }
         },
-        chew: (w, x, y, n) => HullBodies.cutNearest(w, x, y, n)
+        chew: (w, x, y, n) => HullBodies.cutNearest(w, x, y, n),
+        touch: (w, x, y, reach) => HullBodies.probe(w, x, y, reach)
       }
     };
     function trafficSalvageStep(dt) {
@@ -18225,7 +18226,7 @@
       /** Złomiarze świata ruchu w scenie (czas cięcia — z wielkości wraku, szacunek ze zgłoszenia). */
       scrappers: { gameWreckDelay: 0, minProfit: -1e9, gameReserve: 6, hookSeconds: 20 },
       /** Kadr pracy: wysokość widoku nad dziobem tnącego złomiarza [j.] (kadr sceny zostaje pod `DevScene.holowanieKadr()`). */
-      workView: 2600,
+      workView: 1500,
       /**
        * Statki sceny: miejsce na placu (u — od Ziemi, v — w bok) i śmierć (pula HP albo stopienie rdzenia). Linia
        * wzdłuż kierunku holu (lejek – plac – Atlas poziomo w kadrze): wąski pas w pionie = większy zoom na ekranie 32:9.

@@ -49,7 +49,8 @@ function scrapHooks() {
     cellSize: (w) => w.beamHull?.body?.cellSize || 0,
     cellWorld: (w, gx, gy, out) => HullBodies.cellWorld(w, gx, gy, out),
     cutLine: (w, x0, y0, x1, y1, hw) => HullBodies.cutSegment(w, x0, y0, x1, y1, hw),
-    chew: (w, x, y, n) => HullBodies.cutNearest(w, x, y, n)
+    chew: (w, x, y, n) => HullBodies.cutNearest(w, x, y, n),
+    touch: (w, x, y, reach) => HullBodies.probe(w, x, y, reach)
   };
 }
 
@@ -213,6 +214,8 @@ test('moduł złomiarzy: zgłoszenie niesie czas pracy, ramka obrazu — pozy wy
   stepTrafficSalvage(ts, tb, time, DT, 0, 0);
   stepTrafficSalvage(ts, tb, time + DT, DT, 0, 0);
   assert.equal(ts.reported.size, 0);
-  assert.ok(removed.length >= 1);
+  // Ostatni kęs zdejmuje koniec postoju — chyba że silnik rozkruszył go wcześniej (wtedy wpis czekał jako „zmielony”).
+  assert.ok(removed.length >= 1 || ts.log.some((l) => l.what === 'zmielony'), 'reszta zdjęta albo wrak zmielony do końca');
+  assert.equal(window.wrecks.filter((w) => !w.dead && nodesOf(w) > 0).length, 0, 'po pracy nie zostaje żaden kawałek');
   assert.equal(ts.jobs.size, 0);
 });

@@ -6,7 +6,7 @@
 
 /**
  * Zestaw domyślny (sprite złomiarza `salvage_hauler`: paszcza z zębami na dziobie, ładownia na śródokręciu).
- *   maw      — punkt mielenia: tu sekcja znika w kadłubie,
+ *   maw      — punkt mielenia: tu sekcja znika w kadłubie; `mawR` — zasięg zębów wokół niego,
  *   front    — dziób: przed nim (o `gap`) staje bliski koniec wraku,
  *   mounts   — podstawy dwóch wysięgników (lewy y < 0, prawy y > 0),
  *   stow     — głowice w spoczynku: tuż przy podstawie, lekko na zewnątrz — ramię składa się wtedy łokciem
@@ -17,6 +17,7 @@
  */
 export const SCRAP_RIG_DEFAULT = Object.freeze({
   maw: Object.freeze([0.455, 0]),
+  mawR: 0.065,
   front: 0.5,
   gap: 0.085,
   mounts: Object.freeze([Object.freeze([0.33, -0.105]), Object.freeze([0.33, 0.105])]),

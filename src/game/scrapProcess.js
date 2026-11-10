@@ -15,7 +15,8 @@
  * Czysty moduł: bez three, DOM, `window` i losowości; gra podaje haki (`hooks.scrap` w `createTrafficSalvage`):
  *   rig(a) → zestaw osprzętu kadłuba (`src/data/scrapRigs.js`), cells(w, out) → liczba par (ix, iy) żywych komórek,
  *   cellSize(w) → bok komórki [j.], cellWorld(w, gx, gy, out) → punkt siatki w świecie gry,
- *   cutLine(w, x0, y0, x1, y1, halfWidth) → zabite węzły, chew(w, x, y, n) → zdjęte węzły, keepOut(w) → strefy modułów.
+ *   cutLine(w, x0, y0, x1, y1, halfWidth) → zabite węzły, chew(w, x, y, n) → zdjęte węzły, keepOut(w) → strefy modułów,
+ *   touch(w, x, y, reach) → czy żywy węzeł kawałka leży w zasięgu punktu (zęby paszczy sięgają materiału).
  * Z haków wspólnych: alive(w), nodes(w).
  */
 
@@ -44,6 +45,8 @@ export const SCRAP_TUNE = {
   pullGain: 1.2,
   chewArea: 6000,
   chewReachCells: 1.6,
+  /** Kawałek objął paszczę i materiału w zasięgu zębów brak — po tylu sekundach zęby biorą najbliższy węzeł. */
+  chewStarve: 0.6,
   /** Po końcu linii: tyle sekund na rozpad ciała w kroku silnika, zanim odłamy idą do sortowania. */
   settle: 0.12,
   /** Linia nie rozdzieliła wraku — tyle powtórek szerszym rzazem (× `retryWiden`). */
@@ -81,7 +84,7 @@ export function createScrapState(time = 0) {
     arms: [makeArm(), makeArm()], seg: 0, segNow: 0,
     grip: 0, g0x: 0, g0y: 0, g1x: 0, g1y: 0,
     maw: 0, mawX: 0, mawY: 0,
-    rate: 1, hold: 0, wait: 0, chewDebt: 0,
+    rate: 1, hold: 0, wait: 0, chewDebt: 0, starve: 0,
     posErr: Infinity, angErr: Infinity,
     stats: { lines: 0, cutNodes: 0, chewNodes: 0, sections: 0, retries: 0 }
   };
@@ -404,7 +407,15 @@ function stepChew(S, entry, H, T, rig, a, c, s, dt, nodesOf) {
   const vMax = T.pullSpeed * S.rate;
   if (v > vMax) { vx *= vMax / v; vy *= vMax / v; }
   setVel(w, (Number(a.vx) || 0) + vx, (Number(a.vy) || 0) + vy, (Number(w.angVel) || 0) * 0.9);
-  if (d > (Number(w.radius) || 0) + T.chewReachCells * S.cs) return true;
+  // Zęby mielą tylko materiał, którego sięgają (sonda żywych węzłów przy paszczy; bez haka — promień kawałka).
+  const reach = Math.max(T.chewReachCells * S.cs, (Number(rig.mawR) || 0) * L);
+  const bite = H.touch ? H.touch(w, mx, my, reach) : d <= (Number(w.radius) || 0) + reach;
+  if (bite) S.starve = 0;
+  else {
+    // Kawałek objął paszczę (środek masy już na miejscu, a w zasięgu zębów pusto): po chwili biorą najbliższy węzeł.
+    S.starve = d < reach ? S.starve + dt : 0;
+    if (S.starve < T.chewStarve) return true;
+  }
   S.maw = 1;
   S.chewDebt += T.chewArea * S.rate * dt / (S.cs * S.cs);
   let n = Math.floor(S.chewDebt);
@@ -439,6 +450,8 @@ export function stepScrapJob(ts, job, entry, rec, a, time, dt) {
   S.segNow = S.segNow > 0 ? S.segNow + (segWant - S.segNow) * Math.min(1, 2.5 * dt) : segWant;
 
   if (S.phase === 'plan') buildPlan(S, entry, H, T, rig, a, c, s, time, rec);
+  S.mawX = rig.maw[0] * (Number(a.length) || 0);
+  S.mawY = rig.maw[1] * (Number(a.length) || 0);
 
   // Reszta wraku przepadła (ostrzał, rozpad): wszystko, co zostało, idzie do paszczy.
   if (S.phase !== 'plan' && S.phase !== 'done' && S.stock && !isAlive(H, S.stock)) {

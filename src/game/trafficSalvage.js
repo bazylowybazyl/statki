@@ -272,6 +272,14 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
   let holdOff = null;
   const far2 = T.farDespawn * T.farDespawn;
   for (const [gid, rec] of ts.reported) {
+    if (rec.milled) {
+      // Wrak zmielony do końca: wpis żyje, póki złomiarz stoi przy pracy (wysięgniki się składają, paszcza gaśnie),
+      // potem wypada — bez `wreck-gone`. Zwykle zdejmuje go wcześniej `salvage-taken`.
+      let held = false;
+      for (const job of ts.jobs.values()) if (job.gid === gid) { held = true; break; }
+      if (!held) { ts.reported.delete(gid); ts.taken.delete(gid); }
+      continue;
+    }
     let w = rec.wreck;
     let lost = !w || w.dead || (H.alive && !H.alive(w));
     // Cięcie rozdzieliło wrak (rozpad na wyspy): praca przechodzi na największy żywy odłam tej samej pracy.
@@ -292,13 +300,17 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       rec.lastY = wreckY(w);
       continue;
     }
+    // Cięcie jako proces: wrak zmielony do końca przed końcem postoju to praca wykonana, nie „wrak przepadł”.
+    if (rec.loaded === true && !ts.taken.has(gid)) {
+      rec.milled = true;
+      note(ts, 'zmielony', gid);
+      continue;
+    }
     ts.reported.delete(gid);
     const hooked = ts.taken.delete(gid);
     const far = (rec.lastX - px) ** 2 + (rec.lastY - py) ** 2 > far2;
-    // Cięcie jako proces: wrak zmielony do końca przed końcem postoju to praca wykonana, nie „wrak przepadł”.
-    const loaded = rec.loaded === true;
-    note(ts, hooked ? 'zniknal-na-haku' : loaded ? 'zmielony' : far ? 'zniknal-daleko' : rec.playerHold ? 'gracz-zabral' : 'zniknal', gid);
-    if (hooked || far || loaded) continue;
+    note(ts, hooked ? 'zniknal-na-haku' : far ? 'zniknal-daleko' : rec.playerHold ? 'gracz-zabral' : 'zniknal', gid);
+    if (hooked || far) continue;
     (gone || (gone = [])).push(gid);
     ts.stats.gone++;
   }
@@ -339,7 +351,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       const was = job.active;
       job.active = at && near;
       if (!job.active) { if (was) haltScrap(job); continue; }
-      if (w.isCold && H.thaw && !H.thaw(w)) { job.active = false; continue; }
+      if (w.isCold && !w.dead && H.thaw && !H.thaw(w)) { job.active = false; continue; }
       if (rec.kind === 'cut') {
         if (H.scrap) {
           if (!job.scrap) ts.stats.scrapJobs++;
@@ -463,7 +475,7 @@ export function forEachTrafficSalvageWreck(ts, fn) {
   if (!ts) return;
   for (const job of ts.jobs.values()) {
     if (!job.active && !job.rope) continue;
-    fn(job.wreck);
+    if (job.wreck && !job.wreck.dead) fn(job.wreck);
     // Cięcie jako proces: reszta wraku, sekcja w paszczy i kolejka sekcji to osobne encje tej samej pracy.
     const S = job.scrap;
     if (!S) continue;
@@ -521,7 +533,8 @@ export function fillTrafficWorkFrame(ts, tb, t, poseAt) {
       const job = ts.jobs.get(rec.id);
       if (!job || (!job.active && !job.rope)) continue;
       const w = job.wreck;
-      if (!w || w.dead) continue;
+      // Wrak zmielony do końca: złomiarz jeszcze składa wysięgniki (rekord pracy bez żywego wraku).
+      if (!w || (w.dead && !job.scrap)) continue;
       kind = rec.kind === 'cut' ? TRAFFIC_WORK_KIND.CUT : TRAFFIC_WORK_KIND.TOW;
       tx = wreckX(w);
       ty = wreckY(w);
