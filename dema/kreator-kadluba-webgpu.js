@@ -2155,6 +2155,8 @@ function classMountPlace(o, check = true) {
     o.size = S.mountSize || shipClass(lv).weaponSize;
     o.r = Math.round(HD_MOUNT_RADIUS_DU[o.slot] * (d.detail || 0.6) * 100) / 100;
   }
+  // obrotnica (statki robocze): gniazdo główne M, na kadłubie klasy I — S (limit rozmiaru broni mostka)
+  if (o.type === 'rig' && !o.size) o.size = shipClass(lv).weaponSize === 'S' ? 'S' : 'M';
   if (!check) return true;
   const copies = d.mirror && Math.abs(o.y) > 0.5 ? 2 : 1;
   const why = hullDesignMountAddIssue(lv, S.cls?.mounts || [], hullDesignMountOf(o), copies, d.role);
@@ -2209,7 +2211,9 @@ function selectedMount() {
  * (przebudowa), inaczej — wariant nowych modułów narzędzia M (S.moduleVar[typ]).
  */
 const MOD_VARIANTS = {
-  cargo: { v: ['wrota', 'klapa', 'stelaż kontenerów', 'zasobniki'], n: (v) => (v === 3 ? (k) => `zasobnik ${k} × ${k}` : null) },
+  cargo: { v: ['wrota', 'klapa', 'stelaż kontenerów', 'zasobniki', 'kosz otwarty od góry'], n: (v) => (v === 3 ? (k) => `zasobnik ${k} × ${k}` : null) },
+  rig: { v: ['wysięgnik (laser tnący)', 'dźwig'], n: () => null },
+  mill: { v: ['walce tnące'], n: () => (k) => `walców: ${k}` },
   cargo_tank: { v: ['walce', 'kule'], n: () => (k) => `rzędów: ${k}` }
 };
 S.moduleVar = {};
@@ -2230,7 +2234,7 @@ function setModVariant(field, value) {
   if (!t) return;
   const src = t.o || (S.moduleVar[t.type] = S.moduleVar[t.type] || { v: 0, n: 0 });
   src[field] = value;
-  if (field === 'v') { const nf = MOD_VARIANTS[t.type].n(value); src.n = nf ? (src.n || (t.type === 'cargo' ? 2 : 1)) : 0; if (!src.n) delete src.n; }
+  if (field === 'v') { const nf = MOD_VARIANTS[t.type].n(value); src.n = nf ? (src.n || (t.type === 'cargo' || t.type === 'mill' ? 2 : 1)) : 0; if (!src.n) delete src.n; }
   if (t.o) { hullCargoFit(t.o, design().detail); requestBuild(); }
   syncModVariant();
 }
@@ -2251,7 +2255,7 @@ function syncModVariant() {
   sv.value = String(v);
   sn.style.display = nf ? '' : 'none';
   sn.innerHTML = '';
-  if (nf) { for (let k = 1; k <= 4; k++) sn.add(new Option(nf(k), String(k))); sn.value = String(cur.n || (t.type === 'cargo' ? 2 : 1)); }
+  if (nf) { for (let k = 1; k <= 4; k++) sn.add(new Option(nf(k), String(k))); sn.value = String(cur.n || (t.type === 'cargo' || t.type === 'mill' ? 2 : 1)); }
 }
 
 function syncMountEdit() {

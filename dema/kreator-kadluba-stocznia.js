@@ -83,8 +83,21 @@ const CARGO = [
   ['cargo', 1, 0, 'Ładownia — klapa', 'Kontenery pod klapą'],
   ['cargo', 2, 0, 'Stelaż kontenerów', 'Otwarty pokład: kontenery na wierzchu (widać załadunek)'],
   ['cargo', 3, 2, 'Zasobniki', 'Pudła 2 × 2 kontenery na wierzchu'],
+  ['cargo', 4, 0, 'Kosz na złom', 'Ładownia otwarta od góry — dźwig wkłada z góry (widać załadunek)'],
   ['cargo_tank', 0, 1, 'Zbiornik ładunku — walce', 'Ciecz i gaz w walcach (tankowiec)'],
   ['cargo_tank', 1, 1, 'Zbiornik ładunku — kule', 'Gaz w kulach (gazowiec)']
+];
+/**
+ * Osprzęt statków roboczych (złomowanie): [typ, wariant v, etykieta, podpowiedź] — gniazda pod ruchome części, które
+ * stawia gra (wysięgnik, dźwig, szczęki, walce, klapa, podpora); tu wygląd „zamknięty”.
+ */
+const WORK = [
+  ['rig', 0, 'Obrotnica wysięgnika', 'Gniazdo broni pod wysięgnik z laserem tnącym'],
+  ['rig', 1, 'Obrotnica dźwigu', 'Gniazdo broni pod dźwig — ładuje z góry'],
+  ['maw', 0, 'Paszcza', 'Szczęki na dziobie — zjadają cały wrak'],
+  ['mill', 0, 'Gardziel młyna', 'Walce mielą złom'],
+  ['ramp', 0, 'Rampa', 'Klapa jak w samolocie transportowym'],
+  ['damper', 0, 'Gniazdo dampera', 'Wysuwana podpora statku-dźwigu']
 ];
 const WEAPONS = [
   ['turret_s', null, 'Wieża S', 'Lekka wieża (gniazdo główne S)'],
@@ -147,6 +160,7 @@ function buildCatalog() {
   const items = [];
   for (const p of HD_BLOCK_PALETTE) items.push({ key: `blk:${p.id}`, cat: 'ksztalty', group: HD_BLOCK_PALETTE_GROUPS[p.group], kind: 'block', id: p.id, label: p.label, hint: 'Klocek kadłuba' });
   for (const [type, label, hint] of SYSTEMS) items.push({ key: `mod:${type}`, cat: 'systemy', group: 'Systemy okrętu', kind: 'module', type, label, hint, onHull: true });
+  for (const [type, v, label, hint] of WORK) items.push({ key: `mod:${type}:v${v}`, cat: 'systemy', group: 'Osprzęt roboczy', kind: 'module', type, v, label, hint, onHull: true });
   for (const [type, v, n, label, hint] of CARGO) items.push({ key: `mod:${type}:v${v}`, cat: 'ladunek', group: type === 'cargo' ? 'Ładownie' : 'Zbiorniki ładunku', kind: 'module', type, v, n, label, hint, onHull: true });
   for (const [type, slot, label, hint] of WEAPONS) items.push({ key: `mod:${type}${slot ? `:${slot}` : ''}`, cat: 'bron', group: slot ? 'Gniazda broni' : 'Wieże', kind: 'module', type, slot, label, hint, onHull: true });
   for (const [type, label, hint] of DETAILS) items.push({ key: `mod:${type}`, cat: 'detale', group: 'Detale pancerza', kind: 'module', type, label, hint, onHull: true });
