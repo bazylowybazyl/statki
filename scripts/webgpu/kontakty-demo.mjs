@@ -4,7 +4,8 @@
 // pipeline'y synchroniczne, błędy konsoli. Headless Chrome — nie uruchamiać, gdy użytkownik gra.
 //
 //   node scripts/webgpu/kontakty-demo.mjs [--out .tmp/kontakty/demo] [--rozmiar 1600x900]
-//     [--tylko porownanie,echo,oblok,wir,roj,ruch,dzis,namiar,namiar-szybko] (część zrzutów — szybkie strojenie)
+//     [--tylko porownanie,echo,oblok,wir,roj,iksy,ruch,dzis,namiar,namiar-szybko] (część zrzutów — szybkie strojenie)
+//     [--film-iksy 1] (klatki 60 kl/s obłoku X-ów na planszy, 6 s, skala 0,75 → <out>/film-iksy/)
 //     [--film 1] (klatki porównania kontaktów co 0,1 s w skali 0,5 → <out>/film/NNN.png — do animacji)
 //     [--film-namiar 1|misja|uklad|przelot|zblizenie] (klatki 60 kl/s czujki: <out>/film-<scena>/ — pełna pętla sceny
 //        w skali 0,75; <out>/film-zblizenie/ — struna przy Atlasie w misji 1, piksel w piksel; czas: kilka minut)
@@ -80,7 +81,7 @@ try {
     console.log('film: 48 klatek →', dir);
   }
 
-  const styles = ['echo', 'oblok', 'wir', 'roj'];
+  const styles = ['echo', 'oblok', 'wir', 'roj', 'iksy'];
   let k = 1;
   for (const st of styles) {
     if (!want(st)) { k++; continue; }
@@ -143,6 +144,18 @@ try {
       k++;
     }
     await set({ mode: 'kontakty' });
+  }
+  if (args['film-iksy']) {
+    await set({ mode: 'kontakty', variant: 'iksy', scene: 'plansza', clean: true, labels: true });
+    await run(120);
+    const dir = join(out, 'film-iksy');
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 360; i++) {
+      await run(1);
+      const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: W, height: H, scale: 0.75 } });
+      writeFileSync(join(dir, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
+    }
+    console.log('film iksy');
   }
   if (args['film-namiar']) {
     const fn = String(args['film-namiar']);

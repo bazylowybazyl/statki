@@ -40,14 +40,15 @@ const SIZE = [
   { name: 'DUŻY', R: 900, mass: 1.25, minPx: 10 },
   { name: 'OGROMNY', R: 1350, mass: 1.6, minPx: 13 }
 ];
-const VARIANTS = ['dzis', 'echo', 'oblok', 'wir', 'roj', 'porownanie'];
-const TITLES = { dzis: 'DZIŚ (prototyp)', echo: '1 · ECHO', oblok: '2 · OBŁOK', wir: '3 · WIR', roj: '4 · RÓJ', porownanie: 'PORÓWNANIE 2 × 2' };
+const VARIANTS = ['dzis', 'echo', 'oblok', 'wir', 'roj', 'porownanie', 'iksy'];
+const TITLES = { dzis: 'DZIŚ (prototyp)', echo: '1 · ECHO', oblok: '2 · OBŁOK', wir: '3 · WIR', roj: '4 · RÓJ', porownanie: 'PORÓWNANIE 2 × 2', iksy: '6 · X-Y' };
 const DESC = {
   dzis: 'Dzisiejszy znacznik prototypu zasięgu radarów: przerywane koło niepewności z „?” i napisem rozmiaru (grupy bliskie na ekranie — jeden znak „? ×N”). Dla porównania.',
   echo: '<b>Plama-echo luminoforu.</b> (Decyzja: wygląd skał i asteroid, nie kontaktu.) Kilka płatów krąży wokół punktu i zlewa się w jedną morfującą plamę (metakule). Jasny brzeg jak echo na tarczy PPI, w środku warstwice — cięższy kontakt ma ich więcej. Plama jaśnieje, gdy przejdzie wiązka radaru Atlasa (2,4 s), i gaśnie jak luminofor. Niepewność rozsuwa płaty i rozmywa brzeg; przerywana obwiednia = gdzie kontakt może być. Flota = jedna plama.',
-  oblok: '<b>Obłok zakłóceń — WYBRANY na kontakt.</b> Miękka, zawirowana chmura z pasmami interferencji, rwanymi wierszami jak zakłócony odbiór i rzadkim „śniegiem” sygnału. Cięższy = gęstszy, z cieplejszym rdzeniem; niepewność = szersza, rzadsza, bardziej postrzępiona chmura. Flota = jeden obłok.',
+  oblok: '<b>Obłok zakłóceń</b> (był wybrany; 2026-11-10 zastąpiony obłokiem X-ów — wariant 6). Miękka, zawirowana chmura z pasmami interferencji, rwanymi wierszami jak zakłócony odbiór i rzadkim „śniegiem” sygnału. Cięższy = gęstszy, z cieplejszym rdzeniem; niepewność = szersza, rzadsza, bardziej postrzępiona chmura. Flota = jeden obłok.',
   wir: '<b>Wir masy</b> (odpadł) — w duchu sygnatur masy mgły wojny. Ciemne jądro połyka tło, wokół soczewka (gwiazdy wyginają się), spiralny pył ciepłej barwy i cienki fioletowy horyzont. Cięższy = większe jądro, mocniejsza soczewka, szybszy wir; niepewność rozmywa horyzont i poszerza pył. Flota = kilka jąder w jednym wirze.',
   roj: '<b>Rój drobin prawdopodobieństwa</b> (odpadł). Iskry rozbłyskują tam, gdzie kontakt może być (gęstość = prawdopodobieństwo), i krążą wokół środka jak rój; każda żyje ~1 s i odradza się gdzie indziej. Cięższy = gęstszy, większy rój; niepewność = szerszy i rzadszy; flota = roje przenikają się nad wspólną poświatą.',
+  iksy: '<b>Obłok szarych X-ów — WYBRANY na kontakt (2026-11-10).</b> Kształt obłoku jak w OBŁOKU, ale zamiast mgły — X-y: każdy żyje ~1 s i pojawia się w innym miejscu, gęstość X-ów = gdzie kontakt może być. Cięższy = gęstszy i większy, niepewność = szerszy i rzadszy, flota = jeden obłok. Szary — bez strony i klasy.',
   porownanie: 'Wszystkie cztery naraz: w każdej ćwiartce cztery rozmiary (MAŁY → OGROMNY), flota pięciu i para, która się zbliża i rozchodzi.'
 };
 
@@ -74,7 +75,7 @@ const S = {
   mode: params.get('tryb') === 'namiar' ? 'namiar' : 'kontakty',
   namVariant: Math.max(0, NAM_VARIANTS.indexOf(params.get('namiar') || 'czujka')),
   namScene: NAMIAR_SCENES.includes(params.get('scena')) ? params.get('scena') : 'misja',
-  variant: Math.max(0, VARIANTS.indexOf(params.get('wariant') || 'echo')),
+  variant: Math.max(0, VARIANTS.indexOf(params.get('wariant') || 'iksy')),
   scene: params.get('scena') === 'gra' ? 'gra' : 'plansza',
   time: Number(params.get('t')) || 0,
   paused: false, labels: params.get('podpisy') !== '0', truth: false, far: params.get('daleko') === '1',
@@ -294,8 +295,8 @@ function syncPanel() {
   const nam = S.mode === 'namiar';
   const v = nam ? S.namVariant : S.variant;
   const names = nam ? ['0 · Wachlarz (2. runda)', '1 · CZUJKA', '2 · STRUNA', '3 · BŁONA', '', '']
-    : ['Dziś (prototyp)', '1 · ECHO', '2 · OBŁOK', '3 · WIR', '4 · RÓJ', 'Porównanie 2 × 2'];
-  for (let i = 0; i <= 5; i++) {
+    : ['Dziś (prototyp)', '1 · ECHO', '2 · OBŁOK', '3 · WIR', '4 · RÓJ', 'Porównanie 2 × 2', '6 · X-Y (wybrany)'];
+  for (let i = 0; i <= 6; i++) {
     const b = $(`v${i}`);
     if (!b) continue;
     b.firstChild.nodeValue = names[i];
@@ -342,15 +343,15 @@ function cycleScene() {
 function syncMeshes() {
   const nam = S.mode === 'namiar';
   namiar.sync(NAM_VARIANTS[S.namVariant], S.cam, W, H, nam);
-  // w namiarze kontakt bez identyfikacji (scena GRUPY) — wybrany wygląd OBŁOK
-  const v = nam ? (S.contacts.length ? 'oblok' : null) : VARIANTS[S.variant];
+  // w namiarze kontakt bez identyfikacji — wybrany wygląd (obłok X-ów)
+  const v = nam ? (S.contacts.length ? 'iksy' : null) : VARIANTS[S.variant];
   const pr = Core3D.pixelRatio || 1;
   const bw = Core3D.composerTarget?.width || W * pr;
   const bh = Core3D.composerTarget?.height || H * pr;
   for (let i = 0; i < meshes.length; i++) {
     const m = meshes[i];
     const style = KONTAKT_STYLES[i];
-    const on = v === 'porownanie' || v === style;
+    const on = (v === 'porownanie' && QUAD_STYLE.includes(style)) || v === style;
     m.visible = on;
     const r = m.userData.rect.value;
     if (v === 'porownanie') {
@@ -588,7 +589,7 @@ function updateHud() {
 
 const ACTIONS = {
   0: () => setVariant(0), 1: () => setVariant(1), 2: () => setVariant(2), 3: () => setVariant(3), 4: () => setVariant(4),
-  5: () => setVariant(5),
+  5: () => setVariant(5), 6: () => setVariant(6),
   s: () => cycleScene(),
   w: () => setMode(S.mode === 'namiar' ? 'kontakty' : 'namiar'),
   l: () => { S.labels = !S.labels; $('b-labels').classList.toggle('on', S.labels); },
@@ -599,7 +600,7 @@ const ACTIONS = {
 };
 
 function bindInput() {
-  for (let i = 0; i <= 5; i++) $(`v${i}`).addEventListener('click', () => ACTIONS[i]());
+  for (let i = 0; i <= 6; i++) $(`v${i}`).addEventListener('click', () => ACTIONS[i]());
   $('s-plansza').addEventListener('click', () => setSceneName('plansza'));
   $('s-gra').addEventListener('click', () => setSceneName('gra'));
   $('m-kontakty').addEventListener('click', () => setMode('kontakty'));
@@ -745,7 +746,7 @@ window.__kontakty = {
     for (const m of [...namiar.meshes, ...namiar.dists]) Core3D.scene.add(m);
     // warstwę DIST zgłasza się z kroku efektów (flagę kasuje start klatki efektów — wzór hullCloak.js)
     Core3D.addFxStep({ name: 'namiar: impuls czujki (demo)', update() { if (namiar.distLive) Core3D.setDistortLayerActive(true); } });
-    Core3D.warmup.add({ name: 'kontakty czujników (4 propozycje, tło)', objects: () => [backdrop.mesh, ...meshes] });
+    Core3D.warmup.add({ name: 'kontakty czujników (5 propozycji, tło)', objects: () => [backdrop.mesh, ...meshes] });
     Core3D.warmup.add({ name: 'namiar czujników (3 propozycje)', objects: () => namiar.warmupObjects() });
     Core3D.warmup.add({ name: 'namiar: impuls czujki (warstwa DIST)', objects: () => namiar.dists.slice(), layer: FX_DISTORT_LAYER });
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });

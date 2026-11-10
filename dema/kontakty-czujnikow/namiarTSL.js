@@ -5,7 +5,7 @@
 // technologicznych struna … błona jest 360 stopni, struna w stronę, w którą pokazuje myszka gracz”.
 //  STRUNA — jeden gładki łuk przy MOIM okręcie, obraca się za myszką (kierunek celowania). Drga tym mocniej, im silniejszy
 //     sygnał technologiczny w tym kierunku (Σ dopasowanie kąta × `me` grup) — w pustym kierunku prawie nie drgnie. Na łuku,
-//     w miejscu wskazującym grupę, wyrastają TRÓJKĄTY w stronę grupy: ile wrogów, tyle trójkątów, mały = statek, duży =
+//     w miejscu wskazującym grupę, struna wybija się w KOLCE (trójkąty z samej linii) w stronę grupy: ile wrogów, tyle trójkątów, mały = statek, duży =
 //     budowla; duże w środku, mniejsze na boki (gromada rośnie ku środkowi — „strzałka” w stronę grupy). Bez pękania.
 //     Wykrycie (grupa w namiarze ma `them` ≥ 1): struna i trójkąty czerwienieją, nad gromadą „!” (oko przy kursorze
 //     rysuje nakładka 2D). Radar zgadnięty (`est`) — trójkąty puste, słabsze.
@@ -48,7 +48,7 @@ export const NAMIAR_MARK_VEC = 4;
  *  (statek / budowla), odstęp, uniesienie nad struną. */
 export const NAMIAR_GEOM = Object.freeze({
   N: 7, GAP: 11, HALF: 0.3, LW: 2.2,
-  TRI_SHIP: [4.6, 8.5], TRI_BASE: [9.0, 16.5], TRI_GAP: 2.6, TRI_LIFT: 3.0
+  TRI_SHIP: [4.6, 9.0], TRI_BASE: [8.5, 16.5], TRI_GAP: 7.0, TRI_LIFT: 3.0
 });
 
 const TAU = 6.283185307;
@@ -159,9 +159,11 @@ function wachlarzLook(B, px) {
 
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// 2. STRUNA — czujka kierunkowa
+// 2. STRUNA — czujka kierunkowa. Trójkąty grup to KOLCE samej struny (szkic użytkownika 2026-11-10: linia w miejscu grupy
+//    wybija się w ostry ząb na zewnątrz i wraca) — wyrastają ze struny przy wyłonieniu (wysokość od 0, podstawa się
+//    rozszerza), jadą z jej drganiem; duże (budowla) w środku gromady, małe (statki) na boki.
 const STR_F = [0.9, 1.97, 3.13];                       // [Hz w czasie τ] niewspółmierne
-const STR_TRAIL = [[0.0, 1.0], [0.024, 0.32]];         // ślad luminoforu: opóźnienie τ, jasność
+const STR_TRAIL = [[0.0, 1.0], [0.024, 0.22]];         // ślad luminoforu: opóźnienie τ, jasność
 
 function strunaLook(B, px) {
   const { t, pxs, anchors } = header(B);
@@ -173,7 +175,7 @@ function strunaLook(B, px) {
     const d = tv('v2', px.sub(A0.xy));
     const r = tv('f', length(d));
     const rs = A0.z, H = A1.x;
-    If(vis.greaterThan(0.001).and(abs(r.sub(rs)).lessThan(pxs.mul(58.0))), () => {
+    If(vis.greaterThan(0.001).and(abs(r.sub(rs)).lessThan(pxs.mul(62.0))), () => {
       const dA = tv('f', wrapAngle(atan(d.y, d.x).sub(A0.w)));
       const a = tv('f', abs(dA));
       If(a.lessThan(H.add(pxs.mul(16.0).div(rs))), () => {
@@ -186,51 +188,25 @@ function strunaLook(B, px) {
         const sPi = tv('f', s.mul(PI));
         const mW = STR_F.map((_, n) => tv('f', sin(sPi.mul(n + 1))));
         const dW = STR_F.map((_, n) => tv('f', cos(sPi.mul(n + 1)).mul((n + 1) * PI).div(arcLen)));
-        const c0 = STR_F.map(() => float(0).toVar());
-        const offs = tv('f', r.sub(rs));
-        const wl = tv('f', pxs.mul(0.82));
-        const core = float(0).toVar();
-        const glow = float(0).toVar();
-        for (let q = 0; q < STR_TRAIL.length; q++) {
-          const tq = tv('f', tau.sub(STR_TRAIL[q][0]));
-          let y = float(0), sl = float(0);
-          for (let n = 0; n < STR_F.length; n++) {
-            const c = tv('f', cos(tq.mul(STR_F[n] * TAU).add(ph[n])));
-            if (q === 0) c0[n].assign(c);
-            y = y.add(aN[n].mul(mW[n]).mul(c));
-            sl = sl.add(aN[n].mul(dW[n]).mul(c));
-          }
-          const yv = tv('f', y);
-          const slv = tv('f', sl);
-          const dist = tv('f', abs(offs.sub(yv)).div(sqrt(slv.mul(slv).add(1.0))));
-          core.addAssign(gauss(dist, wl).mul(STR_TRAIL[q][1]));
-          if (q === 0) glow.addAssign(gauss(dist, wl.mul(5.0)));
-        }
-        const e = pxs.mul(1.2).div(rs);
-        const endMask = tv('f', float(1.0).sub(smoothstep(H.sub(e), H.add(e), a)));
-        const sig = clamp(amp.div(pxs.mul(6.0)), 0.0, 1.0);
-        const col = tv('v3', mix(c3(BLUE), c3(RED), det));
-        const I = tv('f', sig.mul(0.4).add(0.66).add(det.mul(0.2)).mul(vis));
-        rgb.addAssign(col.mul(core.mul(I).add(glow.mul(I).mul(0.12))).mul(endMask));
-        // węzły na końcach
-        const pd2 = offs.mul(offs).add(a.sub(H).mul(rs).mul(a.sub(H).mul(rs)));
-        rgb.addAssign(col.mul(exp(pd2.div(pxs.mul(2.0).mul(pxs.mul(2.0))).negate()).mul(1.1).mul(vis)));
-        // ── gromady trójkątów: na łuku w miejscu wskazującym grupę, w stronę grupy ──────────────────────────────
+        const c0 = STR_F.map((_, n) => tv('f', cos(tau.mul(STR_F[n] * TAU).add(ph[n]))));
+        let y0 = float(0);
+        for (let n = 0; n < STR_F.length; n++) y0 = y0.add(aN[n].mul(mW[n]).mul(c0[n]));
+        const yv0 = tv('f', y0);
+        // ── kolce: profil „namiotu” na strunie w miejscu każdego trójkąta gromady ─────────────────────────────────
+        const bump = float(0).toVar();
+        const dbump = float(0).toVar();
+        const near = float(0).toVar();
+        const estAt = float(0).toVar();
         const first = int(A2.y);
         markLoop(B, first, first.add(int(A2.z)), 'sg', ({ M0, M1 }) => {
           const rev = M0.w;
           const sc = tv('f', M0.x.add(H).div(H.mul(2.0)));            // środek gromady na łuku (0..1)
           const nB = M0.y, nS = M0.z;
           const ntot = tv('f', nB.add(nS));
-          const reach = nB.mul(G.TRI_BASE[0] * 2 + G.TRI_GAP).add(nS.mul(G.TRI_SHIP[0] * 2 + G.TRI_GAP)).mul(0.5).add(18.0).mul(pxs);
+          const reach = nB.mul(G.TRI_BASE[0] * 2 + G.TRI_GAP).add(nS.mul(G.TRI_SHIP[0] * 2 + G.TRI_GAP)).mul(0.5).add(26.0).mul(pxs);
           If(rev.greaterThan(0.001).and(abs(s.sub(sc)).mul(arcLen).lessThan(reach)), () => {
-            const gdet = tv('f', M1.x);
-            const est = M1.y;
-            const triCol = tv('v3', mix(c3(BLUE), c3(RED), gdet));
             const posR = float(0).toVar(), posL = float(0).toVar();
             const lastR = float(0).toVar(), lastL = float(0).toVar();
-            const tri = float(0).toVar();
-            const halo = float(0).toVar();
             const maxH = float(0).toVar();
             Loop({ start: int(0), end: int(ntot), type: 'int', condition: '<', name: 'tj' }, ({ tj }) => {
               const jf = tv('f', float(tj));
@@ -247,48 +223,30 @@ function strunaLook(B, px) {
               const off = tv('f', right.mul(posR).sub(left.mul(posL)));
               lastR.assign(mix(lastR, hb, right.add(isFirst)));
               lastL.assign(mix(lastL, hb, left.add(isFirst)));
-              // pojawianie od środka: kolejne trójkąty wyrastają po kolei, z lekkim przerzutem
+              // wyrastanie po kolei od środka, z przerzutem; lekka fala wielkości biegnie ku środkowi
               const pop = tv('f', smoothstep(jf.div(ntot.add(3.0)), jf.add(3.0).div(ntot.add(3.0)), rev));
-              const breathe = sin(t.mul(3.2).sub(abs(off).div(pxs.mul(9.0)))).mul(0.06).add(1.0);   // fala ku środkowi
+              const breathe = sin(t.mul(3.2).sub(abs(off).div(pxs.mul(9.0)))).mul(0.06).add(1.0);
               const sz = tv('f', pop.mul(sin(pop.mul(PI)).mul(0.22).add(1.0)).mul(breathe));
               const sj = tv('f', sc.add(off.div(arcLen)));
               const inArc = tv('f', step(0.0, sj).mul(step(sj, 1.0)));
-              // miejsce i nachylenie struny w sj (te same mody i fazy co kreska)
-              const sjPi = tv('f', sj.mul(PI));
-              let yj = float(0), slj = float(0);
-              for (let n = 0; n < STR_F.length; n++) {
-                yj = yj.add(aN[n].mul(sin(sjPi.mul(n + 1))).mul(c0[n]));
-                slj = slj.add(aN[n].mul(cos(sjPi.mul(n + 1))).mul((n + 1) * PI).div(arcLen).mul(c0[n]));
-              }
-              const th = tv('f', A0.w.add(sj.mul(2.0).sub(1.0).mul(H)));
-              const rad = tv('v2', vec2(cos(th), sin(th)));
-              const tg = vec2(rad.y.negate(), rad.x);
-              const nrm = tv('v2', rad.sub(tg.mul(slj)).div(sqrt(slj.mul(slj).add(1.0))));
-              const tng = vec2(nrm.y.negate(), nrm.x);
-              const P = A0.xy.add(rad.mul(rs.add(yj)));
-              const qv = tv('v2', px.sub(P));
-              const v = dot(qv, nrm).sub(pxs.mul(G.TRI_LIFT));
-              const u = dot(qv, tng);
-              const hbj = tv('f', hb.mul(sz));
-              const hhj = tv('f', max(hh.mul(sz), 1e-3));
-              const slant = hhj.div(sqrt(hhj.mul(hhj).add(hbj.mul(hbj))));
-              const sdf = tv('f', max(max(v.negate(), v.sub(hhj)), abs(u).sub(hbj.mul(float(1.0).sub(v.div(hhj)))).mul(slant)));
-              const aa = pxs.mul(0.7);
-              const fill = float(1.0).sub(smoothstep(aa.negate(), aa, sdf));
-              const edge = gauss(sdf, pxs.mul(0.85));
-              const live = inArc.mul(step(0.02, pop));
-              tri.addAssign(fill.mul(mix(float(0.5), float(0.04), est)).add(edge.mul(mix(float(1.15), float(0.8), est))).mul(live));
-              halo.addAssign(gauss(max(sdf, 0.0), pxs.mul(4.0)).mul(0.16).mul(live));
+              const da = tv('f', s.sub(sj).mul(arcLen));                   // px wzdłuż łuku od osi kolca
+              const hbj = tv('f', hb.mul(sz.mul(0.45).add(0.55)));         // podstawa rośnie razem z wysokością
+              const hj = tv('f', hh.mul(sz).mul(inArc));
+              const inside = tv('f', step(abs(da), hbj));
+              bump.addAssign(hj.mul(max(float(1.0).sub(abs(da).div(hbj)), 0.0)));
+              dbump.addAssign(hj.div(hbj).mul(inside).mul(float(1.0).sub(step(0.0, da).mul(2.0))));
+              near.assign(max(near, inside.mul(inArc).mul(step(0.02, sz))));
+              estAt.assign(max(estAt, M1.y.mul(inside).mul(inArc)));
               maxH.assign(max(maxH, hh.mul(pop)));
             });
-            rgb.addAssign(triCol.mul(tri.add(halo)).mul(vis).mul(mix(float(1.0), float(0.72), est)).mul(gdet.mul(0.25).add(1.0)));
             // „!” nad gromadą, pionowo na ekranie; błysk przy wykryciu
+            const gdet = M1.x;
             If(gdet.greaterThan(0.01), () => {
-              const thc = A0.w.add(clamp(sc, 0.0, 1.0).mul(2.0).sub(1.0).mul(H));
-              const yc = float(0).toVar();
-              const scPi = tv('f', clamp(sc, 0.0, 1.0).mul(PI));
-              for (let n = 0; n < STR_F.length; n++) yc.addAssign(aN[n].mul(sin(scPi.mul(n + 1))).mul(c0[n]));
-              const pE = A0.xy.add(vec2(cos(thc), sin(thc)).mul(rs.add(yc).add(maxH).add(pxs.mul(G.TRI_LIFT + 17.0))));
+              const scc = tv('f', clamp(sc, 0.0, 1.0));
+              const thc = A0.w.add(scc.mul(2.0).sub(1.0).mul(H));
+              let yc = float(0);
+              for (let n = 0; n < STR_F.length; n++) yc = yc.add(aN[n].mul(sin(scc.mul(PI * (n + 1)))).mul(c0[n]));
+              const pE = A0.xy.add(vec2(cos(thc), sin(thc)).mul(rs.add(yc).add(maxH).add(pxs.mul(G.TRI_LIFT + 15.0))));
               const fl = M1.w;
               const qg = tv('v2', px.sub(pE).div(pxs.mul(fl.mul(0.7).add(1.4))));
               const bar = length(qg.sub(vec2(0.0, clamp(qg.y, -6.5, 1.2)))).sub(1.55);
@@ -301,6 +259,46 @@ function strunaLook(B, px) {
             });
           });
         });
+        // ── kreska: drganie + kolce, ślad luminoforu ───────────────────────────────────────────────────────────────
+        const offs = tv('f', r.sub(rs));
+        const wl = tv('f', pxs.mul(0.82));
+        const core = float(0).toVar();
+        const glow = float(0).toVar();
+        for (let q = 0; q < STR_TRAIL.length; q++) {
+          let y = float(0), sl = float(0);
+          if (q === 0) {
+            y = yv0;
+            for (let n = 0; n < STR_F.length; n++) sl = sl.add(aN[n].mul(dW[n]).mul(c0[n]));
+          } else {
+            const tq = tv('f', tau.sub(STR_TRAIL[q][0]));
+            for (let n = 0; n < STR_F.length; n++) {
+              const c = tv('f', cos(tq.mul(STR_F[n] * TAU).add(ph[n])));
+              y = y.add(aN[n].mul(mW[n]).mul(c));
+              sl = sl.add(aN[n].mul(dW[n]).mul(c));
+            }
+          }
+          const yv = tv('f', y.add(bump));
+          const slv = tv('f', sl.add(dbump));
+          const dist = tv('f', abs(offs.sub(yv)).div(sqrt(slv.mul(slv).add(1.0))));
+          core.addAssign(gauss(dist, wl).mul(STR_TRAIL[q][1]));
+          if (q === 0) glow.addAssign(gauss(dist, wl.mul(5.0)));
+        }
+        const e = pxs.mul(1.2).div(rs);
+        const endMask = tv('f', float(1.0).sub(smoothstep(H.sub(e), H.add(e), a)));
+        // radar zgadnięty — kolce w kreskach
+        const dashA = step(0.42, fract(s.mul(arcLen).div(pxs.mul(4.0))));
+        const estMask = mix(float(1.0), dashA.mul(0.75).add(0.1), estAt);
+        const sig = clamp(amp.div(pxs.mul(6.0)), 0.0, 1.0);
+        const col = tv('v3', mix(c3(BLUE), c3(RED), det));
+        const I = tv('f', sig.mul(0.4).add(0.66).add(det.mul(0.2)).mul(near.mul(0.3).add(1.0)).mul(vis));
+        rgb.addAssign(col.mul(core.mul(I).add(glow.mul(I).mul(0.12))).mul(endMask).mul(estMask));
+        // słabe wypełnienie kolca — ząb czyta się jako kształt
+        const vv = offs.sub(yv0);
+        const fillT = step(0.0, vv).mul(step(vv, bump)).mul(near).mul(mix(float(0.09), float(0.03), estAt));
+        rgb.addAssign(col.mul(fillT).mul(vis));
+        // węzły na końcach
+        const pd2 = offs.mul(offs).add(a.sub(H).mul(rs).mul(a.sub(H).mul(rs)));
+        rgb.addAssign(col.mul(exp(pd2.div(pxs.mul(2.0).mul(pxs.mul(2.0))).negate()).mul(1.1).mul(vis)));
       });
     });
   });

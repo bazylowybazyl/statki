@@ -20,7 +20,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, float, int, uint, vec2, vec3, vec4, uniform, uniformArray, screenCoordinate, positionGeometry,
-  exp, log, sin, cos, atan, length, dot, mix, smoothstep, clamp, max, abs, fract, floor, step, fwidth, texture,
+  exp, log, sin, cos, atan, length, dot, mix, smoothstep, clamp, max, min, abs, fract, floor, step, fwidth, texture,
   texture3D, select
 } from 'three/tsl';
 import { fxNoise } from '../../src/3d/fx/noise.js';
@@ -31,7 +31,7 @@ export const KONTAKT_MAX = 48;
 export const KONTAKT_HDR = 4;
 /** Okres szumu świata [j.] — kafel tekstury noise3D (krotności całkowite zachowują okresowość). */
 export const KONTAKT_NOISE_TILE = 40000;
-export const KONTAKT_STYLES = Object.freeze(['echo', 'oblok', 'wir', 'roj']);
+export const KONTAKT_STYLES = Object.freeze(['echo', 'oblok', 'wir', 'roj', 'iksy']);
 
 const TAU = 6.283185307;
 
@@ -352,7 +352,86 @@ function rojLook(B, H, ctx) {
   return vec4(sparkCol.mul(spark).mul(2.2).add(c3(AMBER).mul(glow).mul(0.045)), 0.0);
 }
 
-const LOOKS = { echo: echoLook, oblok: oblokLook, wir: wirLook, roj: rojLook };
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// 5. IKSY — obłok szarych X-ów (decyzja użytkownika 2026-11-10: „nieznane kontakty — zamiast obłoku zrób obłok X-ów
+//    szarych”). Kształt obłoku jak w OBŁOKU (wagi → przesunięcie szumem → gęstość × fBm), ale zamiast mgły — X-y w komórkach
+//    ~10 px zakotwiczonych w świecie: X stoi w komórce z prawdopodobieństwem = gęstość obłoku, żyje 0,7–1,6 s i odradza się
+//    w innym miejscu komórki (obłok migocze i morfuje, X-y nie płyną z kamerą). Cięższy = gęstszy i większy, niepewność =
+//    szerszy, rzadszy, postrzępiony; flota = jeden obłok. Szarość bez strony i klasy, pod spodem tylko ślad mgiełki.
+function iksyLook(B, H, ctx, noiseTex) {
+  const { rel } = ctx;
+  const t = H.time;
+  const W = float(0).toVar('xW');
+  const Ew = float(0).toVar('xE');
+  const Rw = float(0).toVar('xR');
+  const Kw = float(0).toVar('xK');
+  Loop({ start: int(0), end: H.count, type: 'int', condition: '<', name: 'xi' }, ({ xi }) => {
+    const A = tv('v4', contactA(B, xi), 'xA');
+    const Bv = tv('v4', contactB(B, xi), 'xB');
+    const d = tv('v2', rel.sub(A.xy), 'xd');
+    const S = A.z.mul(1.5).add(A.w.mul(0.9));
+    const w = tv('f', Bv.w.mul(exp(dot(d, d).div(S.mul(S)).negate())), 'xw');
+    W.addAssign(w);
+    Ew.addAssign(w.mul(A.w));
+    Rw.addAssign(w.mul(A.z));
+    Kw.addAssign(w.mul(Bv.x));
+  });
+  const iw = float(1.0).div(max(W, 1e-4));
+  const E = tv('f', Ew.mul(iw), 'xErr');
+  const Rm = tv('f', Rw.mul(iw), 'xRm');
+  const K = tv('f', Kw.mul(iw), 'xKm');
+  const warpAmp = tv('f', Rm.mul(0.35).add(E.mul(0.45)), 'xWa');
+  const nw = tv('v4', noiseAt(noiseTex, H, rel, 12, t.mul(0.02)), 'xNw');
+  const pw = tv('v2', rel.add(nw.xy.sub(0.5).mul(warpAmp.mul(2.0))), 'xPw');
+  const F = float(0).toVar('xF');
+  Loop({ start: int(0), end: H.count, type: 'int', condition: '<', name: 'xj' }, ({ xj }) => {
+    const A = tv('v4', contactA(B, xj), 'xA2');
+    const Bv = tv('v4', contactB(B, xj), 'xB2');
+    const d = tv('v2', pw.sub(A.xy), 'xd2');
+    const S = A.z.mul(1.05).add(A.w.mul(0.6));
+    const reach = S.mul(3.0);
+    If(dot(d, d).lessThan(reach.mul(reach)), () => {
+      F.addAssign(Bv.w.mul(Bv.y).mul(exp(dot(d, d).div(S.mul(S)).negate())));
+    });
+  });
+  const fb = tv('v4', noiseAt(noiseTex, H, pw, 24, t.mul(0.04)), 'xFb');
+  const ragged = clamp(E.div(max(Rm, 1.0)).mul(0.5), 0.0, 0.6);
+  const D = tv('f', F.mul(mix(float(1.0), fb.x.mul(2.0), ragged.add(0.35))), 'xD');
+  const cloud = tv('f', smoothstep(0.08, 0.8, D), 'xCloud');
+  // komórki X-ów w świecie: punkt w kaflu szumu (początek kafla w double na CPU) — X-y stoją, gdy kamera jedzie
+  const cellPx = tv('f', H.pxs.mul(10.0), 'xCellPx');
+  const cellW = tv('f', cellPx.div(H.zoom), 'xCellW');
+  const wpos = tv('v2', H.nbase.mul(KONTAKT_NOISE_TILE).add(rel), 'xWpos');
+  const g = tv('v2', wpos.div(cellW), 'xG');
+  const ci = floor(g);
+  const f = tv('v2', fract(g), 'xFr');
+  const key = tv('u', hash3(uOf(ci.x.add(65536.0)), uOf(ci.y.add(65536.0)), uint(29)), 'xKey');
+  const life = u01(pcg(key.add(uint(1)))).mul(0.9).add(0.7);
+  const ph = tv('f', t.div(life).add(u01(pcg(key.add(uint(2))))), 'xPh');
+  const k2 = tv('u', hash2(key, uOf(ph)), 'xK2');
+  const lp = fract(ph);
+  const P = clamp(cloud.mul(K.mul(0.08).add(0.42)), 0.0, 0.62);
+  const u = u01(pcg(k2.add(uint(1))));
+  const alive = smoothstep(u, u.add(0.1), P);               // P = 0 → nigdy (poza obłokiem pusto)
+  const env = smoothstep(0.0, 0.14, lp).mul(float(1.0).sub(smoothstep(0.66, 1.0, lp)));
+  const cx = u01(pcg(k2.add(uint(2)))).mul(0.5).add(0.25);       // rozrzut w komórce — bez widocznej kratki
+  const cy = u01(pcg(k2.add(uint(3)))).mul(0.5).add(0.25);
+  const q = tv('v2', f.sub(vec2(cx, cy)).mul(cellPx), 'xQ');
+  const arm = tv('f', H.pxs.mul(u01(pcg(k2.add(uint(4)))).mul(0.8).add(1.6)).mul(cloud.mul(0.35).add(0.8)), 'xArm');
+  const a = q.x.add(q.y).mul(0.7071);
+  const b = q.x.sub(q.y).mul(0.7071);
+  const L = arm.mul(1.4142);
+  const d1 = length(vec2(b, max(abs(a).sub(L), 0.0)));
+  const d2 = length(vec2(a, max(abs(b).sub(L), 0.0)));
+  const line = float(1.0).sub(smoothstep(H.pxs.mul(0.35), H.pxs.mul(1.05), min(d1, d2)));
+  const tone = u01(pcg(k2.add(uint(5)))).mul(0.35).add(0.65);
+  const xI = line.mul(alive).mul(env).mul(tone);
+  const gray = vec3(0.34, 0.355, 0.38);
+  const rgb = gray.mul(xI.mul(1.15).add(cloud.mul(cloud).mul(0.022)));
+  return vec4(rgb, cloud.mul(0.1));
+}
+
+const LOOKS = { echo: echoLook, oblok: oblokLook, wir: wirLook, roj: rojLook, iksy: iksyLook };
 
 // Pomocniki wspólne z wachlarzami (wachlarzeTSL.js) — ten sam język: hasze PCG, zmienne typowane stałą.
 export { tv, pcg, u01, uOf, hash2, hash3 };
