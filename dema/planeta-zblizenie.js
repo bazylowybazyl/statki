@@ -119,6 +119,8 @@ const S = {
   // widok orbitalny: azymut i wysokość kamery nad środkiem planety [rad], odległość [R], przesunięcie celu [R]
   orb: { az: num('az', 0.2), el: num('el', 0.5), dist: num('odl', 1.62), px: num('px', 0.52), py: num('py', 0.2) },
   pora: num('pora', 90), doba: num('doba', 0), lavaRate: 1,
+  // pogoda: mnożnik czasu (0 — stoi; `?pogoda=off` — mapa chmur wypieczona raz, bez pogody)
+  wx: num('pogoda', 1), wxOn: params.get('pogoda') !== 'off',
   patchOn: params.get('wycinki') !== '0', lavaOn: true, cloudsOn: false,
   // chmury jako bryła: osobno dla widoku orbitalnego (domyślnie tak) i widoku z góry (domyślnie płaska maska)
   volOrbit: params.get('bryla') !== '0', volTop: params.get('bryla') === '1', auroraOn: true, atmOn: true,
@@ -218,6 +220,35 @@ async function findCoasts(baked) {
   return keep;
 }
 
+// Chwila pogody na start: z kilku chwil (co 150 s pogody) ta, w której zachmurzenie w promieniu ~13° od bohatera
+// jest najbliższe umiarkowanemu — mała mapa pogody (256 × 128) i odczyt CPU na chwilę. `?czas=` podaje chwilę wprost.
+async function pickWeatherTime(body, baked, hero) {
+  const w = body.weather;
+  if (!w || !hero || params.has('czas')) return;
+  const t = baker.createWeatherTarget(256, 'start');
+  const cosR = Math.cos(0.22);
+  let best = w.time; let score = Infinity;
+  try {
+    for (let k = 0; k < 8; k++) {
+      const time = k * 150;
+      baker.bakeWeather(baked, t, w.snapshot(time), 0, 1);
+      const px = await renderer.readRenderTargetPixelsAsync(t, 0, 0, 256, 128);
+      const row = px.length / 128;
+      let sum = 0; let n = 0;
+      for (let y = 0; y < 128; y++) {
+        for (let x = 0; x < 256; x++) {
+          if (uvDir((x + 0.5) / 256, (y + 0.5) / 128).dot(hero) < cosR) continue;
+          sum += Math.pow(px[y * row + x * 4] / 255, 2.2);
+          n++;
+        }
+      }
+      const sc = Math.abs(sum / Math.max(1, n) - 0.24);
+      if (sc < score) { score = sc; best = time; }
+    }
+  } finally { t.dispose(); }
+  w.time = best;
+}
+
 // ── Budowa planety ────────────────────────────────────────────────────────────────────────────────────────────
 async function build(style = S.style, seed = null) {
   const gen = ++S.gen;
@@ -249,7 +280,10 @@ async function build(style = S.style, seed = null) {
     $('b-erupt').style.display = volcanic ? '' : 'none';
     $('b-vent').textContent = volcanic ? 'Następny wulkan' : 'Następne wybrzeże';
     if (S.view === null) S.view = 'orbit';
-    const body = createGenNearBody(spec, baked, baker, { lava: S.lavaStrength, patch: { width: S.patchW, height: S.patchW / 2 } });
+    const body = createGenNearBody(spec, baked, baker, {
+      lava: S.lavaStrength, patch: { width: S.patchW, height: S.patchW / 2 },
+      weather: { speed: S.wx, time: num('czas', 0), size: Number(params.get('mapaPogody')) === 2048 ? 2048 : 1024 }
+    });
     scene.add(body.group);
     // rozgrzewka materiałów w obu widokach (typ kamery wchodzi do klucza pipeline'u); pióropusz i obie postaci
     // chmur widoczne na czas kompilacji
@@ -267,6 +301,9 @@ async function build(style = S.style, seed = null) {
       await Promise.all(jobs);
     } catch (e) { renderer.setRenderTarget(prev); console.warn('compileAsync', e); }
     body.plume.visible = false;
+    if (gen !== S.gen) { scene.remove(body.group); body.dispose(); baked.dispose(); return; }
+    // pogoda na start: chwila z umiarkowanym zachmurzeniem nad bohaterem (demo ma pokazać chmury od razu)
+    await pickWeatherTime(body, baked, vents[Math.max(0, vents.findIndex((v) => Math.abs(v.dir.y) < Math.sin(35 * DEG)))]?.dir);
     if (gen !== S.gen) { scene.remove(body.group); body.dispose(); baked.dispose(); return; }
     S.body = body; S.baked = baked; S.spec = spec; S.vents = vents;
     // bohater: najlepszy wulkan w pasie ±35° szerokości
@@ -424,6 +461,7 @@ function viewDirs() {
   slider('s-pora', 'o-pora', () => S.pora, (v) => { S.pora = v; }, (v) => `${v}°`);
   slider('s-doba', 'o-doba', () => S.doba, (v) => { S.doba = v; }, (v) => v.toFixed(2));
   slider('s-lava', 'o-lava', () => S.lavaRate, (v) => { S.lavaRate = v; }, (v) => `×${v.toFixed(1)}`);
+  slider('s-wx', 'o-wx', () => S.wx, (v) => { S.wx = v; }, (v) => (v > 0 ? `×${v.toFixed(1)}` : 'stoi'));
   const toggle = (id, key) => { $(id).onclick = () => setToggle(id, key, !S[key]); $(id).classList.toggle('on', S[key]); };
   toggle('t-patch', 'patchOn');
   toggle('t-lava', 'lavaOn');
@@ -539,6 +577,7 @@ function simulate(dt) {
   const b = S.body;
   if (!b) return false;
   b.patches.enabled = S.patchOn;
+  b.setWeather(S.wxOn, S.wx);
   b.step(dt, { spin: S.doba * 0.02, cloudSpin: S.doba * 0.004, lavaRate: S.lavaRate });
   b.mesh.updateMatrixWorld(true);
   sunDir.set(Math.sin(S.pora * DEG), 0, Math.cos(S.pora * DEG));

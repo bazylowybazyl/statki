@@ -5,6 +5,8 @@
 // powierzchni, chmur i pióropusza; grafy gry bez haków zbliżenia), małe przesunięcie dziedziny szumu (float32).
 // Widok orbitalny: tekstura szumu 3D (powtarzalna, rozkład zgodny z progami kłębów), powłoki liczone marszem promienia
 // (bryła chmur, atmosfera, zorza — planetGenCloudVolume.tsl.js, planetGenShell.tsl.js): komplet uniformów, WGSL.
+// Pogoda (planetGenWeather.js): prawo wiatru i cyklony, mapa pogody przeliczana w pasach z zamrożoną chwilą, wycinki
+// chmur z pogodą, czas pogody w grafie chmur i w kłębach bryły.
 // node --test tests/planetGenNear.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,6 +25,8 @@ import { createGenCloudNearMaterial, GEN_CLOUD_NEAR_UNIFORM_KEYS } from '../src/
 import { createPlumeMaterial, plumeUniforms, PLUME_UNIFORM_KEYS } from '../src/3d/planetGen/planetGenPlume.tsl.js';
 import { createPlanetSurfaceMaterial, createPlanetCloudMaterial, PLANET_GRAPH_KEYS } from '../src/3d/planet3d.assets.tsl.js';
 import { buildCloudNoise } from '../src/3d/planetGen/planetGenNoise3D.js';
+import { PlanetGenWeather, WX_DEFAULT, windRate, bandLat, bandAngle, bandRateAt, cycloneAt } from '../src/3d/planetGen/planetGenWeather.js';
+import { WX_BANDS, WX_PHASE, WX_SEAM, CLOUD_CYCLONES } from '../src/3d/planetGen/planetGenBake.tsl.js';
 import {
   createGenCloudVolumeMaterial, cloudVolumeUniforms, CLOUD_VOLUME_UNIFORM_KEYS, CLOUD_VOLUME_STEPS, CLOUD_VOLUME_STEPS_MIN
 } from '../src/3d/planetGen/planetGenCloudVolume.tsl.js';
@@ -129,7 +133,7 @@ function fakeBaker() {
     createPatchTargets: (w, h) => ({ width: w, height: h, bytes: w * h * 16, day: { texture: {} }, relief: { texture: {} }, mask: { texture: {} }, dispose() {} }),
     createCloudPatchTarget: (w, h) => ({ width: w, height: h, bytes: w * h * 4, clouds: { texture: {} }, dispose() {} }),
     patchSteps: PlanetGenBaker.prototype.patchSteps,
-    bakePatchStep(base, win, set, tu, step) { log.push({ ...step, a0: win.a0, st: win.st }); return tu || { id: 1 }; }
+    bakePatchStep(base, win, set, tu, step, wx) { log.push({ ...step, a0: win.a0, st: win.st, wx }); return tu || { id: 1 }; }
   };
 }
 
@@ -379,3 +383,147 @@ test('wypiek przed pierwszym renderem: licznik renderów podbity przed kompilacj
   assert.ok(body.indexOf('r.info.calls = 1') < body.indexOf('compileAsyncNaCelu('), 'podbicie przed kompilacją');
 });
 
+test('pogoda: wiatr strefowy w pasach, cyklon jedzie po swojej szerokości i się obraca', () => {
+  const W = WX_DEFAULT.wind;
+  // pasaty i wiatry średnich szerokości wieją w przeciwne strony, przy biegunach cisza, półkule symetryczne
+  assert.ok(windRate(0, W) < 0 && windRate(60 * Math.PI / 180, W) > 0);
+  assert.ok(Math.abs(windRate(Math.PI / 2, W)) < 1e-9);
+  assert.ok(Math.abs(windRate(0.4, W) - windRate(-0.4, W)) < 1e-12);
+  assert.ok(Math.abs(bandLat(0) + Math.PI / 2) < 1e-12 && Math.abs(bandLat(WX_BANDS) - Math.PI / 2) < 1e-12);
+  // pas jedzie sztywno: cała jego szerokość ma prędkość środka; sąsiednie pasy mają stałe przesunięcie fazy
+  const lat = bandLat(6);
+  assert.equal(bandRateAt(lat + 0.1, W), windRate(lat, W));
+  assert.equal(bandRateAt(lat - 0.1, W), windRate(lat, W));
+  assert.ok(Math.abs(bandAngle(3, 0, W) - 3 * WX_PHASE) < 1e-12);
+  assert.ok(Math.abs(bandAngle(6, 100, W) - bandAngle(6, 0, W) - windRate(lat, W) * 100) < 1e-12);
+  assert.ok(WX_SEAM > 0 && WX_SEAM < 0.5);
+  const a0 = [Math.cos(0.7) * 0.6, Math.sin(0.7), Math.cos(0.7) * 0.8];
+  const wx = { time: 300, ...WX_DEFAULT };
+  const c = cycloneAt(a0, 0.2, wx.time, wx);
+  assert.ok(Math.abs(Math.hypot(...c.axis) - 1) < 1e-9, 'oś jednostkowa');
+  assert.ok(Math.abs(c.axis[1] - a0[1]) < 1e-12, 'szerokość cyklonu bez zmian');
+  assert.ok(Math.abs(c.theta - windRate(0.7, W) * 300) < 1e-12);
+  assert.ok(c.spin > 0 && cycloneAt(a0, 0.07, wx.time, wx).spin > c.spin, 'tropikalny kręci się szybciej');
+  assert.deepEqual(cycloneAt(a0, 0.2, 0, wx).axis.map((v) => +v.toFixed(12)), a0.map((v) => +v.toFixed(12)));
+});
+
+test('mapa pogody: pasy jednej mapy z tej samej chwili, zamiana po ostatnim pasie, bez przeliczeń przy stojącym zegarze', () => {
+  const log = [];
+  const baker = {
+    createWeatherTarget: (size, tag) => ({ texture: { tag }, width: size, height: size / 2, dispose() {} }),
+    bakeWeather(base, target, wx, band, bands) { log.push({ tag: target.texture.tag, time: wx.time, band, bands }); }
+  };
+  const base = { size: 2048, spec: { seed: 7 }, maps: { clouds: { stara: true } } };
+  const w = new PlanetGenWeather(baker, base, { size: 1024, mpPerStep: 0.18 });
+  assert.equal(w.texture, base.maps.clouds, 'przed pierwszą mapą — mapa wypieczona raz');
+  assert.equal(w.shown, null);
+  assert.equal(w.bands, 3);
+  assert.equal(w.update(1 / 60), true, 'pierwszy krok: cała mapa od razu');
+  assert.deepEqual(log.map((l) => l.bands), [1]);
+  const first = w.texture;
+  assert.notEqual(first, base.maps.clouds);
+  // zegar stoi — nic się nie przelicza
+  w.speed = 0;
+  for (let i = 0; i < 50; i++) assert.equal(w.update(1 / 60), false);
+  assert.equal(log.length, 1);
+  // zegar biegnie: nowa mapa dopiero po `minStep`, w pasach, każdy pas z tą samą chwilą; zamiana po ostatnim
+  w.speed = 1;
+  let swaps = 0;
+  let frames = 0;
+  while (swaps === 0 && frames < 600) { frames++; if (w.update(1 / 240)) swaps++; }
+  assert.equal(swaps, 1);
+  const job = log.slice(1);
+  assert.deepEqual(job.map((l) => l.band), [0, 1, 2]);
+  assert.ok(job.every((l) => l.time === job[0].time && l.bands === 3), 'jedna chwila na całą mapę');
+  assert.ok(job[0].time - 1 / 60 >= w.minStep - 1e-9, 'przeliczenie po przesunięciu o ułamek teksela');
+  assert.notEqual(w.texture, first, 'drugi cel po zamianie');
+  assert.equal(w.bakedTime, job[0].time);
+  assert.ok(w.shown.time >= w.bakedTime, 'kłęby dostają bieżący czas (mapa dogania)');
+  // wyłączona — wraca mapa wypieczona raz
+  w.enabled = false;
+  assert.equal(w.texture, base.maps.clouds);
+  assert.equal(w.update(1), false);
+});
+
+test('pogoda w wypieku chmur: czas i cyklony w uniformach, bez pogody — jak dotąd; wycinek chmur z zamrożoną chwilą', () => {
+  const baker = new PlanetGenBaker(renderer);
+  const calls = [];
+  baker._drawBand = (key, target, values, band, bands) => { calls.push({ key, values, band, bands }); };
+  const spec = describePlanet({ type: 'terran', seed: 21 });
+  const base = { spec, size: 2048 };
+  const target = { width: 1024, height: 512 };
+  const wx = { time: 240, ...WX_DEFAULT };
+  baker.bakeWeather(base, target, wx, 1, 3);
+  const v = calls[0].values;
+  assert.equal(calls[0].key, 'clouds');
+  assert.deepEqual([calls[0].band, calls[0].bands], [1, 3]);
+  assert.deepEqual(v.uWx, [240, wx.wind, wx.humidity, 1]);
+  assert.deepEqual(v.uRes.slice(0, 2), [1024, 512]);
+  assert.equal(v.uWin[3], 0, 'cała mapa, nie okno');
+  // te same cyklony co w mapie wypieczonej raz (to samo ziarno), przeniesione wiatrem po swojej szerokości
+  const win = { a0: 0, b0: 0, st: 2 * Math.PI / 2048, frame: PATCH_FRAMES[0] };
+  baker.bakePatchStep(base, win, { width: 512, height: 256, clouds: {} }, null, { pass: 'clouds', band: 0, bands: 1 }, null);
+  baker.bakePatchStep(base, win, { width: 512, height: 256, clouds: {} }, null, { pass: 'clouds', band: 0, bands: 1 }, wx);
+  const st = calls[1].values;
+  const mv = calls[2].values;
+  assert.equal(st.uWx, undefined, 'bez pogody: brak klucza — zera (mapa nieruchoma)');
+  assert.deepEqual(mv.uWx, [240, wx.wind, wx.humidity, 1]);
+  for (let i = 0; i < CLOUD_CYCLONES; i++) {
+    const a = st[`uCyc${i}`];
+    const b = mv[`uCyc${i}`];
+    assert.equal(a[3], b[3], 'promień cyklonu ten sam');
+    assert.ok(Math.abs(a[1] - b[1]) < 1e-12, 'szerokość cyklonu ta sama');
+    assert.ok(Math.abs(Math.hypot(b[0], b[1], b[2]) - 1) < 1e-9);
+    assert.ok(mv[`uCycS${i}`][0] > 0, 'kąt obrotu własnego');
+    assert.equal(st[`uCycS${i}`], undefined);
+  }
+  // graf chmur: klucze pogody
+  const g = baker.graph('clouds');
+  assert.ok(g.U.uWx && g.U.uCycS0 && g.U.uCycS7);
+  // wektory uniformów wypieku startują od zer (three r183, pułapka 46: wartość niezerowa przy kompilacji, która
+  // wraca do zer, zostaje na GPU — domyślne w = 1 włączało pogodę w pierwszym wypieku mapy chmur)
+  const fresh = new PlanetGenBaker(renderer).graph('clouds');
+  assert.deepEqual(fresh.U.uWx.value.toArray(), [0, 0, 0, 0]);
+  assert.deepEqual(fresh.U.uCycS3.value.toArray(), [0, 0, 0, 0]);
+  assert.deepEqual(fresh.U.uCloud.value.toArray(), [0, 0, 0, 0]);
+  // wycinki chmur: chwila pogody zamrożona na cały wypiek okna, `refresh()` piecze to samo okno od nowa
+  const fb = fakeBaker();
+  const P = new PlanetGenPatches(fb, { size: 2048, spec }, { width: 4096, height: 2048, kind: 'clouds', fade: 0 });
+  let now = 10;
+  P.weather = () => ({ time: now, ...WX_DEFAULT });
+  const dirs = viewDirs([0.8, 0.2, 0.566], 0.02);
+  for (let i = 0; i < 40 && P.active < 0; i++) { P.update(dirs, 1 / 60); now += 0.01; }
+  assert.ok(P.active >= 0);
+  assert.ok(fb.log.length > 1 && fb.log.every((l) => l.wx.time === 10), 'wszystkie pasy okna z chwili startu wypieku');
+  assert.equal(P.slots[P.active].wx.time, 10);
+  const n0 = fb.log.length;
+  const key = P.slots[P.active].win.key;
+  for (let i = 0; i < 10; i++) P.update(dirs, 1 / 60);
+  assert.equal(fb.log.length, n0, 'ten sam kadr — bez nowego wypieku');
+  P.refresh();
+  const t1 = now;
+  for (let i = 0; i < 40 && fb.log.length < n0 * 2; i++) { P.update(dirs, 1 / 60); now += 0.01; }
+  assert.equal(fb.log.length, n0 * 2, 'refresh: okno upieczone od nowa');
+  assert.ok(fb.log.slice(n0).every((l) => l.wx.time === t1));
+  assert.equal(P.slots[P.active].win.key, key, 'to samo okno');
+});
+
+test('pogoda w materiałach: kłęby bryły i cień na gruncie jadą z pasami wiatru, mapa ślizga się między przeliczeniami', () => {
+  const t = describePlanet({ type: 'terran', seed: 21 });
+  const cu = cloudVolumeUniforms(t, { clouds: new THREE.Texture() });
+  assert.ok(cu.uCvWx, 'bryła chmur: uniform pogody');
+  assert.deepEqual(cu.uCvWx.value.toArray(), [0, 0, 0, 0], 'domyślnie pogoda wyłączona');
+  const TU = nearSurfaceUniforms(t, { day: new THREE.Texture(), clouds: new THREE.Texture() }, { size: 2048 });
+  assert.ok(TU.uGnCloudVol3);
+  const vol = read('src/3d/planetGen/planetGenCloudVolume.tsl.js');
+  assert.match(vol, /export function puffNoise\(x, freq, time, noise, wxv\)/);
+  assert.match(vol, /smoothstep\(WX_SEAM, 0\.5, abs\(fr\)\)/, 'ten sam podział na pasy co w grafie chmur');
+  assert.match(vol, /export const wxGlideU/);
+  const bake = read('src/3d/planetGen/planetGenBake.tsl.js');
+  assert.match(bake, /smoothstep\(WX_SEAM, 0\.5, abs\(frB\)\)/);
+  const srf = read('src/3d/planetGen/planetGenSurfaceNear.tsl.js');
+  assert.match(srf, /wxGlideU\(latC/);
+  // chmury płaskie: okno wycinka ślizga się z wiatrem (kąt w uGc?T.z)
+  const cn = read('src/3d/planetGen/planetGenCloudsNear.tsl.js');
+  assert.match(cn, /const gc = cos\(T\.z\);/);
+});

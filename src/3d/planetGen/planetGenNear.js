@@ -12,7 +12,8 @@ import { rngFor } from './planetGenRng.js';
 import { createGenCloudNearMaterial, GEN_CLOUD_NEAR_DATA_KEYS } from './planetGenCloudsNear.tsl.js';
 import { createGenNearSurfaceMaterial, GEN_NEAR_DATA_KEYS } from './planetGenSurfaceNear.tsl.js';
 import { createPlumeMaterial, plumeUniforms } from './planetGenPlume.tsl.js';
-import { PlanetGenPatches } from './planetGenPatch.js';
+import { PlanetGenPatches, patchToDir } from './planetGenPatch.js';
+import { PlanetGenWeather, bandRateAt } from './planetGenWeather.js';
 
 /** Wygląd lawy wg rodzaju i stylu: częstość płyt skorupy [1/promień], szerokość szwu [komórki], albedo skorupy, połysk. */
 export function lavaLookFor(spec) {
@@ -48,6 +49,7 @@ export function nearSurfaceUniforms(spec, maps, { lava = 0, size = 0 } = {}) {
     uGnCloud: { value: new THREE.Vector4(0, 0.0035, 0, 0) },
     uGnCloudVol: { value: new THREE.Vector4(0.003, 0.017, 1.15, 23) },
     uGnCloudVol2: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uGnCloudVol3: { value: new THREE.Vector4(0, 0, 0, 0) },
     // sieci świateł miast (planety z miastami): siła, częstość arterii, pół szerokości nitki [rad]
     uGnCity: { value: new THREE.Vector4(spec.night?.cities > 0 ? 1.1 + 1.3 * spec.night.cities : 0, 34, 0, 0) },
     [GEN_NEAR_DATA_KEYS.cloudShadow]: { value: maps.clouds || null },
@@ -96,8 +98,11 @@ export function nearCloudUniforms(spec, maps, U) {
   return CU;
 }
 
-/** Przepisuje stan wycinków chmur do uniformów materiału chmur z bliska. */
-export function bindCloudPatches(CU, patches) {
+/**
+ * Przepisuje stan wycinków chmur do uniformów materiału chmur z bliska. `wx` — bieżący stan pogody (albo null):
+ * okno upieczone w chwili `slot.wx.time` ślizga się z wiatrem szerokości swojego środka do następnego wypieku.
+ */
+export function bindCloudPatches(CU, patches, wx = null) {
   for (let i = 0; i < 2; i++) {
     const s = i === 0 ? 'A' : 'B';
     const slot = patches.slots[i];
@@ -108,7 +113,12 @@ export function bindCloudPatches(CU, patches) {
     CU[`uGc${s}Y`].value.fromArray(w.axes.y);
     CU[`uGc${s}Z`].value.fromArray(w.axes.z);
     CU[`uGc${s}W`].value.set(w.a0, w.b0, 1 / (patches.width * w.st), 1 / (patches.height * w.st));
-    CU[`uGc${s}T`].value.set(w.st, slot.mix, 0, 0);
+    let glide = 0;
+    if (wx && slot.wx) {
+      const c = patchToDir(w.axes, w.a0 + patches.width * w.st * 0.5, w.b0 + patches.height * w.st * 0.5);
+      glide = bandRateAt(Math.asin(Math.max(-1, Math.min(1, c[1]))), wx.wind) * (wx.time - slot.wx.time);
+    }
+    CU[`uGc${s}T`].value.set(w.st, slot.mix, glide, 0);
   }
 }
 
@@ -126,7 +136,7 @@ export function plumeLookFor(spec) {
  * patches, eruption, setSun(dir), setView(dirScene), updatePatches(dirsObject, dt), erupt(dirObject) / stopEruption(),
  * step(dt, { spin }), dispose() }.
  */
-export function createGenNearBody(spec, baked, baker, { segments = 384, halo = true, lava = 0, patch = {} } = {}) {
+export function createGenNearBody(spec, baked, baker, { segments = 384, halo = true, lava = 0, patch = {}, weather: weatherOpts = {} } = {}) {
   const group = new THREE.Group();
   const maps = baked.maps;
   const U = nearSurfaceUniforms(spec, maps, { lava });
@@ -145,6 +155,9 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
     cloudPatches = new PlanetGenPatches(baker, baked, { ...patch, kind: 'clouds', maxLevel: 5 });
     bindCloudPatches(cloudUniforms, cloudPatches);
   }
+  // POGODA (planetGenWeather.js): mapa chmur przeliczana w biegu — czytają ją chmury płaskie, bryła i cień na gruncie
+  const weather = maps.clouds && weatherOpts !== false ? new PlanetGenWeather(baker, baked, weatherOpts) : null;
+  if (cloudPatches && weather) cloudPatches.weather = () => (weather.enabled ? weather.snapshot() : null);
   // powłoki liczone po promieniu widzenia: siatki = kule jednostkowe (promień daje graf), bez odcinania kadrem
   const shells = [];
   const shell = (parent, mat, order) => {
@@ -171,6 +184,21 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
     aurora = shell(mesh, createGenAuroraMaterial(auroraUniforms(spec, [rg.next(), rg.next()])), 7);
   }
   let cloudMode = clouds ? 'flat' : 'off';
+  // mapa chmur i stan pogody w uniformach wszystkich odbiorców (po zamianie mapy pogody i przy przełączeniu pogody)
+  const bindWeather = () => {
+    if (!weather) return;
+    const tex = weather.texture;
+    const shown = weather.shown;
+    cloudUniforms.cloudTexture.value = tex;
+    U[GEN_NEAR_DATA_KEYS.cloudShadow].value = tex;
+    const mapT = shown ? weather.bakedTime : 0;
+    U.uGnCloudVol2.value.set(U.uGnCloudVol2.value.x, shown ? shown.time : 0, shown ? shown.wind : 0, shown ? 1 : 0);
+    U.uGnCloudVol3.value.x = mapT;
+    if (cloudVol) {
+      cloudVol.material.uniforms.cloudTexture.value = tex;
+      cloudVol.material.uniforms.uCvWx.value.set(shown ? shown.time : 0, shown ? shown.wind : 0, shown ? 1 : 0, mapT);
+    }
+  };
   // barwa mgiełki grafu gry (rozpraszanie nad tarczą): przy włączonej powłoce atmosfery część rozpraszania liczy
   // powłoka — graf gry dostaje barwę mgiełki × HAZE_WITH_SHELL (pełna barwa + powłoka = mgiełka policzona dwa razy,
   // wyblakły ląd; zero = granatowe, ciemne morze bez „powietrza” nad tarczą)
@@ -204,7 +232,18 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
   const _d = new THREE.Vector3();
   const ease = (x) => { const c = Math.min(1, Math.max(0, x)); return 1 - (1 - c) * (1 - c) * (1 - c); };
   return {
-    spec, group, mesh, clouds, cloudVol, atm, aurora, plume, uniforms: U, cloudUniforms, patches, cloudPatches, eruption,
+    spec, group, mesh, clouds, cloudVol, atm, aurora, plume, uniforms: U, cloudUniforms, patches, cloudPatches, eruption, weather,
+    /** Pogoda: włączona / wyłączona (wyłączona — mapa chmur wypieczona raz, nieruchoma) i mnożnik czasu. */
+    setWeather(on, speed = weather ? weather.speed : 1) {
+      if (!weather) return;
+      const was = weather.enabled;
+      weather.enabled = !!on;
+      weather.speed = speed;
+      if (was !== weather.enabled) {
+        bindWeather();
+        if (cloudPatches) cloudPatches.refresh();
+      }
+    },
     /** Kierunek słońca w układzie sceny. */
     setSun(dir, intensity = spec.surface.sunInt) {
       _sun.copy(dir).normalize();
@@ -273,8 +312,13 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
         const c = Math.cos(clouds.rotation.y);
         const s = Math.sin(clouds.rotation.y);
         const cd = on ? dirs.map((d) => [d[0] * c - d[2] * s, d[1], d[0] * s + d[2] * c]) : [];
+        // pogoda: okno chmur starzeje się (pasy wiatru jadą różnie, cyklony wirują) — przepiekane co ~0,4 s pogody,
+        // między wypiekami ślizga się z wiatrem (bindCloudPatches)
+        const wxNow = weather && weather.enabled ? weather.snapshot() : null;
+        const act = cloudPatches.active >= 0 ? cloudPatches.slots[cloudPatches.active] : null;
+        if (on && wxNow && act && (!act.wx || Math.abs(wxNow.time - act.wx.time) > 0.4)) cloudPatches.refresh();
         baked2 = cloudPatches.update(cd, dt, force) || baked2;
-        bindCloudPatches(cloudUniforms, cloudPatches);
+        bindCloudPatches(cloudUniforms, cloudPatches, wxNow);
         U.uGnCloud.value.x = clouds.rotation.y;
         U.uGnCloud.value.z = cloudMode !== 'off' ? Math.min(0.85, spec.clouds.opacity * 1.05) : 0;
       }
@@ -295,6 +339,8 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
     stopEruption() { if (eruption.on && eruption.off < 0) eruption.off = eruption.t; },
     /** Krok czasu (doba, chmury, lawa, erupcja): dt [s]. */
     step(dt, { spin = 0, cloudSpin = 0, lavaRate = 1 } = {}) {
+      // pogoda: zegar i pas przeliczenia mapy; tekstura (po zamianie) i bieżący czas pogody u odbiorców co klatkę
+      if (weather) { weather.update(dt); bindWeather(); }
       U.uGsMisc.value.x = (U.uGsMisc.value.x + dt) % 4096;
       U.uGnLava.value.y = (U.uGnLava.value.y + dt * lavaRate) % 4096;
       mesh.rotation.y += spin * dt;
@@ -302,7 +348,8 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
       if (cloudVol) {
         cloudVol.rotation.y = clouds.rotation.y;
         const cu = cloudVol.material.uniforms.uCvNoise.value;
-        cu.w = (cu.w + dt) % 4096;
+        // kłębienie w miejscu (dryf szumu) w tempie pogody; przy stojącej pogodzie wolne, jak dotąd
+        cu.w = (cu.w + dt * (weather && weather.enabled ? Math.min(3, 0.35 + 0.65 * weather.speed) : 1)) % 4096;
         U.uGnCloudVol2.value.x = cu.w;
       }
       if (aurora) aurora.material.uniforms.uAuTime.value.x = (aurora.material.uniforms.uAuTime.value.x + dt) % 4096;
@@ -351,6 +398,7 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
       plume.material.dispose();
       patches.dispose();
       if (cloudPatches) cloudPatches.dispose();
+      if (weather) weather.dispose();
     }
   };
 }

@@ -14,7 +14,7 @@
 import * as THREE from 'three/webgpu';
 import {
   If, float, vec2, vec3, vec4,
-  asin, atan, clamp, cross, dot, exp, fwidth, length, log2, max, min, mix, normalize, smoothstep, sqrt, step,
+  asin, atan, clamp, cos, cross, dot, exp, fwidth, length, log2, max, min, mix, normalize, sin, smoothstep, sqrt, step,
   modelWorldMatrixInverse
 } from 'three/tsl';
 import { registerPlanetCloudKind, PlanetBodyNodeMaterial } from '../planet3d.assets.tsl.js';
@@ -26,7 +26,7 @@ const PI = Math.PI;
 const slotKeys = (s) => ({
   [`uGc${s}X`]: 'vec3', [`uGc${s}Y`]: 'vec3', [`uGc${s}Z`]: 'vec3',   // osie układu wycinka w układzie kuli chmur
   [`uGc${s}W`]: 'vec4',   // okno: a0, b0 [rad], 1 / (szerokość · teksel), 1 / (wysokość · teksel)
-  [`uGc${s}T`]: 'vec4'    // kąt teksela [rad], waga `mix` 0…1, —, —
+  [`uGc${s}T`]: 'vec4'    // kąt teksela [rad], waga `mix` 0…1, ślizg okna z wiatrem [rad wokół osi planety], —
 });
 /** Klucze uniformów per obiekt grafu 'genCloudsNear'. */
 export const GEN_CLOUD_NEAR_UNIFORM_KEYS = Object.freeze({
@@ -46,12 +46,17 @@ const TEX = {
 };
 const LUM = vec3(0.299, 0.587, 0.114);
 
-function slotAt(s, U, p) {
+function slotAt(s, U, p0) {
   const X = U[`uGc${s}X`];
   const Y = U[`uGc${s}Y`];
   const Z = U[`uGc${s}Z`];
   const W = U[`uGc${s}W`];
   const T = U[`uGc${s}T`];
+  // POGODA: okno upieczone w chwili t0 ślizga się z wiatrem swojej szerokości do następnego wypieku (T.z — kąt
+  // obrotu wokół osi planety od t0) — punkt czyta okno tam, skąd przyszło powietrze
+  const gc = cos(T.z);
+  const gs = sin(T.z);
+  const p = vec3(p0.x.mul(gc).sub(p0.z.mul(gs)), p0.y, p0.z.mul(gc).add(p0.x.mul(gs))).toVar();
   const dx = dot(p, X).toVar();
   const sb = clamp(dot(p, Y), -1.0, 1.0).toVar();
   const uvS = vec2(atan(dot(p, Z).negate(), max(dx, 1e-4)).sub(W.x).mul(W.z), asin(sb).sub(W.y).mul(W.w)).toVar();

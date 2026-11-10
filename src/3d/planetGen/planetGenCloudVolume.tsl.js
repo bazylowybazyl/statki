@@ -17,8 +17,9 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Break, float, int, vec2, vec3, vec4, varying, positionGeometry, texture3D,
-  asin, atan, abs, clamp, dot, exp, fwidth, length, log2, max, min, mix, normalize, smoothstep, step
+  asin, atan, abs, clamp, cos, dot, exp, floor, fwidth, length, log2, max, min, mix, normalize, sin, smoothstep, sqrt, step
 } from 'three/tsl';
+import { WX_BANDS, WX_PHASE, WX_SEAM } from './planetGenBake.tsl.js';
 import { genObjectTexture, tinyTexture } from './planetGenNodes.js';
 import { cloudNoiseTexture } from './planetGenNoise3D.js';
 import { SHELL_UNIFORM_KEYS, shellPerObject, shellRay, shellUniforms, shellMaterial, planetLit, pixelNoise } from './planetGenShell.tsl.js';
@@ -30,18 +31,13 @@ export const CLOUD_VOLUME_UNIFORM_KEYS = Object.freeze({
   uCvNoise: 'vec4',    // częstość kłębów [1 / R], częstość erozji, siła erozji, czas [s]
   uCvTint: 'vec3',     // barwa chmur (albedo)
   uCvSky: 'vec4',      // rgb — światło nieba w chmurze, a — kąt teksela mapy chmur [rad]
+  uCvWx: 'vec4',       // pogoda: bieżący czas [s] (kłęby jadą z pasami wiatru), wiatr [rad / s], 1 — włączona, czas mapy pogody [s]
   uCvMisc: 'vec4'      // najdłuższy odcinek marszu [R], rozjaśnienie pod słońce, krok [grubości powłoki], jasność słońca w chmurze
 });
 export const CLOUD_VOLUME_STEPS = 44;
 export const CLOUD_VOLUME_STEPS_MIN = 16;
 const LUM = vec3(0.299, 0.587, 0.114);
 const cloudTex = genObjectTexture('cloudTexture', tinyTexture(new Uint8Array([0, 0, 0, 255]), THREE.UnsignedByteType, THREE.SRGBColorSpace), vec2(0.0));
-
-// uv mapy chmur (równoodległościowej, biegun N = +Y) z kierunku w układzie kuli chmur
-const dirUv = (dir) => vec2(
-  atan(dir.z.negate(), dir.x.add(step(abs(dir.x).add(abs(dir.z)), 1e-7).mul(1e-6))).div(2 * PI).add(0.5),
-  asin(clamp(dir.y, -1.0, 1.0)).div(PI).add(0.5)
-);
 
 // Stromość progu kłębów: gęstość = (szum − próg) · K, przycięta do 0…1 (większa = ostrzejszy brzeg kłębu).
 const K = 7.0;
@@ -68,22 +64,70 @@ export const sheetDensity = (cov, hN) => {
 };
 /** Próg kłębów z pokrycia i wysokości w powłoce (0 — podstawa, 1 — strop). */
 export const puffThreshold = (cov, hN) => float(0.71).sub(cov.mul(0.43)).add(hN.mul(mix(float(0.52), float(0.27), cov)));
-/** Szum kształtu kłębów w punkcie x układu kuli chmur (dwie skale; mediana ~0,52). Wklejana. */
-export function puffNoise(x, freq, time, noise) {
-  const q = x.mul(freq).add(vec3(time.mul(0.006), 0.0, time.mul(0.004))).toVar();
-  const n = texture3D(noise, q, float(0.0)).r;
-  // druga, ~3× większa skala tych samych kłębów: masy chmur z przejaśnieniami, na nich drobne kłęby (wieże tam,
-  // gdzie obie skale są wysokie) — bez niej pole kłębów jednej wielkości („popcorn”) i widoczny okres kafla szumu
-  const big = texture3D(noise, q.mul(0.31).add(vec3(0.37, 0.11, 0.73)), float(0.0)).r;
-  return n.add(big.sub(0.52).mul(0.8));
+// kąt obrotu pasa wiatru i — jak `bandAngle` grafu chmur (planetGenBake.tsl.js); wxv = (czas pogody, wiatr, 1 — pogoda)
+const wxBandAngle = (i, wxv) => cos(i.mul(PI / WX_BANDS).sub(PI / 2).mul(3.0)).negate().mul(wxv.y).mul(wxv.x).add(i.mul(WX_PHASE)).mul(wxv.z);
+const rotY = (v, a) => {
+  const c = cos(a);
+  const s = sin(a);
+  return vec3(v.x.mul(c).add(v.z.mul(s)), v.y, v.z.mul(c).sub(v.x.mul(s)));
+};
+/**
+ * Szum kształtu kłębów w punkcie x układu kuli chmur (dwie skale; mediana ~0,52). POGODA (`wxv` = czas pogody, wiatr,
+ * 1 — włączona): kłęby jadą z pasem wiatru swojej szerokości (najbliższy środek pasa — obrót sztywny wokół osi
+ * planety, ten sam co pokrycia w mapie pogody), w wąskiej strefie między pasami dwa układy przenikają. Bez tego
+ * pokrycie przesuwa się nad nieruchomymi kłębami: chmura „rośnie” z jednej strony i „paruje” z drugiej zamiast płynąć.
+ * Zwraca { n — szum, xr — punkt w układzie pasa (erozja brzegów jedzie z kłębami) }. Wklejana.
+ */
+export function puffNoise(x, freq, time, noise, wxv) {
+  const sample = (xr) => {
+    const q = xr.mul(freq).add(vec3(time.mul(0.006), 0.0, time.mul(0.004))).toVar();
+    const n = texture3D(noise, q, float(0.0)).r;
+    // druga, ~3× większa skala tych samych kłębów: masy chmur z przejaśnieniami, na nich drobne kłęby (wieże tam,
+    // gdzie obie skale są wysokie) — bez niej pole kłębów jednej wielkości („popcorn”) i widoczny okres kafla szumu
+    const big = texture3D(noise, q.mul(0.31).add(vec3(0.37, 0.11, 0.73)), float(0.0)).r;
+    return n.add(big.sub(0.52).mul(0.8));
+  };
+  const fB = asin(clamp(x.y.div(max(length(x), 1e-5)), -1.0, 1.0)).div(PI).add(0.5).mul(WX_BANDS).toVar();
+  const iN = floor(fB.add(0.5)).toVar();
+  const fr = fB.sub(iN).toVar();
+  const xr = vec3(0.0).toVar();
+  xr.assign(rotY(x, wxBandAngle(iN, wxv).negate()));
+  const n = float(0.0).toVar();
+  n.assign(sample(xr));
+  const seam = smoothstep(WX_SEAM, 0.5, abs(fr)).mul(0.5).mul(wxv.z).toVar();
+  If(seam.greaterThan(0.002), () => {
+    const iM = iN.add(mix(float(-1.0), float(1.0), step(0.0, fr)));
+    const n1 = sample(rotY(x, wxBandAngle(iM, wxv).negate()).toVar());
+    // mieszanie bez utraty kontrastu (średnia dwóch niezależnych szumów ma mniejszą wariancję — pas bez kłębów)
+    n.assign(mix(n.sub(0.52), n1.sub(0.52), seam).div(sqrt(max(float(1.0).sub(seam).pow2().add(seam.mul(seam)), 0.25))).add(0.52));
+  });
+  return { n, xr };
 }
 /** Kształt kłębów 0…1 (bez erozji brzegów): szum kształtu ponad próg. Wklejana. */
-export const puffShape = (x, thr, freq, time, noise) => clamp(puffNoise(x, freq, time, noise).sub(thr).mul(K), 0.0, 1.0);
+export const puffShape = (x, thr, freq, time, noise, wxv) => clamp(puffNoise(x, freq, time, noise, wxv).n.sub(thr).mul(K), 0.0, 1.0);
 
 // Wysokość punktu w powłoce 0…1 (podstawa → strop).
 const heightIn = (x, U) => length(x).sub(U.uCvShape.x).div(max(U.uCvShape.y.sub(U.uCvShape.x), 1e-5));
+/**
+ * POGODA — ślizg mapy pokrycia między przeliczeniami: mapa pogody jest z chwili `mapTime`, a kłęby jadą płynnie
+ * z bieżącą (`wxv.x`). Punkt czyta mapę przesuniętą o drogę pasa wiatru swojej szerokości od `mapTime` (obrót wokół
+ * osi planety = przesunięcie u mapy) — pokrycie płynie co klatkę razem z kłębami, bez skoków o ułamek teksela przy
+ * każdej nowej mapie. Zwraca przyrost współrzędnej u. `lat` — szerokość punktu [rad].
+ */
+export const wxGlideU = (lat, wxv, mapTime) => {
+  const iN = floor(lat.div(PI).add(0.5).mul(WX_BANDS).add(0.5));
+  return cos(iN.mul(PI / WX_BANDS).sub(PI / 2).mul(3.0)).mul(wxv.y).mul(wxv.x.sub(mapTime)).mul(wxv.z).div(2 * PI);
+};
+// uv mapy chmur dla kierunku `dir` (układ kuli chmur) ze ślizgiem pogody
+const coverUv = (dir, U) => {
+  const lat = asin(clamp(dir.y, -1.0, 1.0));
+  return vec2(
+    atan(dir.z.negate(), dir.x.add(step(abs(dir.x).add(abs(dir.z)), 1e-7).mul(1e-6))).div(2 * PI).add(0.5).add(wxGlideU(lat, U.uCvWx, U.uCvWx.w)),
+    lat.div(PI).add(0.5)
+  );
+};
 // Pokrycie z mapy chmur w kierunku punktu x (układ kuli chmur) — próbka mapy z poziomem mipmapy.
-const coverAt = (x, U, lod) => cloudCover(dot(cloudTex.sample(dirUv(x.div(max(length(x), 1e-5)))).level(lod).rgb, LUM), U.uCvShape.w);
+const coverAt = (x, U, lod) => cloudCover(dot(cloudTex.sample(coverUv(x.div(max(length(x), 1e-5)), U)).level(lod).rgb, LUM), U.uCvShape.w);
 // Zanik przy podstawie, stropie i tam, gdzie mapa jest pusta.
 const fadeOf = (cov, hN) => smoothstep(0.0, 0.1, hN).mul(float(1.0).sub(smoothstep(0.86, 1.0, hN))).mul(smoothstep(0.02, 0.12, cov));
 
@@ -108,7 +152,8 @@ function densityFull(x, U, noise, cov, erode) {
   const d = float(0.0).toVar();
   If(fade.greaterThan(0.002).and(thr.lessThan(1.12)), () => {
     const t = U.uCvNoise.w;
-    const pn = puffNoise(x, U.uCvNoise.x, t, noise).toVar();
+    const P = puffNoise(x, U.uCvNoise.x, t, noise, U.uCvWx);
+    const pn = P.n;
     const d0 = clamp(pn.sub(thr).mul(K), 0.0, 1.0).toVar();
     // ława warstwowa w płatach tego samego szumu (niższy próg): „spódnice” wokół kłębów, z przerwami
     d.assign(sheetDensity(cov, hN).mul(smoothstep(0.36, 0.6, pn)));
@@ -118,7 +163,7 @@ function densityFull(x, U, noise, cov, erode) {
     }
     If(d0.greaterThan(0.0), () => {
       // erozja: Worley średni i drobny (kanały G, B) strzępi brzegi; wnętrze kłębu zostaje lite
-      const hs = texture3D(noise, x.mul(U.uCvNoise.y).add(vec3(0.0, t.mul(0.009), 0.0)), float(0.0));
+      const hs = texture3D(noise, P.xr.mul(U.uCvNoise.y).add(vec3(0.0, t.mul(0.009), 0.0)), float(0.0));
       const m = float(1.0).sub(hs.g.mul(0.62).add(hs.b.mul(0.38))).mul(U.uCvNoise.z);
       d.assign(max(d, clamp(d0.sub(m).div(max(float(1.0).sub(m), 0.2)), 0.0, 1.0).mul(fade)));
     });
@@ -158,7 +203,7 @@ function build() {
     // gdy średnie pokrycie jest zerowe, marsz się nie zaczyna (większość tarczy to czyste niebo)
     const xm = R.o.add(R.rd.mul(R.t0.add(seg.mul(0.5))));
     const lodSeg = clamp(log2(max(seg.div(max(U.uCvSky.a, 1e-9)), 1e-6)).add(1.0), lod, 9.0);
-    const any = dot(cloudTex.sample(dirUv(xm.div(max(length(xm), 1e-5)))).level(lodSeg).rgb, LUM).mul(U.uCvShape.w);
+    const any = dot(cloudTex.sample(coverUv(xm.div(max(length(xm), 1e-5)), U)).level(lodSeg).rgb, LUM).mul(U.uCvShape.w);
     If(dt.greaterThan(1e-7).and(any.greaterThan(0.02)), () => {
       Loop({ start: int(0), end: nS, type: 'int', condition: '<' }, ({ i }) => {
         const x = R.o.add(R.rd.mul(R.t0.add(dt.mul(jit.add(float(i)))))).toVar();
@@ -222,6 +267,7 @@ export function cloudVolumeUniforms(spec, maps) {
     uCvTint: { value: new THREE.Vector3(tint[0], tint[1], tint[2]).multiplyScalar(dust ? 0.7 : 0.94) },
     uCvSky: { value: new THREE.Vector4(0.15, 0.2, 0.29, 2 * Math.PI / W) },
     // jasność słońca 0,74: oświetlony wierzchołek ~0,9 (pod progiem bloomu gry), srebrny brzeg pod słońce ponad nim
-    uCvMisc: { value: new THREE.Vector4(0.2, 0.65, 0.07, 0.74) }
+    uCvMisc: { value: new THREE.Vector4(0.2, 0.65, 0.07, 0.74) },
+    uCvWx: { value: new THREE.Vector4(0, 0, 0, 0) }
   };
 }

@@ -23,6 +23,7 @@ import {
 import { SOLID_TYPES } from './planetGenSolid.tsl.js';
 import { GAS_BAKE, gasBakeUniforms } from './planetGenGasBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
+import { cycloneAt } from './planetGenWeather.js';
 
 export const PROBE_W = 192;
 export const PROBE_H = 96;
@@ -396,9 +397,10 @@ export class PlanetGenBaker {
 
   /**
    * Jeden krok wypieku wycinka (`step` z `patchSteps`) — jak `bakePatch` / `bakeCloudPatch`, ale jeden pas jednego
-   * przejścia. Zwraca `tu` (uniformsFor rodzaju dla rozdzielczości okna — podaj je w kolejnych krokach).
+   * przejścia. Zwraca `tu` (uniformsFor rodzaju dla rozdzielczości okna — podaj je w kolejnych krokach). `wx` — stan
+   * pogody zamrożony na cały wypiek okna chmur (pasy jednego okna muszą mieć tę samą chwilę).
    */
-  bakePatchStep(base, win, set, tu, step) {
+  bakePatchStep(base, win, set, tu, step, wx = null) {
     const r = this.renderer;
     const spec = base.spec;
     const W = set.width;
@@ -412,7 +414,7 @@ export class PlanetGenBaker {
     const prev = r.getRenderTarget();
     try {
       if (step.pass === 'clouds') {
-        this._drawBand('clouds', set.clouds, { ...frame, ...cloudUniforms(spec, ctx) }, step.band, step.bands);
+        this._drawBand('clouds', set.clouds, { ...frame, ...cloudUniforms(spec, ctx, wx) }, step.band, step.bands);
         return null;
       }
       const t = tu || SOLID_TYPES[spec.type].uniformsFor(spec, ctx);
@@ -445,7 +447,7 @@ export class PlanetGenBaker {
   }
 
   /** Wypiek WYCINKA mapy chmur do `set.clouds` (okno `win` jak w `bakePatch`, w układzie kuli chmur). */
-  bakeCloudPatch(base, win, set) {
+  bakeCloudPatch(base, win, set, wx = null) {
     const r = this.renderer;
     const spec = base.spec;
     const W = set.width;
@@ -457,13 +459,46 @@ export class PlanetGenBaker {
       this._draw('clouds', set.clouds, {
         uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
         uWin: [win.a0, win.b0, win.st, 1], uFrX: win.frame.x, uFrY: win.frame.y, uFrZ: win.frame.z,
-        ...cloudUniforms(spec, ctx)
+        ...cloudUniforms(spec, ctx, wx)
       });
     } finally {
       r.setRenderTarget(prev);
     }
     this.stats.patches = (this.stats.patches || 0) + 1;
     return null;
+  }
+
+  /** Cel MAPY POGODY (mapa chmur planety przeliczana w biegu — planetGenWeather.js): sRGB z mipmapami, jak mapa chmur. */
+  createWeatherTarget(size, tag = '') {
+    const t = makeTarget(size, size / 2, { srgb: true, name: `planetGenWeather:${tag}` });
+    const r = this.renderer;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(t);
+    r.clear();
+    r.setRenderTarget(prev);
+    return t;
+  }
+
+  /**
+   * Jeden pas (`band` z `bands`) mapy chmur planety w chwili pogody `wx` do celu `target` — ten sam graf co mapa
+   * wypieczona raz, z czasem. Mipmapy po ostatnim pasie.
+   */
+  bakeWeather(base, target, wx, band = 0, bands = 1) {
+    const r = this.renderer;
+    const spec = base.spec;
+    const W = target.width;
+    const H = target.height;
+    const texKm = 2 * Math.PI * spec.rKm / W;
+    const prev = r.getRenderTarget();
+    try {
+      this._drawBand('clouds', target, {
+        uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+        uWin: [0, 0, 1e-3, 0], uFrX: [1, 0, 0], uFrY: [0, 1, 0], uFrZ: [0, 0, 1],
+        ...cloudUniforms(spec, { size: W, rKm: spec.rKm, texKm }, wx)
+      }, band, bands);
+    } finally {
+      r.setRenderTarget(prev);
+    }
   }
 
   /** Zwalnia cel pola (wspólny dla planet — po wypieku układu). */
@@ -491,7 +526,8 @@ function nightUniforms(spec, tu) {
   };
 }
 
-function cloudUniforms(spec, ctx) {
+// `wx` — stan pogody ({ time, wind, spin, humidity } z PlanetGenWeather.snapshot) albo null: mapa nieruchoma.
+function cloudUniforms(spec, ctx, wx = null) {
   const c = spec.clouds;
   const rng = rngFor(spec.seed, `${spec.type}:cyklony`);
   const out = {
@@ -507,8 +543,15 @@ function cloudUniforms(spec, ctx) {
     // co trzeci tropikalny (12–28°, mały z okiem), reszta pozatropikalne (35–62°, duże, luźne — fronty)
     const tropical = i % 3 === 2;
     const d = tropical ? rng.dirInLat(12 * hemi, 28 * hemi) : rng.dirInLat(35 * hemi, 62 * hemi);
-    out[`uCyc${i}`] = [...d, tropical ? rng.range(0.05, 0.09) : rng.range(0.16, 0.28)];
+    const rad = tropical ? rng.range(0.05, 0.09) : rng.range(0.16, 0.28);
+    if (wx) {
+      // pogoda: oś przeniesiona wiatrem, kąt obrotu własnego i kąt przeniesienia (z fazą stałą cyklonu)
+      const cy = cycloneAt(d, rad, wx.time, wx);
+      out[`uCyc${i}`] = [...cy.axis, rad];
+      out[`uCycS${i}`] = [cy.spin, cy.theta + i * 1.7, 0, 0];
+    } else out[`uCyc${i}`] = [...d, rad];
   }
+  if (wx) out.uWx = [wx.time, wx.wind, wx.humidity, 1];
   return out;
 }
 

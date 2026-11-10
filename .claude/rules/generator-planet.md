@@ -120,6 +120,32 @@ paths:
 - Kamera orbitalna dema stoi względem miejsca-bohatera (`orbitAt`), słońce w widoku orbitalnym wyżej (34° za
   terminatorem); `advance()` ustawia kamerę orbitalną przed krokami (kierunki kadru dla wycinka biorą jej macierz).
 
+## Pogoda: ruchome chmury (demo, niewpięte; opis i koszt: `docs/OPIS-generator-planet.md` § 10.9)
+
+- Pogoda to CZAS w grafie chmur (`planetGenBake.tsl.js`: `uWx`, `uCycS*`), nie symulacja: obraz w chwili t jest
+  funkcją (ziarno, t). Bez `uWx` (zera) graf daje mapę nieruchomą, bit w bit jak przed pogodą — mapa planety
+  z `bakeSystem` zostaje bez zmian. Uniformy wypieku startują od ZER (`bakeUniforms` — pułapka 46 w regule
+  `webgpu-tsl`): z domyślnym w = 1 flaga `uWx.w` była włączona w PIERWSZYM wypieku mapy chmur i planeta miała inne
+  chmury niż jej wycinki; sprawdzenie odczytem celu — mapa planety równa wypiekowi starym grafem. Prawo wiatru w dwóch miejscach, które muszą się zgadzać: `bandAngle` grafu i
+  `windRate` / `bandAngle` w `planetGenWeather.js` (stałe `WX_BANDS`, `WX_PHASE`, `WX_SEAM` wspólne).
+- Pasy wiatru jadą SZTYWNO (punkt należy do pasa o najbliższym środku), mieszanie dwóch pasów tylko w strefie
+  `WX_SEAM`…0,5 szerokości pasa. Obrót ciągły z szerokością ścina wzór bez końca; mieszanie na całej szerokości pasa
+  („daszek”) sprawia, że wzory mijają się wszędzie i chmury zmieniają kształt w miejscu zamiast płynąć.
+- Mieszanie dwóch niezależnych szumów — z zachowaniem wariancji (`mixNoise`: średnia / √(w² + (1 − w)²)); zwykła
+  średnia zostawia w strefie mieszania pas o niższym kontraście (mniej chmur wzdłuż równoleżnika).
+- Ten sam podział na pasy mają: pokrycie (graf chmur), kłęby bryły (`puffNoise`), cień kłębów na gruncie i ślizg mapy
+  (`wxGlideU`). Kłęby dostają BIEŻĄCY czas pogody, mapa pokrycia jest z chwili `bakedTime` i ślizga się z wiatrem pasa
+  do następnego przeliczenia — kłęby z czasem mapy skakałyby przy każdej zamianie, a pokrycie bez ślizgu pulsuje
+  względem kłębów.
+- Mapa pogody (`PlanetGenWeather`): przeliczenie w pasach celu z JEDNĄ zamrożoną chwilą (`snapshot`) do drugiego
+  celu, zamiana po ostatnim pasie; nowe przeliczenie dopiero po przesunięciu o `texelStep` teksela. Wycinek chmur pod
+  kamerą tak samo zamraża chwilę na cały wypiek okna (`PlanetGenPatches.weather`, `refresh()`).
+- Cyklon: oś przenosi CPU (`cycloneAt` — te same rekordy z ziarna co mapa nieruchoma, ta sama kolejność losowań),
+  obrót własny to sztywny obrót szumu w tarczy z przenikaniem przy brzegu; kąt dodany do skrętu spirali nawijałby
+  ramiona bez końca.
+- Zmiana `texture` mapy pogody = przepięcie trzech odbiorców (`bindWeather` w `planetGenNear.js`): chmury płaskie
+  (`cloudTexture`), bryła (`cloudTexture`, `uCvWx`), powierzchnia (`cloudShadowTexture`, `uGnCloudVol2 / 3`).
+
 ## Zasady i pułapki
 
 - `PlanetGenBaker.compile` podbija `renderer.info.calls` z 0 na 1 przed kompilacją (three r183, pułapka 45 w regule
@@ -182,4 +208,6 @@ paths:
   `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
   `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
   (orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
-  `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`), testy `node --test tests/planetGenNear.test.mjs`.
+  `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,
+  `--bez-raf 1` — start bez klatek rAF), demo: `?pogoda=0…12|off`, `?czas=`, `?mapaPogody=2048`; testy
+  `node --test tests/planetGenNear.test.mjs`.

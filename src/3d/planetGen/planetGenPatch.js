@@ -153,7 +153,14 @@ export class PlanetGenPatches {
     this._tu = new Map();     // poziom → uniformsFor rodzaju (liczby oktaw, kratery)
     this.stats = { bakes: 0, lastMs: 0, level: 0, steps: 0 };
     this.enabled = true;
+    // POGODA (wycinki chmur): `weather()` → stan pogody zamrażany na cały wypiek okna (albo null); `refresh()` —
+    // następny krok piecze okno od nowa także przy tym samym kadrze (chmury w oknie się zestarzały)
+    this.weather = null;
+    this._refresh = false;
   }
+
+  /** Okno do przepieczenia przy tym samym kadrze (po kroku na klatkę, z przenikaniem jak zmiana okna). */
+  refresh() { this._refresh = true; }
 
   /** Bajty GPU obu miejsc (bez celu pola wypiekacza: szerokość × wysokość × 16). */
   get bytes() { return this.slots[0].set.bytes + this.slots[1].set.bytes; }
@@ -175,7 +182,8 @@ export class PlanetGenPatches {
       // za grubo: kadr zbliżył się o ponad oktawę względem okna (z zapasem — bez przełączania tam i z powrotem)
       const coarse = cur?.win && plan.level > cur.win.level
         && (plan.level - cur.win.level > 1 || this._needRatio(bounds, cur.win) < 0.42);
-      if ((!cur || !covers || coarse || force) && (!fading || force) && (!cur || force || plan.key !== cur.win.key)) this._start(plan);
+      const again = this._refresh && !!cur;
+      if ((!cur || !covers || coarse || force || again) && (!fading || force) && (!cur || force || again || plan.key !== cur.win.key)) this._start(plan);
     } else if (!plan && !this.job && cur && !(bounds && patchCovers(cur.win, bounds, this.width, this.height, 0.0))) {
       // kadr za szeroki na wycinek (albo wycinki wyłączone): wraca sama mapa planety
       this.active = -1;
@@ -201,9 +209,11 @@ export class PlanetGenPatches {
     const s = this.slots[slot];
     s.mix = 0;
     s.win = null;
+    this._refresh = false;
     this.job = {
       plan: { ...plan, axes: PATCH_FRAMES[plan.frame] }, slot, i: 0, ms: 0,
-      steps: this.baker.patchSteps(s.set, this.kind), tu: this._tu.get(plan.level) || null
+      steps: this.baker.patchSteps(s.set, this.kind), tu: this._tu.get(plan.level) || null,
+      wx: this.weather ? this.weather() : null
     };
   }
 
@@ -214,13 +224,14 @@ export class PlanetGenPatches {
     const w = { frame: job.plan.axes, a0: job.plan.a0, b0: job.plan.b0, st: job.plan.st };
     const t0 = performance.now();
     for (let k = 0; k < n && job.i < job.steps.length; k++, job.i++) {
-      job.tu = this.baker.bakePatchStep(this.base, w, s.set, job.tu, job.steps[job.i]);
+      job.tu = this.baker.bakePatchStep(this.base, w, s.set, job.tu, job.steps[job.i], job.wx);
       this.stats.steps++;
     }
     job.ms += performance.now() - t0;
     if (job.i < job.steps.length) return false;
     if (job.tu) this._tu.set(job.plan.level, job.tu);
     s.win = job.plan;
+    s.wx = job.wx;            // stan pogody, w którym upieczono okno (ślizg okna z wiatrem do następnego wypieku)
     s.mix = 0;
     this.active = job.slot;
     this.stats.bakes++;

@@ -26,7 +26,11 @@ const PI = Math.PI;
 export function bakeUniforms(defs) {
   const U = {};
   for (const [k, t] of Object.entries(defs)) {
-    const v = t === 'vec4' ? new THREE.Vector4() : t === 'vec3' ? new THREE.Vector3() : t === 'vec2' ? new THREE.Vector2() : 0;
+    // AGENT: wektory od ZER (nie `new Vector4()` — ma w = 1). three r183, pułapka 46 w regule webgpu-tsl: uniform
+    // niezerowy w chwili `compileAsync`, który przed pierwszym prawdziwym rysunkiem wraca do samych zer, zostaje
+    // przy wartości z kompilacji (klon wiązania dziedziczy bufor, a porównuje z zerami). Domyślne w = 1 klucza,
+    // którego wypiek nie podaje (pogoda `uWx`), włączało tak gałąź pogody w PIERWSZYM wypieku mapy chmur.
+    const v = t === 'vec4' ? new THREE.Vector4(0, 0, 0, 0) : t === 'vec3' ? new THREE.Vector3() : t === 'vec2' ? new THREE.Vector2() : 0;
     U[k] = uniform(v, t);
   }
   return U;
@@ -288,9 +292,36 @@ export const CLOUD_DEFS = Object.freeze({
   uCloud2: 'vec4',   // x — skala (×), y — ostrość brzegu, z — kontrast pokładu, w — skręt „Y”
   uTint: 'vec3',
   uTint2: 'vec3',    // barwa ciemnych smug pokładu (styl 1)
-  uCyc0: 'vec4', uCyc1: 'vec4', uCyc2: 'vec4', uCyc3: 'vec4', uCyc4: 'vec4', uCyc5: 'vec4', uCyc6: 'vec4', uCyc7: 'vec4'
+  uCyc0: 'vec4', uCyc1: 'vec4', uCyc2: 'vec4', uCyc3: 'vec4', uCyc4: 'vec4', uCyc5: 'vec4', uCyc6: 'vec4', uCyc7: 'vec4',
+  // POGODA (planetGenWeather.js): czas pogody [s], prędkość kątowa wiatru strefowego [rad / s], siła zmian wilgotności,
+  // 1 — pogoda włączona (0 — mapa nieruchoma, wynik jak przed pogodą)
+  uWx: 'vec4',
+  // cyklon w pogodzie: x — kąt obrotu wokół własnej osi [rad], y — kąt, o który wiatr przeniósł cyklon wokół osi planety
+  uCycS0: 'vec4', uCycS1: 'vec4', uCycS2: 'vec4', uCycS3: 'vec4', uCycS4: 'vec4', uCycS5: 'vec4', uCycS6: 'vec4', uCycS7: 'vec4'
 });
 export const CLOUD_CYCLONES = 8;
+/** Pasy wiatru strefowego: środki pasów co 180° / WX_BANDS szerokości (bieguny włącznie). */
+export const WX_BANDS = 9;
+/** Początek strefy mieszania pasów: ułamek szerokości pasa od jego środka (0,5 = granica między pasami). */
+export const WX_SEAM = 0.3;
+/** Stałe przesunięcie fazy sąsiednich pasów (złoty kąt) — pasy czytają niezależne miejsca szumu także w chwili 0. */
+export const WX_PHASE = 2.399963;
+
+// obrót wokół osi planety (Y) o kąt a: (0, 0, 1) → (sin a, 0, cos a)
+const rotY = (v, a) => {
+  const c = cos(a);
+  const s = sin(a);
+  return vec3(v.x.mul(c).add(v.z.mul(s)), v.y, v.z.mul(c).sub(v.x.mul(s)));
+};
+// obrót wokół osi jednostkowej (wzór Rodriguesa)
+const rotAxis = (v, axis, a) => {
+  const c = cos(a);
+  const s = sin(a);
+  return v.mul(c).add(cross(axis, v).mul(s)).add(axis.mul(dot(axis, v)).mul(float(1.0).sub(c)));
+};
+// mieszanie dwóch niezależnych szumów bez utraty kontrastu (zwykła średnia zmniejsza wariancję w strefie przejścia)
+const mixNoise = (a, b, w) => mix(a, b, w).div(sqrt(max(float(1.0).sub(w).pow2().add(w.mul(w)), 0.25)));
+
 export function buildCloudGraph() {
   const U = bakeUniforms(CLOUD_DEFS);
   const node = Fn(() => {
@@ -301,10 +332,16 @@ export function buildCloudGraph() {
     const q = vec3(C.dir).toVar();
     const spiral = float(0.0).toVar();
     const eye = float(1.0).toVar();
+    // pogoda: cyklon, w którego tarczy leży punkt (najmocniejszy) — waga jego układu, oś, obrót własny, przeniesienie
+    const cycW = float(0.0).toVar();
+    const cycAxis = vec3(0.0, 1.0, 0.0).toVar();
+    const cycSpin = float(0.0).toVar();
+    const cycTh = float(0.0).toVar();
     // cyklony: obrót kierunku wokół osi cyklonu o kąt rosnący ku środkowi (półkula — zwrot). Pozatropikalne (duże,
     // luźne, bez oka — chmury frontu w kształt przecinka) i tropikalne (małe, ciasne, z okiem): promień w uCyc.w
     for (let i = 0; i < CLOUD_CYCLONES; i++) {
       const cy = U[`uCyc${i}`];
+      const cs = U[`uCycS${i}`];
       If(float(i).lessThan(U.uCloud.z), () => {
         const axis = normalize(cy.xyz);
         const cd = dot(C.dir, axis);
@@ -313,33 +350,104 @@ export function buildCloudGraph() {
         If(cd.greaterThan(0.0).and(d.lessThan(rad.mul(2.0))), () => {
           const t = inv01(0.0, rad.mul(2.0), d);
           const tropical = inv01(0.1, 0.13, rad);
-          const turn = t.mul(t).mul(mix(3.2, 6.0, tropical)).mul(mix(float(-1.0), float(1.0), step(0.0, axis.y)));
+          const sgn = mix(float(-1.0), float(1.0), step(0.0, axis.y));
+          const turn = t.mul(t).mul(mix(3.2, 6.0, tropical)).mul(sgn);
           const ca = cos(turn);
           const sa = sin(turn);
           q.assign(q.mul(ca).add(cross(axis, q).mul(sa)).add(axis.mul(dot(axis, q)).mul(float(1.0).sub(ca))));
           spiral.assign(max(spiral, t.mul(mix(0.6, 1.0, tropical))));
           eye.mulAssign(mix(float(1.0), smoothstep(rad.mul(0.04), rad.mul(0.12), d), tropical));
+          // układ cyklonu obejmuje tarczę do ~1,3 promienia, dalej przenika w pasy wiatru
+          const wI = smoothstep(0.0, 0.35, t);
+          If(wI.greaterThan(cycW), () => {
+            cycW.assign(wI);
+            cycAxis.assign(axis);
+            cycSpin.assign(sgn.mul(cs.x));
+            cycTh.assign(cs.y);
+          });
         });
       });
     }
-    const qs = vec3(q.x, q.y.mul(U.uCloud.y), q.z).add(U.uSeed.xyz.mul(1.37)).toVar();
-    // odkształcenie dwupoziomowe — wiry i smugi frontów zamiast plam
-    const warp = pgWarp(qs.mul(1.5).mul(sc), 4, 0.6).toVar();
-    const warp2 = pgWarp(qs.add(warp).mul(3.0).mul(sc).add(vec3(1.3, 4.1, -2.2)), 3, 0.12).toVar();
-    const qw = qs.add(warp).add(warp2.mul(0.6)).toVar();
-    // dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw i trafia w te same pola chmur co mapa planety
-    // Dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw i trafia w te same pola chmur co mapa planety.
-    // Oktawy mapy planety (pierwsze 6 / 4) — w dziedzinie skręconej przez cyklony i rozciągniętej strefowo (ramiona
-    // spiral, smugi frontów); DALSZE — w dziedzinie nieskręconej i izotropowej: drobny detal chmur to kłęby, a w
-    // dziedzinie skręconej wychodził w wycinku jako rozmazane smugi wzdłuż ramion.
-    const nO = int(U.uOct.w).toVar();
-    const qd = C.dir.add(U.uSeed.xyz.mul(1.37)).add(warp).add(warp2.mul(0.6)).toVar();
-    const qr = C.dir.add(U.uSeed.xyz.mul(1.37)).toVar();     // dziedzina surowa: bez skrętu, rozciągnięcia i odkształceń
-    const base = pgFbm(qw.mul(2.5).mul(sc), min(nO, int(5)), 2.03, 0.5, true)
-      .add(pgFbm(qd.mul(2.5 * Math.pow(2.03, 5)).mul(sc).add(vec3(3.3, -7.1, 1.9)), max(nO.sub(5), int(0)), 2.03, 0.5, true).mul(Math.pow(0.5, 5))).toVar();
-    const fine = pgFbm(qw.mul(12.0).mul(sc), min(nO.sub(2), int(4)), 2.03, 0.5, true)
-      .add(pgFbm(qd.mul(12.0 * Math.pow(2.03, 4)).mul(sc).add(vec3(-5.7, 2.2, 8.4)), max(nO.sub(6), int(0)), 2.03, 0.5, true).mul(Math.pow(0.5, 4))).toVar();
     const st = C.stN;                                   // kąt teksela celu [rad]
+    const nO = int(U.uOct.w).toVar();
+    const hiOn = smoothstep(2.5, 5.0, float(1 / 120).div(sc).div(st)).toVar();
+    // SZUMY CHMUR dla jednego układu odniesienia: `Lt` — kierunek skręcony przez cyklony, `Lp` — nieskręcony (oba już
+    // obrócone do układu: pasa wiatru albo cyklonu). Wklejana (każde wywołanie to osobny komplet szumów).
+    const noiseSet = (Lt, Lp) => {
+      const qs = vec3(Lt.x, Lt.y.mul(U.uCloud.y), Lt.z).add(U.uSeed.xyz.mul(1.37)).toVar();
+      // odkształcenie dwupoziomowe — wiry i smugi frontów zamiast plam
+      const warp = pgWarp(qs.mul(1.5).mul(sc), 4, 0.6).toVar();
+      const warp2 = pgWarp(qs.add(warp).mul(3.0).mul(sc).add(vec3(1.3, 4.1, -2.2)), 3, 0.12).toVar();
+      const qw = qs.add(warp).add(warp2.mul(0.6)).toVar();
+      // Dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw i trafia w te same pola chmur co mapa planety.
+      // Oktawy mapy planety (pierwsze 6 / 4) — w dziedzinie skręconej przez cyklony i rozciągniętej strefowo (ramiona
+      // spiral, smugi frontów); DALSZE — w dziedzinie nieskręconej i izotropowej: drobny detal chmur to kłęby, a w
+      // dziedzinie skręconej wychodził w wycinku jako rozmazane smugi wzdłuż ramion.
+      const qd = Lp.add(U.uSeed.xyz.mul(1.37)).add(warp).add(warp2.mul(0.6)).toVar();
+      const qr = Lp.add(U.uSeed.xyz.mul(1.37)).toVar();     // dziedzina surowa: bez skrętu, rozciągnięcia i odkształceń
+      const base = pgFbm(qw.mul(2.5).mul(sc), min(nO, int(5)), 2.03, 0.5, true)
+        .add(pgFbm(qd.mul(2.5 * Math.pow(2.03, 5)).mul(sc).add(vec3(3.3, -7.1, 1.9)), max(nO.sub(5), int(0)), 2.03, 0.5, true).mul(Math.pow(0.5, 5))).toVar();
+      const fine = pgFbm(qw.mul(12.0).mul(sc), min(nO.sub(2), int(4)), 2.03, 0.5, true)
+        .add(pgFbm(qd.mul(12.0 * Math.pow(2.03, 4)).mul(sc).add(vec3(-5.7, 2.2, 8.4)), max(nO.sub(6), int(0)), 2.03, 0.5, true).mul(Math.pow(0.5, 4))).toVar();
+      const cell = float(0.0).toVar();
+      const hi = float(0.0).toVar();
+      const ci = float(0.0).toVar();
+      If(style.lessThan(0.5), () => {
+        // pola cumulusów (komórki) — bez haszu komórki w jasności (hasz skacze na krawędzi komórki — z bliska widać
+        // wielokąty); w dziedzinie nieskręconej (w skręconej komórki przy cyklonach rozciągały się w wachlarze)
+        cell.assign(inv01(0.2, 0.75, pgCells(qr.mul(34.0).mul(sc).add(warp.mul(0.25)), 0.95).x));
+        // drobne kłęby (tylko w wycinkach pod kamerą): szum izotropowy w dziedzinie SUROWEJ (bez odkształceń) —
+        // komórki Worleya dawały równe owalne „cekiny”, a odkształcona dziedzina rozciągała je w smugi
+        hi.assign(pgFbm(qr.mul(60.0).mul(sc).add(vec3(1.9, -4.3, 6.1)), max(nO.sub(5), int(1)), 2.03, 0.55, true));
+        // cienkie pierzaste smugi (cirrus) — rozciągnięte mocniej strefowo
+        ci.assign(pgFbm(vec3(qw.x, qw.y.mul(2.5), qw.z).mul(7.0).mul(sc), 4));
+      });
+      return { base, fine, cell, hi, ci, warp };
+    };
+    // POGODA — wiatr strefowy w PASACH: każdy pas szerokości obraca swój szum sztywno wokół osi planety (pasaty przy
+    // równiku w jedną stronę, wiatry średnich szerokości w drugą). Obrót ciągły z szerokością ścinałby wzór bez końca
+    // (po kilku obrotach same równoleżnikowe smugi); pasy sztywne go nie ścinają. Punkt należy do pasa o najbliższym
+    // środku; tylko w strefie między pasami (40% szerokości pasa) miesza dwa sąsiednie — tam wzory się mijają i chmury
+    // zmieniają kształt, w reszcie pasa płyną sztywno. Ten sam podział mają kłęby bryły chmur (`puffNoise`).
+    const wx = U.uWx.w;
+    const fB = C.lat.div(PI).add(0.5).mul(WX_BANDS).toVar();
+    const i0 = floor(fB.add(0.5)).toVar();
+    const frB = fB.sub(i0).toVar();
+    const i1 = i0.add(mix(float(-1.0), float(1.0), step(0.0, frB))).toVar();
+    const wB = smoothstep(WX_SEAM, 0.5, abs(frB)).mul(0.5).toVar();
+    const bandAngle = (i) => cos(i.mul(PI / WX_BANDS).sub(PI / 2).mul(3.0)).negate().mul(U.uWx.y).mul(U.uWx.x).add(i.mul(WX_PHASE)).mul(wx);
+    const th0 = float(0.0).toVar();
+    th0.assign(bandAngle(i0));
+    const S0 = noiseSet(rotY(q, th0.negate()).toVar(), rotY(C.dir, th0.negate()).toVar());
+    const base = float(0.0).toVar();
+    const fine = float(0.0).toVar();
+    const cell = float(0.0).toVar();
+    const hi = float(0.0).toVar();
+    const ci = float(0.0).toVar();
+    const warp = vec3(0.0).toVar();
+    base.assign(S0.base); fine.assign(S0.fine); cell.assign(S0.cell); hi.assign(S0.hi); ci.assign(S0.ci); warp.assign(S0.warp);
+    const humid = float(0.0).toVar();
+    If(wx.greaterThan(0.5), () => {
+      If(cycW.lessThan(0.999).and(wB.greaterThan(0.001)), () => {
+        const th1 = bandAngle(i1).toVar();
+        const S1 = noiseSet(rotY(q, th1.negate()).toVar(), rotY(C.dir, th1.negate()).toVar());
+        base.assign(mixNoise(base, S1.base, wB)); fine.assign(mixNoise(fine, S1.fine, wB));
+        hi.assign(mixNoise(hi, S1.hi, wB)); ci.assign(mixNoise(ci, S1.ci, wB));
+        cell.assign(mix(cell, S1.cell, wB)); warp.assign(mix(warp, S1.warp, wB));
+      });
+      // w tarczy cyklonu szum jedzie Z CYKLONEM (przeniesienie wiatrem jego szerokości) i obraca się wokół jego osi —
+      // sztywno, więc ramiona spirali się kręcą, a nie nawijają bez końca; przy brzegu tarczy przenika w pasy
+      If(cycW.greaterThan(0.001), () => {
+        const Sc = noiseSet(rotY(rotAxis(q, cycAxis, cycSpin), cycTh.negate()).toVar(), rotY(rotAxis(C.dir, cycAxis, cycSpin), cycTh.negate()).toVar());
+        base.assign(mixNoise(base, Sc.base, cycW)); fine.assign(mixNoise(fine, Sc.fine, cycW));
+        hi.assign(mixNoise(hi, Sc.hi, cycW)); ci.assign(mixNoise(ci, Sc.ci, cycW));
+        cell.assign(mix(cell, Sc.cell, cycW)); warp.assign(mix(warp, Sc.warp, cycW));
+      });
+      // wilgotność: wielkie plamy szumu obracane wolno wokół osi POCHYLONEJ — względem pasów wiatru przesuwają się
+      // wszędzie, więc chmury w danym miejscu gęstnieją i rzedną (powstają i znikają), a obraz się nie zapętla
+      const hAxis = vec3(0.47, 0.6, 0.648);
+      humid.assign(pgFbm(rotAxis(C.dir, hAxis, U.uWx.x.mul(U.uWx.y).mul(0.55)).mul(1.7).add(U.uSeed.xyz.mul(0.71)), 3).mul(U.uWx.z));
+    });
     const out = float(0.0).toVar();
     const tintMix = float(0.0).toVar();
     If(style.lessThan(0.5), () => {
@@ -349,29 +457,20 @@ export function buildCloudGraph() {
       const itcz = exp(aL.div(7.0).pow2().negate()).mul(0.12);
       const sub = exp(aL.sub(24.0).div(9.0).pow2().negate()).mul(-0.26);
       const storm = exp(aL.sub(54.0).div(13.0).pow2().negate()).mul(0.2);
-      const cover = U.uCloud.x.add(itcz).add(sub).add(storm).add(spiral.mul(0.32));
+      const cover = U.uCloud.x.add(itcz).add(sub).add(storm).add(spiral.mul(0.32)).add(humid);
       const dens = base.mul(0.5).add(0.5).add(cover.sub(0.5)).add(fine.mul(0.07)).toVar();
       const edge = U.uCloud2.y;
       out.assign(smoothstep(float(0.5).sub(edge), float(0.5).add(edge), dens));
       // pola cumulusów (komórki) tam, gdzie gęstość tuż pod progiem — podzwrotniki nad oceanem
-      // (bez haszu komórki w jasności: hasz skacze na krawędzi komórki — z bliska widać wielokąty)
-      // (w dziedzinie nieskręconej `qd`: w skręconej komórki przy cyklonach rozciągały się w wachlarze)
-      const cc = pgCells(qr.mul(34.0).mul(sc).add(warp.mul(0.25)), 0.95).toVar();
-      const puff = inv01(0.2, 0.75, cc.x).mul(smoothstep(-0.1, 0.4, fine));
+      const puff = cell.mul(smoothstep(-0.1, 0.4, fine));
       out.assign(max(out, puff.mul(smoothstep(0.3, 0.48, dens)).mul(0.45)));
       // drobne kłęby (tylko w wycinkach pod kamerą): cienkie pola chmur (cumulusy, brzegi frontów) rozpadają się na
       // nieregularne kłęby — inaczej powiększona komórka pola to płaska plama o ostrym brzegu; grube chmury dostają
-      // grudkowate wierzchołki (grubość niesie maska — światło z bliska liczy z niej cień). Szum izotropowy
-      // w dziedzinie SUROWEJ (bez odkształceń): komórki Worleya dawały równe owalne „cekiny”, a odkształcona
-      // dziedzina rozciągała je w smugi.
-      const hi = pgFbm(qr.mul(60.0).mul(sc).add(vec3(1.9, -4.3, 6.1)), max(nO.sub(5), int(1)), 2.03, 0.55, true).toVar();
-      const hiOn = smoothstep(2.5, 5.0, float(1 / 120).div(sc).div(st));
+      // grudkowate wierzchołki (grubość niesie maska — światło z bliska liczy z niej cień)
       const thin = float(1.0).sub(smoothstep(0.5, 0.85, out));
       out.mulAssign(mix(float(1.0), mix(hi.mul(0.3).add(1.0), smoothstep(-0.28, 0.3, hi).mul(1.25), thin), hiOn));
       out.mulAssign(eye);
-      // cienkie pierzaste smugi (cirrus) — rozciągnięte mocniej strefowo
-      const ci = pgFbm(vec3(qw.x, qw.y.mul(2.5), qw.z).mul(7.0).mul(sc), 4);
-      // (w wycinku pod kamerą słabiej: rozciągnięte smugi bez drobnego detalu wyglądają z bliska jak pręgowane łaty)
+      // (cirrus w wycinku pod kamerą słabiej: rozciągnięte smugi bez drobnego detalu wyglądają z bliska jak pręgowane łaty)
       out.assign(max(out, smoothstep(0.25, 0.75, ci).mul(smoothstep(0.3, 0.5, dens)).mul(0.3).mul(float(1.0).sub(hiOn.mul(0.75)))));
     }).ElseIf(style.lessThan(1.5), () => {
       // pokład: ścinanie strefowe (kształt „Y”: długość przesunięta z |φ|), pasma, kołnierz polarny
@@ -387,7 +486,7 @@ export function buildCloudGraph() {
       tintMix.assign(smoothstep(-0.05, 0.6, dark.negate()));
     }).Else(() => {
       // pył / mgła cienka: smugi strefowe
-      const d = base.mul(0.5).add(0.5).add(U.uCloud.x.sub(0.5)).add(fine.mul(0.1));
+      const d = base.mul(0.5).add(0.5).add(U.uCloud.x.sub(0.5)).add(fine.mul(0.1)).add(humid.mul(0.5));
       out.assign(smoothstep(0.42, 0.78, d).mul(0.75));
     });
     return vec4(mix(U.uTint, U.uTint2, tintMix).mul(out), 1.0);

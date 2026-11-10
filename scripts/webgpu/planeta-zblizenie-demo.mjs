@@ -5,6 +5,7 @@
 //        [--ziarno N] [--wycinek 2048|4096] [--szer 1600 --wys 900] [--kadry wulkan,blisko,…] [--erupcja 16]
 //        [--kod "<JS wykonywany po starcie, np. window.__zbl.S.pora = 60>"] [--port 5443]
 //        [--bez-raf 1]  (sam start na stronie bez klatek rAF: kwantyle próby pierwszego wypieku, bez zrzutów)
+//        [--pogoda "0,20,40"]  (każdy kadr dodatkowo po tylu sekundach pogody: <kadr>-t<s>.png — ruch chmur)
 // Kadry widoku z góry: daleko, wulkan, blisko, bardzo-blisko, bez-wycinka (jak „blisko”, wycinki wyłączone), noc,
 // planeta albo własny „nazwa:x,y,zoom” (środek w promieniach planety, px na jednostkę gry). Kadry widoku orbitalnego:
 // orbita, orbita-plaska (chmury jako maska — porównanie z bryłą), orbita-blisko, orbita-daleko, orbita-noc,
@@ -36,6 +37,8 @@ try {
   if (args.ziarno) q.set('ziarno', String(args.ziarno));
   if (args.wycinek) q.set('wycinek', String(args.wycinek));
   if (args.gpu) q.set('gpu', '1');
+  // --q "pogoda=off&czas=120": dodatkowe parametry adresu dema
+  if (args.q) for (const [k, v] of new URLSearchParams(String(args.q))) q.set(k, v);
   // --bez-raf 1: strona bez klatek rAF (jak karta w tle) — sam start: czy pierwszy wypiek ma poprawną próbę
   if (args['bez-raf']) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
   await cdp.send('Page.navigate', { url: `${base}/dema/planeta-zblizenie.html?${q}` });
@@ -75,6 +78,19 @@ try {
     }
     await ev(`(() => { const Z = window.__zbl; const p0 = Z.S.pora; ${code} Z.advance(1.0); window.__p0 = p0; return 1; })()`);
     await settle();
+    // --pogoda "0,20,40": ten sam kadr po kolejnych sekundach dema (ruch chmur) — pliki <kadr>-t<sekundy>.png;
+    // zegar pogody stoi między zrzutami (klatki dema biegną w czasie rzeczywistym — bez tego czasy by pływały)
+    if (args.pogoda) {
+      const wx0 = await ev('window.__zbl.S.wx');
+      let prev = 0;
+      for (const t of String(args.pogoda).split(',').map(Number)) {
+        await ev(`(() => { const Z = window.__zbl; Z.S.wx = ${wx0}; Z.advance(${Math.max(0, t - prev)}); Z.S.wx = 0; return 1; })()`);
+        prev = t;
+        await settle(500);
+        await screenshotPng(cdp, join(out, `${name}-t${t}.png`));
+      }
+      await ev(`window.__zbl.S.wx = ${wx0}`);
+    }
     const f = await screenshotPng(cdp, join(out, `${name}.png`));
     const st = await ev(`(() => { const Z = window.__zbl; const P = Z.S.body.patches; const a = P.active >= 0 ? P.slots[P.active].win : null;
       const r = { zoom: Z.S.zoom, cx: Z.S.cx, cy: Z.S.cy, poziom: a ? a.level : 0, okno: a ? a.key : null, wypieki: P.stats.bakes, wypiekMs: Z.S.stats.bakeMs,

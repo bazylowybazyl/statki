@@ -423,3 +423,63 @@ z tego cień kłębów na gruncie ~0,2–0,35 ms; atmosfera +0,2–0,3 ms (+0,07
 +0,5 ms (+0,3). Pusta powłoka chmur (planeta bez chmur w kadrze) ~0,2–0,3 ms. Dźwignie przy wpięciu: bryła chmur
 w połowie rozdzielczości z rozmyciem przy składaniu (4× mniej pikseli marszu), mniej kroków (16 zamiast do 44:
 −0,3…0,4 ms), bryła tylko na planecie przy graczu i tylko od presetu Wysokie.
+
+### 10.9. Pogoda: ruchome chmury bez symulacji płynu (2026-11-10, demo)
+
+Pytanie użytkownika: „chmury się nie ruszają? nie ma symulacji pogody?”. Stan przed: układ chmur to mapa wypieczona
+raz; ruszał się tylko powolny dryf szumu kłębów i obrót całej warstwy z suwaka „doba”.
+
+Rozwiązanie (`planetGenWeather.js`, graf chmur w `planetGenBake.tsl.js`): wzór chmur zostaje funkcją ziarna, dochodzi
+CZAS — obraz w chwili t to funkcja (ziarno, t), bez stanu (zapis gry trzyma sam czas pogody).
+
+- WIATR STREFOWY W PASACH: 9 pasów szerokości (środki co 20°), prędkość kątowa pasa = −cos 3φ · wiatr (pasaty przy
+  równiku w jedną stronę, wiatry średnich szerokości w drugą, bieguny stoją). Pas obraca swój szum SZTYWNO wokół osi
+  planety; mieszanie dwóch pasów tylko w strefie między nimi (40% szerokości pasa), z zachowaniem wariancji szumu.
+- CYKLONY: oś jedzie z wiatrem swojej szerokości (CPU, `cycloneAt`), w tarczy szum jedzie z cyklonem i obraca się
+  wokół jego osi sztywno (ramiona się kręcą); przy brzegu tarczy przenika w pasy.
+- WILGOTNOŚĆ: szum niskiej częstości obracany wokół osi pochylonej dokłada się do pokrycia — chmury w miejscu
+  gęstnieją i rzedną, obraz się nie zapętla.
+- MAPA POGODY (`PlanetGenWeather`): mapa chmur 1024 × 512 przeliczana tym samym grafem w 3 pasach celu (pas na
+  klatkę) do drugiego celu, potem zamiana. Nowa mapa dopiero po przesunięciu chmur o 0,35 teksela (przy tempie ×1
+  ~6 map na sekundę). Czytają ją bryła chmur, chmury płaskie i cień na gruncie.
+- KŁĘBY bryły chmur jadą z tym samym pasem wiatru co pokrycie (`puffNoise` — obrót punktu przed próbką szumu 3D),
+  cień kłębów na gruncie tak samo. Między przeliczeniami mapa ŚLIZGA się z wiatrem pasa (`wxGlideU` — przesunięcie
+  współrzędnej u), więc pokrycie i kłęby płyną razem co klatkę.
+- Chmury płaskie z bliska (wycinki): okno pieczone z zamrożoną chwilą pogody, ślizg okna z wiatrem do następnego
+  wypieku, przepiekanie co ~0,4 s pogody.
+- Demo: suwak „pogoda” (×0…12, `?pogoda=`, `?pogoda=off`), chwila startu dobierana tak, żeby nad miejscem startowym
+  było umiarkowane zachmurzenie (`?czas=` — wprost), `?mapaPogody=2048`.
+
+Błędy po drodze (zasady w regule `generator-planet`):
+- pierwsza wersja mieszała sąsiednie pasy na całej szerokości (funkcja „daszek”): wzory mijały się wszędzie i chmury
+  zamiast płynąć zmieniały kształt w miejscu — stąd pasy sztywne z wąską strefą mieszania;
+- mapa pogody 2048 × 1024 przeliczana co klatkę (12 pasów): +0,3 ms na każdą klatkę przy 1080p — mapa 1024 i
+  przeliczanie dopiero po przesunięciu o ułamek teksela zdjęły to do zera w medianie klatki;
+- kłęby brały czas mapy w użyciu: przy mapie odświeżanej kilka razy na sekundę skakałyby; kłęby dostały czas bieżący,
+  a mapa ślizg między przeliczeniami;
+- pokrycie przesuwane nad nieruchomymi kłębami wyglądało jak chmura rosnąca z jednej strony i parująca z drugiej;
+- po dodaniu pogody mapa chmur planety przy WYŁĄCZONEJ pogodzie różniła się od dawnej (1,36 mln z 2,1 mln tekseli),
+  choć graf z tymi samymi uniformami daje te same piksele: pierwszy wypiek po kompilacji szedł z flagą pogody
+  `uWx.w` = 1 — domyślne w wektora, którego wypiek nie podaje. three r183 nie wysyła na GPU wartości, która po
+  kompilacji wraca do samych zer (pułapka 46 w regule `webgpu-tsl`). Uniformy wypieku startują od zer; po poprawce
+  mapa planety = wypiek starym grafem (0 różnych tekseli), pierwszy rysunek = drugi.
+
+Koszt (headless Chrome, RTX; planeta `terran` ziarno 21, widok orbitalny):
+
+| | 5120 × 1440 | 1920 × 1080 |
+|---|---|---|
+| klatka, pogoda biegnie (mediana) | 3,06 ms (krawędź tarczy), 2,19 ms (cała planeta) | 1,33 / 1,45 ms |
+| klatka, pogoda stoi | 3,06 / 2,18 ms | 1,33 / 1,43 ms |
+| klatka, pogoda wyłączona (mapa wypieczona raz — inny układ chmur) | 2,93 / 1,97 ms | 1,22 / 1,30 ms |
+| cała mapa pogody 1024 × 512 | 0,59 ms (3 pasy po ~0,2 ms) | 0,59 ms |
+
+Przeliczanie mapy nie zmienia mediany klatki; klatki z pasem (kilkanaście na sekundę przy tempie ×1) są droższe
+o ~0,2 ms. Różnica „włączona — wyłączona” (+0,1…0,2 ms) to kłęby jadące z wiatrem (obrót punktu, drugi komplet
+próbek w strefie między pasami) i inny układ chmur w kadrze — nierozdzielone. Mapa 2048 × 1024: 2,9–3,7 ms na całość.
+
+Sprawdzenie ruchu: `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry orbita --pogoda "0,1,2,3,13"`
+(ten sam kadr po kolejnych sekundach pogody). Kolejne sekundy różnią się równo (średnia różnica jasności 2,9 / 255 na
+sekundę w kadrze „orbita”, 0,34 przy stojącej pogodzie) — bez skoków.
+
+Nie zrobione: pogoda dla pokładu chmur planet toksycznych (styl 1 — smugi stoją), cyklony nie powstają i nie giną
+(stały zestaw z ziarna), opady i burze z wyładowaniami, wpływ pogody na rozgrywkę.

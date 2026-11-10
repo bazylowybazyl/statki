@@ -31,7 +31,7 @@ import { ruinsShade } from './planetGenRuins.tsl.js';
 import { GEN_SOLID_UNIFORM_KEYS, GEN_SOLID_DATA_KEYS } from './planetGenSurface.tsl.js';
 import { plumeShadowAt, PLUME_UNIFORM_KEYS } from './planetGenPlume.tsl.js';
 import { cloudNoiseTexture } from './planetGenNoise3D.js';
-import { cloudCover, puffThreshold, puffShape, sheetDensity } from './planetGenCloudVolume.tsl.js';
+import { cloudCover, puffThreshold, puffShape, sheetDensity, wxGlideU } from './planetGenCloudVolume.tsl.js';
 
 const PI = Math.PI;
 
@@ -50,7 +50,8 @@ export const GEN_NEAR_UNIFORM_KEYS = Object.freeze({
   uGnLava2: 'vec4',     // częstość płyt [1/promień], szerokość szwu [komórki], albedo skorupy, siła detalu ponad mapę (×)
   uGnCloud: 'vec4',     // cień chmur: kąt kuli chmur względem gruntu [rad], wysokość chmur [R], siła (0 — brak), 1 — chmury jako bryła
   uGnCloudVol: 'vec4',  // bryła chmur (jak uCvShape / uCvNoise materiału bryły): podstawa i strop powłoki [R nad gruntem], wzmocnienie pokrycia, częstość kłębów
-  uGnCloudVol2: 'vec4', // czas szumu kłębów [s], —, —, —
+  uGnCloudVol2: 'vec4', // czas szumu kłębów [s]; pogoda: bieżący czas [s], wiatr [rad / s], 1 — włączona
+  uGnCloudVol3: 'vec4', // pogoda: czas mapy pogody w użyciu [s], —, —, —
   uGnCity: 'vec4',      // sieci świateł miast: siła (0 — brak), częstość pierwszej oktawy żyłek [1 / R], —, —
   ...PLUME_UNIFORM_KEYS
 });
@@ -377,10 +378,13 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
         const xg = p.add(sunObj.mul(tv)).toVar();
         const xc = vec3(xg.x.mul(ca).sub(xg.z.mul(sa)), xg.y, xg.x.mul(sa).add(xg.z.mul(ca))).toVar();
         const dc = normalize(xc).toVar();
-        const vuv = vec2(atan(dc.z.negate(), dc.x.add(step(abs(dc.x).add(abs(dc.z)), 1e-7).mul(1e-6))).div(2 * PI).add(0.5), asin(clamp(dc.y, -1.0, 1.0)).div(PI).add(0.5));
+        const latC = asin(clamp(dc.y, -1.0, 1.0));
+        // (ślizg mapy pogody między przeliczeniami — jak w bryle chmur)
+        const vuv = vec2(atan(dc.z.negate(), dc.x.add(step(abs(dc.x).add(abs(dc.z)), 1e-7).mul(1e-6))).div(2 * PI).add(0.5)
+          .add(wxGlideU(latC, vec4(U.uGnCloudVol2.yzw, 0.0), U.uGnCloudVol3.x)), latC.div(PI).add(0.5));
         const cov = cloudCover(dot(cloudShadowTex.sample(vuv).level(lodC.sub(1.0)).rgb, vec3(0.299, 0.587, 0.114)), U.uGnCloudVol.z).toVar();
         If(cov.greaterThan(0.02), () => {
-          sh.addAssign(puffShape(xc, puffThreshold(cov, float(hN)), U.uGnCloudVol.w, U.uGnCloudVol2.x, noise3).mul(smoothstep(0.02, 0.12, cov)));
+          sh.addAssign(puffShape(xc, puffThreshold(cov, float(hN)), U.uGnCloudVol.w, U.uGnCloudVol2.x, noise3, vec4(U.uGnCloudVol2.yzw, 0.0)).mul(smoothstep(0.02, 0.12, cov)));
         });
         // ława warstwowa (półprzezroczysta) — słaby, miękki cień
         if (hN < 0.4) sh.addAssign(sheetDensity(cov, float(0.3)).mul(1.4));
