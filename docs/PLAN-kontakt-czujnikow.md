@@ -5,7 +5,7 @@ w gałęzi prototypu). Prośba użytkownika: „osobna sesja, żeby wykorzystał
 fajnych elementów — jakichś nieznajomych morfujących kształtów / chmurek”. W Starsectorze kontakt to małe i duże
 trójkąty; w HULLFALL ma być coś własnego.
 
-Stan: **KONTAKT wybrany (OBŁOK); NAMIAR → CZUJKA na PPM (struna + błona) — trzecia runda w demie, czeka na ocenę.** Gra bez zmian.
+Stan: **KONTAKT = obłok szarych X-ów; CZUJKA na PPM (struna z kolcami + błona) — „wygląd jest znacznie lepszy”, dopracowanie w demie.** Gra bez zmian.
 
 ## 0. Decyzje użytkownika
 
@@ -27,6 +27,10 @@ Stan: **KONTAKT wybrany (OBŁOK); NAMIAR → CZUJKA na PPM (struna + błona) —
   będzie się kręcić do prawej, podczas przechodzenia zacznie drgać, w stronę piratów mocniej, i te trójkąciki się będą
   pojawiały”. WACHLARZ odpada (zostaje w demie jako wariant 0 do porównania).
 - 2026-11-10: czujka działa **tylko przy trzymanym PPM** (puszczenie — gaśnie), nie zostaje po kliknięciu.
+- 2026-11-10, ocena trzeciej rundy: „wygląd jest znacznie lepszy”. Zmiany: „nieznane kontakty — zamiast obłoku zrób obłok
+  X-ów szarych” (wariant 6 IKSY zastępuje OBŁOK); „struna — niech trójkąty «wychodzą» ze struny, czyli niech robią się na
+  strunie” + szkic: linia struny w miejscu grupy wybija się w ostre zęby na zewnątrz i wraca (podpis szkicu: „gdy widzi
+  ciebie przeciwnik”) — trójkąty to kolce samej struny, nie osobne kształty nad nią.
 
 ## 1. Co obraz ma oddać
 
@@ -206,11 +210,12 @@ trzymasz PPM — czujka działa, struna celuje w myszkę; puszczasz — gaśnie 
   exp(−(Δ / 0,36)²) × `me` grupy; amplituda 0,35 + 5,2·sygnał^1,5 px (najwyżej ~5,5 px; w drugiej rundzie ±20 px —
   „za agresywnie”), wyższe harmoniczne dochodzą z sygnałem, szarpnięcie (+7 px, zanik 0,38 s), gdy grupa wchodzi w namiar.
   W pustym kierunku prawie prosta. Bez pękania.
-- **Trójkąty:** grupa w namiarze (|Δ| < 0,95 pół kąta i dopasowanie > 0,3) wyłania się na łuku DOKŁADNIE w miejscu
-  wskazującym grupę — ile wrogów, tyle trójkątów: budowla — duży (pół podstawy 9 px, wysokość 16,5 px), statek — mały
-  (4,6 / 8,5 px); duże w środku, mniejsze na boki, więc gromada rośnie ku środkowi i wskazuje grupę jak grot. Pojawiają się
-  po kolei od środka (z przerzutem), lekka fala wielkości biegnie ku środkowi. Przy obrocie struny gromada przesuwa się po
-  łuku i znika za jego końcem. `est` (radar zgadnięty) — trójkąty puste, słabsze.
+- **Trójkąty = kolce struny:** grupa w namiarze (|Δ| < 0,95 pół kąta i dopasowanie > 0,3) wyłania się na łuku DOKŁADNIE
+  w miejscu wskazującym grupę — sama linia struny wybija się tam w ostre zęby na zewnątrz (profil „namiotu” dodany do
+  drgania, kreska liczona z nachyleniem). Ile wrogów, tyle zębów: budowla — duży (pół podstawy 8,5 px, wysokość 16,5 px),
+  statek — mały (4,6 / 9 px), odstęp 7 px; duże w środku, mniejsze na boki. Zęby wyrastają ze struny po kolei od środka
+  (wysokość od zera, podstawa się rozszerza, przerzut), jadą z drganiem, słabe wypełnienie zęba. Przy obrocie struny gromada
+  przesuwa się po łuku i znika za jego końcem. `est` (radar zgadnięty) — zęby w kreskach, słabsze.
 - **Wykrycie:** grupa w namiarze z `them` ≥ 1 (histereza 0,975) — struna i jej trójkąty czerwienieją (~0,2 s), nad gromadą
   „!” (błysk przy wykryciu, potem puls), oko przy kursorze się otwiera (czerwone; zamknięte — szare). Oko pokazuje stan
   grupy, w którą celuję, nie całej mapy (do decyzji).
@@ -235,3 +240,15 @@ Decyzje: (7) oko — tylko grupa w namiarze czy „ktokolwiek mnie widzi”; (8)
 (9) wejście czujki w grze (PPM zajęte przez menu rozkazów — skoro czujka żyje tylko przy trzymaniu, naturalny podział:
 krótki klik = menu rozkazów, przytrzymanie = czujka; do potwierdzenia przy wpięciu). Decyzja (10) zapadła: tylko przy
 trzymanym PPM.
+
+### 6a. Kontakt: obłok szarych X-ów (2026-11-10)
+
+Wariant 6 IKSY (`?wariant=iksy`, klawisz 6; domyślny) w `kontaktyTSL.js` — zastępuje OBŁOK jako wygląd nieznanego kontaktu,
+także w scenie czujki. Kształt obłoku liczony jak w OBŁOKU (wagi → przesunięcie szumem → gęstość × fBm), ale zamiast mgły —
+X-y w komórkach ~10 px zakotwiczonych w świecie (punkt w kaflu szumu, początek kafla w double na CPU — X-y nie płyną z
+kamerą): X stoi w komórce z prawdopodobieństwem = gęstość obłoku (do 0,62 — bez pełnej kratki), żyje 0,7–1,6 s i odradza się
+w innym miejscu komórki (rozrzut ½ komórki), więc obłok migocze i morfuje. Cięższy = gęstszy i większy, niepewność =
+szerszy, rzadszy, postrzępiony; flota = jeden obłok. Szary (liniowo 0,34–0,38), pod spodem ledwie mgiełka. Pierwsza wersja
+miała X-y w ~5% komórek całego ekranu (próg prawdopodobieństwa z marginesem ±0,06 przepuszczał P = 0) i zbyt gęstą kratkę
+(„haft krzyżykowy”). Zrzuty: `15-iksy-plansza`, `25-iksy-gra`, animacja `84-iksy.webp` (6 s, 60 kl/s). Koszt (1600 × 900,
+plansza, pojedyncza próbka): 0,139 ms przy pustej 0,065 ms.
