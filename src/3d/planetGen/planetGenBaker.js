@@ -18,8 +18,9 @@ import { resizeRenderTarget } from '../renderTargetResize.js';
 import { describePlanet, plannedMaps, plannedBytes } from './planetGenSpec.js';
 import { PLANET_GEN_TYPE } from './planetGenTypes.js';
 import {
-  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, buildMaskGraph, setBakeUniforms, CLOUD_CYCLONES
+  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, buildMaskGraph, setBakeUniforms, drainTexture, CLOUD_CYCLONES
 } from './planetGenBake.tsl.js';
+import { computeDrainage } from './planetGenDrainage.js';
 import { SOLID_TYPES } from './planetGenSolid.tsl.js';
 import { GAS_BAKE, gasBakeUniforms } from './planetGenGasBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
@@ -29,10 +30,10 @@ export const PROBE_W = 192;
 export const PROBE_H = 96;
 const DEG = Math.PI / 180;
 
-function makeTarget(w, h, { srgb = false, red = false, float32 = false, half = false, mips = true, name = '', clamp = false } = {}) {
+function makeTarget(w, h, { srgb = false, red = false, rg = false, float32 = false, half = false, mips = true, name = '', clamp = false } = {}) {
   const rt = new THREE.RenderTarget(w, h, {
     type: float32 ? THREE.FloatType : (half ? THREE.HalfFloatType : THREE.UnsignedByteType),
-    format: red ? THREE.RedFormat : THREE.RGBAFormat,
+    format: red ? THREE.RedFormat : (rg ? THREE.RGFormat : THREE.RGBAFormat),
     depthBuffer: false, stencilBuffer: false,
     generateMipmaps: mips,
     minFilter: float32 ? THREE.NearestFilter : (mips ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter),
@@ -87,6 +88,7 @@ export class PlanetGenBaker {
     const [pass, type] = key.split(':');
     if (pass === 'field') g = SOLID_TYPES[type].field();
     else if (pass === 'day') g = SOLID_TYPES[type].color(F);
+    else if (pass === 'drain') g = SOLID_TYPES[type].drain(F);
     else if (pass === 'relief') g = buildReliefGraph(F);
     else if (pass === 'spec') g = buildSpecGraph(F);
     else if (pass === 'night') g = buildNightGraph(F);
@@ -101,7 +103,19 @@ export class PlanetGenBaker {
   /** Przejścia potrzebne rodzajowi: [klucz grafu, format celu]. */
   passesFor(type) {
     if (PLANET_GEN_TYPE[type].kind === 'gas') return [['gas', 'srgb']];
-    return [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['relief', 'half'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb'], ['mask', 'rgba']];
+    const passes = [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['relief', 'half'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb'], ['mask', 'rgba']];
+    // rodzaje z rzekami: wejście spływu wody (wysokość i opad do odczytu CPU — planetGenDrainage.js)
+    if (SOLID_TYPES[type].drain) passes.push([`drain:${type}`, 'rg32']);
+    return passes;
+  }
+
+  // Tekstura spływu planety w grafie pola rodzaju (graf jest jeden na rodzaj — tekstura podstawiana przed rysunkiem).
+  // Zwraca wartość `uDr`: bez spływu gałąź rzek jest wyłączona, a jej uniformy skończone (rozmiar 1 × 1).
+  _bindDrain(type, drainage) {
+    const g = this.graph(`field:${type}`);
+    if (!g.drain || !drainage) return [1, 1, 0, 0];
+    g.drain.value = drainage.texture;
+    return drainage.uniforms;
   }
 
   /** Rozgrzewka pipeline'ów przejść dla rodzajów (w tle; obietnica — gotowe). */
@@ -109,7 +123,8 @@ export class PlanetGenBaker {
     const r = this.renderer;
     const dummies = {
       float: this.field, srgb: makeTarget(4, 2, { srgb: true, mips: false }), half: makeTarget(4, 2, { half: true, mips: false }),
-      red: makeTarget(4, 2, { red: true, mips: false }), rgba: makeTarget(4, 2, { mips: false })
+      red: makeTarget(4, 2, { red: true, mips: false }), rgba: makeTarget(4, 2, { mips: false }),
+      rg32: makeTarget(4, 2, { rg: true, float32: true, mips: false })
     };
     const prev = r.getRenderTarget();
     const jobs = [];
@@ -136,7 +151,7 @@ export class PlanetGenBaker {
       r.setRenderTarget(prev);
     }
     await Promise.all(jobs);
-    for (const k of ['srgb', 'half', 'red', 'rgba']) dummies[k].dispose();
+    for (const k of ['srgb', 'half', 'red', 'rgba', 'rg32']) dummies[k].dispose();
   }
 
   _draw(graphKey, target, values) {
@@ -169,8 +184,11 @@ export class PlanetGenBaker {
    * ma `trackTimestamp` (liczy wszystkie przejścia renderu od poprzedniego odczytu — rysunki klatek w tym czasie też).
    * Wynik: tablica { spec, size, maps: { day, relief?, spec?, night?, clouds?, mask? }, levels, gas?, bytes, ms,
    * dispose() }. `mask: true` — dodatkowo mapa masek pola (lawa, osady — materiał zbliżenia, buildMaskGraph).
+   * Planety z rzekami (terran, ocean) dostają `drainage` — drzewo rzek ze spływu wody ({ texture, width, height,
+   * data, stats, uniforms }; dane jak w planetGenDrainage.js — także dla gry: ujścia, biegi rzek); siatka spływu
+   * ma szerokość mapy planety, najwyżej `drainSize`. `drainage: false` — bez rzek.
    */
-  async bakeSystem(list, { size = 2048, sizes = null, mask = false } = {}) {
+  async bakeSystem(list, { size = 2048, sizes = null, mask = false, drainage = true, drainSize = 2048 } = {}) {
     const r = this.renderer;
     const t0 = performance.now();
     const timed = !!r.backend?.trackTimestamp;
@@ -181,7 +199,12 @@ export class PlanetGenBaker {
       const texKm = 2 * Math.PI * spec.rKm / W;
       const ctx = { size: W, rKm: spec.rKm, texKm };
       const out = { spec, size: W, maps: {}, targets: [], rt: {}, levels: null, gas: null, bytes: plannedBytes(spec, W), ms: {} };
-      out.dispose = () => { for (const t of out.targets) t.dispose(); out.targets.length = 0; if (out.gas) out.gas.dispose(); };
+      out.dispose = () => {
+        for (const t of out.targets) t.dispose();
+        out.targets.length = 0;
+        if (out.gas) out.gas.dispose();
+        if (out.drainage) { out.drainage.texture.dispose(); out.drainage = null; }
+      };
       const tu = spec.kind === 'gas' ? null : SOLID_TYPES[spec.type].uniformsFor(spec, ctx);
       return { spec, W, H: W / 2, texKm, ctx, out, tu };
     });
@@ -198,7 +221,7 @@ export class PlanetGenBaker {
         const oct = [it.tu.octaves.x, it.tu.octaves.y, it.tu.octaves.z, it.tu.octaves.w];
         it.oct = oct;
         const rt = this._probeTarget(k);
-        this._draw(`field:${it.spec.type}`, rt, { ...common(it, PROBE_W, PROBE_H), uOct: oct, uLevels: [0, 1, 0, 0], ...it.tu.field });
+        this._draw(`field:${it.spec.type}`, rt, { ...common(it, PROBE_W, PROBE_H), uOct: oct, uLevels: [0, 1, 0, 0], ...it.tu.field, uDr: [1, 1, 0, 0] });
         return r.readRenderTargetPixelsAsync(rt, 0, 0, PROBE_W, PROBE_H);
       });
       const pixels = await Promise.all(reads);
@@ -216,6 +239,44 @@ export class PlanetGenBaker {
         it.out.levels = { uQ: it.uQ, uQ2: it.uQ2, sea: it.tu.water ? 0 : null };
         it.out.ms.probe = tProbe;
       });
+      // (1b) SPŁYW WODY (planety z rzekami): pole bez rzek w rozdzielczości siatki spływu → wysokość i opad (RG32F)
+      // → jeden odczyt na układ → drzewo rzek na CPU (planetGenDrainage.js) → tekstura dla grafu pola
+      const wet = drainage ? solids.filter((it) => it.tu.drainage && SOLID_TYPES[it.spec.type].drain) : [];
+      if (wet.length) {
+        const tDrain = performance.now();
+        const drainReads = wet.map((it) => {
+          const DW = Math.min(it.W, drainSize);
+          const DH = DW / 2;
+          const texKm = 2 * Math.PI * it.spec.rKm / DW;
+          const tuD = DW === it.W ? it.tu : SOLID_TYPES[it.spec.type].uniformsFor(it.spec, { size: DW, rKm: it.spec.rKm, texKm });
+          const base = {
+            ...common(it, DW, DH), uGeo: [it.spec.rKm, texKm, 0, 0], uLevels: [0, tuD.landTop || 3, 1, 0], uQ: it.uQ, uQ2: it.uQ2,
+            uOct: [tuD.octaves.x, tuD.octaves.y, tuD.octaves.z, tuD.octaves.w]
+          };
+          this._ensureField(DW, DH);
+          this._draw(`field:${it.spec.type}`, this.field, { ...base, ...tuD.field, uDr: [1, 1, 0, 0] });
+          const rt = makeTarget(DW, DH, { rg: true, float32: true, mips: false, name: 'planetGenDrainIn' });
+          this._draw(`drain:${it.spec.type}`, rt, { ...base, ...tuD.color });
+          it.drain = { W: DW, H: DH };
+          return r.readRenderTargetPixelsAsync(rt, 0, 0, DW, DH).then((px) => { rt.dispose(); return px; });
+        });
+        const drainPx = await Promise.all(drainReads);
+        wet.forEach((it, k) => {
+          const { W: DW, H: DH } = it.drain;
+          const px = drainPx[k];
+          const n = DW * DH;
+          const hh = new Float32Array(n);
+          const rain = new Float32Array(n);
+          for (let i = 0; i < n; i++) { hh[i] = px[i * 2]; rain[i] = px[i * 2 + 1]; }
+          const d = computeDrainage(hh, rain, DW, DH, { seed: it.spec.seedInt | 0 });
+          const texture = drainTexture(d.data, DW, DH);
+          r.initTexture(texture);
+          it.out.drainage = { texture, width: DW, height: DH, data: d.data, stats: d.stats, uniforms: [DW, DH, 1, it.spec.seedInt % 65521] };
+          it.out.bytes += n * 4;
+          it.out.ms.drain = performance.now() - tDrain;
+          it.out.ms.drainCpu = d.stats.ms;
+        });
+      }
       // (2) przejścia pełnej rozdzielczości
       for (const it of items) {
         const { spec, W, H, out } = it;
@@ -237,7 +298,7 @@ export class PlanetGenBaker {
         const plan = plannedMaps(spec);
         const levels = { uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: it.uQ, uQ2: it.uQ2, uOct: it.oct };
         this._ensureField(W, H);
-        this._draw(`field:${spec.type}`, this.field, { ...common(it, W, H), ...levels, ...tu.field });
+        this._draw(`field:${spec.type}`, this.field, { ...common(it, W, H), ...levels, ...tu.field, uDr: this._bindDrain(spec.type, out.drainage) });
         const day = makeTarget(W, H, { srgb: true, name: name('day') });
         out.targets.push(day);
         this._draw(`day:${spec.type}`, day, { ...common(it, W, H), ...levels, ...tu.color });
@@ -337,7 +398,7 @@ export class PlanetGenBaker {
     const prev = r.getRenderTarget();
     try {
       this._ensureField(W, H);
-      this._draw(`field:${spec.type}`, this.field, { ...common, ...t.field });
+      this._draw(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage) });
       this._draw(`day:${spec.type}`, set.day, { ...common, ...t.color });
       this._draw('relief', set.relief, { ...common, uRel: spec.relief.rough });
       this._draw('mask', set.mask, common);
@@ -358,7 +419,8 @@ export class PlanetGenBaker {
     const steps = [];
     const add = (pass, n) => { for (let i = 0; i < n; i++) steps.push({ pass, band: i, bands: n }); };
     if (kind === 'clouds') { add('clouds', Math.max(1, Math.ceil(B * 0.8))); return steps; }
-    add('field', B);
+    // (pole z rzekami ze spływu: ~1,4 ms GPU na megapiksel — więcej pasów, krok zostaje przy ~2–3 ms)
+    add('field', Math.max(1, Math.ceil(set.width * set.height / 1e6 / (mpPerStep / 1.4))));
     add('day', Math.max(1, Math.ceil(B * 0.7)));
     add('relief', Math.max(1, Math.ceil(B / 3)));
     add('mask', Math.max(1, Math.ceil(B / 4)));
@@ -424,7 +486,7 @@ export class PlanetGenBaker {
       };
       if (step.pass === 'field') {
         this._ensureField(W, H);
-        this._drawBand(`field:${spec.type}`, this.field, { ...common, ...t.field }, step.band, step.bands);
+        this._drawBand(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage) }, step.band, step.bands);
       } else if (step.pass === 'day') this._drawBand(`day:${spec.type}`, set.day, { ...common, ...t.color }, step.band, step.bands);
       else if (step.pass === 'relief') this._drawBand('relief', set.relief, { ...common, uRel: spec.relief.rough }, step.band, step.bands);
       else this._drawBand('mask', set.mask, common, step.band, step.bands);

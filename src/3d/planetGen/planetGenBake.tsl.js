@@ -14,7 +14,7 @@
 // (RGBA32F nie jest filtrowalny bez cechy urządzenia).
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, Loop, float, int, vec2, vec3, vec4, ivec2, uniform, screenCoordinate, textureLoad, select,
+  Fn, If, Loop, float, int, vec2, vec3, vec4, ivec2, uniform, screenCoordinate, textureLoad, texture, select,
   abs, asin, atan, clamp, cos, dot, exp, floor, fract, length, max, min, mix, mod, normalize, sin, smoothstep, sqrt, step, cross, pow
 } from 'three/tsl';
 import { pgNoise, pgCells, pgFbm, pgWarp, pgHashU, pgU1, pgU3, pgRehash, pgRidged } from './planetGenNoise.tsl.js';
@@ -116,6 +116,26 @@ export function fieldAt(F, U, ix, iy) {
   const x = U.uWin ? select(U.uWin.w.greaterThan(0.5), clamp(ix, int(0), W.sub(1)), wrapped) : wrapped;
   const y = clamp(iy, int(0), H.sub(1));
   return textureLoad(F, ivec2(x, y));
+}
+
+// ── SPŁYW WODY (planetGenDrainage.js) ─────────────────────────────────────────────────────────────────────────────
+// Tekstura drzewa rzek planety (RGBA8, bez filtrowania — odczyt textureLoad) i jej węzeł w grafie pola. Graf pola
+// powstaje raz na rodzaj, a teksturę planety podstawia wypiekacz przed rysunkiem (`węzeł.value = tekstura`).
+export function drainTexture(data = null, w = 1, h = 1) {
+  const t = new THREE.DataTexture(data || new Uint8Array(4), w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.name = 'planetGenDrain';
+  t.minFilter = THREE.NearestFilter;
+  t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+/** Węzeł bazowy tekstury spływu (uv-atrapa — pułapka 7); odczyt komórki: `węzeł.load(ivec2(x, y))`. */
+export function drainNode() {
+  return texture(drainTexture(), vec2(0.0));
 }
 
 /** Materiał przejścia wypieku (quad, bez głębi, bez świateł). */

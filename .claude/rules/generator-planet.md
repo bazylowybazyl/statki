@@ -9,6 +9,7 @@ paths:
   - "scripts/webgpu/planeta-zblizenie-demo.mjs"
   - "tests/planetGen.test.mjs"
   - "tests/planetGenNear.test.mjs"
+  - "tests/planetGenDrainage.test.mjs"
 ---
 
 # Generator planet z ziarna (wypiek map na GPU)
@@ -72,7 +73,7 @@ paths:
   Składanie: `planetGenNear.js` (`createGenNearBody`). Dalsze planety zostają na `'genSolid'`.
 - Rodzaj gotowy do okna ma pole ZGODNE MIĘDZY POZIOMAMI: fbm z `full = true` (dzielnik = suma całego szeregu — kolejna
   oktawa dokłada detal i nie przeskalowuje progów z próby), sufity `pgOctavesFor` ponad mapy planety, obiekty
-  wchodzące bramką z rozmiaru w tekselach (`C.stN`), linie nie węższe niż ~1,3 teksela z zachowaniem energii. Zrobione:
+  wchodzące bramką z rozmiaru w tekselach (`C.stN`), linie nie węższe niż ~1,3 teksela. Zrobione:
   `volcanic`, `terran` / `ocean`, chmury.
 - Obiekty w komórkach (wulkany, kaldery, kratery) — pętla po 27 komórkach, każde miejsce dokłada własny profil
   gasnący w promieniu 1 komórki (`forSites`, wzór `pgCraterOctave`). „Hasz najbliższej komórki × profil odległości”
@@ -146,6 +147,37 @@ paths:
 - Zmiana `texture` mapy pogody = przepięcie trzech odbiorców (`bindWeather` w `planetGenNear.js`): chmury płaskie
   (`cloudTexture`), bryła (`cloudTexture`, `uCvWx`), powierzchnia (`cloudShadowTexture`, `uGnCloudVol2 / 3`).
 
+## Rzeki ze spływu wody i mozaika biomów (terran / ocean; opis, błędy po drodze i koszt: `docs/OPIS-generator-planet.md` § 10.10)
+
+- Rzeki to DRZEWO ze spływu po mapie wysokości planety (`planetGenDrainage.js`, czysty JS): `bakeSystem` rysuje pole
+  BEZ rzek w rozdzielczości siatki spływu, przejście `drain:<rodzaj>` (cel RG32F: wysokość, opad) idzie do odczytu
+  CPU (jeden na układ), `computeDrainage` daje teksturę RGBA8 — `baked.drainage` ({ texture, width, height, data,
+  stats, uniforms }). Rodzaj z rzekami: `drain(F)` w `SOLID_TYPES` + `drainage: true` w `uniformsFor`. Linie zera
+  szumu jako rzeki dają pętle i przecięcia — nie wracać.
+- Graf pola jest jeden na rodzaj, a tekstura spływu jest per planeta: przed KAŻDYM rysunkiem pola
+  `uDr: baker._bindDrain(rodzaj, baked.drainage)` (podstawia `graph.drain.value`). Bez spływu `uDr = [1, 1, 0, 0]` —
+  gałąź rzek wyłączona, uniformy skończone (próba, wejście spływu).
+- Kanały pola terran / ocean: y > 0 — woda słodka, y < 0 — minus wilgotność doliny (pas przy rzece); z > 0 — pasma
+  gór, z < 0 — minus pas starorzecza. Odbiorcy czytają `max(·, 0)` (maski, połysk); nowy odbiorca pola też.
+- Geometria rzeki (`riverNet`): węzeł = środek komórki + przesunięcie z haszu (≤ `DRAIN_JITTER` = 0,22 — przy
+  większym odcinki drzewa mogą się skrzyżować), bieg = łuk Béziera przez węzeł odbiorcy (`bezierNear`), meander =
+  sinusoida w poprzek łuku z zerem w węzłach. Szerokość z przepływu WŁASNEJ komórki (interpolacja do przepływu
+  odbiorcy pogrubia dopływy — gwiazdy w zbiegach). Dolina i pas zalewowy idą wzdłuż łuku bez meandra.
+- Sąsiedztwo 5 × 5 komórek daje pewne odległości do ~0,75 komórki — zasięgi doliny i pasa wilgotności są do tego
+  przycięte; szersze pasy wymagają większego sąsiedztwa.
+- Poziomy szczegółowości rzek: próg widoczności przepływu rośnie z tekselem celu (`lfVis`), linia węższa niż teksel
+  ma ~1,3 teksela i pokrycie (w / wt)^0,7, meandry i starorzecza gasną, gdy teksel ich nie rozdziela.
+- Spływ na CPU: odbiorca wybierany spośród sąsiadów zalanych WCZEŚNIEJ (bez pętli), ważony polem „ulubionego
+  kierunku” (gładkim — losowanie na komórkę daje zygzak); przekątna odpada, gdy druga przekątna kwadratu 2 × 2
+  niesie połączenie (bez przecięć — pilnuje test); komórka poniżej poziomu zalania dostaje koszt malejący
+  z głębokością (rzeka idzie osią zagłębienia); do wysokości TRASOWANIA dochodzi szum `wander` (nie do rzeźby).
+- Barwy lądu (`earthColor`) to KLASY pokrycia z ostrymi granicami: próg przez `edge(v)` (szerokość z `fwidth` celu
+  wypieku — bez schodków tekseli przy powiększeniu wycinka), szum granic (`nMo`, `nBog`) od ~6 tekseli okresu, szum
+  ziarna (`nD`, od 3 tekseli) tylko w fakturze, nie w progu. Wzory widoczne dopiero z bliska (wydmy, skupiska
+  drzew) gasną z tekselem celu (`st`). Klimat (`earthClimate`) jest wspólny dla barw i opadu spływu.
+- Dane dla gry: `riverMouths(baked.drainage)` — ujścia rzek od największej (miejsca pod miasta i porty; użytkownik
+  planuje desant na powierzchnię i proceduralne miasta), `drainReceiver` — bieg rzeki komórka po komórce.
+
 ## Zasady i pułapki
 
 - `PlanetGenBaker.compile` podbija `renderer.info.calls` z 0 na 1 przed kompilacją (three r183, pułapka 45 w regule
@@ -211,3 +243,6 @@ paths:
   `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,
   `--bez-raf 1` — start bez klatek rAF), demo: `?pogoda=0…12|off`, `?czas=`, `?mapaPogody=2048`; testy
   `node --test tests/planetGenNear.test.mjs`.
+- Spływ wody: testy `node --test tests/planetGenDrainage.test.mjs` (drzewo do morza, bez pętli i przecięć, wpięcie
+  w wypiek); kadry lądu z rzekami: `--kadry "lad:0.25,0.35,0.6,rzeka:0.262,0.335,3.0" --q "pogoda=off" --kod
+  "window.__zbl.S.cloudsOn=false"` (planeta `terran`, ziarno 21).

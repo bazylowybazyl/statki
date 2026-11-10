@@ -307,8 +307,8 @@ potrzebę (ostry obraz przy każdym zbliżeniu) załatwia WYPIEK W BIEGU SAMEGO 
 
 ### 10.4. Rodzaj `terran` z bliska
 
-- Pole: rzeki (linia zera szumu z pochodnymi — odległość = |szum| / |gradient|, stała szerokość; dolina wycięta w
-  rzeźbie, nie niżej niż 160 m n.p.m.) i jeziora w kanale cieczy; drobna plamistość lądu z oktaw rozdzielczości.
+- Pole: rzeki z drzewa spływu wody i jeziora w kanale cieczy (dolina wycięta w rzeźbie, nie niżej niż 160 m n.p.m.),
+  barwy lądu jako mozaika klas pokrycia — § 10.10 (dawne rzeki z linii zera szumu i jednolita plamistość zastąpione).
 - Morze w materiale: fale (normalna z czterech oktaw szumu), iskrzenie (wąski odblask na normalnej fal, płatami
   wiatru), przybój; szeroki odblask grafu gry słabnie z rozmiarem piksela (z bliska dawał mleczną taflę na cały kadr).
 - CHMURY (`planetGenCloudsNear.tsl.js`): okno mapy chmur w układzie kuli chmur; z bliska drobne oktawy i kłęby w
@@ -483,3 +483,68 @@ sekundę w kadrze „orbita”, 0,34 przy stojącej pogodzie) — bez skoków.
 
 Nie zrobione: pogoda dla pokładu chmur planet toksycznych (styl 1 — smugi stoją), cyklony nie powstają i nie giną
 (stały zestaw z ziarna), opady i burze z wyładowaniami, wpływ pogody na rozgrywkę.
+
+### 10.10. Ląd terrański z bliska: rzeki ze spływu wody i mozaika biomów (2026-11-10, demo)
+
+Powód: użytkownik pokazał zbliżenie niziny planety terrańskiej obok zdjęcia Ziemi z Google Earth — „nasza to po
+prostu plama”: rzeki jako zamknięte pętle krzyżujące się w „X”, ląd w jednej barwie z miękką plamistością. Wskazał
+brak biomów (las, łąka, pustynia, dolina rzeczna, góry). Zapowiedział też rozgrywkę na powierzchni: desant kapsuł
+z wojskiem i proceduralne miasta, o które toczy się walka.
+
+**Rzeki ze spływu** (`planetGenDrainage.js` — czysty JS, wynik `baked.drainage`):
+
+- Dawne rzeki były liniami zera gładkiego szumu: poziomice zamykają się w pętle, dwie skale szumu przecinają się,
+  szerokość jest stała, nie ma dopływów ani ujść. Poprawki tej metody nie dają drzewa rzek.
+- Wypiekacz rysuje pole planety bez rzek w rozdzielczości siatki spływu (szerokość mapy, najwyżej 2048), osobnym
+  przejściem (`drain:<rodzaj>`, cel RG32F) wysokość i opad (z tego samego klimatu co barwy — `earthClimate`),
+  odczytuje je raz na układ i na CPU liczy drzewo: zalewanie z kolejką priorytetową w kubełkach poziomów (każda
+  komórka lądu dostaje drogę do morza, zagłębienia wypełniają się do progu przelewu), wybór odbiorcy, przepływ
+  (opad × pole komórki sumowany w dół drzewa). Wynik to tekstura RGBA8 (kierunek do odbiorcy, przepływ w skali
+  logarytmicznej, głębokość wypełnienia), którą graf pola czyta przez `textureLoad`.
+- Graf pola (`riverNet`, `planetGenSolid.tsl.js`) dla każdego teksela przegląda 5 × 5 komórek siatki: bieg wody
+  komórki to łuk Béziera od połowy odcinka do odbiorcy, przez węzeł odbiorcy, do połowy jego odcinka (odległość
+  dokładna — pierwiastki równania 3. stopnia). Na łuk nałożony jest meander (sinusoida w poprzek, zero w węzłach).
+  Z odległości: woda (szerokość ∝ przepływ^0,4), dolina w rzeźbie, pas wilgotności / dolina zalewowa, a przy wielkich
+  rzekach pasy starorzeczy i jeziora-starorzecza.
+
+Błędy po drodze (każdy widoczny na zrzucie, poprawiony u źródła):
+
+- „odbiorca = komórka, z której zalewanie odkryło tę komórkę” daje na równym stoku proste, równoległe rzeki
+  w ośmiu kierunkach siatki, a w zagłębieniach promienie od progu przelewu („grzebienie”, gwiazdy);
+- losowanie kierunku osobno w każdej komórce (Rho8) usuwa równoległość, ale daje zygzak co komórkę — z daleka
+  ząbkowana linia; wybór ważony gładkim polem „ulubionego kierunku” (krata co 8 komórek) trzyma kierunek przez
+  dłuższy odcinek;
+- szerokość odcinka interpolowana do przepływu odbiorcy pogrubiała każdy dopływ przed ujściem do dużej rzeki —
+  w zbiegach powstawały gwiazdy;
+- odcinki proste między węzłami: z najbliższego zbliżenia rzeka była łamaną;
+- meander z szumu przesuwającego punkt: falowanie bez kształtu zakola; dolina idąca za każdym zakrętem wyglądała
+  w świetle jak zamek błyskawiczny (dolina idzie teraz wzdłuż łuku bez meandra i mieści pas meandrów);
+- pełna sieć strumieni rysowana z daleka wyglądała jak żyłki na całym lądzie — próg widoczności rośnie z tekselem
+  celu (stała gęstość linii na ekranie).
+
+**Mozaika biomów** (`earthColor`): klasy pokrycia zamiast jednego gradientu — pustynia (morza piasku z wydmami
+w dwóch skalach, kamienista hamada), step i łąka (płaty odcieni), las (granica z szumu płatów, skupiska drzew
+i luki na skraju, faktura koron, płaty drzewostanów), polany i torfowiska, dolina zalewowa (łąki zamiast lasu,
+pasy starorzeczy), tundra z oczkami, skała, śnieg, plaża i jasna płycizna. Wilgotność miejsca = klimat + dolina
+rzeki: w stepie wychodzą lasy wzdłuż rzek, w pustyni zielone wstęgi. Granice klas są progami z szerokością
+z pochodnej ekranu celu wypieku (`edge`), szum granic ma okres od ~6 tekseli: przy powiększeniu wycinka nie ma
+schodków tekseli. Błędy po drodze: szum ziarna w progu klasy dawał poszarpane krawędzie o schodkach tekseli; szum
+grzbietowy jako wzór polan wyglądał z daleka jak „robaczki” na całym lądzie; zależność lasu od wystawy stoku
+(nachylenie z drobnych oktaw) dawała kreski.
+
+Koszt (headless Chrome, RTX, planeta `terran` ziarno 21):
+
+| | po zmianie | przed (§ 10.5) |
+|---|---|---|
+| spływ wody, siatka 2048 × 1024 (raz na planetę z wodą): odczyt + CPU | ~0,29 s (CPU 0,28 s) | — |
+| wypiek planety 2048 × 1024, GPU | 5,6 ms | — |
+| okno 2048 × 1024: pole / dzień / razem | 2,9 / 1,8 / 4,8 ms GPU | razem z chmurami 5,3 ms |
+| okno 4096 × 2048: pole / dzień / razem | 11,3 / 7,1 / 18,5 ms GPU (w pasach) | razem z chmurami 21,6 ms |
+
+Pole kosztuje ~1,4 ms GPU na megapiksel (dawniej ~1,0), dzień ~0,87 (dawniej ~0,7); pole piecze się w większej
+liczbie pasów (`patchSteps`). Materiał klatki bez zmian — koszt klatki ten sam.
+
+Nie zrobione: faktura otwartego terenu z najbliższego zbliżenia (łąka i step są gładkie), jeziora w wypełnionych
+zagłębieniach (kanał A tekstury spływu niesie głębokość wypełnienia), delty i ujścia lejkowate, drobniejsza siatka
+spływu albo spływ liczony dla okna (z bliska komórka ma ~120 px), spływ w workerze, zatoki-ryfty (§ 10.7), miasta
+z danych spływu (`riverMouths` — ujścia rzek posortowane po przepływie).
