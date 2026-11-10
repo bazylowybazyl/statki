@@ -651,6 +651,7 @@ export function settleGarrisonLosses(war, shipyards, rng = Math.random, events =
         wreck.y = link.y;
         // promień (punkt postoju złomiarza) i pierwszeństwo gracza — jak w `bindGameWreck` (`scrapperFleets.js`)
         wreck.r = Math.max(0, Number(link.r) || 0);
+        wreck.work = Math.max(0, Number(link.work) || 0);
         wreck.readyAt = Number(link.readyAt) || 0;
         war.gameWrecks.set(link.gid, wreck);
       }

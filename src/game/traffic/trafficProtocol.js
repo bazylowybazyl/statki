@@ -413,10 +413,13 @@ export const BELT_MSG = Object.freeze({
  *     gid   — id wraku GRY (zgłoszony przez `wreck-report`) albo null (wrak wojny liczonej w tle).
  *
  * GRA → WORKER
- *   wreck-report { wrecks: [{ gid, x, y, classId, scale, towable, factionId, source }] }
+ *   wreck-report { wrecks: [{ gid, x, y, r, work, classId, scale, towable, factionId, source }] }
  *       wraki gry w bańce gracza do rejestru złomiarzy (`war.wrecks`): klasa okrętu wojennego (`WARSHIP_CLASSES`),
  *       `scale` — ułamek kadłuba klasy (0–1), `towable: false` — sam złom (odłam, cywil); `source` — 'course:N'
  *       albo 'entity:N' (okręt garnizonu / zapasu floty: wrak wiąże się ze stratą zapasu, bez drugiego wraku);
+ *       `r` — promień wraku (punkt postoju złomiarza), `work` — szacunek czasu cięcia [s] z wielkości wraku
+ *       (cięcie jako proces, reguła `zlomowanie`): postój złomiarza przy cięciu wraku gry trwa tyle, bez `work` —
+ *       stałe `cutSeconds`;
  *   wreck-gone { gids: [gid] }   wrak gry przepadł — złomiarz w drodze wraca pusty, wpis wypada z rejestru;
  *   wreck-hold { gids: [gid], on } gracz pracuje przy wraku (tnie, holuje, zbiera łup) — złomiarze go pomijają, holownik
  *       w drodze albo przy wraku wraca pusty (wrak zostaje w rejestrze); `on: false` — gracz go zostawił.
