@@ -28,16 +28,18 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `hullDesignBuild.worker.js` i klientem strony `hullDesignBuildClient.js`, `hullDesignHalf.js` (float16 bez three),
   `hullDesignPaint.js` (pędzel — § „Warstwa barw”), `hullDesignCargo.js` (ładunek statków cywilnych — § „Statki
   cywilne”), `freighters/` (presety frachtowców: zestaw `freighterKit.js`, rejestr `index.js`, plik na frachtowiec),
+  `workships/` (statki robocze złomowania: zestaw `workKit.js`, rejestr, plik na statek) i `hullDesignWorkRig.js`
+  (osprzęt roboczy dla gry) — § „Statki robocze (złomowanie)”,
   `warships/` (okręty z plików w tym samym formacie — superkapitał Hyperion, § „Superkapitał linii Atlasa”).
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól; mapy i passy barw), `hullDecalAtlas.js`.
 - Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami) z dwoma interfejsami: STOCZNIA
   (domyślny, przyjazny: `dema/kreator-kadluba-stocznia.js` — § „Stocznia”) i WARSZTAT (pełny panel narzędzi,
   `?ui=warsztat`), podgląd przeciągania `dema/kreator-kadluba-podglad.js`, testy `tests/hullDesign.test.mjs`,
   `tests/hullDesignBuild.test.mjs`, `tests/hullDesignPaint.test.mjs`,
-  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs`, `tests/hullDesignCargo.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
+  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs`, `tests/hullDesignCargo.test.mjs`, `tests/hullDesignWorkships.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
   podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`,
   sprawdzenie jednego presetu z podglądem CPU `scripts/kreator-sprawdz-preset.mjs`, zrzuty frachtowców
-  `scripts/webgpu/kreator-frachtowce.mjs`.
+  `scripts/webgpu/kreator-frachtowce.mjs`, zrzuty i plansza statków roboczych `scripts/webgpu/kreator-robocze.mjs`.
 
 ## Decyzje użytkownika
 
@@ -62,6 +64,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   frachtowce o RÓŻNYCH KSZTAŁTACH — „średnio mi się podobają te frachtowce z gry” (sprite'y ruchu mają jedną anatomię),
   więc presety ich nie odwzorowują; paleta „Frachtowiec”; ładunek jako warianty ładowni (stelaż kontenerów, zasobniki)
   i zbiorniki ładunku (walce, kule); zakres — demo kreatora (wpięcie do ruchu v2 to osobny etap).
+- Statki robocze złomowania (2026-11-10): złomowanie to proces — złapać i usztywnić wrak → wypompować paliwo →
+  zdemontować silniki, reaktor, bronie → pociąć kadłub; lasery tnące i dźwigi siedzą w ZWYKŁYCH GNIAZDACH BRONI, jeden
+  statek może mieć i lasery, i dźwigi (tnie, łapie i ładuje do własnej ładowni albo do statku obok); „od góry” (dźwig
+  + ładownia otwarta od góry) i „rampą / paszczą” to RÓŻNE sposoby ładowania; statki: złomiarz, paszcza, młyn (daje
+  surowiec „złom”, nie stal), rafineria przy młynie, frachtowiec z rampą jak w samolocie transportowym, dźwig
+  z damperami.
 - Superkapitał linii Atlasa (2026-10-27): „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa
   (czerń / szary)”; szkic Atlasa to „bardziej battleship — za krótki na superkapitała” — preset bierze ze szkicu UKŁAD
   sekcji, nie proporcje (dłuższy, smukły kadłub w limicie klasy VI).
@@ -99,7 +107,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Nowa barwa używana w passach map → przenieś ją do passu barw (jak okna: siła w mapie, barwa w ALB / EOUT), inaczej
   zmiana palety nie odświeży obrazu ścieżką barw.
 - Palety (`HD_PALETTES`): Terra Nova, frakcje gry (`HD_FACTION_PALETTE`: mars, inner, belt, outer, pirate), Atlas,
-  Atlas — czerń (`atlasDark`: grafit i szarość sprite'a Atlasa, emblemat `wing`), Cywilny, Frachtowiec. Żadna barwa poza oknami nie może zapalać `hullGlowMask` (test `hullDesignPaint`); `glowSafeLinear` ścisza
+  Atlas — czerń (`atlasDark`: grafit i szarość sprite'a Atlasa, emblemat `wing`), Cywilny, Frachtowiec, Roboczy (`work`). Żadna barwa poza oknami nie może zapalać `hullGlowMask` (test `hullDesignPaint`); `glowSafeLinear` ścisza
   niebieski do 0,38 przy czerwonym < 0,25 (zgodnie z maską). Emblemat nacji `HD_PALETTE_EMBLEM` (piraci — `raider`,
   bez czaszek), barwa `HD_PALETTE_EMBLEM_COLOR`; emblemat z wyboru palety ma `nation: true`.
 - Pędzel: `paint` na klocku (nie wycięciu) albo kasztelu — slot `HD_PAINT_SLOTS` albo '#rrggbb' (`normalizeHullPaint`);
@@ -312,7 +320,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   src/data/cargoBays.js). `cargo` v 2 — STELAŻ KONTENERÓW, v 3 — ZASOBNIKI n × n kontenerów (`n`, domyślnie 2); siatkę
   (`hullCargoGrid`: rama `frameDu` jd, odstęp 1 j., wyśrodkowana) liczy JS (receptura `cargo`, mocowania `cargoBays`
   z `containers`) i kompozytor tą samą formułą ze stałych `HD_CARGO` — zmiana rachunku = zmiana obu. `cargo_tank` (kod 15)
-  — zbiornik ŁADUNKU (v 0 walce w n rzędach, v 1 kule): w sieci tylko kabel pompy (`HD_POWER_LOAD`), bez roli w
+  — zbiornik ŁADUNKU (v 0 walce w n rzędach, v 1 kule; `cargo` v 4 — KOSZ, § „Statki robocze”): w sieci tylko kabel pompy (`HD_POWER_LOAD`), bez roli w
   `HD_SYSTEM_ROLE` — ładunek nie płynie do reaktora; `fuel_tank` to paliwo okrętu (rury do rdzenia, w grze wybuch
   z miejsca zbiornika), na ładunek się nie nadaje. Oba są w `HD_SYSTEM_TYPES` (lock w presetach).
 - ZAŁADUNEK `cargoLoad` (0–1) to WYGLĄD: `hullDesignLookKey` go pomija (ścieżka wyglądu bez workera), kompozytor czyta go
@@ -329,6 +337,47 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   rejestru. Frachtowiec spełnia te same warunki co każdy preset (testy na `HD_PRESET_KEYS`); jeden sprawdza
   `node scripts/kreator-sprawdz-preset.mjs --plik src/game/hullDesign/freighters/<klucz>.js --png .tmp/kreator/plan`
   (bez rejestru — błąd innego pliku go nie zatrzyma; podgląd CPU: poziomy, moduły, siatka kontenerów, trasy sieci).
+
+## Statki robocze (złomowanie)
+
+- Stan: sześć presetów w demie kreatora (grupa `work` — „Statki robocze” w `HD_PRESET_GROUPS`), niewpięte do gry.
+  RUCHOME części (wysięgnik, dźwig, szczęki, walce, klapa rampy, podpora dampera) NIE są kadłubem — to modele gry na
+  mocowaniach; kreator daje statyczny kadłub z GNIAZDAMI pod nie i wygląd „zamknięty”.
+- MODUŁY-GNIAZDA (`HD_MODULES`, kody 16–20, każdy z gałęzią w kompozytorze i kablem w `HD_POWER_LOAD`; bez `lock`):
+  `rig` — OBROTNICA (okrągła, r): v 0 wysięgnik z laserem tnącym, v 1 dźwig (pas ostrzegawczy, szersze jarzmo). To
+  ZWYKŁE GNIAZDO BRONI — wpis w `HD_MOUNT_MODULES` (główne, `size`, domyślnie M), więc liczy się do limitów mostka
+  i bilansu mocy, a w mocowaniach wychodzi jako `hardpoints` typu `main`; `maw` — PASZCZA (dwie zamknięte szczęki
+  z zębatą linią podziału, otwiera się ku +x modułu); `mill` — GARDZIEL MŁYNA (n walców tnących, osie w poprzek osi
+  x modułu; `B.z` = n); `ramp` — RAMPA (zawias po −x modułu, klapa opada ku +x; rufowa: rot π); `damper` — GNIAZDO
+  DAMPERA (schowana stopa, wysuw ku +x). Kierunek gniazda = oś +x modułu (`rot`), jak dysza SIDE.
+- KOSZ — `cargo` v 4: ładownia OTWARTA OD GÓRY (dźwig wkłada z góry), widać złom; zasyp rośnie z `cargoLoad` (wygląd —
+  jak stelaż), ładowność liczona jak stelaż (`hullCargoGrid`), `isTopCargo`. Wrota / klapa (v 0 / v 1) to ładownia
+  ZAMKNIĘTA — wnętrze, do którego wchodzi się paszczą albo rampą (komora paszczy, tunel rampowca). `v` modułu: 0–4.
+- Detal gniazd skaluje się z ROZMIAREM MODUŁU (zęby paszczy, tarcze walców, listwy rampy, kawałki złomu), nie tylko
+  z jd — gniazdo ma 20–300 j.; stały krok w jd dawał na dużym module jednolitą fakturę. Obrotnica stoi NA płycie:
+  dokłada `PN_SLAB` (pod modułem kompozytor nie rysuje grubej płyty — bez tego wyglądała jak wnęka).
+- KONTRAKT DLA GRY — `hullDesignWorkRig(field)` (`hullDesignWorkRig.js`): osprzęt w UŁAMKACH DŁUGOŚCI kadłuba L,
+  początek w środku sylwetki, x — dziób, y — prawa burta (w kreatorze y > 0) — ten sam układ co zestaw złomiarza NPC
+  gry. Pola (tylko te, które statek ma): `front`, `maw` + `mawR` + `mawLen`, `mounts` + `mountR` (obrotnice
+  wysięgników), `cranes` + `craneR`, `hold` + `holdSize` + `holdTop` (+ `holds`), `ramp` + `rampSize` + `rampDir`,
+  `mill` + `millSize` + `millRolls`, `dampers` + `damperDir`, `ports` (złącza przeładunku = pierścienie `well` v 0).
+  Liczy się z POZYCJI MODUŁÓW (nie z ręcznych liczb), wymiary w osiach OKRĘTU; długość z `hullSilhouetteBox`
+  (przejście pola ramy przez zero — `field.bounds` to pudło komórek siatki z zapasem teksela, ~0,2% za długie); oś
+  okrętu z lustrem to y = 0. Nowe gniazdo ruchomej części → typ modułu + pole w `hullDesignWorkRig` + test.
+- PRESETY: plik na statek w `workships/` (`export default { key, label, cls, make }`, rejestr `index.js` →
+  `HD_WORKSHIP_PRESETS` / `HD_WORKSHIP_CLASS`; `hullDesignPreset` bierze klasę presetów z plików z jednej mapy), zestaw
+  `workKit.js` (eksportuje dalej zestaw frachtowców; `workship()` — rola cywilna, paleta „Roboczy”; `boom`, `crane`,
+  `maw`, `mill`, `ramp`, `damper`, `bin`, `coupling`). Każdy o INNEJ sylwetce (test: proporcje i zestaw osprzętu
+  różne parami): złomiarz III — widły z zatoką roboczą, 4 wysięgniki, kosz, 2 dźwigi; paszcza IV — wieloryb, komora
+  na cały niszczyciel (Hasta); młyn III — lej z gardzielą, 2 kosze, złącza na burtach; rafineria IV — grzebień
+  z pomostami zbiorników i złączami po obu burtach; frachtowiec z rampą VI — tunel na cały pancernik (Bellator),
+  gondole na wysięgnikach poza rampą; dźwig IV — ponton z obrotnicą L i 4 damperami. Wymiary komór pilnuje test na
+  pudłach presetów TN — zmiana obrysu Hasty albo Bellatora może wymagać powiększenia komory.
+- Stocznia: karty „Osprzęt roboczy” w zakładce Systemy (`WORK` w `dema/kreator-kadluba-stocznia.js`), „Kosz na złom”
+  w Ładunku, paleta „Roboczy” w barwach cywilnych; Warsztat: warianty obrotnicy i liczba walców w `MOD_VARIANTS`.
+- Do decyzji użytkownika (tabele i lista: `docs/KREATOR-KADLUBA.md` § „Statki robocze złomowania”): czy obrotnica
+  zostaje gniazdem głównym (limity i pobór jak działo), kosz zamiast zasobników u młyna, złącze przeładunku jako
+  pierścień `well`, nazwy i klasy statków.
 
 ## Superkapitał linii Atlasa (Hyperion)
 
@@ -350,7 +399,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
   tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
 - Testy budowy i barw: `node --test tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`; statki cywilne
-  i ładunek: `node --test tests/hullDesignCargo.test.mjs`.
+  i ładunek: `node --test tests/hullDesignCargo.test.mjs`; statki robocze i kontrakt osprzętu:
+  `node --test tests/hullDesignWorkships.test.mjs`.
+- Statki robocze: jeden preset — `node scripts/kreator-sprawdz-preset.mjs --plik src/game/hullDesign/workships/<klucz>.js
+  --png .tmp/kreator/robocze`; zrzuty z kompozytora, zbliżenia gniazd, Stocznia i PLANSZA wszystkich w jednej skali
+  z tabelami osprzętu — `node scripts/webgpu/kreator-robocze.mjs --out .tmp/kreator/robocze [--tylko k1,k2]`
+  (`plansza.png`, `osprzet.json`, `raport.json`).
 - Frachtowce: jeden preset — `node scripts/kreator-sprawdz-preset.mjs <klucz> --png .tmp/kreator/plan` (bez przeglądarki;
   z podkładem: `--maska <png> --skala sx[,sy] --x0 <px> --y0 <px>`); zrzuty z kompozytora —
   `node scripts/webgpu/kreator-frachtowce.mjs --out .tmp/kreator/frachtowce [--tylko k1,k2] [--projekt plik.json]

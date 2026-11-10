@@ -646,6 +646,62 @@ Sprite'y frachtowców gry (dla porównania; skala profilu, pole alfy → klasa):
 299 × 89 II, dalekiego zasięgu 509 × 143 III, tankowiec 509 × 144 III, ciężki 1733 × 590 VI (783 tys. j²),
 megafrachtowiec 2712 × 898 (1,93 mln j²); mirror-IoU 0,99+ (ciężki 0,93), oś alfy 13–20 px nad środkiem płótna.
 
+## Statki robocze złomowania (2026-11-10)
+
+Decyzje użytkownika: złomowanie to proces (złapać i usztywnić wrak → wypompować paliwo → zdemontować silniki, reaktor,
+bronie → pociąć kadłub); lasery tnące i dźwigi siedzą w zwykłych gniazdach broni; „od góry” i „rampą / paszczą” to różne
+sposoby ładowania; sześć statków roboczych. Zakres — demo kreatora (bez wpięcia do gry); ruchome części to modele gry na
+mocowaniach, kreator daje kadłub z gniazdami i wygląd „zamknięty”. Stan i zasady: reguła `kreator-kadlubow`
+§ „Statki robocze (złomowanie)”.
+
+**Moduły-gniazda** (każdy z gałęzią w kompozytorze i kablem zasilania): `rig` obrotnica wysięgnika (v 0) / dźwigu (v 1)
+— zwykłe gniazdo główne, `maw` paszcza, `mill` gardziel młyna (n walców), `ramp` rampa, `damper` gniazdo dampera,
+`cargo` v 4 — kosz (ładownia otwarta od góry, widać złom). Paleta „Roboczy”: grafit, stal, żółte pasy ostrzegawcze.
+
+**Presety (sprawdzarka ✓, testy na wszystkich presetach zielone; wymiary sylwetki):**
+
+| preset | wymiary [j.] | pow. [j²] | klasa | gniazda i ładunek | sylwetka |
+|---|---|---|---|---|---|
+| Złomiarz | 412 × 168 | 58 317 | III | 4 wysięgniki, 2 dźwigi, kosz 92 × 72 j. (70 t) | widły: dwa ramiona z zatoką roboczą 124 × 72 j. |
+| Paszcza | 774 × 264 | 174 815 | IV | paszcza 140 × 180 j., komora 272 × 156 j. (510 t) | wieloryb: szeroka głowa ze szczękami, węższy tułów |
+| Młyn | 428 × 220 | 65 699 | III | gardziel 64 × 116 j. (3 walce), 2 kosze (160 t), 4 złącza | lej: dziób rozszerzony we wlot |
+| Rafineria | 614 × 260 | 121 508 | IV | 6 zbiorników (walce, kule — 201 t), 4 złącza | grzebień: kręgosłup z pomostami zbiorników |
+| Frachtowiec z rampą | 1112 × 624 | 539 360 | VI | rampa 124 × 288 j., tunel 640 × 392 j. (3182 t) | samolot transportowy: tunel, nos-elipsa, gondole na wysięgnikach |
+| Dźwig | 556 × 392 | 170 998 | IV | obrotnica L r = 80 j., 4 dampery, kosz 84 × 88 j. (72 t) | ponton-ośmiokąt z łapami w narożach |
+
+Komora Paszczy mieści kadłub niszczyciela Hasta (243 × 137 j.), tunel Frachtowca z rampą — pancernik Bellator
+(612 × 377 j.); pilnuje tego test na pudłach presetów TN.
+
+**Osprzęt dla gry** (`hullDesignWorkRig`, ułamki długości kadłuba L; x — dziób, y — prawa burta, początek w środku
+sylwetki; `front` = 0,5 u wszystkich; pełne tabele: `osprzet.json` ze skryptu `kreator-robocze.mjs`):
+
+| statek | L [j.] | osprzęt |
+|---|---|---|
+| Złomiarz | 412 | `mounts` [0,4126; ∓0,1408], [0,2379; ∓0,1456], `mountR` 0,0267 · `cranes` [0; ∓0,1675], `craneR` 0,0291 · `hold` [0; 0], `holdSize` [0,2233; 0,1748], od góry |
+| Paszcza | 774 | `maw` [0,3915; 0], `mawR` 0,1163, `mawLen` 0,1809 · `hold` [0,022; 0], `holdSize` [0,3514; 0,2016], zamknięta |
+| Młyn | 428 | `mill` [0,3972; 0], `millSize` [0,1495; 0,271], 3 walce · `holds` [0,1495; 0] i [−0,0561; 0], każda [0,1869; 0,215], od góry · `ports` [0,1028; ∓0,1472], [−0,0607; ∓0,1472] |
+| Rafineria | 614 | `ports` [0,0668; ∓0,202], [−0,145; ∓0,202] |
+| Frachtowiec z rampą | 1112 | `ramp` [−0,3921; 0], `rampSize` [0,1115; 0,259], `rampDir` [−1; 0] · `hold` [−0,0324; 0], `holdSize` [0,5755; 0,3525], zamknięta |
+| Dźwig | 556 | `cranes` [0,018; 0], `craneR` 0,1439 · `dampers` [0,3849; ∓0,2806], [−0,3489; ∓0,2806], wysuw na zewnątrz · `hold` [−0,2626; 0], `holdSize` [0,1511; 0,1583], od góry |
+
+Zrzuty: `node scripts/webgpu/kreator-robocze.mjs --out .tmp/kreator/robocze` — okręty, zbliżenia gniazd, Stocznia
+(grupa „Statki robocze”, 6 kart osprzętu), plansza w jednej skali; 0 pipeline'ów synchronicznych, 0 błędów strony.
+
+**Do decyzji użytkownika:**
+
+1. Obrotnica jako gniazdo GŁÓWNE (limity mostka, pobór jak typowe działo rozmiaru): tak rozumiana decyzja „w zwykłych
+   gniazdach broni”. Inna możliwość — własny typ gniazda „narzędziowe” z osobnym limitem i poborem.
+2. Ładownia otwarta od góry = nowy wariant `cargo` v 4 (kosz ze złomem); wrota i klapa zostają ładownią zamkniętą
+   (komora paszczy, tunel rampowca). Młyn ma kosze zamiast stelaża / zasobników kontenerów (zmielony złom to towar
+   sypki).
+3. Złącze przeładunku młyna i rafinerii to pierścień `well` v 0 przy burcie (bez własnego modułu); złącza obu statków
+   nie leżą w tych samych odstępach (różne długości) — do ustalenia przy ruchomym rękawie w grze.
+4. Klasy: złomiarz III, paszcza IV, młyn III, rafineria IV, rampowiec VI
+   (tunel na pancernik wymusza ponad 420 tys. j²), dźwig IV. Nazwy na burtach (KRUK 04, LEWIATAN, MIELCZ 2, HUTA 9,
+   TRAGARZ, ATLANT 1) są robocze.
+5. Paszcza i rampowiec nie mają własnych obrotnic (wrak wciągają wiązki albo wpychają holowniki / drony) — do
+   dołożenia jednym modułem, jeśli mają też ciąć.
+
 ## Superkapitał Hyperion — linia Atlasa (2026-10-27)
 
 Prośba użytkownika: „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa (czerń / szary)”; w trakcie
