@@ -110,6 +110,8 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     CanvasVFX: { spawnWeaponImpactFromPreset: () => {} },
     triggerMercAggro: () => {},
     markPlayerDamage: () => {},
+    // Warstwa dźwięku (hak trafienia wiązką `if (SND) soundSceneBeamHit(…)`) — w piaskownicy wyłączona.
+    SND: null,
     performance: { now: () => clock },
     CustomEvent: FakeCustomEvent,
     // Szyna strzałów (src/game/weaponShotBus.js) — ten sam wpis w logu co zdarzenie.
