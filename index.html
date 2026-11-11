@@ -34786,7 +34786,7 @@
         // lustra (`?szew=inline`, RW-11b): mostki po fazie begin migawki — niżej, przed updateHexShips3D
         if (!SZEW_LATE) {
           Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
-          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain, cull: _hexCullInfo });
         }
         // Widok klatki po stronie gry (RW-31): flaga pudła rysowania encji (model lotu, LOD dysz) i ciała do rysowania
         // zimnych wraków na belkach (budżet coldWreckSystem) — PO mostkach: nowe ciało dołącza do list mostków i modeli
@@ -34821,7 +34821,7 @@
           // Mostki: jeszcze na obiektach gry — na lustrach obraz różni się (światła okien / emitery w scenach wraków,
           // Stan RW-11b krok 2). AGENT: RW-11b — lista SEEN_COLD luster, gdy różnica zostanie znaleziona.
           Bridge3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam, visibility: bridgeModelVisibility });
-          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain });
+          BridgeFx3D.update(renderSeenCold, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, visibility: cloakLightGain, cull: _hexCullInfo });
           RenderWorld.setSource(_mirrorPlayers);
           updateHexShips3D(cam, renderMirror.lists[SNAP_LIST.RENDER], _hexCullInfo, renderMirror.lists[SNAP_LIST.COLD], _cloakMirrorState.frame);
           RenderWorld.setSource(null);

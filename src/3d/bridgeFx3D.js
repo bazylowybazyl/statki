@@ -56,6 +56,8 @@ import { SimClock, CLOCK_SIM } from '../game/simClock.js';
 import { Core3D } from './core3d.js';
 import { HullDamageMap } from './hullDamageMap.js';
 import { SparkSystem3D } from './sparkSystem3D.js';
+// Łuki i iskry przy ranach zasilanej części kadłuba (2026-11-11) — ta sama lista i opcje klatki, wołane na końcu update.
+import { PowerArcsFx3D } from './powerArcsFx3D.js';
 
 const WINDOW_Z = 12;               // FG: nad kadłubem, pod lampami pozycyjnymi (13)
 const WINDOW_RENDER_ORDER = 51;    // lampy pozycyjne 52, bronie od 55
@@ -178,6 +180,8 @@ export const BridgeFx3D = {
    */
   attach(scene, services = null) {
     if (services && services.weaponFx) this.weaponFx = services.weaponFx;
+    // łuki przy ranach zasilanych okrętów (powerArcsFx3D.js) — ta sama pula ARC / SPARK broni
+    PowerArcsFx3D.attach(services);
     if (this.scene === scene && this.mesh) return true;
     this.dispose();
     if (!scene) return false;
@@ -358,6 +362,10 @@ export const BridgeFx3D = {
     this.stats.vents = vents;
     this.stats.flashes += flashes;
     this.stats.arcs += arcs;
+    // Łuki i iskry przy ranach zasilanej części kadłuba (powerArcsFx3D.js): ta sama lista (strona — renderSeenCold,
+    // worker — SEEN_COLD: mgła wojny i soczewka skoku już odsiane) i opcje (dt — 0 w pauzie, zoom, poza renderu,
+    // maskowanie, `cull` — pudło kadru). Wołane stąd, żeby strona nie dokładała odwołań do renderu.
+    PowerArcsFx3D.update(entities, opts);
   },
 
   _roomFlash(x, y, col, S) {

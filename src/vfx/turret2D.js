@@ -16,6 +16,16 @@ import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
 // Lampki gotowości wież (2026-11-11): kod z pól broni i stanu zasilania okrętu — rekord niesie go do obrazu (pole `ready`).
 import { shipPowerOn } from '../game/shipPower.js';
 import { TURRET_LAMP, turretLampCode } from '../data/turretReadyLamp.js';
+// Zasilanie z siatki belek (src/game/hullPower.js): wieża w części kadłuba odciętej od komory reaktora — lampka zgaszona.
+import { hullPointPowered } from '../game/hullMounts.js';
+
+// Gniazdo z prądem z komory reaktora (byt bez kadłuba belkowego / rdzenia — true).
+function mountPowered(entity, hp) {
+  if (!hp || !entity?.beamHull) return true;
+  const sx = entity.__hardpointScaleX || entity.__hardpointScale || 1;
+  const sy = entity.__hardpointScaleY || entity.__hardpointScale || 1;
+  return hullPointPowered(entity, hp, (Number(hp.x) || 0) * sx, (Number(hp.y) || 0) * sy);
+}
 
 // Barwy odpowiadają materiałom Lambert z dawnego weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
@@ -700,7 +710,7 @@ function emitPlayerTurretList(list, prefix, aimAlpha, cdKind) {
       : cdKind === PLAYER_CD_SPECIAL ? Number(h.specialCd) || 0 : Number(h.missileCd) || 0;
     emitTurret(slot, prefix, i, def, info, hp.x ?? 0, hp.y ?? 0,
       mountedWeaponRenderAngle(entity, slot, aimAlpha), false,
-      playerTurretLampCode(entity, slot, left, powered, cdKind !== PLAYER_CD_MISSILE));
+      playerTurretLampCode(entity, slot, left, powered && mountPowered(entity, h), cdKind !== PLAYER_CD_MISSILE));
   }
 }
 
@@ -829,7 +839,7 @@ export const Turret2D = {
           w.hpOffset.y,
           w.visualAngle !== undefined ? w.visualAngle : shipAngle,
           true,
-          npcTurretLampCode(w, f.powered)
+          npcTurretLampCode(w, f.powered && mountPowered(entity, w.hpOffset))
         );
       }
       return;
@@ -866,7 +876,7 @@ export const Turret2D = {
         hp?.y ?? c?.offset?.y ?? 0,
         Number.isFinite(interpAngle) ? interpAngle : (c?.angle !== undefined ? c.angle : shipAngle),
         false,
-        playerTurretLampCode(entity, slot, Number(c?.cd) || 0, f.powered, false)
+        playerTurretLampCode(entity, slot, Number(c?.cd) || 0, f.powered && mountPowered(entity, slot?.hp), false)
       );
     }
 
