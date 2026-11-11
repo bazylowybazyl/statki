@@ -933,7 +933,10 @@ if (isWorker) {
           if (Number.isFinite(src.berthVersion)) dst.berthVersion = src.berthVersion;
           if (Number.isFinite(src.lampLevel)) dst.lampLevel = src.lampLevel;
           const db = dst.layout && dst.layout.berths;
-          if (db) for (let j = 0; j < db.length && j < src.berths.length; j++) { db[j].occupied = src.berths[j].occupied; db[j].reserved = src.berths[j].reserved; }
+          if (db) for (let j = 0; j < db.length && j < src.berths.length; j++) {
+            const sb = src.berths[j];
+            db[j].occupied = sb.occupied; db[j].reserved = sb.reserved; db[j].approachLight = sb.approachLight;
+          }
           if (src.poses) dst.poses = src.poses;
         }
       }

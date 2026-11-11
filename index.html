@@ -34310,7 +34310,7 @@
       // odpięcie stoją w pauzie i scenach fabuły; każdy ring, także poza kadrem i w podzielonym ekranie), lampki
       // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
       if (haloWorld) {
-        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, frameDt, ship, sun: SUN });
         // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): pozy obsługi i zegar zaworów tej klatki — także w intro i odprawie.
         hallSoundFrame(frameDt);
       }

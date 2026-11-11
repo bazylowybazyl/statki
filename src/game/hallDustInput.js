@@ -76,8 +76,11 @@ function num(v, d = 0) {
   return Number.isFinite(x) ? x : d;
 }
 
-/** Blok obsługi stanowisk capital (HALL_DUST_SERVICE) z mapy póz hali (berthId → poza K-7) albo zera. */
-export function packHallService(out, poses) {
+/**
+ * Blok obsługi stanowisk capital (HALL_DUST_SERVICE) z mapy póz hali (berthId → poza K-7) albo zera; `berths` —
+ * stanowiska hali w rejestrze (poziom reflektora podejścia `approachLight`; brak — NaN, pełna moc).
+ */
+export function packHallService(out, poses, berths = null) {
   const S = HALL_DUST_SERVICE;
   for (let i = 0; i < HALL_DUST_SERVICE_BERTHS; i++) {
     const o = HALL_DUST_IN.service + i * S.stride;
@@ -88,6 +91,15 @@ export function packHallService(out, poses) {
     out[o + S.vent] = p ? num(p.vent) : 0;
     out[o + S.occupied] = p && (num(p.clamp) > 0.5 || num(p.lock) > 0.5) ? 1 : 0;
     out[o + S.seat] = p ? num(p.seat) : 0;
+    let light = NaN;
+    if (berths) {
+      // stanowiska capital stoją na początku układu K-7 (createK7Layout) — zwykle trafienie od razu
+      const id = CAPITAL_IDS[i];
+      let b = i < berths.length ? berths[i] : null;
+      if (!b || b.id !== id) { b = null; for (let j = 0; j < berths.length; j++) if (berths[j] && berths[j].id === id) { b = berths[j]; break; } }
+      if (b && typeof b.approachLight === 'number') light = b.approachLight;
+    }
+    out[o + S.light] = light;
   }
   return out;
 }
@@ -185,7 +197,7 @@ export function packHallDustFrame(out, o = {}) {
   out[I.active] = 1;
   out[I.hall] = key;
   out[I.lamps] = num(bestOwner.lampLevel, 0.22);
-  packHallService(out, bestOwner.poses);
+  packHallService(out, bestOwner.poses, bestOwner.layout ? bestOwner.layout.berths : null);
   out[I.p0x] = _best.p0x; out[I.p0y] = _best.p0y;
   out[I.ax] = _best.ax; out[I.ay] = _best.ay;
   out[I.bx] = _best.bx; out[I.by] = _best.by;

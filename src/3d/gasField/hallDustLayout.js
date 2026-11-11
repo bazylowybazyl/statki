@@ -23,9 +23,10 @@ export const HALL_DUST_MAX_SHIPS = 16;
 export const HALL_DUST_SERVICE_BERTHS = 4;
 /**
  * Pola stanowiska w bloku obsługi: rygiel złączy, ramię paliwowe nad wlewem, przepływ, upust, zajęte (0 / 1),
- * wysięgnik ze złączką na wlewie (haloPortK7Layout.K7_SERVICE_KEYS).
+ * wysięgnik ze złączką na wlewie (haloPortK7Layout.K7_SERVICE_KEYS), poziom reflektora podejścia stanowiska
+ * (0…1 z automatu obsługi stanowisk — `approachLight`; NaN — pełna moc: haloPortK7Lights.k7ApproachSpotGain).
  */
-export const HALL_DUST_SERVICE = Object.freeze({ lock: 0, extension: 1, flow: 2, vent: 3, occupied: 4, seat: 5, stride: 6 });
+export const HALL_DUST_SERVICE = Object.freeze({ lock: 0, extension: 1, flow: 2, vent: 3, occupied: 4, seat: 5, light: 6, stride: 7 });
 
 /**
  * Maska OBRYSU kadłuba w rekordzie okrętu (src/game/hullFootprint.js — z żywych węzłów siatki belek): w × h
