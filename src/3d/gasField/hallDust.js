@@ -25,7 +25,7 @@ import { EngineFrame } from '../engineFrame.js';
 import { engineSmokeFlow } from '../../game/engineIgnition.js';
 import { fxNoise } from '../fx/noise.js';
 import { createK7Layout, k7ForceFieldList, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
-import { K7_BEACON, K7_BEACON_GRID, K7_BEACON_LOOK, k7BeaconLevel, k7LightRig } from '../haloRing/haloPortK7Lights.js';
+import { K7_BEACON, K7_BEACON_GRID, K7_BEACON_LOOK, k7ApproachSpotGain, k7BeaconLevel, k7LightRig } from '../haloRing/haloPortK7Lights.js';
 import {
   HALL_DUST_IN, HALL_DUST_MASK, HALL_DUST_SERVICE, HALL_DUST_SHIP, hallBodyFieldSpan, hallBodyUniforms, hallDustDomain,
   hallDomainDistance, rasterizeHallCells
@@ -179,6 +179,7 @@ class HallDustSystem {
     this.rig = null;
     this.gasSrc = null;
     this._beaconBerth = null;
+    this._spotBerth = null;
     this.layout = null;
     this.fields = [];          // pola siłowe bram (k7ForceFieldList — układ hali)
     this._fieldsOn = false;    // stan rastru (pola w przeszkodach) — HallDustTune.forceFields przebudowuje go w biegu
@@ -207,6 +208,7 @@ class HallDustSystem {
     this.gasSrc = createHallGasSources(layout, this.rig);
     const capIds = layout.berths.filter((b) => b.size === 'CAPITAL').map((b) => b.id);
     this._beaconBerth = this.rig.beacons.map((b) => (b.berthId ? capIds.indexOf(b.berthId) : -1));
+    this._spotBerth = this.rig.spots.map((s) => (s.berthId ? capIds.indexOf(s.berthId) : -1));
     this.sim = new GasField2D({
       nx: dom.nx, ny: dom.ny, h: dom.h, cellData: cells.data, noise3D: fxNoise.noise3D(),
       maskW: HALL_DUST_MASK.w, maskH: HALL_DUST_MASK.h
@@ -561,8 +563,12 @@ class HallDustSystem {
         L.color[0] * k, L.color[1] * k, L.color[2] * k, T.lampScatter);
     }
     const spotK = T.spotGain * (0.6 + (Number(IN[I.lamps]) || 0));
-    for (const s of this.rig.spots) {
-      const k = s.intensity * spotK;
+    const spots = this.rig.spots;
+    for (let si = 0; si < spots.length; si++) {
+      const s = spots[si];
+      // reflektor podejścia stanowiska: moc × poziom podejścia z bloku obsługi (ten sam mnożnik co pokład hali)
+      const sb = this._spotBerth[si];
+      const k = s.intensity * spotK * (sb >= 0 ? k7ApproachSpotGain(IN[I.service + sb * HALL_DUST_SERVICE.stride + HALL_DUST_SERVICE.light]) : 1);
       const dx = s.dir[0], dz = s.dir[2];
       // oś: hala (x, z) → gra (liniowo), scena = (x, −y gry); pion = wysokość sceny
       const gx = dx * ax + dz * bx;

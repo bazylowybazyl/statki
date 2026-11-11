@@ -294,6 +294,9 @@ const _qEnd = { x: 0, y: 0 };
 // Odrost: pozycja nowego węzła (układ ciała) i lista węzłów do odświeżenia mocowań.
 const _regrowPos = { x: 0, y: 0, z: 0 };
 const _regrowTouched = [];
+// Komórki związane (bindCell / boundCell): punkt w układzie ciała, wynik domyślny.
+const _bindLocal = { x: 0, y: 0 };
+const _boundCell = { entity: null, x: 0, y: 0, dx: 0, dy: 0, vx: 0, vy: 0, angle: 0 };
 
 // Klucz mapy ran (18-C): kolejny numer kadłuba, dziedziczony przez wraki i odłamy.
 let _nextDmgKey = 0;
@@ -1531,6 +1534,87 @@ export const HullBodies = {
     return out;
   },
 
+  /**
+   * WIĄZANIE punktu świata gry z KOMÓRKĄ kadłuba encji (najbliższy żywy węzeł, nie dalej niż `reach` komórek): `out`
+   * = { body, key, ix, iy, angle0 } albo null (bez kadłuba płaskiego, za daleko). Komórka (ix, iy) to tożsamość węzła —
+   * ta sama we wraku z tego kadłuba (convertToWreck przenosi ciało) i w odłamach rodu `key` (dmgKey); rzecz gry
+   * przypięta do kadłuba (zatoki kapsuł ratunkowych) jedzie z węzłem przez śmierć, wrak i rozpad (`boundCell`,
+   * `rebindCell`). `angle0` — kąt encji w chwili wiązania (obrót kadłuba od wiązania). Tylko odczyt.
+   */
+  bindCell(entity, wx, wy, reach = Infinity, out = {}) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || hull.solid3D || !hull.body || hull.body.dead) return null;
+    const body = hull.body, s = body.nodeStore;
+    const pose = entityPose(hull, _qPose);
+    const l = toLocal(hull, pose, wx, wy, _bindLocal);
+    const r = reach * body.cellSize;
+    let best = -1, bestD2 = r * r;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const dx = s.x[i] - l.x, dy = s.y[i] - l.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = i; }
+    }
+    if (best < 0) return null;
+    out.body = body;
+    out.key = Number(hull.dmgKey) || 0;
+    out.ix = s.ix[best];
+    out.iy = s.iy[best];
+    out.angle0 = Number(entity.angle) || 0;
+    return out;
+  },
+
+  /**
+   * Bieżąca poza komórki związanej `bindCell`: out.entity (encja z tym ciałem — statek, hulk mostka, wrak, odłam),
+   * out.x / y (węzeł w świecie gry przy pozie encji — ta sama co skóra), out.dx / dy (od kotwicy encji), out.vx / vy
+   * (ruch sztywny w tym punkcie: prędkość kotwicy + ω × r), out.angle (kąt encji). false — komórka nie jest już
+   * żywym węzłem tego ciała (zniszczona, odpadła z odłamem, ciało zwolnione albo zamrożone w zimnym wraku). Bez
+   * alokacji, tylko odczyt.
+   */
+  boundCell(bind, out = _boundCell) {
+    const body = bind?.body;
+    if (!body || body.dead) return false;
+    const hull = body.hull, e = hull ? hull.entity : null;
+    if (!hull || !e || hull.body !== body || hull.solid3D || e.beamHull !== hull) return false;
+    if (!bodyCellNode(body, bind.ix, bind.iy)) return false;
+    // węzeł w świecie jak nodeWorld (ciało płaskie), bez obiektów pośrednich: θ = −(kąt + obrót sprite'a)
+    const s = body.nodeStore;
+    const theta = -((Number(e.angle) || 0) + hullSpriteRotation(e));
+    const c = Math.cos(theta), sn = Math.sin(theta);
+    const lx = s.x[_bodyCellI] - anchorLocalX(hull), ly = s.y[_bodyCellI] - anchorLocalY(hull);
+    const ex = entityPosX(e), ey = entityPosY(e);
+    const dx = c * lx - sn * ly, dy = -(sn * lx + c * ly);
+    const om = Number(e.angVel) || 0;
+    out.entity = e;
+    out.x = ex + dx;
+    out.y = ey + dy;
+    out.dx = dx;
+    out.dy = dy;
+    out.vx = entityVelX(e) - om * dy;
+    out.vy = entityVelY(e) + om * dx;
+    out.angle = Number(e.angle) || 0;
+    return true;
+  },
+
+  /**
+   * Komórka związana trafiła do innego ciała tego samego rodu (odłam z rozpadu, wrak po detonacji) — szuka jej wśród
+   * encji `entities` (żywy węzeł o tych samych ix, iy w kadłubie o tym samym `dmgKey`) i przepina wiązanie. false —
+   * nie ma jej nigdzie (zniszczona). Tylko odczyt kadłubów.
+   */
+  rebindCell(bind, entities) {
+    if (!bind || !bind.key || !entities) return false;
+    for (let k = 0; k < entities.length; k++) {
+      const e = entities[k];
+      const hull = e?.beamHull;
+      if (!hull || hull.entity !== e || hull.solid3D || (Number(hull.dmgKey) || 0) !== bind.key) continue;
+      const body = hull.body;
+      if (!body || body.dead || body === bind.body || !bodyCellNode(body, bind.ix, bind.iy)) continue;
+      bind.body = body;
+      return true;
+    }
+    return false;
+  },
+
   /** Pozycja węzła w świecie gry (y w dół; bryła 3D — także z, wysokość). */
   nodeWorld(hull, i, out = _nodeWorld) {
     const body = hull.body, s = body.nodeStore;
@@ -2318,6 +2402,19 @@ function updateComPivot(hull) {
   const b = hull.body;
   hull.pivot.x = -b.latticeMin.x / hull.scale - hull.srcWidth * 0.5;
   hull.pivot.y = (b.latticeMin.y + hull.ny * b.cellSize) / hull.scale - hull.srcHeight * 0.5;
+}
+
+// Żywy węzeł komórki (ix, iy) ciała płaskiego → indeks w _bodyCellI; false — brak.
+let _bodyCellI = -1;
+function bodyCellNode(body, ix, iy) {
+  _bodyCellI = -1;
+  if (!body || body.dead) return false;
+  const d = body.dims;
+  if (!(ix >= 0 && iy >= 0 && ix < d.x && iy < d.y)) return false;
+  const i = D._latticeIndex(body).cells[ix + iy * d.x];
+  if (!(i >= 0) || body.nodeStore.active[i] !== 1) return false;
+  _bodyCellI = i;
+  return true;
 }
 
 function bodyHasCell(body, key) {

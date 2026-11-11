@@ -28,7 +28,10 @@ function assertMirror(m, w, ship, roof, msg) {
       const mh = me.halls[i];
       assert.ok(Object.is(mh.berthVersion, h.berthVersion), `${msg} ${e.key} hala ${i}: wersja`);
       assert.ok(Object.is(mh.lampLevel, typeof h.lampLevel === 'number' ? h.lampLevel : NaN), `${msg} ${e.key} hala ${i}: lampy`);
-      assert.deepEqual(mh.berths, h.layout.berths.map((b) => ({ id: b.id, occupied: b.occupied ?? null, reserved: b.reserved ?? null })));
+      // reflektor podejścia: stanowiska capital — poziom z automatu obsługi, reszta — NaN (pełna moc)
+      assert.deepEqual(mh.berths, h.layout.berths.map((b) => ({
+        id: b.id, occupied: b.occupied ?? null, reserved: b.reserved ?? null, approachLight: typeof b.approachLight === 'number' ? b.approachLight : NaN
+      })));
       assert.deepEqual([...mh.poses.keys()], [...h.poses.keys()], `${msg} ${e.key} hala ${i}: stanowiska póz`);
       for (const [id, p] of h.poses) {
         const mp = mh.poses.get(id);
@@ -56,6 +59,7 @@ test('blok ringów: lustro = świat ringów gry (zegar, stanowiska, lampy, pozy,
     const [id0, p0] = [...hall0.poses][0] || [];
     if (i === 3 && id0) { hall0.poses.set(id0, { ...p0, lock: 0.5, flow: 1, settle: true, owner: 'story' }); }
     if (i === 6 && id0) { hall0.layout.berths[0].occupied = 'player'; hall0.berthVersion++; }
+    if (i === 4) hall0.layout.berths[1].approachLight = 0.37;   // poziom reflektora podejścia w biegu (bez wersji)
     if (i === 8 && id0) hall0.poses.delete(id0);
     roof = i >= 5 && i < 9 ? { key: 'earth', hall: 0, cut: i === 6 ? undefined : 0.4, roofFade: 0.1 * i } : null;
     const ringShip = i === 10 ? null : ship;

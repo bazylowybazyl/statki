@@ -296,7 +296,8 @@ test('klej: czysty moduł, krok w świecie ringów gry (HaloRingWorld.frame) prz
   const pv = game.slice(game.indexOf('_portVisuals(e, dt, ship'), game.indexOf('_hullInHall(hull, inv)'));
   assert.ok(pv.indexOf('this._syncBerthLamps(') > 0 && pv.indexOf('this._syncBerthLamps(') < pv.indexOf('hall.update('), 'lampki przed rysowaniem hal');
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /haloWorld\.frame\(\{ nowMs: performance\.now\(\), gameDt: \(PAUSED \|\| StoryGame\.worldFrozen\) \? 0 : frameDt, ship, sun: SUN \}\);/);
+  // czas gry dla automatu, czas klatki dla poziomu reflektorów podejścia
+  assert.match(html, /haloWorld\.frame\(\{ nowMs: performance\.now\(\), gameDt: \(PAUSED \|\| StoryGame\.worldFrozen\) \? 0 : frameDt, frameDt, ship, sun: SUN \}\);/);
   assert.ok(html.indexOf('haloWorld.frame({') < html.indexOf('haloRings.update(frameDt, cam, {'), 'świat przed obrazem');
   assert.ok(html.indexOf('haloRings.update(frameDt, cam, {') < html.indexOf('packHallDustFrame(HallDust.input'), 'przed wejściem pyłu hal');
   const story = strip(readFileSync(new URL('../src/game/story/storyGame.js', import.meta.url), 'utf8'));

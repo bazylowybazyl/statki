@@ -154,12 +154,14 @@ export class HaloRingWorld {
   /**
    * Klatka gry (render(), przed obrazem ringów i wejściem pyłu hal): zegar migania świateł hal (zegar ściany —
    * jak dawniej), automat obsługi stanowisk w czasie gry (0 w pauzie i scenach fabuły) dla gracza, lampki
-   * z automatu, poziom lamp hal ze słońca gry.
-   * @param {{ nowMs: number, gameDt: number, ship: object|null, sun: {x:number,y:number}|null }} f
+   * z automatu, poziom lamp hal ze słońca gry, poziom reflektorów podejścia stanowisk (`berth.approachLight` —
+   * narasta / gaśnie w czasie klatki `frameDt`, jak miganie soczewek; brak — czas gry).
+   * @param {{ nowMs: number, gameDt: number, frameDt?: number, ship: object|null, sun: {x:number,y:number}|null }} f
    */
-  frame({ nowMs, gameDt = 0, ship = null, sun = null } = {}) {
+  frame({ nowMs, gameDt = 0, frameDt = NaN, ship = null, sun = null } = {}) {
     this.clock = k7BeaconClock(nowMs);
     const dt = Number.isFinite(gameDt) ? Math.max(0, gameDt) : 0;
+    const lightDt = Number.isFinite(frameDt) ? Math.max(0, frameDt) : dt;
     const alive = ship && !ship.dead && ship.pos;
     this._ships[0] = alive ? ship : null;
     for (let i = 0; i < this.entries.length; i++) {
@@ -167,8 +169,8 @@ export class HaloRingWorld {
       e.collider.setPlanet(e.planet);
       // Obsługa stanowisk capital w grze swobodnej (src/game/k7BerthService.js): gracz stoi na polu stanowiska —
       // zamki pola, ramiona i przewody paliwowe podpinają się, rusza — awaryjne odpięcie. Pozy fabuły
-      // (owner = 'story') nietknięte.
-      stepK7BerthService(e.service, dt, e.place, this._ships, 1);
+      // (owner = 'story') nietknięte. Reflektory podejścia: gracz w pasie stanowiska — reflektor rozjaśnia się.
+      stepK7BerthService(e.service, dt, e.place, this._ships, 1, undefined, lightDt);
       const halls = e.collider.registry.halls;
       this._updateSun(e, sun);
       for (let k = 0; k < halls.length; k++) {
