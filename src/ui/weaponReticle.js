@@ -22,6 +22,9 @@ import { FC_TURRET } from '../game/fireControl.js';
 const TAU = Math.PI * 2;
 const wrap = (a) => ((a + Math.PI) % TAU + TAU) % TAU - Math.PI;
 
+/** Promień pierścienia celownika [px przy skali 1] — na nim rysuje się też koło ładowania (cursorChargeRing.js). */
+export const RETICLE_RADIUS = 27;
+
 export const RETICLE_COLORS = Object.freeze({
   reload: '#ff4d5e',
   ready: '#52ff9a',
@@ -101,12 +104,12 @@ function fmt1(v) {
 
 /**
  * Celownik broni. `ring` / `n` — wieże grupy w ręku w kolejności orderRingTurrets.
- * opts: { scale, distance [j.], cold (PRZELOT — broń zimna), dim (MASKOWANIE), tag (napis pod spodem),
+ * opts: { scale, distance [j.], cold (broń zimna: postawa, hipercruise, warp), dim (MASKOWANIE), tag (napis pod spodem),
  *         tagColor, missiles: { ready, total, left } dla rakiet w ręku (bez wież) }
  */
 export function drawWeaponReticle(ctx, x, y, ring, n, opts) {
   const s = Math.max(0.6, Number(opts?.scale) || 1);
-  const R = 27 * s;
+  const R = RETICLE_RADIUS * s;
   ctx.save();
   ctx.lineCap = 'butt';
   if (opts?.dim) ctx.globalAlpha = 0.6;

@@ -5,6 +5,7 @@ paths:
   - "src/game/fireControl.js"
   - "src/game/weaponAim.js"
   - "src/ui/weaponReticle.js"
+  - "src/ui/cursorChargeRing.js"
   - "src/ui/turretPanel.js"
   - "src/ui/hitMarker.js"
   - "src/game/shipModes.js"
@@ -57,6 +58,12 @@ paths:
 ## Celownik, sylwetka okrętu i tryby okrętu pod ŚPM (2026-10-03)
 
 - JEDEN celownik broni (`src/ui/weaponReticle.js`, wzór World of Warships): pierścień wokół kursora, segment = wieża grupy w ręku, stan z `fireControl.turrets[grupa]` (`FC_TURRET`: przeładowanie czerwone wypełnia się zgodnie z zegarem, gotowa i wycelowana zielona, lufa dojeżdża — przygaszona zieleń, kursor poza łukiem — cienki szary, ładowanie przed strzałem — błękit, broń z postoju (`requiresStationary`, Mjolnir) przy okręcie w ruchu — cienki bursztyn `FC_TURRET.STILL` i napis „WYMAGA POSTOJU” (`env.stationary` — próg `isStationary` z `weaponCharge.js`), zniszczona — ciemna). Prawa połowa pierścienia = prawa burta od dziobu, lewa = lewa od rufy (`orderRingTurrets`). Obok liczba gotowych, odległość / czas do najbliższej / „POZA ŁUKIEM”; pod spodem tag trybu i postawy ognia. Dawne tryby SINGLE / MULTI / SUB / SELECT, koło celownika, namiar przytrzymaniem i namiar na podsystemy usunięte (decyzja użytkownika) — cele priorytetowe tylko T / U (T trzymane — malowanie). Stan wież liczy `stepFireControl` (bufor bez alokacji, `writeTurret`); nowa broń w ręku z innym stanem — nowy `FC_TURRET`, nie osobna ścieżka w HUD-zie.
+
+- KURSOR = CENTRALNE MIEJSCE INFORMACJI (decyzja użytkownika 2026-11-11: „informacje o warp (streszczone) przerzuć na kursor myszy — on jest centralnym miejscem wyświetlania informacji”; „ładowanie hipercruise'u też pokaż na myszce — ładujące się koło; jak się załaduje — animacja powiększenia, »skoku kompletności«”). Nowa informacja o stanie okrętu dla gracza — przy celowniku, nie ramka gdzieś na ekranie. Klej: `_drawCursorDriveInfo(cursor, scale, tagged)` w `index.html`, wołany z obu wariantów celownika (zwykły, torpedy / kopalnia).
+  - KOŁO ŁADOWANIA (`src/ui/cursorChargeRing.js`): ładowanie warpa (`warp.charge / chargeTime`, barwa lawendowa) i rozruch hipercruise'u (`hypercruiseSpoolProgress`, błękit) na pierścieniu celownika (`RETICLE_RADIUS`) — wypełnia się od góry zgodnie z zegarem, z białą główką. Start napędu (przejście ładowanie → `warp.state` / `hypercruise.state` 'active') = SKOK KOMPLETNOŚCI: biały błysk podskakuje o 0,24 promienia (0,16 s), koło w barwie napędu rośnie o 0,8 promienia i gaśnie (0,55 s); przerwane ładowanie gaśnie w czerwieni (0,3 s). Czas rzeczywisty jak znacznik trafienia; przerwa w krokach > 0,25 s (celownik schowany: RTS, koło trybów) kasuje przejście. Nastawy `CHARGE_RING_TUNE`.
+  - Broń zimna także w warpie (ładowanie, lot, rampa — `warp.isBusy()`, jak `env.canFire`): pierścień wież gaśnie do cienkiego toru, koło jedzie po nim.
+  - Streszczenie skoku pod celownikiem (pod tagiem, przy dolnej krawędzi — nad celownikiem) — reguła `warp`, „HUD WARPA PRZY KURSORZE”.
+  - Testy `tests/cursorDriveInfo.test.mjs`; w grze `node scripts/webgpu/kursor-naped-gra.mjs` (zrzuty kursora: kurs, połowa ładowania, lot, rozruch; zapis łuków skoku kompletności — promień, barwa, czas).
 
 - ZNACZNIK TRAFIENIA (2026-10-13, `src/ui/hitMarker.js`): cztery skośne kreski wokół krzyża celownika — tarcza (błękit), kadłub (ciepła biel), zniszczenie (czerwone, rozchodzą się); siła z obrażeń i serii. Notuje `applyDamageToNPC(…, byPlayer)` (5. argument): pociski (`b.source === ship`, bez CIWS), wiązki gracza 1, rakiety (`r.byPlayer`, też głowice Hydry); bez obrony punktowej, wraków i własnych (`friendly`, `playerOwned`). Nowa ścieżka obrażeń od broni gracza — ten sam argument. W grze: `lot-pocisku-gra.mjs --bron yamato --warianty '' --znacznik 1 --cel 2600`.
 

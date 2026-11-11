@@ -994,7 +994,8 @@
       buildShipModeWheelItems, modeWheelExtent, modeWheelScale
     } from "./src/ui/shipModeWheel.js";
     // Jeden celownik (pierścień wież) i sylwetka okrętu z wieżami nad szyną broni.
-    import { drawWeaponReticle, drawArcCompass, orderRingTurrets } from "./src/ui/weaponReticle.js";
+    import { drawWeaponReticle, drawArcCompass, orderRingTurrets, RETICLE_RADIUS } from "./src/ui/weaponReticle.js";
+    import { createChargeRing, stepChargeRing, drawChargeRing } from "./src/ui/cursorChargeRing.js";
     import { HIT_MARK, createHitMarker, noteHitMarker, hitStrength, hitMarkerActive, drawHitMarker } from "./src/ui/hitMarker.js";
     import { buildHullSilhouette, drawTurretPanel } from "./src/ui/turretPanel.js";
     import {
@@ -1706,7 +1707,7 @@
     // Księżyce z bryłą (Luna, księżyce Jowisza): miejsce i promień jak w obrazie — zwolnienie skoku przy mijanym księżycu.
     import { MOON_BODY_TUNES, moonGameNode, moonStartAngle, moonOrbitRadius, moonBodyRadius } from "./src/data/moonBodies.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue, chooseWarpJump, warpCourseInCone, warpChargeTurn } from "./src/game/warpCourse.js";
-    import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
+    import { drawWarpCourseHud, warpCursorLines, drawWarpCursorInfo } from "./src/ui/warpCourseOverlay.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
     import { restyleNavLights } from "./src/data/shipNavLights.js";
@@ -10902,6 +10903,9 @@
     const _reticleHud = { compassAlpha: 0, lastHand: null, handChangedAt: -1e9 };
     const _missileReticle = { ready: 0, total: 0, progress: 1, left: 0 };
     const _reticleOpts = { scale: 1, distance: NaN, cold: false, dim: false, tag: '', tagColor: '', missiles: null };
+    // Przy kursorze: koło ładowania warpa / rozruchu hipercruise'u i streszczenie stanu skoku (dawna ramka u góry ekranu).
+    const _cursorCharge = createChargeRing();
+    const _warpCursorText = { status: '', detail: '', color: '' };
     // Znacznik trafienia na celowniku (src/ui/hitMarker.js): trafienia ognia GRACZA 1 — tarcza / kadłub /
     // zniszczenie — notuje applyDamageToNPC (argument byPlayer: pociski, wiązki, rakiety; bez obrony punktowej).
     const playerHitMarker = createHitMarker();
@@ -35699,6 +35703,7 @@
           ctx.moveTo(cursor.x, cursor.y - g0); ctx.lineTo(cursor.x, cursor.y - g1);
           ctx.stroke();
           ctx.restore();
+          _drawCursorDriveInfo(cursor, scale, false);
           _drawPlayerHitMarker(cursor, scale);
           return;
         }
@@ -35707,7 +35712,9 @@
         opts.scale = scale;
         const mw = screenToWorld(cursor.x, cursor.y, camRef);
         opts.distance = Math.hypot(mw.x - ship.pos.x, mw.y - ship.pos.y);
-        opts.cold = !!stanceTune(shipModes).weaponsCold || hypercruiseBusy(hypercruise);
+        // broń zimna jak w kierowaniu ogniem (env.canFire): postawa, hipercruise, warp z ładowaniem i rampą wyjścia —
+        // pierścień wież gaśnie do cienkiego toru, a koło ładowania jedzie po nim
+        opts.cold = !!stanceTune(shipModes).weaponsCold || hypercruiseBusy(hypercruise) || warp.isBusy();
         opts.dim = !!ship.cloak && isCloakEngaged(ship.cloak);
         opts.missiles = null;
         _reticleTag(opts);
@@ -35725,6 +35732,7 @@
           if (total > 0) opts.missiles = _missileReticle;
         }
         drawWeaponReticle(ctx, cursor.x, cursor.y, _ringOrder, n, opts);
+        _drawCursorDriveInfo(cursor, scale, !!opts.tag);
         _drawPlayerHitMarker(cursor, scale);
       }
 
@@ -35769,6 +35777,8 @@
       }
 
       function drawWarpCourseOverlay(camRef, clipX, clipW) {
+        // Stan skoku pod celownikiem (_drawCursorDriveInfo) tylko w klatce, w której HUD kursu jest widoczny.
+        _warpCourseHud.visible = false;
         const leg = warpCourse.aim || travelNav.leg;
         // Skok bez kursu (cel w stożku, skok awaryjny — DECYZJE-2 T1) też ma punkt wyjścia: HUD na czas skoku (skok
         // z holownikiem — bez HUD-u, jak dawniej).
@@ -35804,10 +35814,39 @@
         // odcinek napędem ze studni startu do jej brzegu (BRIEF-studnie pkt 1 — skok rusza dopiero za brzegiem)
         s.wellExit = !!leg.wellExit;
         s.err = b.err; s.dist = b.dist; s.along = pass.along; s.miss = pass.miss;
-        s.exitIn = (pass.along - rampDist) / Math.max(1, getPlayerSpeed());
+        // Czas do wyjścia: w skoku z planu trasy (warp.route.exitT od kopu — ta sama symulacja co fizyka; z samej
+        // prędkości tuż po kopie wychodziły tysiące sekund, bo statek dopiero się rozpędza), bez planu — z prędkości.
+        const rt = warp.route;
+        const planExitIn = warp.state === 'active' && rt.active && Number.isFinite(rt.exitT) && Number.isFinite(warp.kickSim)
+          ? rt.exitT - (SimClock.sim - warp.kickSim) : NaN;
+        s.exitIn = Number.isFinite(planExitIn) ? planExitIn : (pass.along - rampDist) / Math.max(1, getPlayerSpeed());
         s.label = (warpCourse.aim && warpCourse.label) || travelNav.label;
         s.jumpKind = warpCourse.aim ? warpCourse.kind : '';
+        s.visible = true;
         drawWarpCourseHud(ctx, s);
+      }
+
+      // Kursor = centralne miejsce informacji (decyzja użytkownika 2026-11-11): koło ładowania warpa / rozruchu
+      // hipercruise'u na pierścieniu celownika (pełne → skok kompletności) i dwie linie stanu skoku pod nim. Ramki warpa
+      // u góry ekranu nie ma (src/ui/warpCourseOverlay.js). `tagged` — celownik ma napis pod spodem (linie idą niżej).
+      function _drawCursorDriveInfo(cursor, scale, tagged) {
+        const now = performance.now() / 1000;
+        let kind = '', state = '', p = 0;
+        if (warp.state === 'charging') {
+          kind = 'warp'; state = 'charge';
+          p = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 1;
+        } else if (warp.state === 'active') state = 'done';
+        else if (hypercruise.state === 'spool') { kind = 'hyper'; state = 'charge'; p = hypercruiseSpoolProgress(hypercruise); }
+        else if (hypercruise.state === 'active') state = 'done';
+        stepChargeRing(_cursorCharge, kind, state, p, now);
+        const R = RETICLE_RADIUS * scale;
+        drawChargeRing(ctx, cursor.x, cursor.y, R, _cursorCharge, now, scale);
+        if (!_warpCourseHud.visible) return;
+        warpCursorLines(_warpCourseHud, _warpCursorText);
+        let y = cursor.y + R + (tagged ? 35 : 20) * scale;
+        // przy dolnej krawędzi — nad celownikiem
+        if (y + 18 * scale > H - 6) y = cursor.y - R - 26 * scale;
+        drawWarpCursorInfo(ctx, cursor.x, y, _warpCursorText, scale);
       }
 
       function _drawReticle(mouseRef, camRef, shipRef, clipX, clipW) {
