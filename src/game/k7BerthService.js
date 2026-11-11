@@ -100,9 +100,6 @@ export function createK7BerthService(registry) {
         uMax = Math.max(u0, u1);
         laneHalf = lane.width * 0.5;
       }
-      // reflektor podejścia startuje w stanie stanowiska (zajęte — pełny, wolne — przygaszony)
-      const light = b.occupied || b.reserved ? 1 : 0;
-      b.approachLight = light;
       return {
         id: b.id,
         berth: b,
@@ -122,7 +119,9 @@ export function createK7BerthService(registry) {
         from: { clamp: 0, extension: 0, seat: 0, lock: 0, flow: 0, vent: 0 },
         lamp: K7_SERVICE_LAMP.free,
         approach: false,
-        light
+        // poziom reflektora podejścia: NaN — przed pierwszym krokiem (pierwszy krok bierze cel od razu: tło menu i
+        // ekran ładowania widzą pełną moc jak dawniej — `approachLight` niezapisane — a gra startuje w stanie stanowisk)
+        light: NaN
       };
     })
   }));
@@ -237,7 +236,8 @@ function stepApproachLight(rec, lightDt, T) {
   const target = T.approachLights === false ? 1
     : (rec.approach || (rec.state !== ST.idle) || b.occupied || b.reserved) ? 1 : 0;
   let v = rec.light;
-  if (v < target) v = Math.min(target, v + lightDt / Math.max(1e-3, T.lightRise));
+  if (!(v === v)) v = target;
+  else if (v < target) v = Math.min(target, v + lightDt / Math.max(1e-3, T.lightRise));
   else if (v > target) v = Math.max(target, v - lightDt / Math.max(1e-3, T.lightFall));
   rec.light = v;
   if (b.approachLight !== v) b.approachLight = v;

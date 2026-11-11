@@ -85,7 +85,9 @@ test('mnożnik reflektora: wolne — przygaszony, podejście — pełny, bez poz
 
 test('podejście pasem z bramy: reflektor stanowiska rośnie do pełnego, sąsiednie zostają przygaszone; postój i obsługa trzymają, odlot ku bramie — gaśnie', () => {
   const w = world();
-  // start: wszystkie wolne → przygaszone (poziom 0) w rejestrze od razu
+  // przed pierwszym krokiem bez poziomu (tło menu — pełna moc), pierwszy krok bierze cel od razu: wolne — przygaszone
+  for (const id of ['C-01', 'C-02', 'C-03', 'C-04']) assert.equal(berthOf(w, id).approachLight, undefined, id);
+  run(w, null, DT);
   for (const id of ['C-01', 'C-02', 'C-03', 'C-04']) assert.equal(berthOf(w, id).approachLight, 0, id);
   // Atlas za bramą G-01 na osi pasu C-01, dziobem ku stanowisku, 220 j/s ku ścianie tylnej
   const s = shipAt(w, C01.x, L.frontZ + 600, { vhz: -220 });
@@ -195,6 +197,7 @@ test('pył hal: blok obsługi niesie poziom reflektora (NaN bez rejestru), świa
   const owner = w.col.registry.halls[0];
   const IN = new Float64Array(HALL_DUST_IN.size);
   const S = HALL_DUST_SERVICE;
+  run(w, null, DT);   // pierwszy krok automatu: poziomy w rejestrze
   owner.layout.berths.find((b) => b.id === 'C-02').approachLight = 0.5;
   packHallService(IN, owner.poses, owner.layout.berths);
   const at = (i) => IN[HALL_DUST_IN.service + i * S.stride + S.light];
