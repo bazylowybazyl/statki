@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeDrainage, drainReceiver, riverMouths, drainFlowDecode, drainFlowEncode, DRAIN_CODE_STEP, DRAIN_JITTER
+  computeDrainage, drainReceiver, riverMouths, drainFlowDecode, drainFlowEncode, DRAIN_CODE_STEP, DRAIN_JITTER, DRAIN_SEA_K
 } from '../src/3d/planetGen/planetGenDrainage.js';
 
 // teren próbny: suma sinusów z haszem (deterministyczny, z zagłębieniami bez odpływu), ~45% lądu
@@ -68,11 +68,15 @@ test('spływ: przepływ rośnie w dół rzeki, a odcinki drzewa się nie krzyżu
       if (h[i] > 0) {
         const r = drainReceiver(d, x, y);
         const ri = r.y * W + r.x;
-        // kanał B = przepływ odbiorcy (ląd) i nie mniejszy niż własny (z dokładnością kodowania)
-        if (h[ri] > 0) {
-          assert.equal(d.data[i * 4 + 2], d.data[ri * 4 + 1]);
-          assert.ok(d.data[ri * 4 + 1] >= d.data[i * 4 + 1]);
-        }
+        // przepływ odbiorcy (ląd) nie mniejszy niż własny (z dokładnością kodowania)
+        if (h[ri] > 0) assert.ok(d.data[ri * 4 + 1] >= d.data[i * 4 + 1]);
+        // kanał B = odległość od morza: ląd > 0, komórka z odbiorcą-morzem = 1 komórka, sąsiedzi różnią się o ≤ 1
+        const b = d.data[i * 4 + 2];
+        assert.ok(b >= DRAIN_SEA_K && b % DRAIN_SEA_K === 0, `odległość od morza ${b}`);
+        if (!(h[ri] > 0)) assert.equal(b, DRAIN_SEA_K);
+        const bx = d.data[(y * W + ((x + 1) % W)) * 4 + 2];
+        if (h[y * W + ((x + 1) % W)] > 0) assert.ok(Math.abs(bx - b) <= DRAIN_SEA_K);
+        else assert.equal(bx, 0);
       }
       // kwadrat 2 × 2 o rogu (x, y): przekątna „/” to (x, y) ↔ (x + 1, y + 1), „\” to (x + 1, y) ↔ (x, y + 1)
       const up = code(x, y) === 9 || code(x + 1, y + 1) === 1;        // (+1, +1) = kod 9, (−1, −1) = kod 1
@@ -160,4 +164,29 @@ test('spływ w wypieku: graf pola czyta teksturę spływu, przejście wejścia s
   assert.equal(baker.graph('field:terran').drain.value, tex);
   // szerokości rzek: rosną z przepływem, w granicach pewnych odległości sąsiedztwa 5 × 5
   assert.ok(RIVER_FLOW_MIN > 1 && RIVER_W0 < RIVER_W_MAX && RIVER_W_MAX <= 0.25);
+});
+
+// ── Spójność między poziomami zbliżenia (strażniki źródeł — obraz sprawdza seria zrzutów jednego miejsca) ─────────
+const { readFileSync } = await import('node:fs');
+const src = (p) => readFileSync(new URL(`../src/3d/planetGen/${p}`, import.meta.url), 'utf8');
+
+test('spójność zbliżeń: brzeg bez detalu na płaskim, skupiska drzew o średniej zero, łuk rzeki przy ujściu', () => {
+  // brzeg morza: detal wysokości tylko na stromym brzegu (na płaskiej nizinie wybijał kałuże z pianą, inne na
+  // każdym poziomie zbliżenia) — w obu materiałach powierzchni
+  for (const f of ['planetGenSurface.tsl.js', 'planetGenSurfaceNear.tsl.js']) {
+    const s = src(f);
+    assert.match(s, /dH\.mul\(coastK\)/, `${f}: detal w progu morza bramkowany nachyleniem`);
+    assert.doesNotMatch(s, /const hC = \w+(\.x)?\.add\(dH\)\.toVar\(\)/, `${f}: sam detal w progu morza`);
+    assert.match(s, /skyFill/, `${f}: światło nieba na stokach w cieniu`);
+  }
+  const solid = src('planetGenSolid.tsl.js');
+  // skupiska drzew przesuwają granicę lasu w obie strony: stała = średnia odległość komórek (0,516 ± 0,01)
+  const cl = solid.match(/const clump = float\((0\.\d+)\)\.sub\(cA\.x\)[\s\S]*?float\((0\.\d+)\)\.sub\(cB\.x\)/);
+  assert.ok(cl, 'człon skupisk drzew');
+  for (const v of [Number(cl[1]), Number(cl[2])]) assert.ok(Math.abs(v - 0.516) < 0.01, `stała skupisk ${v}`);
+  // ujście (B = C): zerowa styczna zastąpiona cięciwą — inaczej „odległość 0” w całym sąsiedztwie (prostokąt wody)
+  assert.match(solid, /const chord = C\.sub\(A\)/);
+  assert.match(solid, /mix\(chord, tan0, step\(/);
+  // barwy lądu bez członów zależnych od skali teksela w progu lasu (krzywizna)
+  assert.doesNotMatch(solid, /const Mv = [^;]*curv/);
 });

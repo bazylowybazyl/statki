@@ -548,3 +548,143 @@ Nie zrobione: faktura otwartego terenu z najbliższego zbliżenia (łąka i step
 zagłębieniach (kanał A tekstury spływu niesie głębokość wypełnienia), delty i ujścia lejkowate, drobniejsza siatka
 spływu albo spływ liczony dla okna (z bliska komórka ma ~120 px), spływ w workerze, zatoki-ryfty (§ 10.7), miasta
 z danych spływu (`riverMouths` — ujścia rzek posortowane po przepływie).
+
+### 10.11. Spójność między poziomami zbliżenia i pasma gór ze śniegiem (2026-11-10, demo)
+
+Powód: użytkownik przysłał sześć zrzutów jednego obszaru w różnych zbliżeniach — „nie podoba mi się, że podczas
+zoomowania tak mocno się wszystko zmienia” — i poprosił o „góry ze śnieżnobiałymi szczytami”.
+
+Co zmieniało się ze zbliżeniem i dlaczego:
+
+- **Kałuże z pianą na nizinach („konfetti”) i ląd dziurawy jak ser z daleka.** Oba materiały powierzchni liczyły
+  brzeg morza z wysokości mapy PLUS detalu wysokości dokładanego co klatkę. Na płaskiej nizinie (wysokość bliska zera
+  na dużym obszarze) detal wybijał w lądzie kałuże, każdą z pianą przyboju — duże z daleka (niskie oktawy detalu),
+  drobne z bliska. Detal przesuwa teraz linię brzegu tylko na stromym brzegu (`coastK` z nachylenia mapy), piana
+  tylko do 30 m głębokości.
+- **Prostokąt wody i doliny zalewowej przy ujściu rzeki.** Łuk Béziera odcinka z odbiorcą-morzem ma B = C, więc
+  styczna na końcu łuku jest zerowa; odległość liczona ze stycznej wychodziła 0 w całym obszarze za końcem łuku,
+  a granice obszaru wyznaczało sąsiedztwo 5 × 5 komórek. Zerową styczną zastępuje cięciwa (`bezierNear`).
+- **Rzeki: z daleka jasnozielone pasy, z bliska niebieskie linie.** Pas zalewowy był poszerzany do teksela celu
+  i z daleka zastępował rzekę jasnym pasem; woda węższa niż teksel prawie znikała, a połysk tafli (pełny z daleka)
+  ją wybielał. Teraz: pas zalewowy tylko przy dużych rzekach na płaskim i tylko gdy cel go rozdziela, pokrycie
+  wody (w / wt)^0,5, połysk wody słodkiej × 0,3.
+- **Rzeki z daleka jak ścieżki obwodu drukowanego** (proste odcinki po osiach i przekątnych siatki). Dwie długie
+  fale odkształcenia biegu (okres ~6 i ~2,5 komórki) na każdym poziomie; przy morzu gasną (kanał B siatki spływu =
+  odległość od morza, czytany dwuliniowo), żeby ujście trafiało w brzeg. Krata pola kierunku spływu co 5 komórek.
+- **Łąki rosnące przy zbliżaniu.** Człon skupisk drzew w progu lasu miał średnią ujemną (stała 0,42 zamiast średniej
+  odległości komórek 0,516) i włączał się dopiero z bliska; krzywizna w progu lasu zależała od skali teksela.
+- **Beżowe równiny przy morzu.** Plaża była progiem samej wysokości; teraz pas stałej szerokości z odległości od
+  brzegu ≈ |wysokość| / nachylenie.
+
+Sprawdzanie: seria zrzutów JEDNEGO miejsca w kilku odległościach kamery (narzędzie robocze
+`.tmp/planeta-zblizenie/seria.mjs` — cel: bohater, największe ujście rzeki, najwyższe góry z odczytu mapy rzeźby).
+
+**Góry.** Pomiar mapy rzeźby planety dema (ziarno 21): 83% lądu poniżej 1 km, najwyższy szczyt 3,8 km przy
+`mountainKm` = 7 — pasma były tylko na zbieżnych granicach płyt, a iloczyn pasmo × grzbiet rzadko dochodził do
+połowy wysokości. Zmiany w `earthField`:
+
+- łańcuchy śródlądowe (`rangeN`: grzbiety szumu niskiej częstości — długie i wąskie) obok pasm na granicach płyt;
+- częstość grzbietów × 12 (`EARTH_RIDGE_FREQ`): przy częstości z opisu planety pierwsza oktawa szumu grzbietowego
+  była kopułą szeroką na ~20° — „pasmo” wychodziło płaskowyżem w całości nad linią śniegu (biała plama z szarą
+  obwódką); przy × 3,5 grzbiet miał wciąż ~570 km i stoki ~5%;
+- profil: 12% przedgórza + grzbiet² × 1,35 (wąskie szczyty, głębokie doliny), dno morza po staremu (łuki wysp).
+
+Po zmianie: 77% lądu poniżej 1 km, 18% w pasie 1–2 km, 3,8% w 2–3 km, 1,1% w 3–4 km, 0,3% powyżej 4 km, szczyty
+do 5,5 km. Barwy: spadek temperatury 0,16 / km (dawniej 0,10 — granica lasu i linia śniegu wypadały za wysoko),
+piętra las → hale → skała i piarg → śnieg, śnieg z ostrą linią w górach i bez śniegu na ścianach o nachyleniu
+ponad ~30%. W materiałach (planety z wodą): przesadzenie normalnych z nasyceniem na stromym, cień terenu × 2,6
+(dawniej × 5 — zalewał doliny), światło nieba na stokach odwróconych od słońca (graf gry nie ma światła otoczenia —
+ściany w cieniu były czarne i w śniegu wyglądały jak dziury); albedo śniegu × 0,88, żeby nie wchodził w bloom.
+
+Koszt (5120 × 1440): klatka 3,09 ms (przed 3,06 — bez zmiany), okno 4096 × 2048 19,3 ms GPU w pasach (przed 18,5),
+spływ wody ~0,4 s CPU na planetę (przed 0,28 s; więcej gór i nowa mapa odległości od morza).
+
+Nie zrobione: pasmo plaży ma szerokość ~2 tekseli celu na każdym poziomie (z bliska cienka obwódka brzegu), drobne
+wysepki i zatoczki nadal dochodzą z bliska z kolejnych oktaw kształtu kontynentów, lodowce w dolinach, jeziora
+górskie; wygląd gór na pozostałych rodzajach planet bez zmian.
+
+### 10.12. Rzeka nizinna pod wzorzec ze zdjęcia satelitarnego (2026-11-10, demo)
+
+Powód: po § 10.11 użytkownik zgłosił regres rzek („jasnozielone to, co jest teraz; ciemniejsze to, co było
+wcześniej”) i przypomniał wzorzec — zdjęcie rzeki nizinnej z Google Earth: ciemne koryto z ciasnymi zakolami, jasne
+łachy po wewnętrznej stronie zakoli, dolina zalewowa soczyście zielona z łukami dawnych koryt, jasne tarasy na jej
+brzegu, ciemny las z beżowymi, rozgałęzionymi polanami.
+
+Co było źle po § 10.11: dolina zalewowa jako blady, równy pas (wyglądała jak pobocze), starorzecza jako niebieskie
+„strzałki”, kropki pasa zalewowego wzdłuż strumyków (szum DODANY do progu wilgotności), rzeźba dolin spłaszczona
+(nasycenie normalnych od zera i światło nieba dopłacane także płaskiemu gruntowi przy niskim słońcu).
+
+Zmiany:
+
+- **Meander z szerokości koryta**: długość fali ≈ 12 szerokości — liczba półfal na łuku z szerokości (wielka rzeka:
+  jedno zakole na łuk, strumyk do czterech), amplituda do ~⅓ długości fali (do 0,42 komórki), koryto węższe
+  (`RIVER_W_MAX` 0,12). Stała liczba półfal dawała wielkiej rzece zęby zamka błyskawicznego.
+- **Dno doliny** (`riverNet`): łachy — piasek po wewnętrznej stronie zakola tuż przy korycie; łuki dawnych koryt —
+  pasy w stałej odległości od koryta (od najbliższego odcinka wielkiej rzeki). Kanał z pola: −0,49 · pasy
+  (0…−0,49) albo −(0,5 + 0,5 · łacha). Starorzecza jako cienkie łuki wody usunięte (wychodziły jasnymi kreskami
+  bez kształtu). Łachy, pasy i tarasy tylko gdy teksel celu je rozdziela (inaczej „koraliki” wzdłuż rzeki).
+- **Barwy**: dolina zalewowa = soczysta zieleń łęgów z pasami, brzeg pasa poszarpany szumem; tarasy — jasne płaty
+  na zewnętrznym brzegu; woda ciemna; polany = beżowe pasma wzdłuż drobnych cieków (rozgałęziają się jak sieć
+  rzeczna) + drobne płaty na grzbietach szumu, całe okolice bez polan.
+- **Plaża tylko przy wodzie** (w promieniu 3 tekseli punkt poniżej poziomu morza) — sam próg wysokości rysował
+  jasne kreski-poziomice na niskich pagórkach przy ujściach.
+- **Materiały**: nasycenie przesadzenia normalnych dopiero powyżej ~10% nachylenia (doliny niziny z pełnym
+  cieniowaniem), światło nieba tylko tam, gdzie jest ciemniej niż na płaskim gruncie, cień terenu × 3,6.
+
+Nie zrobione: dolina ma szerokość ograniczoną sąsiedztwem 5 × 5 komórek (do ~0,75 komórki od osi — we wzorcu jest
+szersza względem koryta), zakola są sinusoidą (bez pętli-podków i odciętych starorzeczy), dopływy uchodzą bez delt.
+
+Koszt po zmianie (5120 × 1440): okno 4096 × 2048 19,2 ms GPU w pasach (pole 12,0, dzień 7,1), spływ wody ~0,36 s CPU.
+
+### 10.13. Mapa terenu — trzeci poziom szczegółowości (2026-11-11, prototyp, demo)
+
+Powód: po § 10.12 użytkownik wyjaśnił, o co chodzi od początku — nie o samą rzekę, tylko o cały krajobraz wokół niej
+(paleta, teren), bo chce ostrzeliwać miasta z orbity i lądować jednostkami (minigra RTS o przejmowanie miast), a wtedy
+wokół miasta ma być widać teren jak na zdjęciu satelitarnym; biom miejsca ma wyznaczać resztę (rzeka, drzewa, plaże,
+meandry; pustynia; góry). Zapytał, czy to w ogóle da się zrobić.
+
+Dlaczego strojenie planety tego nie da: zdjęcie wzorca pokazuje ~30 km terenu, najbliższe zbliżenie planety ~770 km
+na monitorze użytkownika, a najdrobniejsza dana planety (komórka sieci rzecznej) to ~17 km — całe zdjęcie mieści się
+w niecałych dwóch komórkach. Rzeka szerokości 100 m ma na planecie mniej niż piksel.
+
+Rozwiązanie: **mapa terenu** (`planetGenTerrainMap.js`, czysty JS) — wycinek kilkudziesięciu kilometrów generowany na
+żądanie dla jednego miejsca, teksel ~20 m. Planeta ma mówić, co tam jest (biom, rzeka, brzeg); mapa buduje krajobraz
+w swojej skali. Prototyp: jeden biom, „tajga z rzeką nizinną”, bez połączenia z planetą (miejsce = ziarno).
+
+- **Rzeka = symulacja wędrówki koryta** (model Howarda–Knutsona w postaci z meanderpy): prędkość przesuwania brzegu
+  z krzywizny odcinka i ważonej krzywizny w górę rzeki, odcięcia zakoli. Koryto co kilka kroków odciska się
+  w rastrze „kiedy ostatnio płynęła tu rzeka” — z niego wychodzą łachy (teren świeżo opuszczony), łuki dawnych koryt
+  (pasy równego wieku), zasięg doliny o nieregularnym brzegu, sukcesja roślin od piasku do lasu i starorzecza. To,
+  czego na planecie nie dało się narysować wzorem (§ 10.12: „zakola są falą, nie pętlami”), tu wynika z symulacji.
+- **Cieki i torfowiska**: spływ wody po rzeźbie (`computeDrainage` w trybie mapy lokalnej: `wrapX: false`,
+  `rowWeight: false`, `keep: true`), wysokość nad najbliższym ciekiem → torfowiska na płaskim i wąskie jasne pasma
+  wzdłuż części strumyków, wyspy drzew w nieregularnych komórkach („plaster miodu” ze zdjęcia), ciemny łęg wzdłuż
+  większych strumieni.
+- **Barwy**: paleta z próbek zdjęć (kwantyzacja wzorca: las `#2a3f3e`–`#344843`, torfowisko `#77805f`; mapa po
+  dostrojeniu: las `#263c38`–`#2f443f`, torfowisko `#677359`), cieniowanie rzeźby i wysokości koron (skraj lasu).
+- **Warstwy wyniku**: barwa, wysokość, pokrycie terenu w klasach (woda, piasek, łąka, zarośla, las, torfowisko — pod
+  rozgrywkę: przejezdność, osłona), oś rzeki.
+
+Błędy po drodze: zaburzenie startowe osi mniejsze niż szerokość koryta zostawiało górny odcinek rzeki prosty (zakola
+rosną, wędrując w dół); piasek łach obrysowywał rzekę z obu stron (teren pod korytem z ostatnich kroków to brzeg, nie
+łacha); wyspy drzew jako równe kółka w kracie; czarne kreski każdego strumyka; surowa wysokość nad ciekiem i surowa
+„wielkość cieku” dawały torfowiska i łęgi o schodkowych brzegach (wygładzone rastry); słabe, szerokie pasmo wilgoci
+wzdłuż strumyków dawało wszędzie plamy zarośli we wzór maskujący (pasmo wąskie i pełne, tylko przy części strumyków).
+
+Czas (Node, jeden wątek): 1024 × 1024 (20 km) ~2,3 s, 2048 × 2048 (40 km) ~6,3 s (symulacja rzeki 2,7 s, spływ 1,3 s,
+barwy 1,2 s); w demie liczy worker. Nie mierzone na słabszym sprzęcie.
+
+Różnice wobec wzorca (stan prototypu): las bez faktury koron (miękkie plamy — teksel 20 m), brzegi torfowisk za
+gładkie i bez zielonej otoczki przejścia, dolina rzeki zbyt jednolicie zielona („malowana”), brak małych krętych
+strumieni z własnymi zakolami, starorzecza tylko jako ciemne łuki.
+
+Nie zrobione (kolejne kroki): połączenie z planetą (biom, kierunek i wielkość rzeki, brzeg morza z danych miejsca),
+pozostałe biomy (pustynia, góry, wybrzeże, step), miasto na mapie, materiał TSL i widok w grze (celownik ostrzału,
+mapa desantu), drobniejszy teksel albo tekstury detalu, ślady ostrzału.
+
+Narzędzia: demo `dema/mapa-terenu.html` (`?ziarno=`, `?roz=1024|2048`, `?km=`, `?rzeka=`; przeciąganie, kółko,
+„Losuj miejsce”), PNG bez przeglądarki `node scripts/mapa-terenu-png.mjs --ziarno 7 --roz 2048 --km 40 --out …`,
+testy `node --test tests/planetGenTerrainMap.test.mjs`.
+
+Życzenie użytkownika z tej samej rozmowy (nie zrobione): tryb „ultra” — planeta bardziej szczegółowa z daleka
+(większa mapa planety i drobniejsza siatka spływu; koszt: pamięć i czas wypieku).
