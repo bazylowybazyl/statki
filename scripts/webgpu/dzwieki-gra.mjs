@@ -9,14 +9,14 @@
 // wybuchy), odnowienie celów. Na końcu: dźwięki, które nie zagrały ani razu (z listą zdarzeń) i błędy konsoli.
 //
 //   node scripts/webgpu/dzwieki-gra.mjs [--baza http://localhost:5199] [--out .tmp/dzwieki/gra] [--query renderWorker=1]
-//        [--rozmiar 1600x900] [--tryb scena|bronie|zwykla|stary|wojna] [--czas 25] [--zestawy id,id]
+//        [--rozmiar 1600x900] [--tryb scena|bronie|zwykla|wojna] [--czas 25] [--zestawy id,id]
 // `--tryb bronie` — scena z kolejnymi zestawami broni Atlasa (`DevScene.dzwiekiZestaw`, panel „Broń Atlasa”): na zestaw
 // namiar na pancernik piratów, LPM grupami 1 / 2 / 3, flak — piraci strzelają (rakiety → flak), torpedy (8), superbronie
 // (Mjolnir z postoju, Hexlance 4 dwa razy, odmowa: Mjolnir w ruchu); na końcu dźwięki uzbrojenia,
 // które nie zagrały (`--zestawy` — tylko wybrane).
 // `--tryb zwykla` — zwykła gra BEZ sceny (warstwa dźwięku gra od 2026-11-11): warstwa powstaje, liczniki rosną przy locie
-//   (silnik MAIN), strzale i trafieniu (pancernik bez mózgu przed Atlasem), stary AudioSys nie ma efektów, zapis gry otwarty,
-//   głośność główna po migracji; `--tryb stary` — `?dzwiek=stary`: warstwa nie powstaje, stary AudioSys ma swoje dźwięki;
+//   (silnik MAIN), strzale i trafieniu (pancernik bez mózgu przed Atlasem), dawnego dźwięku z WAV nie ma, zapis gry otwarty,
+//   głośność główna po migracji (tryb `stary` usunięty razem z dawnym dźwiękiem, 2026-11-11);
 // `--tryb wojna` — `?wojna` (dwie floty, `--czas` s gry): kontrola, że w dużej bitwie nic się nie sypie — błędy konsoli,
 //   szczyt po limiterze, głosy, odrzucenia limitu (nie pomiar wydajności).
 // `--baza` — serwer z .claude/launch.json (domyślnie „Vite Dev Server” na 5199); bez serwera: `--baza vite` (własny Vite).
@@ -163,7 +163,7 @@ try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { try {
     localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0');
   } catch {} })();\nwindow.__HARNESS_SEED__ = ${0x5eed4243};\n${INJECT}` });
-  const dopisek = { scena: '&scena=dzwieki', bronie: '&scena=dzwieki', zwykla: '', stary: '&dzwiek=stary', wojna: '&wojna' }[TRYB] ?? '';
+  const dopisek = { scena: '&scena=dzwieki', bronie: '&scena=dzwieki', zwykla: '', wojna: '&wojna' }[TRYB] ?? '';
   const url = `${base}/index.html?dev=1${dopisek}${args.query ? `&${args.query}` : ''}`;
   report.url = url;
   await cdp.send('Page.navigate', { url });
@@ -181,7 +181,7 @@ try {
         zagraly: s ? Object.fromEntries(Object.entries(s.dzwieki).filter(([, v]) => v.zagral > 0).map(([k, v]) => [k, v.zagral])) : null,
         odrzucone: s ? Object.fromEntries(Object.entries(s.dzwieki).filter(([, v]) => v.odrzuconeLimit || v.odrzuconeOdstep).map(([k, v]) => [k, (v.odrzuconeLimit || 0) + (v.odrzuconeOdstep || 0)])) : null,
         zdarzenia: s?.zdarzenia || null, szczytPrzedDb: s?.szczytPrzedDb, szczytPoDb: s?.szczytPoDb, przester: s?.przester, glosyMax: s?.glosyMax, ostrzezenia: s?.ostrzezenia }; })()`;
-    if (TRYB !== 'stary') await waitFor(cdp, '!!(window.__dzwieki && window.__dzwieki.wczytane)', 60000, 250);
+    await waitFor(cdp, '!!(window.__dzwieki && window.__dzwieki.wczytane)', 60000, 250);
     await ev('window.__harness.hold(true)');
     await step(30);
     report.tryb = await ev('window.RenderWorkerHost ? "worker" : "off"');

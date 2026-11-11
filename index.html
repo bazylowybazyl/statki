@@ -1155,7 +1155,6 @@
       projectileClockOf,
       setRenderPosedEntity
     } from "./src/game/carrierVelocity.js";
-    import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
     // Gospodarka stacji, przewozy i ceny liczą się w ruchu v2 (blok „RUCH v2”, most src/game/trafficBridge.js);
     // gra trzyma tylko kopię rynku z mostu. Stara ekonomia (vany cargoFleet, tranzyt przez bramy, produkcja
@@ -2245,11 +2244,12 @@
     };
     let OPTIONS_OPEN = false;
 
-    // --- SYSTEM AUDIO (AudioSys) ---
+    // --- KONTEKST DŹWIĘKU (AudioSys) ---
+    // Właściciel jedynego `AudioContext` strony. Dźwięk gry gra warstwa `src/audio/` (blok „SCENA DŹWIĘKI”) i warstwa
+    // hali K-7 — obie na tym kontekście, z własnymi szynami. Dawnych efektów z plików WAV (pętla silnika, trafienie
+    // w tarczę, strzały „centrali dźwiękowej uzbrojenia”) nie ma — usunięte 2026-11-11 na polecenie użytkownika.
     const AudioSys = {
       ctx: null,
-      masterGain: null,
-      sounds: {},
       isInit: false,
 
       // Inicjalizacja kontekstu (musi być po kliknięciu użytkownika)
@@ -2257,13 +2257,6 @@
         if (this.isInit) return;
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AudioContext();
-
-        // Główna szyna głośności (Master)
-        this.masterGain = this.ctx.createGain();
-        // Pobieramy głośność z Twoich OPTIONS (jeśli są dostępne)
-        const vol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.master : 0.5;
-        this.masterGain.gain.value = vol;
-        this.masterGain.connect(this.ctx.destination);
 
         // Kontekst utworzony bez gestu gracza (nowa gra z menu pauzy startuje sama po przeładowaniu strony) przeglądarka
         // zostawia w stanie „suspended” — wznowienie przy pierwszym kliknięciu albo klawiszu.
@@ -2280,169 +2273,9 @@
 
         this.isInit = true;
         console.log("[AudioSys] Zainicjowano.");
-      },
-
-      // Ładowanie pojedynczego dźwięku do pamięci
-      loadSound: async function (name, url) {
-        if (!this.ctx) this.init();
-        try {
-          const response = await fetch(url);
-          const arrayBuffer = await response.arrayBuffer();
-          const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-          this.sounds[name] = audioBuffer;
-          console.log(`[AudioSys] Załadowano '${name}'`);
-        } catch (e) {
-          console.error(`[AudioSys] Błąd ładowania '${name}' z ${url}:`, e);
-        }
-      },
-
-      // Tworzenie zapętlonego silnika (z kontrolą Pitch i Volume)
-      createEngineLoop: function (soundName) {
-        if (!this.sounds[soundName]) return null;
-
-        const source = this.ctx.createBufferSource();
-        source.buffer = this.sounds[soundName];
-        source.loop = true;
-
-        const gainNode = this.ctx.createGain();
-        gainNode.gain.value = 0; // Na start cisza
-
-        // Lancuch: Zrodlo -> Gain -> Master -> Wyjscie
-        source.connect(gainNode);
-        gainNode.connect(this.masterGain);
-
-        source.start(0);
-
-        return {
-          source: source,
-          gain: gainNode,
-
-          // Funkcja aktualizująca brzmienie w czasie rzeczywistym
-          update: (throttle) => {
-            const now = AudioSys.ctx.currentTime;
-            const targetPitch = 0.5 + (throttle * 0.6);
-            source.playbackRate.setTargetAtTime(targetPitch, now, 0.2);
-            let baseVol = 0.05 + (throttle * 0.25);
-
-            // Pobranie ustawień SFX gracza
-            const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-
-            // Aplikowanie głośności
-            gainNode.gain.setTargetAtTime(baseVol * sfxVol, now, 0.1);
-          },
-
-          stop: () => {
-            try { source.stop(); } catch (e) { }
-          }
-        };
-      },
-      // Prosta funkcja do strzałów (na przyszłość)
-      playSound: function (name) {
-        if (!this.sounds[name]) return;
-        const source = this.ctx.createBufferSource();
-        source.buffer = this.sounds[name];
-        const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-
-        const gain = this.ctx.createGain();
-        gain.gain.value = sfxVol;
-
-        source.connect(gain);
-        gain.connect(this.masterGain);
-        source.start(0);
       }
     };
     window.AudioSys = AudioSys;
-    // --- CENTRALA DZWIEKOWA UZBROJENIA ---
-    // Strzały z rdzenia broni przychodzą szyną (src/game/weaponShotBus.js — bez
-    // zdarzenia DOM i obiektu per strzał); superbroń nadal wysyła rzadkie
-    // CustomEvent('game_weapon_fired'). Obie drogi prowadzą do tej funkcji.
-    function onWeaponShotAudio(detail) {
-      if (!detail || !window.AudioSys || !window.AudioSys.isInit) return;
-      const x = detail.x;
-      const y = detail.y;
-
-      // Tutaj decydujemy jaki dźwięk grać w zależności od ID broni
-      switch (detail.weaponId) {
-        case 'hexlance':
-          // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
-          playDynamicSound('sfx_hexlance', x, y, 0.1, 0.6);
-          break;
-
-        case 'death_ray':
-          // Promień śmierci — dźwięk superbroni, głośniej i bez wariacji
-          playDynamicSound('sfx_hexlance', x, y, 0, 0.9);
-          break;
-
-        case 'railgun_mk1':
-        case 'railgun_mk2':
-          playDynamicSound('sfx_railgun', x, y, 0.2, 0.05);
-          break;
-
-        case 'vulcan_minigun':
-          playDynamicSound('sfx_railgun', x, y, 0.35, 0.035);
-          break;
-
-        case 'helios_laser':
-          playDynamicSound('sfx_railgun', x, y, 0.12, 0.045);
-          break;
-
-        case 'main_cannon':
-          // (Przyszłość) Tu dodasz dźwięk dla Main Cannon
-          // playDynamicSound('sfx_maincannon', x, y, 0.2, 0.6);
-          break;
-
-        case 'nuclear_missile':
-          // (Przyszłość) Inna superbroń
-          // playDynamicSound('sfx_nuke_launch', x, y, 0, 1.0);
-          break;
-      }
-    }
-    WeaponShotBus.on(onWeaponShotAudio);
-    window.addEventListener('game_weapon_fired', (e) => onWeaponShotAudio(e.detail));
-
-    // Limit głosów per dźwięk + tłumienie odległością od kamery
-    // (src/game/audioVoiceLimiter.js). Bez tego każdy railgun w bitwie tworzył
-    // BufferSource + Gain — setki źródeł na sekundę, także 12 km od kamery.
-    const shotVoiceLimiter = createVoiceLimiter();
-
-    // Helper do ładniejszego odtwarzania dźwięków (z wariacją)
-    function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {
-      const ctx = window.AudioSys.ctx;
-      const buffer = window.AudioSys.sounds[soundKey];
-      if (!ctx || !buffer) return;
-
-      // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
-      const rate = pitchVar ? 1.0 + (fxRandomGame.next() - 0.5) * 2 * pitchVar : 1.0;
-      const dist = (Number.isFinite(x) && Number.isFinite(y)) ? Math.hypot(x - camera.x, y - camera.y) : 0;
-      const durationMs = (Number(buffer.duration) || 0) / rate * 1000;
-      const voiceVolume = shotVoiceLimiter.admit(soundKey, performance.now(), volume, dist, durationMs);
-      if (voiceVolume <= 0) return;
-
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      if (rate !== 1.0) source.playbackRate.value = rate;
-
-      const gainNode = ctx.createGain();
-      // Ustaw głośność (bazując na opcjach gry + opcjach wywołania)
-      const gameSfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-      gainNode.gain.value = voiceVolume * gameSfxVol;
-
-      source.connect(gainNode);
-      gainNode.connect(window.AudioSys.masterGain);
-      source.start(0);
-    }
-
-    // Trafienie pocisku w tarczę: tylko w kadrze (ta sama bramka co efekt trafienia) albo blisko
-    // kamery, przez limit głosów strzałów. Dawniej każde trafienie na mapie tworzyło BufferSource
-    // + Gain bez limitu — w bitwie flot setki na sekundę (audyt 2026-10-07 § 5.4).
-    function playShieldHitSound(x, y) {
-      if (!(impactFxScreenPx(x, y, 1) > 0)) {
-        const dx = x - camera.x, dy = y - camera.y;
-        const near = shotVoiceLimiter.limits.fullVolumeDist;
-        if (!(dx * dx + dy * dy <= near * near)) return;
-      }
-      playDynamicSound('shieldHit', x, y, 0, 1.0);
-    }
 
     const mainMenuEl = document.getElementById('main-menu');
     const newGameButton = document.getElementById('btn-new-game');
@@ -2701,10 +2534,8 @@
     function applyAudioOptions() {
       // Hala K-7: własna warstwa (blok „DŹWIĘKI HALI K-7”) — główna × efekty z opcji.
       if (HALL_SND) HALL_SND.ustawGlosnosc(hallSoundVolume());
-      // Warstwa dźwięku (zwykła gra i scena); w scenie stary AudioSys zostaje wyciszony.
+      // Warstwa dźwięku (zwykła gra i scena).
       if (SND) SND.ustawGlosnosc(SoundScene.active ? soundSceneVolume() : soundGameVolume());
-      if (SoundScene.active) return;
-      if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
     }
     try {
       const savedAudio = JSON.parse(localStorage.getItem('sc_audio') || 'null');
@@ -10774,7 +10605,6 @@
       });
 
       pushZoneMessage("WARNING: HOSTILE CAPITAL SIGNATURES DETECTED", 4.0);
-      if (window.AudioSys) AudioSys.playSound('shieldHit');
     }
 
     // POPRAWKA 2: Przypisanie do window (teraz będzie widoczne globalnie)
@@ -18969,8 +18799,8 @@
     // Cruise Missile Rack, Supernova, CIWS Mk II — tylko w pamięci), piraci tuż obok (taran, tarcie, zgniot) i w zasięgu
     // broni, panel (`src/ui/dzwiekiPanel.js`): tarcza Atlasa, cele niezniszczalne, piraci strzelają, odnowienie celów,
     // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) gra w ZWYKŁEJ grze i w
-    // scenie (2026-11-11, decyzja użytkownika): `SND` = warstwa włączona albo null (`?dzwiek=stary` poza sceną — stary
-    // AudioSys jak dawniej), a każdy hak w grze to jedno `if (SND)`; z warstwą stary AudioSys nie wczytuje efektów. ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
+    // scenie (2026-11-11, decyzja użytkownika): `SND` = warstwa włączona (zwykła gra i scena), a każdy hak w grze to
+    // jedno `if (SND)`; dawnego dźwięku z plików WAV nie ma. ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
     // (`__SAVE_LOCKED` w bloku resetu zapisu), scena z konsoli — od swojego startu; do przeładowania strony (wyposażenie
     // sceny zostaje w pamięci, więc odblokowanie po końcu sceny zapisałoby je jako wyposażenie gracza). Atlas w scenie
     // nie ginie (kadłub nie spada poniżej 1 — alarm kadłuba krytycznego da się usłyszeć bez końca gry).
@@ -19040,7 +18870,6 @@
     };
     let SND = null;
     // Warstwa dźwięku gry: jedna na stronę (zwykła gra i scena), `SND` wskazuje ją, gdy jest włączona.
-    const SOUND_LAYER_OLD = new URLSearchParams(location.search).get('dzwiek') === 'stary';
     let SND_LAYER = null;
     let SND_LOADING = null;
     // Znane id do zapisu wyboru (pliki i synteza) i klucz serii CIWS / pętli wiązki strzelca bez obiektu.
@@ -19078,7 +18907,7 @@
     }
     /** Start gry (po AudioSys.init): warstwa w zwykłej grze — pliki w tle, pierwsze klatki bez dźwięków z plików. */
     function startSoundLayer() {
-      if (SOUND_LAYER_OLD || !AudioSys.ctx) return;
+      if (!AudioSys.ctx) return;
       soundLayerCreate(soundGameVolume());
       SND = SND_LAYER;
     }
@@ -19086,7 +18915,7 @@
       active: false, starting: false, t: 0, spot: null, opts: null, pirates: [], panel: null,
       shieldOn: true, undying: true, pirFire: false,
       lastShield: null, lastLocks: 0, critical: false, grind: 0, grindX: NaN, grindY: NaN, grindRam: false,
-      lastDeath: { t: -1, x: 0, y: 0 }, ammoT: 0, oldMasterGain: null, lastRefuse: -1, zestaw: 'scena'
+      lastDeath: { t: -1, x: 0, y: 0 }, ammoT: 0, lastRefuse: -1, zestaw: 'scena'
     };
     window.SoundScene = SoundScene;
 
@@ -19115,7 +18944,7 @@
     // Osobna warstwa dźwięku (tabela DZWIEKI_HALI: tło, pompy, przepływ, serwa ramion, syk zaworów, złączki, zaciski,
     // gong i spiker) i czysty reżyser (src/game/k7HallSound.js), który co klatkę czyta stan gry hali przy kamerze —
     // pozy obsługi stanowisk z rejestru kolidera i harmonogram zaworów. Gra w kampanii i w grze swobodnej, gdy kamera
-    // jest przy hali K-7; poza halą, w pauzie i w scenie dźwięków — cisza. Stary AudioSys bez zmian.
+    // jest przy hali K-7; poza halą, w pauzie i w scenie dźwięków — cisza.
     let HALL_SND = null;
     const HallSound = createK7HallSound({ rand: () => fxRandomGame.next() });
     window.K7HallSoundTune = K7_HALL_SOUND_TUNE;
@@ -19160,17 +18989,12 @@
       if (TowScene.active) stopTowScene();
       if (RadarRangeScene.active) stopRadarScene();
       AudioSys.init();
-      // Ta sama warstwa co w zwykłej grze (z `?dzwiek=stary` powstaje dopiero tu); scena czeka na pliki.
+      // Ta sama warstwa co w zwykłej grze; scena czeka na pliki.
       soundLayerCreate(soundSceneVolume());
       await SND_LOADING;
       SND = SND_LAYER;
       SND.wlacz();
       SND.ustawGlosnosc(soundSceneVolume());
-      // Stary AudioSys wyciszony na czas sceny (silnik z pliku, shieldHit, railgun) — słychać tylko nowe dźwięki.
-      if (AudioSys.masterGain) {
-        SoundScene.oldMasterGain = AudioSys.masterGain.gain.value;
-        AudioSys.masterGain.gain.value = 0;
-      }
       Object.assign(SoundScene, { active: true, starting: false, t: 0, opts, lastShield: ship.shield?.state || null, lastLocks: lockedTargets.length, critical: false, grind: 0 });
       soundScenePlace();
       if (!SoundScene.panel) {
@@ -19199,11 +19023,9 @@
       const S = SoundScene;
       if (!S.active) return false;
       S.active = false;
-      // Zwykła gra gra dalej na tej samej warstwie (głośność z opcji); `?dzwiek=stary` — warstwa gaśnie.
-      if (SND && SOUND_LAYER_OLD) { SND.wylacz(); SND = null; }
-      else if (SND) SND.ustawGlosnosc(soundGameVolume());
+      // Zwykła gra gra dalej na tej samej warstwie (głośność z opcji).
+      if (SND) SND.ustawGlosnosc(soundGameVolume());
       if (S.panel) { S.panel.usun(); S.panel = null; }
-      if (AudioSys.masterGain && S.oldMasterGain != null) AudioSys.masterGain.gain.value = S.oldMasterGain;
       SensorSystem.clearArea('scena-dzwieki');
       for (const p of S.pirates) if (p.npc && !p.npc.dead) p.npc.__dzwiekiNiezniszczalny = false;
       return true;
@@ -27433,7 +27255,6 @@
       RenderCommands.writer.flakBurst(b, b.x, b.y, radius);
       if (SND) soundSceneFlakBurst(b.x, b.y);
       ActiveCarrier.clear();
-      if (window.AudioSys) AudioSys.playSound('explosion');
     }
 
     function handlePlayerDestroyed() {
@@ -28645,7 +28466,6 @@
             // Jeśli tarcza działa ORAZ (trafiono w elipsę LUB trafiono w kadłub) -> TARCZA BLOKUJE
 
             registerShieldImpact(hitNPC, hitX, hitY, npcDamage, shieldFxClassForBullet(b));
-            if (window.AudioSys) playShieldHitSound(hitX, hitY);
             if (SND) soundSceneShieldHit(hitX, hitY);
 
             // Odejmij HP tarczy
@@ -33109,24 +32929,7 @@
       }
 
       // --- AUDIO UPDATE ---
-      if (ship && ship.engineSound) {
-        if (!ship.destroyed) {
-          // input.main to wartość 0..1 (moc silnika)
-          let throttle = input.main;
-
-          // Boost napędu podbija również wysokość dźwięku.
-          if ((typeof boost !== 'undefined' && boost.state === 'active') || driveState.shiftBoostTimer > 0) {
-            throttle += 0.5;
-          }
-
-          // Aktualizuj dźwięk
-          ship.engineSound.update(throttle);
-        } else {
-          // Jeśli statek zniszczony - wycisz natychmiast
-          ship.engineSound.gain.gain.setTargetAtTime(0, AudioSys.ctx.currentTime, 0.1);
-        }
-      }
-      // Scena dźwięków: silnik MAIN z syntezy, tarcie, alarm, tarcze, namiar, pomiar szyny (poza sceną — nic).
+      // Warstwa dźwięku gry: silniki MAIN i SIDE z syntezy, tarcie, alarmy, tarcze, namiar, dźwięki obszarów, pomiar szyny.
       if (SND) soundSceneFrame();
       // --------------------
 
@@ -37751,25 +37554,11 @@
       // --- AUDIO START ---
       AudioSys.init();
       startHallSound();
-      // Warstwa dźwięku gry (blok „SCENA DŹWIĘKI”, reguła `dzwiek`): z nią stary AudioSys nie wczytuje efektów — jego
-      // strzały, tarcza, wybuch i pętla silnika z WAV nie grają podwójnie (bez bufora wychodzą od razu). `?dzwiek=stary` —
-      // warstwa nie powstaje, gra brzmi jak dawniej.
+      // Warstwa dźwięku gry (blok „SCENA DŹWIĘKI”, reguła `dzwiek`) — pliki wczytuje w tle.
       startSoundLayer();
-      const oldSfx = !SND;
-      await Promise.all([
-        oldSfx ? AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav') : null,
-        oldSfx ? AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav') : null,
-        oldSfx ? AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav') : null,
-        oldSfx ? AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav') : null,
-        oldSfx ? AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav') : null,
-        // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
-        // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
-        RW_WORKER ? null : prepareShipModels3D()
-      ]);
-
-      if (typeof ship !== 'undefined') {
-        ship.engineSound = oldSfx ? AudioSys.createEngineLoop('engine') : null;
-      }
+      // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
+      // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
+      if (!RW_WORKER) await prepareShipModels3D();
       // --- AUDIO END ---
 
       gameStarted = true;
