@@ -52,7 +52,7 @@ const KATEGORIE_NAZWY = {
  *           stan: () => ({ tarcza: boolean, niezniszczalne: boolean, piraciStrzelaja: boolean, zapisZablokowany: boolean,
  *                          glosnoscZastepcza: boolean }) }} opts
  */
-export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zestawy = null }) {
+export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zestawy = null, zdarzenia = null }) {
   const doc = document;
   if (!doc.getElementById('dzwieki-panel-styl')) {
     const st = doc.createElement('style');
@@ -104,6 +104,11 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zestawy = null }) {
     sekcja.appendChild(el('span', { text: 'Broń Atlasa' }));
     sekcja.appendChild(wyborZestawu);
   }
+  // Zdarzenia trudne do wywołania w scenie (dźwięki obszarów): `zdarzenia` — [{ nazwa, przycisk, tytul, fn }].
+  for (const z of zdarzenia || []) {
+    sekcja.appendChild(el('span', { text: z.nazwa }));
+    sekcja.appendChild(przycisk(z.przycisk, () => z.fn(), z.tytul || ''));
+  }
   const uwaga = el('div', { class: 'dp-uwaga', text: 'Zapis gry wyłączony do przeładowania strony (scena nie zmienia Twojego zapisu).' });
   const uwagaGlosnosc = el('div', { class: 'dp-uwaga', text: 'Głośność główna w opcjach = 0 — scena gra z głośnością 70%.' });
 
@@ -111,9 +116,11 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zestawy = null }) {
   const wiersze = [];
   let ostatniaKat = '';
   for (const r of dzwieki.lista()) {
-    if (r.kat !== ostatniaKat) {
-      ostatniaKat = r.kat;
-      lista.appendChild(el('div', { class: 'dp-grupa', text: KATEGORIE_NAZWY[r.kat] || r.kat }));
+    // dźwięki obszarów (pole `obszar`) — grupa obszaru zamiast kategorii
+    const grupa = r.obszar ? `Obszar: ${r.obszar}` : (KATEGORIE_NAZWY[r.kat] || r.kat);
+    if (grupa !== ostatniaKat) {
+      ostatniaKat = grupa;
+      lista.appendChild(el('div', { class: 'dp-grupa', text: grupa }));
     }
     const licznik = el('span', { class: 'dp-licznik', text: '0' });
     const warianty = el('div', { class: 'dp-warianty' });

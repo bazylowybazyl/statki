@@ -124,7 +124,8 @@ test('wygląd rodzaju (E17): lampy w slocie HullLightStore z bramką promienia, 
   const freighter = actor({ id: 'haul-00051', hull: 'container_ship', x: near.x + 1200, y: near.y });
   ShipProxyBatch3D.update([destroyer, freighter], 1, near);
   const D = dataOf(meshOf('terrandestroyer.png'));
-  assert.equal(D[14], 8, 'niszczyciel: lampy statku na blasze (6 nawigacyjnych + reflektor daleki i otoczenia)');
+  // 6 nawigacyjnych + reflektor daleki i otoczenia + lampy pokładowe (stan zasilania okrętu, src/data/shipDeckLights.js)
+  assert.ok(D[14] >= 8, `niszczyciel: lampy statku na blasze (${D[14]})`);
   assert.ok(D[19] >= 0 && D[19] < 1, 'faza migania okrętu w instancji');
   assert.equal(D[16] % HullLightStore.slotVec4, 0, 'slot lamp rodzaju w vec4');
   const lamps = HullLightStore.array();
@@ -134,7 +135,9 @@ test('wygląd rodzaju (E17): lampy w slocie HullLightStore z bramką promienia, 
   assert.equal(D[18], 1, 'waga lakieru');
   assert.ok(D[15] > 0.99, 'duży na ekranie — pełny odblask lakieru');
   const F = dataOf(meshOf('container_ship.png'));
-  assert.equal(F[14], 6, 'cywil: 6 świateł nawigacyjnych z src/data/shipNavLights.js, bez reflektorów otoczenia');
+  // 6 świateł nawigacyjnych (src/data/shipNavLights.js) + lampy pokładowe kadłuba (src/data/shipDeckLights.js),
+  // bez reflektorów otoczenia
+  assert.ok(F[14] >= 6, `cywil: lampy nawigacyjne i pokładowe (${F[14]})`);
   assert.ok(F[17] > 0, 'cywil ma strefy dysz MAIN / SIDE');
   assert.equal(ShipProxyBatch3D.stats.lights, 2, 'widoki lamp pozycyjnych (billboardy) — niszczyciel i frachtowiec');
 

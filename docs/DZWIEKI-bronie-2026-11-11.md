@@ -98,7 +98,7 @@ rozerwanie flaku i pętla naładowanego Hexlance'a w `drobne`.
   plików (~110 kredytów).
 - Konto: przed zadaniem użyte 10 926, po generacji 13 306 → **~2 380 kredytów** (budżet 15 000).
 
-## Pomiary plików (`node scripts/dzwieki-pomiar.mjs --grupa Uzbrojenie`)
+## Pomiary plików (`node scripts/dzwieki-pomiar-bronie.mjs --grupa Uzbrojenie`)
 
 Atak = kiedy okno 5 ms dochodzi do (najgłośniejsze okno − 6 dB), od początku pliku; słychać do = koniec ostatniego
 okna 10 ms powyżej (najgłośniejsze − 40 dB); bas = udział energii < 150 Hz. Odniesienie: Tempest Ion (oceniony

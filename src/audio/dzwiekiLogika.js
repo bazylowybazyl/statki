@@ -9,6 +9,7 @@
 // dwa dźwięki są z syntezy (src/audio/przepisySyntezy.js): silnik MAIN i seria CIWS.
 
 import { tabelaDzwiekowBroni, wystrzalBroni, MYSLIWIEC_DZIALKO, dzialkoMysliwca } from './dzwiekiBroni.js';
+import { DZWIEKI_SWIATA, ZDARZENIA_SWIATA, SYNTEZA_SWIATA } from './dzwiekiSwiata.js';
 
 export const dbToGain = (db) => Math.pow(10, db / 20);
 export const gainToDb = (g) => (g > 0 ? 20 * Math.log10(g) : -Infinity);
@@ -94,7 +95,8 @@ export const DZWIEKI = Object.freeze({
   malowanie: { kat: 'interfejs', limit: 3, odstep: 60, zwloka: 1, ton: 0, glos: 0, ui: true },
   alarm: { kat: 'interfejs', petla: true, limit: 1, ui: true },
   // Uzbrojenie: rodziny broni × wielkość, wiązki, superbronie (src/audio/dzwiekiBroni.js)
-  ...tabelaDzwiekowBroni({ wystrzal: POZIOM_WYSTRZALU, specjalna: POZIOM_SPECJALNEJ })
+  ...tabelaDzwiekowBroni({ wystrzal: POZIOM_WYSTRZALU, specjalna: POZIOM_SPECJALNEJ }),
+  ...DZWIEKI_SWIATA // obszary gry: warp, przyloty, maskowanie, rdzeń reaktora… (src/audio/dzwiekiSwiata.js)
 });
 
 /**
@@ -132,7 +134,8 @@ export const DZWIEKI_SYNTEZY = Object.freeze({
   silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -6 },
   // Silniki SIDE: praca ciągła jak MAIN, nie pojedynczy syk (decyzja użytkownika 2026-11-11); 2 dB pod MAIN.
   silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -8 },
-  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -4 }
+  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -4 },
+  ...SYNTEZA_SWIATA
 });
 
 /**
@@ -160,7 +163,8 @@ export const ZDARZENIA = Object.freeze({
   ogienAutoWl: 'potwierdzenie',
   odmowa: 'blad',
   namiar: 'namiar',
-  malowanieCelu: 'malowanie'
+  malowanieCelu: 'malowanie',
+  ...ZDARZENIA_SWIATA
 });
 
 /** Strzał broni gracza / piratów → id dźwięku. Broń wiązki (pętla) i CIWS (synteza) obsługuje warstwa osobno. */

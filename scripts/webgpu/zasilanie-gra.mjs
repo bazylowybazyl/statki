@@ -165,7 +165,15 @@ try {
   await shot('7d-alarm-blisko');
   await ev(`(async () => { await window.__harness.step(9); return true; })()`);
   await shot('7e-alarm-blisko-pozniej');
-  await ev(`(async () => { window.ShipAlarm.clear(); await window.__harness.step(120); window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42); return true; })()`);
+  await ev(`(async () => { window.ShipAlarm.clear(); await window.__harness.step(120); return true; })()`);
+  // Reflektor dziobowy (klawisz ;): snop ku kursorowi, sygnatura × 1,6.
+  result.kroki.reflektor = await ev(`(async () => { window.PlayerSearchlight.toggle(); await window.__harness.step(40);
+    const fa = await import('/src/ai/fleetAwareness.js'); fa.updateFleetAwareness(npcs, ship, 0, true);
+    return { on: window.PlayerSearchlight.on(), ang: ship.__spotAng, sig: ship.__sigMul }; })()`);
+  check(result.kroki.reflektor.on && Number.isFinite(result.kroki.reflektor.ang) && result.kroki.reflektor.sig > 1.5, `reflektor: ${JSON.stringify(result.kroki.reflektor)}`);
+  await ev(`window.__harness.scene.cam(${DEEP.x} + 2500, ${DEEP.y}, 0.3)`);
+  await shot('7f-reflektor');
+  await ev(`(async () => { window.PlayerSearchlight.toggle(); await window.__harness.step(10); window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42); return true; })()`);
   const fa2 = await ev(`(async () => { const fa = await import('/src/ai/fleetAwareness.js'); fa.updateFleetAwareness(npcs, ship, 0, true); return { sig: ship.__sigMul, piratWidzi: fa.isVisibleToSide('pirate', ship) }; })()`);
   check(fa2.sig === 1, `po rozruchu sygnatura 1 (${JSON.stringify(fa2)})`);
 

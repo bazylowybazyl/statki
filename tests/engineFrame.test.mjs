@@ -87,6 +87,7 @@ test('EngineFrame.side: dysze SIDE z ciągiem — lista płaska (próg mocy, NaN
 test('engineVfxSystem: dysza SIDE z ciągiem na listę EngineFrame.side — wylot dzwonu, moc strugi × maskowanie, bez hulka', () => {
   const src = readFileSync(new URL('../src/3d/engineVfxSystem.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /const sideGasFrom = EngineFrame\.sdN;/, 'początek dysz SIDE okrętu (zdublowane markery łączą się)');
-  assert.match(src, /if \(!isHulk\) EngineFrame\.side\(flameX, flameY, dirX, dirY, sideNozzleR, jetPower \* cloakVis, shipSceneVX, shipSceneVY, sideGasFrom\);\n\s*if \(cloakVis <= 0\.01\) continue;/,
+  // bez hulka i bez okrętu wyłączonego (stan zasilania — src/game/shipPower.js)
+  assert.match(src, /if \(!isHulk && !powerDead\) EngineFrame\.side\(flameX, flameY, dirX, dirY, sideNozzleR, jetPower \* cloakVis, shipSceneVX, shipSceneVY, sideGasFrom\);\n\s*if \(cloakVis <= 0\.01\) continue;/,
     'po automacie dyszy (jetPower), przed odrzuceniem dysz ukrytych');
 });

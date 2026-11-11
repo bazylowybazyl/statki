@@ -655,6 +655,38 @@ function alarmBeaconLights(ctx) {
   }
 }
 
+// ── Reflektor dziobowy gracza (2026-11-11, decyzja użytkownika: „reflektor dziobowy sterowany myszą: oświetla skały
+// i wraki w cieniu planety, ale podnosi sygnaturę”) — kąt z gry (`__spotAng`, świat gry), snop z dziobu w siatce
+// świateł (kadłuby, skały pasa, pył, gaz). Poza renderu gracza (ta sama co kadłub). Moc / zasięg poniżej progu błysku.
+export const SEARCHLIGHT_TUNE = { bow: 0.86, z: 45, range: 9000, gain: 0.0016, coneDeg: 11, dz: -0.06, rgb: [1, 0.95, 0.86] };
+const _searchlight = { on: false, x: 0, y: 0, a: 0 };
+let _searchStep = null;
+function noteSearchlight(entity) {
+  const pose = RenderWorld.playerPose;
+  const ang = pose ? (Number(pose.angle) || 0) : (Number(entity.angle) || 0);
+  const r = Math.max(60, Number(entity.radius) || Number(entity.r) || 300) * SEARCHLIGHT_TUNE.bow;
+  const x = pose ? pose.x : (Number(entity.pos?.x ?? entity.x) || 0);
+  const y = pose ? pose.y : (Number(entity.pos?.y ?? entity.y) || 0);
+  const s = _searchlight;
+  s.on = true;
+  s.x = x + Math.cos(ang) * r;
+  s.y = y + Math.sin(ang) * r;
+  s.a = Number(entity.__spotAng) || 0;
+  if (_searchStep === null && Core3D.fx && typeof Core3D.addFxStep === 'function') {
+    _searchStep = Core3D.addFxStep({ name: 'szperacz dziobowy', lights: searchlightLights });
+  }
+}
+function searchlightLights(ctx) {
+  const s = _searchlight;
+  if (!s.on || !ctx?.grid) return;
+  const T = SEARCHLIGHT_TUNE;
+  const I = T.range * T.gain;
+  const dx = Math.cos(s.a), dy = Math.sin(s.a);
+  const n = Math.sqrt(1 + T.dz * T.dz);
+  ctx.grid.addWorld(s.x, s.y, T.z, T.range, T.rgb[0] * I, T.rgb[1] * I, T.rgb[2] * I, 0.9,
+    dx / n, -dy / n, T.dz / n, Math.cos(T.coneDeg * Math.PI / 180), Math.cos(T.coneDeg * 0.55 * Math.PI / 180), 0, 0, 0);
+}
+
 // ── Stan zasilania okrętu (2026-11-11, src/game/shipPower.js) ──────────────────────────────────────────────────────
 // Kanały świateł kadłuba z SAMEGO stanu i czasu fazy (encja gry albo lustro — `shipPower { state, t }`), światło
 // bojowe floty (`__battleLights` — przejście 1,2 s), migotanie (rozruch: faza reflektorów; trafienie dużego kalibru:
@@ -1557,12 +1589,15 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   stale.length = 0;
   validSet.clear();
   _alarmBeacon.on = false;
+  _searchlight.on = false;
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
     lodFrameStats.entitiesIn++;
     valid.push(entity);
     // Koguty alarmu (src/game/shipAlarms.js — kod w ENT.ALARM): okręt gracza, poza renderu (ta sama co kadłub).
     if (entity.__alarmCode > 0 && entity.isPlayer === true && !entity.fogHidden) noteAlarmBeacon(entity);
+    // Reflektor dziobowy (kąt w ENT.SPOT_ANG): okręt gracza.
+    if (entity.__spotAng !== undefined && entity.isPlayer === true) noteSearchlight(entity);
     const hideHexVisual = entity.hideHexVisual === true || entity.visual?.hideHexMesh === true;
     if (hideHexVisual) {
       const data = state.entityMeshes.get(entity);
