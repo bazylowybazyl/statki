@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dźwięki z generatora — odsłuch</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 24px 16px 96px; background: #0c1016; color: #d7dee8;
+    font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #7f8da0;
+    margin: 28px 0 8px; }
+  p.lead { margin: 0 0 8px; color: #9aa7b8; }
+  .dzwiek { background: #131a23; border: 1px solid #1f2a37; border-radius: 8px;
+    padding: 12px 14px; margin: 0 0 10px; }
+  .dzwiek h3 { font-size: 16px; margin: 0; }
+  .dzwiek .opis { color: #9aa7b8; margin: 2px 0 8px; }
+  .dzwiek .meta { color: #66748a; font-size: 12px; }
+  .wariant { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0; }
+  .wariant label { display: flex; align-items: center; gap: 6px; min-width: 92px; cursor: pointer; }
+  .wariant audio { height: 34px; flex: 1 1 320px; min-width: 240px; }
+  .wariant.wybrany label { color: #7fe0a3; }
+  input[type=text] { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px;
+    background: #0c1016; color: inherit; border: 1px solid #263343; border-radius: 6px; font: inherit; }
+  details { margin-top: 6px; color: #66748a; font-size: 12px; }
+  .pasek { position: fixed; left: 0; right: 0; bottom: 0; background: #131a23;
+    border-top: 1px solid #1f2a37; padding: 10px 16px; }
+  .pasek div { max-width: 980px; margin: 0 auto; display: flex; gap: 12px; align-items: center; }
+  button { background: #2a6df4; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px;
+    font: inherit; cursor: pointer; }
+  #stan { color: #9aa7b8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Dźwięki z generatora — odsłuch</h1>
+  <p class="lead">Robocze dźwięki z ElevenLabs (<code>public/sounds/ai/</code>). Zaznacz wariant, który
+    bierzesz, dopisz uwagę, jeśli żaden nie pasuje, i skopiuj wybór do rozmowy.</p>
+  <div id="lista"></div>
+</main>
+<div class="pasek"><div>
+  <button id="kopiuj" type="button">Kopiuj wybór</button>
+  <span id="stan"></span>
+</div></div>
+<script type="module">
+const BAZA = '/sounds/ai/';
+const KLUCZ = 'dzwiekiAiWybor';
+const lista = document.getElementById('lista');
+const stan = document.getElementById('stan');
+
+let pamiec = { wybor: {}, uwagi: {} };
+try {
+  const z = JSON.parse(localStorage.getItem(KLUCZ) || 'null');
+  if (z && z.wybor && z.uwagi) pamiec = z;
+} catch { /* bez pamięci przeglądarki strona działa dalej */ }
+function zapisz() {
+  try { localStorage.setItem(KLUCZ, JSON.stringify(pamiec)); } catch { /* jw. */ }
+}
+
+function el(tag, attrs = {}, ...dzieci) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'text') e.textContent = v;
+    else if (k === 'class') e.className = v;
+    else e.setAttribute(k, v);
+  }
+  e.append(...dzieci);
+  return e;
+}
+
+function podsumowanie(dzwieki) {
+  const wybrane = dzwieki.filter((d) => d.pliki.some((p) => pamiec.wybor[p.plik])).length;
+  stan.textContent = `Wybrany wariant: ${wybrane} z ${dzwieki.length} dźwięków.`;
+}
+
+function tekstWyboru(dzwieki) {
+  const linie = [];
+  for (const d of dzwieki) {
+    const wybrane = d.pliki.filter((p) => pamiec.wybor[p.plik]).map((p) => p.plik);
+    const uwaga = (pamiec.uwagi[d.id] || '').trim();
+    if (!wybrane.length && !uwaga) continue;
+    linie.push(`${d.id}: ${wybrane.length ? wybrane.join(', ') : 'żaden'}${uwaga ? ` — ${uwaga}` : ''}`);
+  }
+  return linie.join('\n');
+}
+
+function rysuj(manifest) {
+  const poId = new Map();
+  for (const p of manifest.pliki) {
+    if (!poId.has(p.id)) poId.set(p.id, { id: p.id, grupa: p.grupa, nazwa: p.nazwa, opis: p.opis,
+      prompt: p.prompt, sekundy: p.sekundy, petla: p.petla, pliki: [] });
+    poId.get(p.id).pliki.push(p);
+  }
+  // Dźwięki jednej grupy obok siebie, także gdy manifest ma je w kolejności przebiegów.
+  const grupy = new Map();
+  for (const d of poId.values()) {
+    if (!grupy.has(d.grupa)) grupy.set(d.grupa, []);
+    grupy.get(d.grupa).push(d);
+  }
+  const dzwieki = [...grupy.values()].flat();
+  for (const d of dzwieki) d.pliki.sort((a, b) => a.wariant - b.wariant);
+
+  let grupa = null;
+  for (const d of dzwieki) {
+    if (d.grupa !== grupa) { grupa = d.grupa; lista.append(el('h2', { text: grupa })); }
+    const karta = el('section', { class: 'dzwiek' },
+      el('h3', { text: d.nazwa }),
+      el('div', { class: 'opis', text: d.opis }),
+      el('div', { class: 'meta', text: `${d.id} · ${d.sekundy} s${d.petla ? ' · pętla' : ''}` }));
+    for (const p of d.pliki) {
+      const pole = el('input', { type: 'checkbox' });
+      pole.checked = !!pamiec.wybor[p.plik];
+      const audio = el('audio', { controls: '', preload: 'none', src: BAZA + p.plik });
+      if (p.petla) audio.loop = true;
+      const wiersz = el('div', { class: `wariant${pole.checked ? ' wybrany' : ''}` },
+        el('label', {}, pole, `wariant ${p.wariant}`), audio);
+      pole.addEventListener('change', () => {
+        if (pole.checked) pamiec.wybor[p.plik] = true; else delete pamiec.wybor[p.plik];
+        wiersz.classList.toggle('wybrany', pole.checked);
+        zapisz();
+        podsumowanie(dzwieki);
+      });
+      // Jeden dźwięk naraz: start odtwarzania zatrzymuje pozostałe.
+      audio.addEventListener('play', () => {
+        for (const inny of document.querySelectorAll('audio')) if (inny !== audio) inny.pause();
+      });
+      karta.append(wiersz);
+    }
+    const uwaga = el('input', { type: 'text', placeholder: 'Uwaga (np. za długi, więcej basu, żaden nie pasuje)' });
+    uwaga.value = pamiec.uwagi[d.id] || '';
+    uwaga.addEventListener('input', () => {
+      if (uwaga.value.trim()) pamiec.uwagi[d.id] = uwaga.value; else delete pamiec.uwagi[d.id];
+      zapisz();
+    });
+    karta.append(uwaga, el('details', {}, el('summary', { text: 'Opis dla generatora' }),
+      el('div', { text: d.prompt })));
+    lista.append(karta);
+  }
+  podsumowanie(dzwieki);
+
+  document.getElementById('kopiuj').addEventListener('click', async () => {
+    const tekst = tekstWyboru(dzwieki);
+    if (!tekst) { stan.textContent = 'Nic nie zaznaczono.'; return; }
+    try {
+      await navigator.clipboard.writeText(tekst);
+      stan.textContent = 'Skopiowano — wklej do rozmowy.';
+    } catch {
+      window.prompt('Skopiuj wybór:', tekst);
+    }
+  });
+}
+
+try {
+  const r = await fetch(`${BAZA}manifest.json`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(String(r.status));
+  const manifest = await r.json();
+  if (!manifest.pliki?.length) throw new Error('pusty');
+  rysuj(manifest);
+} catch {
+  lista.append(el('p', { class: 'lead',
+    text: 'Nie ma jeszcze wygenerowanych dźwięków. Uruchom: node scripts/dzwieki-elevenlabs.mjs --generuj' }));
+  document.querySelector('.pasek').hidden = true;
+}
+</script>
+</body>
+</html>
