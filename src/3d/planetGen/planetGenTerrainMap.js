@@ -94,9 +94,11 @@ const mix = (a, b, t) => a + (b - a) * t;
  * Oś doliny: łagodny łuk od brzegu do brzegu mapy (z zapasem poza mapę — skutki końców osi zostają poza kadrem).
  * Wynik: punkty co `ds` [m].
  */
-function valleyAxis(rng, L, ds) {
+function valleyAxis(rng, L, ds, flowAngle = null) {
   const ext = L * 0.3;
-  const ang = rng.range(-0.5, 0.5) + (rng.chance(0.5) ? 0 : Math.PI);
+  // kierunek spływu: z ziarna albo zadany (mapa miejsca na planecie — rzeka płynie tak jak na planecie)
+  const rnd = rng.range(-0.5, 0.5) + (rng.chance(0.5) ? 0 : Math.PI);
+  const ang = flowAngle == null ? rnd : flowAngle;
   const cx = L * rng.range(0.4, 0.6);
   const cy = L * rng.range(0.4, 0.6);
   const half = L * 0.75 + ext;
@@ -292,7 +294,7 @@ const mix3 = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2
 const VEG = {
   tajga: pal({
     forestA: '#253938', forestB: '#2f4540', forestC: '#3a4f43', riparian: '#1d3830', shrub: '#4d604e',
-    fen: '#848a63', fenLight: '#9d9f76', fenWet: '#5f7559', grass: '#6f8a5a', meadow: '#3d6a4c', thicket: '#234d3b',
+    fen: '#848a63', fenLight: '#9d9f76', fenWet: '#5f7559', grass: '#68805a', meadow: '#3b5d49', thicket: '#234a3a',
     heath: '#6d5142', terrace: '#a8a27d', accent: null, mangrove: '#1f3f33', marsh: '#5f7a55'
   }),
   tropik: pal({
@@ -340,6 +342,20 @@ const RIVER_STYLES = {
 const VEG_FEN = { tajga: 1, tropik: 0.4, czerwona: 0.7, purpura: 0.7, zlota: 0.8 };
 export const TERRAIN_RIVERS = Object.freeze(Object.keys(RIVER_STYLES));
 export const TERRAIN_VEGETATION = Object.freeze(Object.keys(VEG));
+/**
+ * Barwy krajobrazu palety (sRGB 0–255) dla PLANETY widzianej z daleka (planetGenSolid.tsl.js: `earthColor`) — planeta
+ * maluje torfowiska, dolinę zalewową i wodę tymi samymi barwami co mapa terenu. `fenAmount` — udział torfowisk.
+ */
+export const terrainLandscape = (veg) => {
+  const P = VEG[veg];
+  return { forest: [...P.forestB], fen: mix3(P.fen, P.fenLight, 0.5), fenWet: [...P.fenWet], grass: [...P.grass], meadow: [...P.meadow], fenAmount: VEG_FEN[veg] };
+};
+/** Barwy wody i osadu (sRGB 0–255): ciemna woda leśna, muł wielkiej rzeki, mleczny błękit z lodowca, osad w morzu, piasek. */
+export const TERRAIN_WATER = Object.freeze({
+  dark: [27, 40, 48], mud: [150, 134, 88], ice: [...WATER.lodowa.edge], silt: [226, 190, 138], sand: [...GROUND.sand]
+});
+/** Barwa lasu palety (sRGB 0–255) — odniesienie dla odcienia z palety planety (`vegTint`, planetGenPlace.js). */
+export const terrainForestColor = (veg) => [...VEG[veg].forestB];
 
 // Ramiona delty: od wierzchołka delty ku morzu, z rozwidleniami; szerokość rośnie przy morzu (lejek pływowy).
 function growDistributaries({ rng, apex, dcAt, flowAng, W, L, tideK }) {
@@ -394,18 +410,23 @@ function growDistributaries({ rng, apex, dcAt, flowAng, W, L, tideK }) {
 /**
  * Mapa terenu. `seed` — ziarno miejsca, `size` — bok rastra [teksele], `extentKm` — bok mapy [km], `river` — styl
  * rzeki (`TERRAIN_RIVERS`), `veg` — paleta roślinności (`TERRAIN_VEGETATION`), `riverWidthM` — szerokość koryta
- * (0 = ze stylu). Wynik: { size, extentKm, cellM, albedo (RGBA8 sRGB, wiersz 0 = północ), height [m], cover
+ * (0 = ze stylu), `flowAngle` — kierunek spływu rzeki w układzie mapy [rad] (x — wschód, y — południe; null = z ziarna;
+ * przy delcie morze leży po tej stronie), `vegTint` — mnożniki barw roślinności [r, g, b] (odcień z palety planety). Wynik: { size, extentKm, cellM, albedo (RGBA8 sRGB, wiersz 0 = północ), height [m], cover
  * (TERRAIN_COVER), river: { xs, ys, widthM } [m], sea (czy na mapie jest morze), stats }.
  */
 export function generateTerrainMap({
   seed = 1, size = 1024, extentKm = 20, biome = 'tajga', river: riverStyle = 'meandry', veg = 'tajga', riverWidthM = 0,
-  now = () => performance.now()
+  flowAngle = null, vegTint = null, now = () => performance.now()
 } = {}) {
   if (!TERRAIN_MAP_BIOMES.includes(biome)) throw new Error(`mapa terenu: nieznany biom „${biome}”`);
   const RS = RIVER_STYLES[riverStyle];
   if (!RS) throw new Error(`mapa terenu: nieznany styl rzeki „${riverStyle}”`);
   if (!VEG[veg]) throw new Error(`mapa terenu: nieznana roślinność „${veg}”`);
-  const P = VEG[veg];
+  // odcień roślinności z palety PLANETY (mnożniki kanałów): mapa miejsca ma barwy z tej samej rodziny co planeta
+  // widziana z orbity
+  const P = vegTint
+    ? Object.fromEntries(Object.entries(VEG[veg]).map(([k, c]) => [k, c ? [Math.min(255, c[0] * vegTint[0]), Math.min(255, c[1] * vegTint[1]), Math.min(255, c[2] * vegTint[2])] : null]))
+    : VEG[veg];
   const WC = WATER[RS.water];
   const G0 = GROUND;
   const t0 = now();
@@ -426,7 +447,7 @@ export function generateTerrainMap({
   // węzła skaczą na granicach między węzłami o ~odległość × kąt załamania — przy rzadkich węzłach wyspy i jeziora
   // były pocięte prostymi krawędziami, a brzeg koryta z kół wyglądał jak sznur korali)
   const pds = RS.islands ? W / 8 : ds;
-  const axis = valleyAxis(rng, L, ds * 4);
+  const axis = valleyAxis(rng, L, ds * 4, flowAngle);
   // odległość od osi doliny i podatność brzegu w kracie zgrubnej (obszar mapy z zapasem)
   const G = 192;
   const ext = L * 0.3;
@@ -753,6 +774,28 @@ export function generateTerrainMap({
       }
     }
   }
+  // STRUMIENIE wysoczyzny jako linie: położenie uśrednione z kilku komórek w dół cieku (ścieżka spływu idzie zygzakiem
+  // po ośmiu kierunkach siatki — rysowana wprost wyglądała jak pęknięcia), grubość z wielkości zlewni
+  const streamCov = new Float32Array(N * N);
+  {
+    const rcv = dr.receiver;
+    const flow = dr.flow;
+    const order = dr.order;
+    for (let i = 0; i < order.length; i++) {
+      const c = order[i];
+      if (!isStream[c] || flow[c] < tStream * 2.5) continue;
+      let sx = 0;
+      let sy = 0;
+      let cnt = 0;
+      for (let q = c, j = 0; j < 7 && q >= 0 && hd[q] > 0; j++, q = rcv[q]) { const qy = (q / N) | 0; sx += q - qy * N + 0.5; sy += qy + 0.5; cnt++; }
+      const r = cs * Math.min(1.5, 0.45 + 0.16 * Math.log2(flow[c] / (tStream * 2.5) + 1));
+      const kMax = Math.min(0.85, 0.35 + 0.13 * Math.log2(flow[c] / (tStream * 2.5) + 1));
+      eachInDisc(sx / cnt * cs, sy / cnt * cs, r + cs, (k, d) => {
+        const cv = (1 - sstep(r - 0.6 * cs, r + 0.6 * cs, d)) * kMax;
+        if (cv > streamCov[k]) streamCov[k] = cv;
+      });
+    }
+  }
   // wysokość nad ciekiem wygładzona: surowa skacze na działach wodnych między ścieżkami spływu (torfowiska
   // o brzegach z prostokątnych schodków) — wygładzona daje miękkie, zaokrąglone zasięgi
   const handS = boxBlur(Float32Array.from(hand), N, Math.max(1, Math.round(45 / cs)), 2);
@@ -896,6 +939,8 @@ export function generateTerrainMap({
         // (nizina delty ma własne pokrycie — namorzyny i trzciny — torfowiska gasną ku morzu)
         const inland = coast ? sstep(apexD * 0.5, apexD * 1.3, dc) : 1;
         let fen = Math.max(wetLine * (0.6 + 0.4 * flat) * Math.min(1, VEG_FEN[veg] + 0.3), bogPlain * region * VEG_FEN[veg]) * inland;
+        // brzeg torfowiska nierówny w skali kilkudziesięciu metrów (gładki obrys wyglądał jak plama farby)
+        fen += (0.2 * vnoise(xm / 110, ym / 110, honeySeed + 21) + 0.12 * vnoise(xm / 45, ym / 45, honeySeed + 22)) * sstep(0.04, 0.4, fen) * (1 - sstep(0.75, 1.0, fen));
         // łęg wzdłuż większych strumieni
         const rip = (1 - sstep(0.5, 2.0, hnd + e * 0.5)) * (1 - small);
         if (rip > 0.01) { put(k, P.riparian, rip * 0.6); can = mix(can, 17, rip); }
@@ -931,8 +976,11 @@ export function generateTerrainMap({
           const f = sstep(0.3, 0.8, fen + e * 0.08) * (1 - island);
           // brzeg torfowiska: szeroki pas zarośli (miękkie przejście do lasu); środek: jasny beż, miejscami jaśniejszy
           // albo wilgotniej zielony
-          const shrubK = sstep(0.06, 0.4, fen) * (1 - f);
-          put(k, P.shrub, shrubK * 0.8);
+          // (otoczka: wilgotna zieleń przechodząca w zarośla — na zdjęciu torfowisko ma zielone obrzeże, nie ostrą
+          // granicę z lasem)
+          // (wyspy drzew zostają ciemnym lasem — otoczka tylko na obrzeżu torfowiska)
+          const shrubK = sstep(0.04, 0.42, fen) * (1 - f) * (1 - 0.8 * island);
+          put(k, mix3(P.shrub, P.fenWet, sstep(0.15, 0.4, fen)), shrubK * 0.85);
           const tone = sstep(-0.3, 0.4, e + a * 0.6);
           const fenC = mix3(P.fen, P.fenLight, tone);
           const wet = sstep(0.2, 0.7, c - e * 0.4) * 0.5;
@@ -941,15 +989,12 @@ export function generateTerrainMap({
           tex = mix(tex, 0.03, f);
           if (f > 0.5) cov = TERRAIN_COVER.FEN; else if (shrubK > 0.5) cov = TERRAIN_COVER.SHRUB;
         }
-        // strumień: cienka ciemna linia (szerokość poniżej teksela — krycie z wielkości zlewni); dopiero od większej
-        // zlewni i miękko: czarne kreski każdego strumyka wyglądały jak pęknięcia
-        if (isStream[k]) {
-          const s = Math.min(0.7, 0.13 * Math.log2(dr.flow[k] / tStream + 1));
-          if (s > 0.28) {
-            put(k, WC.stream, s);
-            can = mix(can, 2, s);
-            if (s > 0.6) cov = TERRAIN_COVER.WATER;
-          }
+        // strumień: ciemna linia z rastra `streamCov` (wygładzony bieg)
+        const sc = streamCov[k];
+        if (sc > 0.02) {
+          put(k, WC.stream, sc);
+          can = mix(can, 2, sc);
+          if (sc > 0.6) cov = TERRAIN_COVER.WATER;
         }
       }
       // NIZINA DELTY: namorzyny (ciemny las pływów), trzcinowiska, jaśniejsze wały przy korytach, błota przy brzegu
@@ -1023,7 +1068,8 @@ export function generateTerrainMap({
         if (fresh) { col = WC.edge; ch = 0; } else if (age < 0.02) { col = G0.sand; ch = 0; cov = TERRAIN_COVER.SAND; } else {
           const g1 = sstep(0.02, 0.06, age);                        // piasek → trawy
           const g2 = sstep(0.05, 0.16, age);                        // trawy → łąka
-          const g3 = sstep(0.14, 0.5, age + c * 0.18 + e * 0.08);   // łąka → zarośla i las
+          // (granica łąka / las poszarpana kępami — gładkie przejście z wieku powierzchni wyglądało na malowane)
+          const g3 = sstep(0.14, 0.5, age + c * 0.18 + e * 0.12 + 0.1 * vnoise(xm / 130, ym / 130, bs + 71));   // łąka → zarośla i las
           col = mix3(mix3(G0.sand, P.grass, g1), P.meadow, g2);
           // zarośla w obniżeniach, jaśniejsza trawa na grzędach
           const th = sstep(0.35, 0.75, (1 - ridge) * 0.45 + e * 0.6 + c * 0.3 + 0.25) * sstep(0.04, 0.2, age);
@@ -1108,9 +1154,10 @@ export function generateTerrainMap({
         }
       }
       cover[k] = cov;
-      canopy[k] = can;
-      // ziarno koron: szum co teksel i grudki kilku tekseli (korony i luki — bez tego las jest gładką plamą)
+      // ziarno koron: szum co teksel i grudki kilku tekseli (korony i luki — bez tego las jest gładką plamą); te same
+      // grudki falują WYSOKOŚĆ koron, więc cieniowanie daje lasowi fakturę oświetlonych i ocienionych kęp
       const clump = vnoise(x / 2.7, y / 2.7, 4177) * 0.6 + vnoise(x / 6.1, y / 6.1, 4178) * 0.4;
+      canopy[k] = can + (can > 6 ? (clump * 3.2 + grain * 3.0) : 0);
       const t = 1 + (grain * 2 + clump * 1.3) * tex + e * 0.04;
       rgb[o] *= t; rgb[o + 1] *= t; rgb[o + 2] *= t;
     }

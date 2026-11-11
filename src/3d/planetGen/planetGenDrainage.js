@@ -36,6 +36,13 @@ export const DRAIN_JITTER = 0.22;
 export const DRAIN_CODE_STEP = 25;
 export const DRAIN_FLOW_K = 12;
 export const DRAIN_SEA_K = 32;
+// SMUGI OSADU w morzu przy ujściach (kanał A): rzeka o log2(1 + przepływ) ≥ LF0 niesie do morza muł; siła smugi
+// rośnie do LF1, zasięg od ~1,5 do 1,5 + PLUME_CELLS komórek (siatka 2048 komórek w obwodzie; gęstsza siatka —
+// progi i zasięg przeliczone tak, żeby smuga miała ten sam rozmiar na planecie).
+export const PLUME_LF0 = 6.5;
+export const PLUME_LF1 = 12.5;
+export const PLUME_CELLS = 9;
+const PLUME_REF_W = 2048;
 
 // koszt wejścia do komórki poniżej poziomu zalania [poziomy]: 1 + FILL_COST / (1 + głębokość / FILL_DEPTH) + hasz 0…7
 const DRAIN_RHO = 0.6;       // waga „ulubionego kierunku” w wyborze spływu (0 — zawsze najstromszy z ośmiu)
@@ -53,11 +60,12 @@ export const drainFlowDecode = (g) => Math.pow(2, g / DRAIN_FLOW_K) - 1;
  * @param {number} W
  * @param {number} H
  * Opcje mapy LOKALNEJ (płaski wycinek, nie cała kula): `wrapX: false` — bez zawijania w osi x, `rowWeight: false` —
- * komórki równej wagi (bez cos φ), `keep: true` — w wyniku także `receiver`, `order`, `flow`.
+ * komórki równej wagi (bez cos φ), `keep: true` — w wyniku także `receiver`, `order`, `flow`; `plumes` — smugi
+ * osadu w morzu przy ujściach (kanał A; domyślnie tylko mapa całej planety).
  * @returns {{ width, height, data: Uint8Array, stats: { land, seeds, maxFlow, filled, ms } }}
  */
 export function computeDrainage(height, rain, W, H, {
-  levels = 65536, wander = 0.06, seed = 1, wrapX = true, rowWeight = true, keep = false, now = () => performance.now()
+  levels = 65536, wander = 0.06, seed = 1, wrapX = true, rowWeight = true, keep = false, plumes = wrapX, now = () => performance.now()
 } = {}) {
   const t0 = now();
   const N = W * H;
@@ -250,7 +258,43 @@ export function computeDrainage(height, rain, W, H, {
     }
     for (let i = 0; i < nOrder; i++) { const c = order[i]; if (!seaDist[c]) seaDist[c] = cap; }
   }
-  const mPerLvl = hMax * 1000 / (levels - 1);
+  // smugi osadu: stempel wokół komórki morza, do której uchodzi rzeka (największa wartość wygrywa); obejmuje także
+  // ląd przy brzegu, żeby próbka dwuliniowa w grafie nie gasła na samym brzegu. Tylko mapa całej planety.
+  if (plumes) {
+    const ks = W / PLUME_REF_W;
+    const lf0 = PLUME_LF0 + 2 * Math.log2(ks);
+    const pl = new Float32Array(N);
+    for (let i = 0; i < nOrder; i++) {
+      const c = order[i];
+      const r = rcv[c];
+      if (r < 0 || isLand(r)) continue;
+      const lf = Math.log2(1 + flow[c]);
+      if (lf < lf0) continue;
+      const s = Math.min(1, (lf - lf0) / (PLUME_LF1 - PLUME_LF0));
+      const rad = (1.5 + s * PLUME_CELLS) * ks;
+      const y0 = (r / W) | 0;
+      const x0 = r - y0 * W;
+      const cosL = Math.max(0.2, cosRow[y0]);
+      const ry = Math.ceil(rad);
+      const rx = Math.min(W >> 1, Math.ceil(rad / cosL));
+      const peak = 0.4 + 0.6 * s;
+      for (let dy = -ry; dy <= ry; dy++) {
+        const yy = y0 + dy;
+        if (yy < 0 || yy >= H) continue;
+        for (let dx = -rx; dx <= rx; dx++) {
+          const dd = Math.sqrt(dx * cosL * dx * cosL + dy * dy);
+          if (dd >= rad) continue;
+          let xx = x0 + dx;
+          if (xx < 0) xx += W; else if (xx >= W) xx -= W;
+          const t = 1 - dd / rad;
+          const v = peak * t * t * (3 - 2 * t);
+          const n = yy * W + xx;
+          if (v > pl[n]) pl[n] = v;
+        }
+      }
+    }
+    for (let i = 0; i < N; i++) if (pl[i] > 0) data[i * 4 + 3] = Math.round(pl[i] * 255);
+  }
   for (let i = 0; i < nOrder; i++) {
     const c = order[i];
     const r = rcv[c];
@@ -266,7 +310,6 @@ export function computeDrainage(height, rain, W, H, {
     const g = drainFlowEncode(flow[c]);
     data[o + 1] = g;
     data[o + 2] = Math.min(255, seaDist[c] * DRAIN_SEA_K);
-    data[o + 3] = Math.min(255, Math.round((popLvl[c] - lvl[c]) * mPerLvl / 2));
   }
   const out = { width: W, height: H, data, stats: { land, seeds, maxFlow, filled, ms: now() - t0 } };
   // `keep` (mapa terenu — planetGenTerrainMap.js): odbiorcy, kolejność zalewania (odbiorca zawsze wcześniej niż

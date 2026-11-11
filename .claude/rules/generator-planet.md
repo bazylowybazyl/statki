@@ -155,17 +155,21 @@ paths:
 ## Rzeki ze spływu wody i mozaika biomów (terran / ocean; opis, błędy po drodze i koszt: `docs/OPIS-generator-planet.md` § 10.10)
 
 - Rzeki to DRZEWO ze spływu po mapie wysokości planety (`planetGenDrainage.js`, czysty JS): `bakeSystem` rysuje pole
-  BEZ rzek w rozdzielczości siatki spływu, przejście `drain:<rodzaj>` (cel RG32F: wysokość, opad) idzie do odczytu
-  CPU (jeden na układ), `computeDrainage` daje teksturę RGBA8 — `baked.drainage` ({ texture, width, height, data,
-  stats, uniforms }). Rodzaj z rzekami: `drain(F)` w `SOLID_TYPES` + `drainage: true` w `uniformsFor`. Linie zera
+  BEZ rzek w rozdzielczości siatki spływu, przejście `drain:<rodzaj>` (cel RGBA32F: wysokość, opad, temperatura,
+  wilgotność) idzie do odczytu CPU (jeden na układ), `computeDrainage` daje teksturę RGBA8 — `baked.drainage`
+  ({ texture, width, height, data, stats, uniforms, heightM, temp, moist } — trzy ostatnie to dane MIEJSCA dla
+  mapy terenu, § „Mapa terenu”). Rodzaj z rzekami: `drain(F)` w `SOLID_TYPES` + `drainage: true` w `uniformsFor`. Linie zera
   szumu jako rzeki dają pętle i przecięcia — nie wracać.
 - Graf pola jest jeden na rodzaj, a tekstura spływu jest per planeta: przed KAŻDYM rysunkiem pola
   `uDr: baker._bindDrain(rodzaj, baked.drainage)` (podstawia `graph.drain.value`). Bez spływu `uDr = [1, 1, 0, 0]` —
   gałąź rzek wyłączona, uniformy skończone (próba, wejście spływu).
-- Kanały pola terran / ocean: y > 0 — woda słodka, y < 0 — minus wilgotność doliny (pas przy rzece); z > 0 — pasma
-  gór, z < 0 — dno doliny zalewowej: −0,49 · łuki dawnych koryt (0…−0,49) albo −(0,5 + 0,5 · łacha piasku). Odbiorcy czytają `max(·, 0)` (maski, połysk); nowy odbiorca pola też.
+- Kanały pola terran / ocean: y > 0 — woda słodka, y < 0 — minus wilgotność doliny (pas przy rzece), na MORZU
+  y = −smuga osadu z rzek; z > 0 — pasma gór, z < 0 — dno doliny zalewowej: −0,49 · łuki dawnych koryt (0…−0,49)
+  albo −(0,5 + 0,5 · łacha piasku), w pikselu WODY słodkiej z = −0,49 · muł niesiony przez wielką rzekę. Odbiorcy
+  czytają `max(·, 0)` (maski, połysk); nowy odbiorca pola też.
 - Tekstura spływu (RGBA8): R — kierunek do odbiorcy, G — przepływ (log), B — odległość od morza [komórki ×
-  `DRAIN_SEA_K`], A — głębokość wypełnionego zagłębienia.
+  `DRAIN_SEA_K`], A — smuga osadu w morzu przy ujściach rzek (stempel wokół komórki morza, do której uchodzi
+  rzeka; obejmuje też ląd przy brzegu — próbka dwuliniowa nie gaśnie na brzegu; tylko mapa całej planety).
 - Geometria rzeki (`riverNet`): węzeł = środek komórki + przesunięcie z haszu (≤ `DRAIN_JITTER` = 0,22 — przy
   większym odcinki drzewa mogą się skrzyżować), bieg = łuk Béziera przez węzeł odbiorcy (`bezierNear`), meander =
   sinusoida w poprzek łuku z zerem w węzłach; liczba półfal Z SZEROKOŚCI koryta (długość fali ≈ 12 szerokości —
@@ -216,7 +220,36 @@ paths:
   tylko na część ponad smugę strumyka (`wetBig`). Wzory dna doliny (łachy, pasy, tarasy) gasną, gdy teksel celu ich
   nie rozdziela („koraliki”). Plaża tylko w promieniu 3 tekseli od punktu poniżej poziomu morza.
 
-## Mapa terenu — trzeci poziom (prototyp; opis, wzorzec i różnice: `docs/OPIS-generator-planet.md` § 10.13)
+## Planeta z daleka: krajobraz jak na mapie terenu, tryb ultra (opis, liczby i błędy po drodze: `docs/OPIS-generator-planet.md` § 10.16)
+
+- Decyzja użytkownika (2026-11-11): szczegółowość map terenu ma mieć CAŁA planeta, zaczynając od planety
+  oddalonej — „bardziej szczegółowa i zbliżona do map terenów”. Osobny panel z mapą miejsca nie jest celem.
+- Barwy krajobrazu planety idą z palet MAPY TERENU (`terrainLandscape(paleta)`, `TERRAIN_WATER` w
+  `planetGenTerrainMap.js` → `landscapeUniforms` → `uFenA / B`, `uFenWetA / B`, `uGrassA / B`, `uMeadowA / B`,
+  `uWDark`, `uWMud`, `uWIce`, `uSilt`, `uSandB`): A — klimat chłodny (tajga), B — ciepły (las równikowy), planeta
+  o rdzawej roślinności — paleta czerwona; lekki odcień ku barwie lasu planety. Zmiana palety mapy terenu zmienia
+  też planetę.
+- TORFOWISKA I POLANY to mozaika pól w trzech skalach (komórka szumu ~120, ~33, ~9 km; `fenLayer`), z dziedziną
+  odkształconą własnym szumem warstwy (sam próg szumu przy małym udziale pola daje okrągłe kropki). Warstwa,
+  której teksel celu nie rozdziela, wchodzi ŚREDNIĄ (`fenMean` — udział pola jako rozjaśnienie): kraina torfowisk
+  ma tę samą jasność na każdym poziomie zbliżenia. Jedna wielka plama z progu szumu o gasnących oktawach wygląda
+  jak naklejka — nie wracać.
+- Woda słodka: ciemna (rzeki leśne, jeziora), mętna (wielka rzeka: `RIVER_MUD_LF0 / LF1` ≈ przepływ 600–1800, od
+  tej wielkości mapa terenu rysuje „wielką rzekę”), mleczny błękit (rzeki w górach). Rzeka nie ma barwy morza.
+  Pas zalewowy wielkiej rzeki węższy niż teksel gaśnie ze stosunkiem szerokości (z daleka jaśniejsza wstęga doliny).
+- SMUGI OSADU przy ujściach: kanał A siatki spływu → w polu próbka w punkcie przesuniętym szumem (skala w komórkach
+  siatki 2048 — `kS`) → głębokość morza z ŻĄDANEJ widoczności dna (materiał pokazuje dno z wagą e^(−28 · głębokość))
+  i barwa dna = muł. Liniowe spłycenie do kilku metrów daje półkę o ostrym brzegu, którą detal wysokości wynosi
+  nad wodę (blady „ląd” w morzu); barwa mułu tylko pod wodą (h < 0) — wyspy na szelfie leżą po stronie morza.
+- Pas o szerokości w TEKSELACH celu (plaża „nie mniej niż 2 teksele”, piana przyboju w pasie płycizny) robi wokół
+  każdego lądu obwódkę, grubszą z daleka: szerokość w kilometrach, a gdy teksel jest większy — pokrycie
+  (szerokość / teksel)^0,7; przybój z daleka 0,08 i tylko tam, gdzie dno opada (nachylenie mapy).
+- TRYB ULTRA dema (`?ultra=1|0`, domyślnie na ekranach szerszych niż 3000 px): mapa planety 4096 × 2048, siatka
+  rzek 4096 (`bakeSystem({ drainSize })` — stałe rzek są w komórkach, więc gęstsza siatka daje więcej cieńszych
+  rzek i więcej prawdziwych zakrętów), okno pod kamerą 6144 × 3072. Okno ma stały kształt 2 : 1 i zapas 1,5 —
+  na ekranie 5120 × 1440 okno 4096 daje 0,27–0,53 teksela na piksel.
+
+## Mapa terenu — trzeci poziom (prototyp; opis, wzorzec i różnice: `docs/OPIS-generator-planet.md` § 10.13–10.15)
 
 - CEL użytkownika: ostrzał miast z orbity i desant (minigra RTS o miasta) — wokół miasta ma być krajobraz jak na
   zdjęciu satelitarnym, a biom miejsca wyznacza resztę. Planeta i zbliżenie tego nie pokażą (komórka sieci rzecznej
@@ -224,7 +257,27 @@ paths:
 - `planetGenTerrainMap.js` (czysty JS — przeglądarka, worker, Node): `generateTerrainMap({ seed, size, extentKm,
   biome, river, veg, riverWidthM })` → warstwy: `albedo` (RGBA8 sRGB, wiersz 0 = północ), `height` [m], `cover`
   (`TERRAIN_COVER`: woda, piasek, łąka, zarośla, las, torfowisko — także pod rozgrywkę), `river` (oś [m]), `sea`.
-  Biomy: `TERRAIN_MAP_BIOMES` (dziś `tajga`). Niepołączone z planetą — miejsce = ziarno.
+  Biomy: `TERRAIN_MAP_BIOMES` (dziś `tajga`). Opcje ze złącza z planetą: `flowAngle` (kierunek spływu rzeki; układ
+  mapy: x — wschód, y — południe), `vegTint` (mnożniki barw całej palety roślinności).
+- ZŁĄCZE Z PLANETĄ (`planetGenPlace.js`, czysty JS): `describePlace(baked, kierunek)` czyta dane miejsca, które
+  wypiek zostawił na CPU (`baked.drainage`: drzewo rzek, odległość od morza, `heightM` Int16 [m], `temp` / `moist`
+  Uint8 — kodowanie `PLACE_T` / `PLACE_M`, ten sam klimat co barwy planety), i zwraca gotowe opcje
+  `generateTerrainMap` (`map`): styl i szerokość rzeki z przepływu, kierunek spływu z pierwszych kroków w dół rzeki
+  (przy delcie morze leży po właściwej stronie), roślinność, bok mapy, ziarno = (ziarno planety, komórka) — to samo
+  miejsce daje tę samą mapę. Punkt w morzu przy brzegu przeskakuje na ląd, punkt obok rzeki — na największą rzekę
+  okolicy (`searchKm`); otwarte morze → `{ ok: false, reason: 'morze' }`.
+- Mapa terenu NIE odtwarza planety teksel w teksel: bierze z niej, CO jest w miejscu (rzeka tej wielkości płynąca
+  w tę stronę, morze w tym kierunku, taki klimat), i buduje krajobraz w swojej skali. Kształt brzegu morza i bieg
+  zakoli na mapie nie są kształtem z planety.
+- Barwy mapy przy planecie: układ palety z klimatu miejsca (`tajga` / `tropik`; planeta o rdzawej roślinności —
+  `czerwona`), odcień w połowie ku barwie lasu PLANETY (`vegTint`, siła `PLACE_TINT`). Wybór innej palety mapy
+  z nazwy palety planety dawał mapę w innej barwie niż planeta widziana z orbity — nie wracać.
+- Biom miejsca (`biome`: las, step, pustynia, tundra, góry, lód i śnieg) z progów klimatu planety; `supported`
+  mówi, czy biom ma przepis mapy (dziś tylko las — reszta dostaje mapę lasu z dopiskiem w demie). Nowy biom =
+  przepis w `generateTerrainMap` + wpis w `describePlace`.
+- Tajga: linie cieków z wygładzonego rastra pokrycia (`streamCov`), brzeg torfowisk z szumem i zielonym pasem
+  zarośli, faktura lasu z szumu WYSOKOŚCI koron (cieniowanie robi resztę) — szum dokładany wprost do barwy lasu
+  daje płaską „kaszę”.
 - STYLE RZEK (`TERRAIN_RIVERS`, wzorce — zdjęcia od użytkownika, § 10.14 opisu): `meandry` (symulacja), `wielka`
   (szerokie koryto z wyspami i bocznymi ramionami, muł), `roztoki` (żwirowe łożysko z plecionką koryt), `delta`
   (morze, ramiona delty z lejkami pływowymi, potoki pływowe, smugi osadu). Bok mapy dobieraj do stylu: wielka rzeka
@@ -248,7 +301,9 @@ paths:
   szerokości — losować obecność, kształt i szerokość.
 - Narzędzia: demo `dema/mapa-terenu.html` (listy rzeki i roślinności, `?rzeka=`, `?ros=`), PNG
   `node scripts/mapa-terenu-png.mjs --rzeka delta --ros tropik --km 40 --roz 2048 --ziarno 4 --out …`, testy
-  `tests/planetGenTerrainMap.test.mjs`.
+  `tests/planetGenTerrainMap.test.mjs`. Złącze: demo planety `dema/planeta-zblizenie.html?styl=terran` — dwuklik
+  na lądzie otwiera mapę terenu miejsca (worker, `?teren=2048` — większa mapa; `window.__zbl.openPlace(kierunek)`,
+  `pickDir(x, y)`, `closePlace()`, stan w `terrain`), testy `node --test tests/planetGenPlace.test.mjs`.
 
 ## Zasady i pułapki
 
@@ -311,7 +366,8 @@ paths:
   `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `?widok=orbita|gora`, `?bryla=0|1`, `?chmury=0…1`, `window.__zbl`: `setView`,
   `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
   `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
-  (orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
+  (demo: `?ultra=1|0`, `?mapa=2048|4096`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`;
+  orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
   `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,
   `--bez-raf 1` — start bez klatek rAF), demo: `?pogoda=0…12|off`, `?czas=`, `?mapaPogody=2048`; testy
   `node --test tests/planetGenNear.test.mjs`.

@@ -44,6 +44,11 @@
   #load { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #9fb0c4; font-size: 13px; letter-spacing: .06em; }
   #err { position: fixed; left: 12px; right: 12px; bottom: 60px; color: #ffc4c4; background: rgba(50, 0, 0, .92); padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none; }
   body.test #panel, body.test #stat, body.test #scale, body.hide #panel { display: none !important; }
+  #teren { display: none; position: fixed; left: 12px; top: 12px; width: min(42vw, 80vh); padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; z-index: 4; }
+  #terenC { display: block; width: 100%; aspect-ratio: 1; border-radius: 4px; background: #0b0f0e; }
+  #terenLoad { position: absolute; left: 8px; right: 8px; top: 8px; aspect-ratio: 1; display: none; align-items: center; justify-content: center; background: rgba(6, 10, 12, .6); color: #c8d4e2; letter-spacing: .05em; border-radius: 4px; }
+  #terenInfo { margin-top: 7px; color: #c8d4e2; }
+  #terenX { position: absolute; right: 14px; top: 14px; z-index: 2; width: 26px; height: 26px; padding: 0; font-size: 15px; line-height: 1; }
 </style>
 </head>
 <body>
@@ -77,9 +82,11 @@
     Widok orbitalny: <kbd>LPM</kbd> obrót · <kbd>PPM</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> kadr · <kbd>kółko</kbd> odległość.<br>
     Widok z góry: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>LPM</kbd> przesuw · <kbd>kółko</kbd> zbliżenie.<br>
     <kbd>O</kbd> widok · <kbd>B</kbd> chmury bryłą · <kbd>Z</kbd> zorza · <kbd>C</kbd> chmury · <kbd>E</kbd> erupcja · <kbd>V</kbd> miejsce ·
-    <kbd>T</kbd> wycinek · <kbd>L</kbd> żar · <kbd>Home</kbd> planeta · <kbd>H</kbd> panel
+    <kbd>T</kbd> wycinek · <kbd>L</kbd> żar · <kbd>Home</kbd> planeta · <kbd>H</kbd> panel<br>
+    <kbd>dwuklik</kbd> na lądzie (planeta terrańska) — mapa terenu tego miejsca
   </div>
 </div>
+<div id="teren"><button id="terenX" title="zamknij mapę terenu">×</button><canvas id="terenC" width="16" height="16"></canvas><div id="terenLoad">generuję mapę terenu…</div><div id="terenInfo"></div></div>
 <div id="scale"><span></span><i></i></div>
 <div id="stat"></div>
 <div id="load">wypiek planety…</div>

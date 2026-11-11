@@ -21,6 +21,7 @@ import {
 import { bakeUniforms, bakeCoords, fieldAt, bakeMaterial, drainNode, COMMON_DEFS } from './planetGenBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
 import { DRAIN_JITTER, DRAIN_CODE_STEP, DRAIN_FLOW_K, DRAIN_SEA_K } from './planetGenDrainage.js';
+import { terrainLandscape, TERRAIN_WATER } from './planetGenTerrainMap.js';
 
 const PI = Math.PI;
 export const CRATER_OCTAVES = 7;
@@ -221,6 +222,10 @@ export const RIVER_W_MAX = 0.12;       // (koryto wąskie względem zakoli: ampl
 export const RIVER_W_EXP = 0.4;        // szerokość ∝ przepływ^0,4
 export const RIVER_MEANDER = 0.7;      // amplituda meandra = RIVER_MEANDER · długość łuku / liczba półfal (do 0,42 komórki)
 const RIVER_LF0 = Math.log2(1 + RIVER_FLOW_MIN);
+// log2(1 + przepływ), od którego woda rzeki jest mętna od niesionego mułu (pełna barwa przy LF1 ≈ przepływ 1500 —
+// od tej wielkości mapa terenu rysuje „wielką rzekę”, planetGenPlace.js)
+const RIVER_MUD_LF0 = 9.2;
+const RIVER_MUD_LF1 = 10.8;
 function riverNet(D, U, gp, cosL, stC, flatK) {
   const W = max(int(U.uDr.x), int(1)).toVar();
   const H = max(int(U.uDr.y), int(1)).toVar();
@@ -235,6 +240,7 @@ function riverNet(D, U, gp, cosL, stC, flatK) {
   const wet = float(0.0).toVar();
   const stripe = float(0.0).toVar();
   const bar = float(0.0).toVar();
+  const mud = float(0.0).toVar();
   const dBest = float(1e3).toVar();
   // meandry i starorzecza dopiero, gdy teksel celu je rozdziela (okres meandra ≥ ~½ komórki)
   const fine = float(1.0).sub(smoothstep(0.12, 0.3, stC)).toVar();
@@ -306,7 +312,13 @@ function riverNet(D, U, gp, cosL, stC, flatK) {
         const vis = smoothstep(lfVis.sub(1.0), lfVis, lf);
         // rzeka węższa niż teksel: linia ~1,3 teksela o pokryciu (w / wt)^0,5 — mocniej niż z zachowania energii:
         // rzeka ma być z daleka tą samą linią co z bliska (nie znikać i nie zmieniać się w jasny pas)
-        line.assign(max(line, inv(wt.mul(0.4), wt, dist).mul(pow(w.div(wt), 0.5)).mul(vis)));
+        // (muł: wielka rzeka niesie osad — barwa wody z przepływu odcinka, który daje największe pokrycie)
+        const ln = inv(wt.mul(0.4), wt, dist).mul(pow(w.div(wt), 0.5)).mul(vis).toVar();
+        const mudR = smoothstep(RIVER_MUD_LF0, RIVER_MUD_LF1, lf).toVar();
+        If(ln.greaterThan(line), () => {
+          line.assign(ln);
+          mud.assign(mudR);
+        });
         // dolina: potok — wąskie V, wielka rzeka — szerokie dno; głębiej z przepływem
         const rv = clamp(max(w.mul(5.0).add(0.04).add(belt), wt.mul(3.0)), 0.05, 0.75).toVar();
         const pv = inv(min(belt.mul(0.6), rv.mul(0.6)), rv, dist0).toVar();
@@ -314,14 +326,13 @@ function riverNet(D, U, gp, cosL, stC, flatK) {
         carve.assign(max(carve, pv.mul(pv).mul(dep)));
         // wilgotność doliny: przy strumyku wąska smuga, przy wielkiej rzece pas zalewowy
         const rw = clamp(max(w.mul(7.0).add(0.05).add(belt.mul(1.3)), wt), 0.05, 0.75).toVar();
-        // Pas zalewowy (drugi człon) tylko przy dużych rzekach na płaskim (flatK — w górach dolina jest wąska)
-        // i tylko gdy cel go rozdziela: pas poszerzony do teksela gaśnie z kwadratem stosunku szerokości — z daleka
-        // rzeka zostaje linią wody, a nie pasem innym niż z bliska.
+        // Pas zalewowy (drugi człon) tylko przy dużych rzekach na płaskim (flatK — w górach dolina jest wąska).
+        // Pas węższy niż teksel celu gaśnie ze stosunkiem szerokości: z daleka wielka rzeka to jaśniejsza wstęga
+        // doliny (średnia tego, co widać z bliska: ciemna woda, łachy, łęgi), mała — sama smuga wilgotności.
         const rw0 = w.mul(7.0).add(0.05).add(belt.mul(1.3));
         const res = min(rw0.div(rw), 1.0).toVar();
         const sw = smoothstep(2.8, 5.5, lf).mul(0.45).mul(res)
-          .add(smoothstep(5.5, 9.0, lf).mul(0.55).mul(res.mul(res)).mul(smoothstep(0.75, 0.95, flatK))
-            .mul(float(1.0).sub(smoothstep(0.1, 0.22, stC))));
+          .add(smoothstep(5.5, 9.0, lf).mul(0.55).mul(res).mul(smoothstep(0.75, 0.95, flatK)));
         wet.assign(max(wet, inv(rw.mul(0.25), rw, dist0).mul(sw)));
         // DNO DOLINY wielkiej rzeki (wzór: zdjęcie satelitarne): ŁACHY — jasny piasek po WEWNĘTRZNEJ stronie zakola
         // tuż przy korycie; ŁUKI DAWNYCH KORYT — pasy w stałej odległości od dzisiejszego koryta (równoległe do
@@ -342,12 +353,13 @@ function riverNet(D, U, gp, cosL, stC, flatK) {
       });
     });
   });
-  return { line, carve, wet, stripe, bar };
+  return { line, carve, wet, stripe, bar, mud };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // TERRAN / OCEAN — pole: y — woda słodka (> 0: rzeki, jeziora, starorzecza) albo −wilgotność doliny (< 0: pas przy
-// rzece bez wody), z — pasma gór (> 0, skała) albo dno doliny zalewowej (< 0: łuki dawnych koryt, łachy), w — kontynentalność c
+// rzece bez wody; na MORZU: −smuga osadu z rzek), z — pasma gór (> 0, skała) albo dno doliny zalewowej (< 0: łuki
+// dawnych koryt, łachy; w pikselu wody słodkiej: −0,49 · muł niesiony przez rzekę), w — kontynentalność c
 // (próg oceanu z próby: uQ.x). uDr — siatka spływu: x, y — rozmiar, z — 1: włączona, w — ziarno haszu węzłów.
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 function earthField(type) {
@@ -388,6 +400,8 @@ function earthField(type) {
     const wetV = float(0.0).toVar();
     const scar = float(0.0).toVar();
     const bar = float(0.0).toVar();
+    const mud = float(0.0).toVar();
+    const plume = float(0.0).toVar();
     If(U.uDr.z.greaterThan(0.5), () => {
       const cosL = max(cos(C.lat), 0.05).toVar();
       const cellsPerRad = U.uDr.y.div(PI).toVar();
@@ -429,6 +443,22 @@ function earthField(type) {
       wetV.assign(R.wet);
       scar.assign(R.stripe.mul(plain));
       bar.assign(R.bar.mul(plain));
+      mud.assign(R.mud);
+      // SMUGI OSADU w morzu przy ujściach rzek (kanał A siatki spływu — planetGenDrainage.js): próbka dwuliniowa
+      // w punkcie przesuniętym szumem (wiry i języki zamiast koła wokół ujścia; drobne zawijasy dopiero gdy teksel
+      // celu je rozdziela), siła łamana szumem o średniej 1
+      // (skala w komórkach siatki 2048: przy gęstszej siatce smuga ma tyle samo kilometrów, więc i zawijasy)
+      const kS = U.uDr.x.div(2048.0).toVar();
+      const nzS = (f, o) => vec2(
+        pgNoise(wp.div(kS).mul(f).add(vec3(o, o * 1.7 - 2.0, 3.1 - o))), pgNoise(wp.div(kS).mul(f).add(vec3(-o * 1.3, 5.2 + o, o * 0.7 + 9.0))));
+      const pw = nzS(0.22, 31.3).mul(2.6).add(nzS(0.7, 7.9).mul(1.0)).add(nzS(2.4, 12.2).mul(0.3).mul(float(1.0).sub(smoothstep(0.1, 0.25, stC.div(kS))))).mul(kS).toVar();
+      const gs = gq.add(pw.div(vec2(cosL, 1.0))).toVar();
+      const s0 = floor(gs).toVar();
+      const fs = gs.sub(s0).toVar();
+      const plAt = (dx, dy) => D.load(ivec2(mod(int(s0.x).add(dx).add(DW.mul(2)), DW), clamp(int(s0.y).add(dy), int(0), DH.sub(1)))).a;
+      const plRaw = mix(mix(plAt(0, 0), plAt(1, 0), fs.x), mix(plAt(0, 1), plAt(1, 1), fs.x), fs.y).toVar();
+      const plN = pgFbm(wp.div(kS).mul(0.9).add(vec3(4.4, -7.1, 2.6)), 4).toVar();
+      plume.assign(clamp(plRaw.mul(float(1.0).add(plN.mul(1.1))).mul(1.2).sub(0.05), 0.0, 1.0));
     });
     // jeziora na nizinach: płaska tafla w zagłębieniu szumu
     const lakeN = pgFbm(P.q.mul(12.0).add(vec3(-4.2, 9.3, 1.1)), 4).toVar();
@@ -439,8 +469,15 @@ function earthField(type) {
     // dno: szelf przy brzegu, stok, równina abisalna; grzbiety śródoceaniczne na granicach płyt oceanicznych
     const mor = inv(0.0, 0.1, P.border).mul(float(1.0).sub(P.cont1)).mul(pgFbm(P.q.mul(9.0), 3).mul(0.4).add(0.6));
     const abyss = pgFbm(P.q.mul(14.0), 4).mul(0.3);
-    const hSea = float(-0.1).sub(U.uE3.x.mul(smoothstep(0.0, 0.3, d.negate()))).add(mor.mul(U.uE3.y)).add(abyss)
+    const hSea0 = float(-0.1).sub(U.uE3.x.mul(smoothstep(0.0, 0.3, d.negate()))).add(mor.mul(U.uE3.y)).add(abyss)
       .add(mtnSea.mul(0.45)).toVar();
+    // osad z rzeki spłyca morze przy ujściu (stożek delty): materiał pokazuje dno przez wodę z wagą e^(−28 · głębokość),
+    // więc głębokość liczy się z ŻĄDANEJ widoczności mętnego dna (0,8 · smuga → ~8 m w sercu smugi, ~125 m na jej
+    // skraju — tam zostaje barwa szelfu). Liniowe spłycenie do kilku metrów dawało płaską półkę o ostrym brzegu,
+    // a detal wysokości wynosił ją nad wodę jako blady ląd.
+    const plVis = clamp(plume.mul(0.8), 0.03, 0.8).toVar();
+    const hPlume = log2(plVis).mul(0.6931472 / 28.0).toVar();
+    const hSea = mix(hSea0, max(hSea0, hPlume), smoothstep(0.0, 0.25, plume)).toVar();
     const h = mix(hSea, hLand, step(0.0, d)).toVar();
     // archipelagi na szelfach i łukach (wyspy z drobnych stożków w płytkiej wodzie)
     If(U.uE3.z.greaterThan(0.01), () => {
@@ -487,15 +524,20 @@ function earthField(type) {
     // y: woda (> 0) albo −wilgotność doliny; z: pasma gór (> 0), −0,49 · łuki dawnych koryt (0…−0,49) albo
     // −(0,5 + 0,5 · łacha) (−0,5…−1) — tylko na lądzie
     const onLand = step(0.0, d);
-    const yOut = mix(wetV.negate(), clamp(fresh, 0.0, 1.0), step(0.02, fresh)).mul(onLand);
-    const zOut = mix(mix(belt.mul(ridge), scar.mul(-0.49), step(0.02, scar).mul(onLand)), bar.mul(0.5).add(0.5).negate(), step(0.05, bar).mul(onLand));
+    // (na MORZU y = −smuga osadu; w pikselu WODY słodkiej z = −0,49 · muł — barwy czytają to zamiast łuków)
+    const yOut = mix(plume.negate(), mix(wetV.negate(), clamp(fresh, 0.0, 1.0), step(0.02, fresh)), onLand);
+    const zLand = mix(mix(belt.mul(ridge), scar.mul(-0.49), step(0.02, scar).mul(onLand)), bar.mul(0.5).add(0.5).negate(), step(0.05, bar).mul(onLand));
+    const zOut = mix(zLand, mud.mul(-0.49), step(0.02, fresh).mul(step(0.02, mud)).mul(onLand));
     return vec4(h, yOut, zOut, P.c);
   })();
   return { U, material: bakeMaterial(`PlanetGenField_${type}`, node), drain: D };
 }
 
 const EARTH_COLOR_DEFS = {
-  ...COMMON_DEFS, uK: 'vec4', uK2: 'vec4',
+  ...COMMON_DEFS, uK: 'vec4', uK2: 'vec4', uK3: 'vec4',
+  // barwy krajobrazu wspólne z mapą terenu (planetGenTerrainMap.js): A — klimat chłodny, B — ciepły
+  uFenA: 'vec3', uFenB: 'vec3', uFenWetA: 'vec3', uFenWetB: 'vec3', uGrassA: 'vec3', uGrassB: 'vec3', uMeadowA: 'vec3', uMeadowB: 'vec3',
+  uWDark: 'vec3', uWMud: 'vec3', uWIce: 'vec3', uSilt: 'vec3', uSandB: 'vec3',
   uRain: 'vec3', uForest: 'vec3', uTaiga: 'vec3', uSteppe: 'vec3', uTundra: 'vec3', uDesert: 'vec3', uDesertRed: 'vec3',
   uRock: 'vec3', uSnow: 'vec3', uIce: 'vec3', uShallow: 'vec3', uOcean: 'vec3', uDeep: 'vec3'
 };
@@ -521,9 +563,9 @@ function earthClimate(U, C, h, d) {
     .sub(smoothstep(0.1, 0.7, d).mul(0.36)).add(0.12).toVar();
   return { ps, wq, nM, nP, T, M };
 }
-// WEJŚCIE SPŁYWU (cel RG32F w rozdzielczości siatki spływu, odczyt CPU — planetGenBaker.js): x — wysokość [km],
+// WEJŚCIE SPŁYWU (cel RGBA32F w rozdzielczości siatki spływu, odczyt CPU — planetGenBaker.js): x — wysokość [km],
 // y — opad 0…~1,6 (waga przepływu: w pustyni rzeki nie rodzą się, w górach i wilgotnych strefach gęsto; pod lodem
-// prawie nic).
+// prawie nic), z — temperatura, w — wilgotność (klimat miejsca dla mapy terenu — planetGenPlace.js).
 function earthDrainInput(type) {
   return (F) => {
     const U = bakeUniforms(EARTH_COLOR_DEFS);
@@ -533,7 +575,7 @@ function earthDrainInput(type) {
       const K = earthClimate(U, C, f.x, f.w.sub(U.uQ.x));
       const rain = clamp(K.M.sub(0.12).mul(2.4), 0.03, 1.3).mul(smoothstep(-0.08, 0.1, K.T).mul(0.85).add(0.15))
         .add(smoothstep(0.6, 2.5, f.x).mul(0.35));
-      return vec4(f.x, rain, 0.0, 1.0);
+      return vec4(f.x, rain, K.T, K.M);
     })();
     return { U, material: bakeMaterial(`PlanetGenDrain_${type}`, node) };
   };
@@ -557,9 +599,15 @@ function earthColor(type) {
       const mtn = max(f.z, 0.0).toVar();
       const zNeg = max(f.z.negate(), 0.0).toVar();
       const bar = clamp(zNeg.mul(2.0).sub(1.0), 0.0, 1.0).toVar();
-      const scar = clamp(zNeg.div(0.49), 0.0, 1.0).mul(float(1.0).sub(step(0.5, zNeg))).toVar();
+      const scar0 = clamp(zNeg.div(0.49), 0.0, 1.0).mul(float(1.0).sub(step(0.5, zNeg))).toVar();
       const water = max(f.y, 0.0).toVar();
-      const wetV = max(f.y.negate(), step(0.02, f.y)).toVar();
+      const onLand = step(0.0, d).toVar();
+      const wetV = max(f.y.negate(), step(0.02, f.y)).mul(onLand).toVar();
+      // morze: smuga osadu przy ujściach rzek; woda słodka: muł niesiony przez wielką rzekę (kanał z w pikselu wody)
+      const plume = max(f.y.negate(), 0.0).mul(float(1.0).sub(onLand)).mul(float(1.0).sub(step(0.0, h))).toVar();
+      const isW = step(0.02, f.y).toVar();
+      const mudW = clamp(zNeg.div(0.49), 0.0, 1.0).mul(isW).toVar();
+      const scar = scar0.mul(float(1.0).sub(isW)).toVar();
       // szumy mozaiki — oktawy z rozdzielczości celu (wycinek pod kamerą dostaje drobniejsze w tej samej dziedzinie):
       // nD — ziarno (korony, żwir; okres od 3 tekseli), nMo — kształty płatów (granice klas pokrycia), nBog — płaty
       // polan i torfowisk (oba od ~6 tekseli: granice klas mają być gładkimi liniami, nie ziarnem; szum grzbietowy
@@ -568,7 +616,9 @@ function earthColor(type) {
       const edge = (v, pad = 0.0015) => { const fw = fwidth(v).mul(0.8).add(pad); return smoothstep(fw.negate(), fw, v); };
       const nD = pgFbm(ps.mul(110.0).add(wq.mul(3.0)), U.uK.w, 2.03, 0.6, true).toVar();
       const nMo = pgFbm(ps.mul(46.0).add(vec3(3.7, -8.1, 5.3)).add(wq.mul(2.0)), U.uK2.x, 2.03, 0.6, true).toVar();
-      const nBog = pgRidged(ps.mul(140.0).add(vec3(-6.2, 2.9, 4.4)), U.uK2.y, 2.1, 0.5, 1.0, 2.0, true).toVar();
+      // nFen — płaty torfowisk i polan: szereg o wolno gasnących oktawach (wielkie płaty z rojem mniejszych wokół —
+      // z daleka widać mozaikę jasnych i ciemnych pól, zbliżenie dokłada coraz mniejsze płaty w tym samym układzie)
+      const nFen = pgFbm(ps.mul(30.0).add(vec3(5.1, -3.3, 7.7)).add(wq.mul(2.5)), U.uK2.z, 2.03, 0.62, true).toVar();
       const flat = float(1.0).sub(smoothstep(0.03, 0.14, sl.s)).toVar();
       // wilgotność miejsca: klimat + dolina rzeki (lasy łęgowe w stepie, zielona wstęga w pustyni) − suche stoki
       // (bez członów zależnych od skali teksela, np. krzywizny — płaty lasu mają być te same na każdym poziomie)
@@ -577,9 +627,15 @@ function earthColor(type) {
       const desertC = mix(U.uDesert, U.uDesertRed, smoothstep(0.0, 0.6, nV.add(nP.mul(0.5))).mul(0.6));
       const forestC = vec3(mix(mix(U.uTaiga, U.uForest, smoothstep(0.36, 0.55, T)), U.uRain, smoothstep(0.72, 0.9, T))).toVar();
       const meadowC = vec3(mix(U.uSteppe, forestC, 0.42).mul(vec3(1.3, 1.75, 1.1))).toVar();
-      // jasny beż torfowisk, tarasów i suchych polan (wzór: jasne, rozgałęzione polany w ciemnym lesie)
-      const bogC = mix(U.uSteppe, U.uDesert, 0.3).mul(vec3(1.0, 1.08, 0.82));
-      const sandC = mix(U.uDesert, vec3(0.5, 0.46, 0.38), 0.5);
+      // barwy krajobrazu z palet MAPY TERENU (ten sam las, torfowisko i dolina co na mapie miejsca): chłodny
+      // klimat — paleta A (tajga), ciepły — B (las równikowy); przejście jak wybór palety w planetGenPlace.js
+      const warmK = smoothstep(0.5, 0.74, T).toVar();
+      const fenC = vec3(mix(U.uFenA, U.uFenB, warmK)).toVar();
+      const fenWetC = vec3(mix(U.uFenWetA, U.uFenWetB, warmK)).toVar();
+      const grassC = vec3(mix(U.uGrassA, U.uGrassB, warmK)).toVar();
+      const meadowT = vec3(mix(U.uMeadowA, U.uMeadowB, warmK)).toVar();
+      const bogC = mix(fenC, U.uSteppe, 0.25);
+      const sandC = U.uSandB;
       // ── PUSTYNIA: morza piasku z wydmami (dwie skale grzbietów, widoczne dopiero gdy teksel je rozdziela),
       //    kamienista hamada w ciemniejszych płatach o wyraźnym brzegu ──
       const land = vec3(desertC).toVar();
@@ -618,24 +674,50 @@ function earthColor(type) {
       // cieków (wilgotność doliny strumyka — rozgałęziają się jak sieć rzeczna, przerywane szumem) i drobne płaty
       // na grzbietach szumu; rzadko, na płaskim, wilgotnym i chłodnym gęściej; całe okolice bez polan
       const region = smoothstep(-0.1, 0.2, nV).toVar();
-      const thr = mix(float(0.78), float(0.64), bogP).add(float(1.0).sub(region).mul(0.2)).toVar();
       const fen = smoothstep(0.1, 0.24, wetV).mul(inv(0.4, 0.5, wetV)).mul(smoothstep(-0.02, 0.1, nMo.add(nF.mul(0.4)))).mul(region);
-      const clr = max(edge(nBog.sub(thr), 0.004), fen).toVar();
+      // TORFOWISKA I POLANY — mozaika płatów w TRZECH SKALACH (komórka szumu ~120, ~33 i ~9 km), jak na mapie
+      // terenu: dużo małych, postrzępionych pól zamiast kilku wielkich plam. Gęstość `fenD` rośnie na płaskim,
+      // wilgotnym i chłodnym, całe krainy mają pól więcej albo mniej (`nFen`, `nV`). Warstwa, której teksel celu
+      // jeszcze nie rozdziela, wchodzi ŚREDNIĄ (udział pola `cov` jako rozjaśnienie lasu), więc kraina torfowisk
+      // ma z daleka tę samą jasność co z bliska, a zbliżenie rozbija ją na coraz drobniejsze pola.
+      const fenAmt = mix(float(0.3), float(1.0), bogP).mul(mix(U.uK3.x, U.uK3.y, warmK)).mul(mix(float(0.35), float(1.0), flat)).toVar();
+      const fenD = clamp(fenAmt.mul(float(0.6).add(nFen.mul(5.0)).add(nV.mul(2.0))), 0.0, 1.0).toVar();
+      // próg warstwy (szum trzech oktaw, odchylenie ~0,18): 0,30 ≈ 2% pola, 0,19 ≈ 14%
+      const fenT = mix(float(0.30), float(0.19), fenD).toVar();
+      const fenMean = float(1.0).sub(smoothstep(-0.36, 0.36, fenT)).toVar();
+      const fenLayer = (freq, off) => {
+        // (dziedzina odkształcona własnym szumem warstwy: pola wydłużone i rozgałęzione — sam próg szumu przy małym
+        // udziale pola daje okrągłe kropki)
+        const pp = ps.mul(freq).add(off).toVar();
+        const n = pgFbm(pp.add(pgWarp(pp.mul(1.6).add(vec3(3.3, 1.1, -2.2)), 2, 0.7)), 3).toVar();
+        const on = float(1.0).sub(smoothstep(1 / (freq * 12), 1 / (freq * 6), st)).toVar();
+        // (obrys strzępiony drobnym szumem celu — największe pola nie mają gładkiego brzegu)
+        return mix(fenMean, edge(n.add(nD.mul(0.22)).add(nMo.mul(0.12)).sub(fenT), 0.003), on);
+      };
+      const fenA = fenLayer(46.0, vec3(5.1, -3.3, 7.7)).toVar();
+      const fenB = fenLayer(170.0, vec3(-9.4, 6.2, 1.8)).toVar();
+      const fenS = fenLayer(620.0, vec3(2.7, 8.8, -4.6)).toVar();
+      // wyspy i pasma drzew w większych polach: ujemna strona drobnego szumu `nD` (gdy cel go rozdziela)
+      const fenHole = smoothstep(0.02, 0.07, nD.negate().sub(nMo.mul(0.3))).mul(float(1.0).sub(smoothstep(4.0e-4, 1.2e-3, st))).mul(0.85);
+      const fenAll = float(1.0).sub(float(1.0).sub(fenA.mul(float(1.0).sub(fenHole))).mul(float(1.0).sub(fenB)).mul(float(1.0).sub(fenS))).toVar();
+      const clr = max(fenAll, fen).toVar();
+      // w polu: suche (jaśniejsze) i mokre (zieleńsze) części — drobna mozaika, nie gradient
+      const fenWetK = smoothstep(0.02, 0.08, nD.add(nMo.mul(0.5))).mul(0.6).toVar();
       // (brzeg pasa nierówny: szum MNOŻY wilgotność — dodany tworzył kropki pasa zalewowego wzdłuż strumyków)
       // (część wilgotności ponad smugę strumyka = pas wielkiej rzeki; jej brzeg mocno poszarpany szumem — równa
       // otoczka wokół rzeki wyglądała jak pigułka)
       const wetBig = max(wetV.sub(0.46), 0.0).div(0.54).toVar();
       const flood = smoothstep(0.25, 0.55, wetBig.add(nMo.mul(2.0).add(nV.mul(0.6)).mul(smoothstep(0.02, 0.2, wetBig)))).toVar();
-      land.assign(mix(land, bogC.mul(float(1.0).add(nD.mul(0.3))), clr.mul(smoothstep(0.36, 0.48, Mv)).mul(treeT).mul(0.8)));
+      land.assign(mix(land, mix(fenC, fenWetC, fenWetK).mul(float(1.0).add(nD.mul(0.25))), clr.mul(smoothstep(0.36, 0.48, Mv)).mul(treeT).mul(0.95)));
       forest.mulAssign(float(1.0).sub(clr.mul(0.92)));
       forest.mulAssign(float(1.0).sub(flood.mul(0.5)));
       // DOLINA ZALEWOWA: soczysta zieleń łęgów (ciemniejsza niż łąka — blady pas wyglądał jak pobocze), łuki dawnych
       // koryt jaśniejszymi i ciemniejszymi pasami
-      const floodC = vec3(mix(forestC.mul(2.6), meadowC, 0.45).mul(vec3(0.7, 1.15, 0.85))).toVar();
+      const floodC = vec3(mix(meadowT, grassC, 0.55)).toVar();
       land.assign(mix(land, floodC.mul(mix(float(0.72), float(1.32), scar)).mul(float(1.0).add(nD.mul(0.2))), flood.mul(smoothstep(0.1, 0.2, T)).mul(0.9)));
       // korony: ziarno do teksela i płaty drzewostanów o innym odcieniu
       const stand = smoothstep(-0.2, 0.25, nF.add(nV.mul(0.4)));
-      const canopy = mix(vec3(0.95, 1.0, 1.02), vec3(1.4, 1.3, 0.95), stand).mul(float(1.0).add(nD.mul(0.6)))
+      const canopy = mix(vec3(0.95, 1.0, 1.02), vec3(1.4, 1.3, 0.95), stand).mul(float(1.0).add(nD.mul(0.6)).add(nMo.mul(0.9)))
         .mul(mix(float(1.0), float(0.8).add(float(0.6).sub(cB.x).mul(0.5)), onB));
       land.assign(mix(land, forestC.mul(canopy), forest));
       // tarasy: jasne płaty na zewnętrznym brzegu doliny; łachy: jasny piasek po wewnętrznej stronie zakoli
@@ -673,16 +755,25 @@ function earthColor(type) {
       // sam próg wysokości zamieniał płaskie niziny przy morzu w beżowe równiny)
       // Tylko przy WODZIE: w promieniu 3 tekseli musi być punkt poniżej poziomu morza (na lądzie) — sam próg
       // wysokości rysował jasne kreski-poziomice na niskich pagórkach w głębi lądu.
-      const beachW = max(float(1.6), U.uGeo.y.mul(2.0)).toVar();
+      // (plaża ma ~1 km; gdy teksel celu jest większy, pas idzie na szerokość teksela, ale z pokryciem
+      // (szerokość / teksel)^0,7 — z daleka nie robi jasnej obwódki wokół każdego lądu)
+      const beachW0 = float(1.0);
+      const beachW = max(beachW0, U.uGeo.y.mul(1.5)).toVar();
+      const beachCov = pow(beachW0.div(beachW), 0.7).toVar();
       const hNear = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
       const hLow = min(min(hNear(3, 0), hNear(-3, 0)), min(hNear(0, 3), hNear(0, -3)));
       const hHigh = max(max(hNear(3, 0), hNear(-3, 0)), max(hNear(0, 3), hNear(0, -3)));
       const shore = mix(step(0.0, hHigh), float(1.0).sub(smoothstep(-0.002, 0.004, hLow)), step(0.0, h));
       const beach = inv(beachW.mul(0.4), beachW, abs(h).div(sl.s.add(2e-4))).mul(inv(0.0, 0.03, abs(h))).mul(shore)
-        .mul(smoothstep(0.1, 0.22, T)).mul(smoothstep(-0.25, 0.1, nV));
-      land.assign(mix(land, mix(U.uDesert, vec3(0.62, 0.58, 0.5), 0.55), beach.mul(0.6)));
-      // woda słodka: rzeki, jeziora i starorzecza — barwa płytkiej wody; połysk i fale dokłada materiał zbliżenia
-      land.assign(mix(land, mix(U.uShallow, U.uOcean, 0.75).mul(0.85), water.mul(inv(-0.05, 0.02, T).oneMinus())));
+        .mul(smoothstep(0.1, 0.22, T)).mul(smoothstep(-0.1, 0.2, nV.add(nMo.mul(0.5)))).mul(beachCov);
+      land.assign(mix(land, U.uSandB, beach.mul(0.7)));
+      // woda słodka (barwy jak na mapie terenu): ciemna woda leśnych rzek i jezior, mętna wielkich rzek niosących
+      // muł, mleczny błękit rzek z lodowców w górach; połysk i fale dokłada materiał zbliżenia
+      const glac = smoothstep(0.9, 2.0, h).mul(float(1.0).sub(mudW)).toVar();
+      const waterC = mix(mix(U.uWDark, U.uWIce, glac), U.uWMud, mudW);
+      land.assign(mix(land, waterC, water.mul(inv(-0.05, 0.02, T).oneMinus())));
+      // dno morza w smudze osadu: jasny muł (materiał pokazuje go przez płytką wodę)
+      land.assign(mix(land, U.uSilt.mul(float(1.0).add(nMo.mul(0.3))), smoothstep(0.0, 0.1, plume)));
       // MORZE liczy shader (planetGenSurface.tsl.js: brzeg z wysokości i detalu, barwa wody z głębokości), więc mapa
       // dnia ma WSZĘDZIE barwę gruntu — pod wodą to dno, które płycizny przepuszczają, a brzeg w mapie nie istnieje
       // (bez schodków tekseli przy zbliżeniu). Alfa = lód morski (płaty z temperatury, ciągłe przez brzeg); na morzu
@@ -702,6 +793,28 @@ function earthColor(type) {
 // przy × 3,5 grzbiet miał wciąż ~570 km (stoki ~5%) i śnieg zlewał się w pole. × 12: grzbiety co ~150 km, ściany
 // o nachyleniu kilkudziesięciu procent — skała na ścianach, śnieg na grzbietach.
 const EARTH_RIDGE_FREQ = 12;
+// Barwy krajobrazu z palet mapy terenu (sRGB 0–255 → liniowe) dla roślinności planety: [klimat chłodny, ciepły].
+const PLANET_TERRAIN_VEG = { rdzawa: ['czerwona', 'czerwona'] };
+const lin255 = (c) => c.map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); });
+function landscapeUniforms(L) {
+  const [a, b] = (PLANET_TERRAIN_VEG[L.vegetation] || ['tajga', 'tropik']).map(terrainLandscape);
+  const W = TERRAIN_WATER;
+  // odcień: barwy palety mapy terenu przesunięte lekko (stosunek^0,25, w granicach 0,8–1,25) ku barwie lasu TEJ planety —
+  // torfowiska i łęgi zostają w rodzinie barw planety (tak samo mapa terenu dostaje odcień planety, planetGenPlace.js)
+  const tint = (pal, forestPlanet) => {
+    const f = lin255(pal.forest);
+    const k = f.map((v, i) => Math.min(1.25, Math.max(0.8, Math.pow((forestPlanet[i] + 0.004) / (v + 0.004), 0.25))));
+    return (c) => lin255(c).map((v, i) => v * k[i]);
+  };
+  const ta = tint(a, L.palette.taiga);
+  const tb = tint(b, L.palette.rain);
+  return {
+    uK3: [a.fenAmount, b.fenAmount, 0, 0],
+    uFenA: ta(a.fen), uFenB: tb(b.fen), uFenWetA: ta(a.fenWet), uFenWetB: tb(b.fenWet),
+    uGrassA: ta(a.grass), uGrassB: tb(b.grass), uMeadowA: ta(a.meadow), uMeadowB: tb(b.meadow),
+    uWDark: lin255(W.dark), uWMud: lin255(W.mud), uWIce: lin255(W.ice), uSilt: lin255(W.silt), uSandB: lin255(W.sand)
+  };
+}
 function earthUniforms(spec, ctx) {
   const L = spec.look;
   const rng = rngFor(spec.seed, `${spec.type}:łańcuchy`);
@@ -728,7 +841,8 @@ function earthUniforms(spec, ctx) {
   const P = L.palette;
   const color = {
     uK: [L.temp, L.wet, L.axisTilt, pgOctavesFor(ctx.size, 110, 2.03, 3, 12)],
-    uK2: [pgOctavesFor(ctx.size, 46, 2.03, 6, 12), pgOctavesFor(ctx.size, 140, 2.1, 6, 8), 0, 0],
+    uK2: [pgOctavesFor(ctx.size, 46, 2.03, 6, 12), pgOctavesFor(ctx.size, 140, 2.1, 6, 8), pgOctavesFor(ctx.size, 30, 2.03, 5, 13), 0],
+    ...landscapeUniforms(L),
     uRain: P.rain, uForest: P.forest, uTaiga: P.taiga, uSteppe: P.steppe, uTundra: P.tundra, uDesert: P.desert, uDesertRed: P.desertRed,
     uRock: P.rock, uSnow: P.snow, uIce: P.ice, uShallow: P.shallow, uOcean: P.ocean, uDeep: P.deep
   };

@@ -728,3 +728,102 @@ ramiona delty kończą się zaokrąglonymi „czubkami” z ciemną obwódką; b
 wysp barierowych); nurt rzeki roztokowej zbyt prosty i równy; brak chmur, fal i przyboju na morzu.
 
 Demo: `dema/mapa-terenu.html` — listy „rzeka” i „roślinność” (`?rzeka=`, `?ros=`), domyślnie delta + tropik.
+
+### 10.15. Tajga dopracowana, mapa terenu połączona z planetą (2026-11-11, prototyp, demo)
+
+Polecenie użytkownika: „dokończ tajgę i połącz z planetą”.
+
+**Tajga** (`planetGenTerrainMap.js`): linie cieków z wygładzonego rastra pokrycia (`streamCov`) zamiast czarnych
+kresek po ścieżce spływu; brzeg torfowisk z szumem i zielonym pasem zarośli (bez pasa przy wyspach drzew); granica
+lasu łęgowego z szumem; faktura lasu z szumu wysokości koron (kępy + ziarno, tylko dla koron powyżej 6 m) —
+cieniowanie od słońca daje nierówny las zamiast płaskiej plamy; paleta doliny odrobinę mniej nasycona.
+
+**Złącze** (`planetGenPlace.js`, czysty JS): planeta zostawia na CPU dane miejsca, mapa terenu dostaje z nich opcje.
+
+- Wypiek: przejście `drain:<rodzaj>` zwraca teraz cztery kanały (wysokość, opad, temperatura, wilgotność — cel
+  RGBA32F zamiast RG32F; ten sam jeden odczyt na układ). W `baked.drainage` zostają: `heightM` (Int16, metry),
+  `temp`, `moist` (Uint8). Koszt: 16 B zamiast 8 B na komórkę celu przejścia, 4 B na komórkę na CPU.
+- `describePlace(baked, kierunek)`:
+  - punkt w morzu przy brzegu → najbliższy ląd; otwarte morze → odmowa;
+  - największa rzeka w promieniu 14 km → mapa staje nad nią;
+  - bieg w dół rzeki po odbiorcach: kierunek spływu z pierwszych pięciu kroków (`flowAngle`; mapa: x — wschód,
+    y — południe) i droga do morza (do 60 km);
+  - styl: morze bliżej niż 20 km rzeką → `delta` (40 km, koryto 220–700 m); góry albo rzeźba okolicy ponad 1500 m →
+    `roztoki` (16 km); przepływ ≥ 1500 → `wielka` (40 km, 600–1400 m); inaczej `meandry` (30 km; 40 km przy korycie
+    ponad 220 m); bez rzeki — mała rzeka 60 m na mapie 20 km. Szerokość koryta 38 · przepływ^0,33 [m];
+  - biom z klimatu (progi jak barwy lądu planety): lód i śnieg, góry, tundra, pustynia, step, las; przepis mapy ma
+    dziś tylko las (`supported`);
+  - roślinność: chłodno — `tajga`, ciepło (T > 0,62) — `tropik`, planeta o rdzawej roślinności — `czerwona`; odcień
+    palety w połowie ku barwie lasu planety w tym klimacie (`vegTint`);
+  - ziarno mapy = (ziarno planety, komórka) — to samo miejsce daje tę samą mapę.
+- `generateTerrainMap` dostał `flowAngle` (oś doliny obrócona w zadanym kierunku; przy delcie morze po tej stronie)
+  i `vegTint` (mnożniki barw palety roślinności; układ mapy bez zmian — pilnuje test).
+
+**Demo** (`dema/planeta-zblizenie.html?styl=terran`): dwuklik na lądzie (widok z góry i orbitalny) otwiera panel
+z mapą terenu miejsca; mapa liczy się w workerze (1024 × 1024, `?teren=2048`), pod mapą opis miejsca (biom, rzeka,
+bok mapy, szerokość geograficzna, wysokość).
+
+Sprawdzone na planecie dema (headless, prawdziwy dwuklik, konsola bez błędów):
+
+| Miejsce | Wynik |
+|---|---|
+| ujście największej rzeki | delta, koryto 700 m, mapa 40 km, tropik z odcieniem planety, przepływ 9194, morze 17 km rzeką |
+| największa rzeka w głębi lądu | wielka rzeka, koryto 772 m, mapa 40 km |
+| mała rzeka | meandry, koryto 192 m, tajga, mapa 30 km |
+| najwyższe góry | biom „lód i śnieg” — bez przepisu, pokazana mapa lasu z dopiskiem |
+| otwarte morze | odmowa („wskaż ląd”) |
+
+Czas mapy w panelu (1024 × 1024, worker): 1,9–3,2 s; opis miejsca — poniżej milisekundy.
+
+Błąd po drodze: pierwsze przypisanie „paleta planety → paleta mapy” (planeta oliwkowa → mapa `zlota`) dało mapę
+złotobrązową przy planecie oliwkowozielonej; zastąpione układem palety z klimatu i odcieniem ku barwie planety.
+
+Czego złącze nie robi: mapa nie odtwarza kształtu brzegu morza ani biegu rzeki z planety (zgadza się styl, wielkość,
+kierunek i strona morza); biomy inne niż las nie mają przepisu; na mapie nie ma miasta; planeta nie pokazuje, gdzie
+leży otwarta mapa (brak znacznika); mapa nie jest jeszcze rysowana jako teren pod kamerą gry.
+
+### 10.16. Planeta z daleka: krajobraz jak na mapie terenu, tryb ultra (2026-11-11, demo)
+
+Powód: po pokazaniu mapy terenu w panelu obok planety użytkownik napisał: „po to robimy to takie szczegółowe, żeby
+CAŁA PLANETA była taka szczegółowa”, „czyli de facto to ten tryb ultra”, a na propozycję zaczęcia od głębokiego
+zbliżenia: „zacznijmy od ulepszenia oddalonej planety. Ją potrzebuję bardziej szczegółową i zbliżoną do map terenów”.
+
+Stan przed (seria zbliżeń jednego miejsca, widok z góry): ląd gładki, oliwkowy, mało zróżnicowany; rzadkie beżowe
+kreski polan; rzeki jaskrawoniebieskie; wokół każdego lądu szara obwódka; mapa planety dema 2048 × 1024 (na ekranie
+5120 × 1440 tarcza planety ma ~0,7 teksela na piksel, a okno pod kamerą 0,27–0,53).
+
+Zrobione:
+
+- **Barwy z palet mapy terenu** (`terrainLandscape`, `TERRAIN_WATER`): torfowiska, łąki doliny zalewowej, woda, muł
+  i piasek planety to te same barwy co na mapie miejsca; zestaw chłodny (tajga) i ciepły (las równikowy) mieszane
+  temperaturą, lekki odcień ku barwie lasu planety (stosunek^0,25, 0,8–1,25).
+- **Mozaika pól w trzech skalach** zamiast rzadkich kresek: komórka szumu ~120, ~33 i ~9 km, dziedzina odkształcona
+  szumem warstwy, obrys strzępiony drobnym szumem; gęstość z klimatu (płasko, wilgotno, chłodno — najwięcej) i krain
+  (szum niskiej częstości). Warstwa nierozdzielona przez teksel celu wchodzi średnią.
+- **Woda słodka**: ciemna w lesie, mętna w wielkich rzekach (muł w kanale z pola w pikselu wody), mleczny błękit
+  w górach. Pas zalewowy wielkich rzek widoczny także z daleka (gaśnie ze stosunkiem szerokości do teksela).
+- **Smugi osadu w morzu** przy ujściach rzek: stempel w kanale A siatki spływu (siła i zasięg z przepływu, do ~10
+  komórek siatki 2048 ≈ 180 km), w polu próbka przesunięta szumem, morze spłycone tak, żeby dno prześwitywało
+  w zadanym stopniu, dno w barwie mułu.
+- **Brzeg**: plaża ~1 km z pokryciem zamiast pasa dwóch tekseli; przybój z daleka 0,08 zamiast 0,45 i tylko przy
+  opadającym dnie.
+- **Tryb ultra** w demie planety: mapa 4096 × 2048, siatka rzek 4096, okno 6144 × 3072.
+
+Liczby (planeta dema, ultra): wypiek planety 1,5–1,7 s, z tego spływ na CPU 1,0–1,1 s (siatka 4096 × 2048,
+2,1 mln komórek lądu) i próba 0,13 s; dwa miejsca okna 6144 × 3072 — 768 MB. Koszt klatki nie był mierzony ponownie
+(w materiałach zmienił się tylko przybój); czas GPU wypieku okna 6144 × 3072 nie był mierzony.
+
+Błędy po drodze: torfowiska z jednego progu szumu o gasnących oktawach — wielkie gładkie plamy (naklejki); po
+przejściu na warstwy z małym udziałem pola — okrągłe kropki (konfetti) → odkształcenie dziedziny i większy udział;
+odcień ku barwie lasu planety pierwiastkiem stosunku zrobił z torfowisk pomarańcz → stosunek^0,25; smuga osadu jako
+liniowe spłycenie do 4 m — półka o ostrym brzegu wyniesiona detalem nad wodę (blady ląd z niebieskimi dziurami)
+→ głębokość z widoczności dna; barwa mułu na wyspach szelfu (leżą po stronie morza) → tylko pod wodą; funkcja `log`
+nieimportowana z TSL (jest `log2`).
+
+Znane wady: smuga osadu ma jeszcze zbyt okrągły obrys; mozaika pól w ciepłych lasach jest gęsta i dość równa (do
+oceny użytkownika); pasy wilgotności wzdłuż strumieni z daleka miejscami wychodzą kreskowane; udział pola warstw
+(`fenMean`) jest z oszacowania odchylenia szumu, nie z pomiaru — jasność krainy między poziomami może się nieco
+różnić; palety roślinności planety (oliwkowa, zielona…) bez zmian; zakola wielkiej rzeki nadal ostre („zęby”).
+
+Narzędzia: seria zbliżeń `.tmp/planeta-zblizenie/seria.mjs` dostała cel `tajga` (chłodny wilgotny las w głębi lądu)
+i wypisuje czasy wypieku; testy — `tests/planetGenDrainage.test.mjs` (smugi osadu, barwy wspólne z mapą terenu).

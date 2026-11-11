@@ -229,12 +229,16 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
         gWave.addAssign(nd.yzw.mul(w.mul(Math.pow(0.75, k))));
       });
     }
-    const shal = float(1.0).sub(smoothstep(0.0, 0.03, depth)).mul(float(1.0).sub(land)).toVar();
+    // (przybój tylko przy BRZEGU — tam, gdzie dno opada (nachylenie mapy): rozległa płycizna smugi osadu przy ujściu
+    // rzeki nie pieni się cała)
+    const shal = float(1.0).sub(smoothstep(0.0, 0.03, depth)).mul(float(1.0).sub(land)).mul(smoothstep(0.004, 0.03, length(gMap))).toVar();
     // (szum piany tylko w pasie płycizny — każdy szum na cały kadr 5120 × 1440 to ~0,1 ms GPU)
     If(shal.greaterThan(0.01), () => {
       const fn = pgNoise(p.mul(5200.0).add(vec3(0.0, t.mul(0.5), 0.0))).mul(0.5).add(0.5);
       const fadeF = float(1.0).sub(smoothstep(0.1, 0.33, pixL.mul(5200.0)));
-      foam.assign(shal.mul(mix(float(0.45), smoothstep(0.3, 0.7, fn.add(shal.mul(0.35))), fadeF)));
+      // (z daleka pas przyboju jest węższy niż piksel: zostaje ślad 0,08 — z 0,45 każdy ląd miał szarą obwódkę
+      // o szerokości teksela mapy, inną na każdym poziomie zbliżenia)
+      foam.assign(shal.mul(mix(float(0.08), smoothstep(0.3, 0.7, fn.add(shal.mul(0.35))), fadeF)));
     });
   });
   seaCol.assign(mix(seaCol, vec3(0.8, 0.85, 0.87), foam.mul(float(1.0).sub(day.a)).mul(0.8)));

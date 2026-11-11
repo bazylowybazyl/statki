@@ -142,7 +142,7 @@ function buildQuad(material) {
 test('spływ w wypieku: graf pola czyta teksturę spływu, przejście wejścia spływu tylko dla rodzajów z rzekami', () => {
   const baker = new PlanetGenBaker(renderer);
   for (const type of ['terran', 'ocean']) {
-    assert.ok(baker.passesFor(type).some(([k, f]) => k === `drain:${type}` && f === 'rg32'), `${type}: przejście drain`);
+    assert.ok(baker.passesFor(type).some(([k, f]) => k === `drain:${type}` && f === 'float'), `${type}: przejście drain`);
     const g = baker.graph(`field:${type}`);
     assert.ok(g.drain && g.U.uDr, `${type}: węzeł tekstury spływu i uDr`);
     const wgsl = buildQuad(g.material);
@@ -189,4 +189,71 @@ test('spójność zbliżeń: brzeg bez detalu na płaskim, skupiska drzew o śre
   assert.match(solid, /mix\(chord, tan0, step\(/);
   // barwy lądu bez członów zależnych od skali teksela w progu lasu (krzywizna)
   assert.doesNotMatch(solid, /const Mv = [^;]*curv/);
+});
+
+test('smugi osadu: morze przy ujściu wielkiej rzeki ma smugę, daleko od ujść nie; siatka gęstsza — ten sam zasięg w km', async () => {
+  const { PLUME_LF0, PLUME_CELLS } = await import('../src/3d/planetGen/planetGenDrainage.js');
+  const W = 256;
+  const H = 128;
+  const h = terrain(W, H, 7);
+  const d = computeDrainage(h, null, W, H);
+  const land = (i) => d.data[i * 4] !== 0 || d.data[i * 4 + 1] !== 0;
+  // (siatka próbna ma 256 komórek w obwodzie — próg przepływu smugi liczony jak dla siatki 2048 przesuwa się o 2·log2(256/2048))
+  const lf0 = PLUME_LF0 + 2 * Math.log2(W / 2048);
+  const mouths = riverMouths(d).filter((m) => Math.log2(1 + m.flow) >= lf0 + 1);
+  assert.ok(mouths.length > 0, 'teren próbny ma ujścia dość dużych rzek');
+  // smuga: w komórce morza, do której uchodzi rzeka, i w jej sąsiedztwie
+  let withPlume = 0;
+  for (const m of mouths) {
+    const r = drainReceiver(d, m.x, m.y);
+    assert.ok(r && !land(r.y * W + r.x), 'ujście spływa do morza');
+    if (d.data[(r.y * W + r.x) * 4 + 3] > 60) withPlume++;
+  }
+  assert.equal(withPlume, mouths.length, 'każde duże ujście ma smugę w morzu');
+  // wartości tylko w zasięgu smugi: większość morza jest czysta, smuga nie przekracza zasięgu
+  let sea = 0;
+  let seaPl = 0;
+  for (let i = 0; i < W * H; i++) if (!land(i)) { sea++; if (d.data[i * 4 + 3] > 0) seaPl++; }
+  assert.ok(seaPl > 0 && seaPl < sea * 0.5, `smugi zajmują ${(seaPl / sea * 100).toFixed(1)}% morza`);
+  assert.ok(PLUME_CELLS > 2 && PLUME_CELLS < 30);
+  // mapa lokalna (mapa terenu) — bez smug; wyłączenie jawne
+  const loc = computeDrainage(h, null, W, H, { wrapX: false, rowWeight: false });
+  let any = 0;
+  for (let i = 0; i < W * H; i++) any += loc.data[i * 4 + 3];
+  assert.equal(any, 0, 'mapa lokalna nie ma smug');
+  const off = computeDrainage(h, null, W, H, { plumes: false });
+  any = 0;
+  for (let i = 0; i < W * H; i++) any += off.data[i * 4 + 3];
+  assert.equal(any, 0);
+  // powtarzalność
+  assert.deepEqual(computeDrainage(h, null, W, H).data, d.data);
+});
+
+test('planeta z daleka: barwy krajobrazu z palet mapy terenu, woda słodka ciemna / mętna, smuga osadu i przybój', async () => {
+  const fs = await import('node:fs');
+  const { terrainLandscape, TERRAIN_WATER, TERRAIN_VEGETATION } = await import('../src/3d/planetGen/planetGenTerrainMap.js');
+  for (const veg of TERRAIN_VEGETATION) {
+    const L = terrainLandscape(veg);
+    for (const k of ['forest', 'fen', 'fenWet', 'grass', 'meadow']) assert.ok(L[k].length === 3 && L[k].every((v) => v >= 0 && v <= 255), `${veg}.${k}`);
+    assert.ok(L.fenAmount > 0 && L.fenAmount <= 1);
+    // torfowisko jaśniejsze od lasu (mozaika jasnych pól w ciemnym lesie)
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    assert.ok(lum(L.fen) > lum(L.forest) * 1.5, `${veg}: torfowisko jaśniejsze od lasu`);
+  }
+  // woda leśna ciemna, muł jasny i ciepły
+  const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  assert.ok(lum(TERRAIN_WATER.dark) < 50 && lum(TERRAIN_WATER.mud) > 100 && TERRAIN_WATER.mud[0] > TERRAIN_WATER.mud[2]);
+  const src = fs.readFileSync(new URL('../src/3d/planetGen/planetGenSolid.tsl.js', import.meta.url), 'utf8');
+  // rzeki nie są już malowane barwą morza; barwy pól i wody idą z uniformów palety mapy terenu
+  assert.ok(!/mix\(U\.uShallow, U\.uOcean, 0\.75\)/.test(src), 'woda słodka bez barwy morza');
+  for (const u of ['uFenA', 'uFenB', 'uGrassA', 'uMeadowB', 'uWDark', 'uWMud', 'uWIce', 'uSilt', 'uSandB']) assert.ok(src.includes(`U.${u}`), u);
+  // warstwa pól, której cel nie rozdziela, wchodzi średnią (jasność krainy ta sama na każdym poziomie zbliżenia)
+  assert.match(src, /return mix\(fenMean, edge\(/);
+  // smuga osadu: głębokość z widoczności dna, bez wynoszenia nad wodę; barwa tylko pod wodą
+  assert.match(src, /const hSea = mix\(hSea0, max\(hSea0, hPlume\), smoothstep\(0\.0, 0\.25, plume\)\)/);
+  assert.match(src, /const plume = max\(f\.y\.negate\(\), 0\.0\)\.mul\(float\(1\.0\)\.sub\(onLand\)\)\.mul\(float\(1\.0\)\.sub\(step\(0\.0, h\)\)\)/);
+  // przybój z daleka nie robi obwódki wokół lądu i nie pieni całej płycizny smugi
+  const near = fs.readFileSync(new URL('../src/3d/planetGen/planetGenSurfaceNear.tsl.js', import.meta.url), 'utf8');
+  assert.match(near, /foam\.assign\(shal\.mul\(mix\(float\(0\.08\)/);
+  assert.match(near, /smoothstep\(0\.004, 0\.03, length\(gMap\)\)/);
 });

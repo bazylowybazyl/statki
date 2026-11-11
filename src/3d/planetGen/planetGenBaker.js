@@ -21,6 +21,7 @@ import {
   buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, buildMaskGraph, setBakeUniforms, drainTexture, CLOUD_CYCLONES
 } from './planetGenBake.tsl.js';
 import { computeDrainage } from './planetGenDrainage.js';
+import { PLACE_T, PLACE_M, encodeClimate } from './planetGenPlace.js';
 import { SOLID_TYPES } from './planetGenSolid.tsl.js';
 import { GAS_BAKE, gasBakeUniforms } from './planetGenGasBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
@@ -105,7 +106,7 @@ export class PlanetGenBaker {
     if (PLANET_GEN_TYPE[type].kind === 'gas') return [['gas', 'srgb']];
     const passes = [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['relief', 'half'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb'], ['mask', 'rgba']];
     // rodzaje z rzekami: wejście spływu wody (wysokość i opad do odczytu CPU — planetGenDrainage.js)
-    if (SOLID_TYPES[type].drain) passes.push([`drain:${type}`, 'rg32']);
+    if (SOLID_TYPES[type].drain) passes.push([`drain:${type}`, 'float']);
     return passes;
   }
 
@@ -186,7 +187,8 @@ export class PlanetGenBaker {
    * dispose() }. `mask: true` — dodatkowo mapa masek pola (lawa, osady — materiał zbliżenia, buildMaskGraph).
    * Planety z rzekami (terran, ocean) dostają `drainage` — drzewo rzek ze spływu wody ({ texture, width, height,
    * data, stats, uniforms }; dane jak w planetGenDrainage.js — także dla gry: ujścia, biegi rzek); siatka spływu
-   * ma szerokość mapy planety, najwyżej `drainSize`. `drainage: false` — bez rzek.
+   * ma szerokość mapy planety, najwyżej `drainSize`. `drainage: false` — bez rzek. W `drainage` zostają też dane
+   * MIEJSC dla mapy terenu (planetGenPlace.js): `heightM` (Int16, metry), `temp` i `moist` (klimat w 8 bitach).
    */
   async bakeSystem(list, { size = 2048, sizes = null, mask = false, drainage = true, drainSize = 2048 } = {}) {
     const r = this.renderer;
@@ -239,7 +241,7 @@ export class PlanetGenBaker {
         it.out.levels = { uQ: it.uQ, uQ2: it.uQ2, sea: it.tu.water ? 0 : null };
         it.out.ms.probe = tProbe;
       });
-      // (1b) SPŁYW WODY (planety z rzekami): pole bez rzek w rozdzielczości siatki spływu → wysokość i opad (RG32F)
+      // (1b) SPŁYW WODY (planety z rzekami): pole bez rzek w rozdzielczości siatki spływu → wysokość, opad i klimat (RGBA32F)
       // → jeden odczyt na układ → drzewo rzek na CPU (planetGenDrainage.js) → tekstura dla grafu pola
       const wet = drainage ? solids.filter((it) => it.tu.drainage && SOLID_TYPES[it.spec.type].drain) : [];
       if (wet.length) {
@@ -255,7 +257,7 @@ export class PlanetGenBaker {
           };
           this._ensureField(DW, DH);
           this._draw(`field:${it.spec.type}`, this.field, { ...base, ...tuD.field, uDr: [1, 1, 0, 0] });
-          const rt = makeTarget(DW, DH, { rg: true, float32: true, mips: false, name: 'planetGenDrainIn' });
+          const rt = makeTarget(DW, DH, { float32: true, mips: false, name: 'planetGenDrainIn' });
           this._draw(`drain:${it.spec.type}`, rt, { ...base, ...tuD.color });
           it.drain = { W: DW, H: DH };
           return r.readRenderTargetPixelsAsync(rt, 0, 0, DW, DH).then((px) => { rt.dispose(); return px; });
@@ -267,12 +269,25 @@ export class PlanetGenBaker {
           const n = DW * DH;
           const hh = new Float32Array(n);
           const rain = new Float32Array(n);
-          for (let i = 0; i < n; i++) { hh[i] = px[i * 2]; rain[i] = px[i * 2 + 1]; }
+          // dane miejsc dla mapy terenu: wysokość [m] i klimat (temperatura, wilgotność — te same co w barwach lądu)
+          const heightM = new Int16Array(n);
+          const temp = new Uint8Array(n);
+          const moist = new Uint8Array(n);
+          for (let i = 0; i < n; i++) {
+            const h = px[i * 4];
+            hh[i] = h;
+            rain[i] = px[i * 4 + 1];
+            heightM[i] = Math.max(-32000, Math.min(32000, Math.round(h * 1000)));
+            temp[i] = encodeClimate(px[i * 4 + 2], PLACE_T);
+            moist[i] = encodeClimate(px[i * 4 + 3], PLACE_M);
+          }
           const d = computeDrainage(hh, rain, DW, DH, { seed: it.spec.seedInt | 0 });
           const texture = drainTexture(d.data, DW, DH);
           r.initTexture(texture);
-          it.out.drainage = { texture, width: DW, height: DH, data: d.data, stats: d.stats, uniforms: [DW, DH, 1, it.spec.seedInt % 65521] };
-          it.out.bytes += n * 4;
+          it.out.drainage = {
+            texture, width: DW, height: DH, data: d.data, stats: d.stats, uniforms: [DW, DH, 1, it.spec.seedInt % 65521], heightM, temp, moist
+          };
+          it.out.bytes += n * 8;
           it.out.ms.drain = performance.now() - tDrain;
           it.out.ms.drainCpu = d.stats.ms;
         });

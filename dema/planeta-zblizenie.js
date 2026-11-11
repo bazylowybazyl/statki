@@ -17,6 +17,7 @@ import { describePlanet } from '../src/3d/planetGen/planetGenSpec.js';
 import { PlanetGenBaker } from '../src/3d/planetGen/planetGenBaker.js';
 import { createGenNearBody } from '../src/3d/planetGen/planetGenNear.js';
 import { freshSeed, mix32 } from '../src/3d/planetGen/planetGenRng.js';
+import { describePlace } from '../src/3d/planetGen/planetGenPlace.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -110,6 +111,8 @@ for (const [name, camera] of [['top', cam], ['orbit', orb]]) {
 
 // ── Stan ──────────────────────────────────────────────────────────────────────────────────────────────────────
 const num = (k, d) => (params.has(k) && Number.isFinite(Number(params.get(k))) ? Number(params.get(k)) : d);
+const ULTRA = params.has('ultra') ? params.get('ultra') !== '0' : innerWidth * DPR > 3000;
+const pickNum = (key, allowed, def) => (allowed.includes(Number(params.get(key))) ? Number(params.get(key)) : def);
 const S = {
   style: STYLE_SEED[params.get('styl')] ? params.get('styl') : 'terran',
   seed: params.has('ziarno') ? (Number(params.get('ziarno')) >>> 0) : null,
@@ -124,7 +127,12 @@ const S = {
   patchOn: params.get('wycinki') !== '0', lavaOn: true, cloudsOn: false,
   // chmury jako bryła: osobno dla widoku orbitalnego (domyślnie tak) i widoku z góry (domyślnie płaska maska)
   volOrbit: params.get('bryla') !== '0', volTop: params.get('bryla') === '1', auroraOn: true, atmOn: true,
-  patchW: Number(params.get('wycinek')) === 4096 ? 4096 : (Number(params.get('wycinek')) === 2048 ? 2048 : (innerWidth * DPR > 3000 ? 4096 : 2048)),
+  // TRYB ULTRA (`?ultra=1|0`, domyślnie na szerokich ekranach): mapa planety 4096 × 2048 zamiast 2048 × 1024, siatka
+  // rzek 4096 (dwa razy gęstsza sieć), okno pod kamerą 6144 × 3072. `?mapa=`, `?rzeki=`, `?wycinek=` — wprost.
+  ultra: ULTRA,
+  mapW: pickNum('mapa', [2048, 4096], ULTRA ? 4096 : 2048),
+  drainW: pickNum('rzeki', [1024, 2048, 4096], ULTRA ? 4096 : 2048),
+  patchW: pickNum('wycinek', [2048, 4096, 6144, 8192], ULTRA ? 6144 : (innerWidth * DPR > 3000 ? 4096 : 2048)),
   body: null, baked: null, spec: null, vents: [], ventIdx: 0, lavaStrength: 1,
   busy: 0, paused: false, frameNo: 0, gen: 0, volcanic: true,
   stats: { bakeMs: 0, fps: 0, gpuMs: null, frameMs: 0 }
@@ -271,7 +279,7 @@ async function build(style = S.style, seed = null) {
       : (heroClouds ? describePlanet({ type, seed: S.seed, clouds: heroClouds }) : spec0);
     S.paused = true;
     let baked;
-    try { baked = (await baker.bakeSystem([spec], { size: 2048, mask: true }))[0]; } finally { S.paused = false; }
+    try { baked = (await baker.bakeSystem([spec], { size: S.mapW, mask: true, drainSize: S.drainW }))[0]; } finally { S.paused = false; }
     const vents = volcanic ? await findVents(baked) : await findCoasts(baked);
     if (gen !== S.gen) { baked.dispose(); return; }
     S.lavaStrength = volcanic ? 0.55 + 0.6 * spec0.night.lava : 0;
@@ -494,6 +502,7 @@ function nextVent() {
   if (S.view === 'orbit') orbitAt(undefined, undefined, S.orb.dist);
 }
 async function rebuild(style, seed) {
+  closePlace();   // mapa terenu należała do poprzedniej planety
   await build(style, seed);
   setViewMode(S.view || 'orbit');
   if (S.body) {
@@ -678,18 +687,88 @@ function updateStat() {
   const texPx = (act ? act.st : 2 * Math.PI / S.baked.size) * R_GAME * S.zoom;
   const lines = [
     `${S.view === 'orbit' ? `widok orbitalny, ${(S.orb.dist - 1).toFixed(2)} R nad powierzchnią` : `1 px = ${(1 / S.zoom).toFixed(2)} j.`} · planeta R = ${R_GAME.toLocaleString('pl')} j. · ${b.spec.look.style || b.spec.name}, ziarno ${b.spec.seed}`,
-    `${act ? `wycinek ${P.width} × ${P.height}, poziom ${act.level}` : 'mapa planety 2048'}${S.view === 'orbit' ? '' : ` · teksel ${texPx.toFixed(1)} px`} · wypieków ${P.stats.bakes}, ostatni ${S.stats.bakeMs.toFixed(1)} ms`
+    `${act ? `wycinek ${P.width} × ${P.height}, poziom ${act.level}` : `mapa planety ${S.baked.size}`}${S.view === 'orbit' ? '' : ` · teksel ${texPx.toFixed(1)} px`} · wypieków ${P.stats.bakes}, ostatni ${S.stats.bakeMs.toFixed(1)} ms`
       + ` · ${S.stats.fps.toFixed(0)} kl/s${S.stats.gpuMs != null ? ` · GPU ${S.stats.gpuMs.toFixed(2)} ms` : ''}`
   ];
   $('stat').textContent = lines.join('\n');
   $('b-erupt').textContent = b.eruption.on && b.eruption.off < 0 ? 'Zakończ erupcję' : 'Erupcja';
 }
 
+// ── Mapa terenu MIEJSCA (trzeci poziom szczegółowości): dwuklik na lądzie ────────────────────────────────────────
+// Punkt pod kursorem → `describePlace` (planetGenPlace.js: rzeka, morze i klimat z danych planety) → ustawienia mapy →
+// generator w workerze → obraz w panelu. To samo miejsce daje zawsze tę samą mapę.
+const TER = { worker: null, job: 0, place: null, ready: false, stats: null, size: Number(params.get('teren')) === 2048 ? 2048 : 1024 };
+const RIVER_NAMES = { meandry: 'rzeka nizinna', wielka: 'wielka rzeka', roztoki: 'rzeka roztokowa', delta: 'delta — ujście do morza' };
+/** Kierunek planety (układ planety) pod punktem ekranu albo null (poza tarczą). */
+function pickDir(px, py) {
+  const b = S.body;
+  if (!b) return null;
+  _inv.copy(b.mesh.quaternion).invert();
+  if (S.view === 'orbit') {
+    _o.setFromMatrixPosition(orb.matrixWorld);
+    _r.set(px / innerWidth * 2 - 1, -(py / innerHeight) * 2 + 1, 0.5).unproject(orb).sub(_o).normalize();
+    const bq = _o.dot(_r);
+    const disc = bq * bq - (_o.lengthSq() - 1);
+    if (disc <= 0 || -bq - Math.sqrt(disc) <= 0) return null;
+    _c.copy(_o).addScaledVector(_r, -bq - Math.sqrt(disc)).normalize().applyQuaternion(_inv);
+  } else {
+    const x = S.cx + (px - innerWidth / 2) / (S.zoom * R_GAME);
+    const y = S.cy - (py - innerHeight / 2) / (S.zoom * R_GAME);
+    const r2 = x * x + y * y;
+    if (r2 >= 0.9999) return null;
+    _c.set(x, y, Math.sqrt(1 - r2)).applyQuaternion(_inv);
+  }
+  return [_c.x, _c.y, _c.z];
+}
+function placeText(p) {
+  const lat = `${Math.abs(p.latDeg).toFixed(0)}° ${p.latDeg >= 0 ? 'N' : 'S'}`;
+  const river = p.river ? `${RIVER_NAMES[p.map.river]}, koryto ${p.map.riverWidthM} m` : 'bez większej rzeki';
+  return `${p.biome}${p.supported ? '' : ' (ten biom nie ma jeszcze własnej mapy — pokazany las)'} · ${river} · ${p.map.extentKm} × ${p.map.extentKm} km · ${lat} · ${Math.max(0, p.heightM)} m n.p.m.`;
+}
+function closePlace() { $('teren').style.display = 'none'; TER.place = null; TER.ready = false; TER.job++; }
+function openPlace(dir) {
+  if (!S.baked || !dir) return null;
+  const place = describePlace(S.baked, dir);
+  TER.place = place;
+  TER.ready = false;
+  TER.job++;
+  $('teren').style.display = 'block';
+  if (!place.ok) {
+    $('terenLoad').style.display = 'none';
+    $('terenInfo').textContent = place.reason === 'morze' ? 'To otwarte morze — wskaż ląd.' : `Brak mapy terenu: ${place.reason}.`;
+    return place;
+  }
+  $('terenInfo').textContent = placeText(place);
+  $('terenLoad').style.display = 'flex';
+  if (!TER.worker) {
+    TER.worker = new Worker(new URL('./mapa-terenu.worker.js', import.meta.url), { type: 'module' });
+    TER.worker.onmessage = (ev) => {
+      const m = ev.data;
+      if (m.id !== TER.job) return;
+      $('terenLoad').style.display = 'none';
+      if (m.error) { $('terenInfo').textContent = `Błąd mapy terenu: ${m.error}`; return; }
+      const cv = $('terenC');
+      cv.width = m.size;
+      cv.height = m.size;
+      cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(m.albedo), m.size, m.size), 0, 0);
+      TER.ready = true;
+      TER.stats = m.stats;
+      $('terenInfo').textContent = `${placeText(TER.place)} · ${(m.stats.ms / 1000).toFixed(1)} s`;
+    };
+  }
+  TER.worker.postMessage({ id: TER.job, opts: { ...place.map, size: TER.size } });
+  return place;
+}
+canvas.addEventListener('dblclick', (e) => { openPlace(pickDir(e.clientX, e.clientY)); });
+$('terenX').addEventListener('click', closePlace);
+
 // ── Start ─────────────────────────────────────────────────────────────────────────────────────────────────────
 window.__zbl = {
   S, baker, renderer, scene, cam, orb, R_GAME, setViewMode, uBloomOn, guardStats,
   ready: () => S.busy === 0 && !!S.body,
   build, rebuild, goVent, orbitAt, viewAll, toggleEruption, nearestVent, seedForStyle, viewDirs,
+  /** Mapa terenu miejsca: `openPlace(kierunek planety)` / `pickDir(x, y ekranu)`; stan w `terrain` (place, ready, stats). */
+  openPlace, closePlace, pickDir, terrain: TER,
   /** Kadr: środek [R], zoom [px / j.]. */
   setView(cx, cy, zoom) { S.cx = cx; S.cy = cy; if (zoom) S.zoom = zoom; },
   /** Przewija symulację (erupcja, lawa, przenikanie wycinków) o `sec` sekund bez rysowania. */
