@@ -15,7 +15,7 @@
 
 import {
   SENSOR_LEVEL, computeDetectionPicture, contactOffset, contactSizeClass, createDetectionPicture, createSensorState,
-  entitySignature, noteSensorFire, noteSensorPing, sensorStrength, stepSensorState
+  detectionLevel, entitySignature, noteSensorFire, noteSensorPing, sensorStrength, stepSensorState
 } from './sensorDetection.js';
 import {
   addCoverageCircle, beginCoverage, buildCoverage, coverageCountAt, createCoverage, nearestCoverageEdge
@@ -29,6 +29,9 @@ export const SENSOR_PICTURE_TUNE = Object.freeze({
   // Moc radaru KONTAKTU zgadywana z rozmiaru (MAŁY … OGROMNY), póki nie zidentyfikowany — typowa moc klasy o takiej
   // sygnaturze (fregata 18 km, niszczyciel 30, pancernik 45; okręty z flagą kapitałową mają sygnaturę 1,3 → OGROMNY).
   strengthGuess: Object.freeze([15000, 25000, 35000, 45000]),
+  // Wzrok KONTAKTU zgadywany z rozmiaru (tylko obraz: granica identyfikacji niezidentyfikowanego wroga) — wzrok klas
+  // SHIP_RANGE_PROFILES (fregata 5 km, niszczyciel 8, pancernik 11, okręt kapitałowy 14).
+  visionGuess: Object.freeze([5000, 8000, 11000, 14000]),
   // Własne czujniki pokazujemy dla celu o tej sygnaturze (pancernik).
   refSignature: 1.0,
   // Stacje bez profilu czujników.
@@ -69,6 +72,7 @@ export function createSensorPicture(adapters, tune = SENSOR_PICTURE_TUNE) {
     enemyInfo: [],                 // znacznik koła strefy wroga → wpis wiedzy (est — moc zgadnięta, ghost — duch)
     knowList: [],                  // wiedza strony gracza o bytach wroga (pętla rysunku czyta level / ident / x / y)
     threats: createThreats(64),    // grupy zagrożeń: wrogowie w jednym miejscu — ich i mój zasięg jako ułamek odległości
+    watchers: createWatchers(16),  // wrogowie, których strona gracza nie wykrywa, a którzy wykrywają gracza (sama granica)
     know: new WeakMap(),
     states: new WeakMap(),
     nextId: 1,
@@ -146,7 +150,10 @@ function fillEntityRec(P, r, e, side, isPlayer, kind) {
 function knowOf(P, e) {
   let k = P.know.get(e);
   if (!k) {
-    k = { e, id: P.nextId++, level: 0, ident: false, seenAt: -1e9, x: 0, y: 0, ang: 0, err: 0, sigSeen: 1, strength: 0, disc: false, rec: -1, listed: false, wasLead: false, groupLeadId: -1 };
+    k = {
+      e, id: P.nextId++, level: 0, ident: false, seenAt: -1e9, x: 0, y: 0, ang: 0, err: 0, sigSeen: 1, strength: 0, vision: 0,
+      themLvl: 0, disc: false, rec: -1, listed: false, wasLead: false, groupLeadId: -1
+    };
     P.know.set(e, k);
   }
   if (!k.listed) { k.listed = true; P.knowList.push(k); }
@@ -219,6 +226,9 @@ function rebuild(P, world) {
   const n = P.n;
   const det = P.det;
   computeDetectionPicture(det, P.recs, n, P.recs, n);
+  // Mój ślad sygnałowy (sygnatura × osłona przy mnie) — zasięg wroga względem mnie = jego moc × ten ślad.
+  const pr0 = P.playerRec;
+  const mySig = pr0 ? pr0.signature * (pr0.cover >= 0 ? pr0.cover : 1) : 0;
 
   // Wiedza strony gracza o bytach wroga: identyfikacja z mgły wojny, KONTAKT z modelu.
   const knowList = P.knowList;
@@ -229,6 +239,14 @@ function rebuild(P, world) {
     const k = knowOf(P, r.e);
     k.rec = i;
     k.strength = r.strength;
+    k.vision = r.ident;
+    // Czy ON ma MNIE (prawda gry, ten sam model co wykrycie gracza `det.seenBy[0]`): 0 nic, 1 kontakt, 2 identyfikacja.
+    if (pr0) {
+      const dx = pr0.x - r.x, dy = pr0.y - r.y;
+      k.themLvl = detectionLevel(dx * dx + dy * dy, r.strength * mySig, r.ident);
+    } else {
+      k.themLvl = 0;
+    }
     const identified = A.identified(r.e);
     const lvl = identified ? SENSOR_LEVEL.IDENTIFIED : (det.level[i] >= SENSOR_LEVEL.CONTACT ? SENSOR_LEVEL.CONTACT : SENSOR_LEVEL.NONE);
     if (lvl > 0) {
@@ -316,6 +334,7 @@ function rebuild(P, world) {
     pl.edge.arc = -1; pl.edge.dist = Infinity; pl.edge.inside = false;
   }
   buildThreatGroups(P);
+  buildWatchers(P);
   P.version++;
   P.ready = true;
 }
@@ -337,12 +356,20 @@ function createThreats(cap) {
     them: new Float64Array(cap), me: new Float64Array(cap),
     themR: new Float64Array(cap), meR: new Float64Array(cap),
     themD: new Float64Array(cap),    // odległość członka o największym THEM (`dist` to odległość lidera)
+    // OBUSTRONNIE (mechanika 2026-11-11): poziomy i granice wzroku. themLvl — czy ONI mają MNIE (najlepszy członek, prawda
+    // gry: 0 nic, 1 kontakt, 2 identyfikacja); meLvl — mój (strony gracza) poziom wobec nich (1 kontakt — obłok X-ów,
+    // 2 identyfikacja — cały okręt). themIdR / themId — ich wzrok (granica identyfikacji wobec mnie; zgadnięty z rozmiaru,
+    // gdy `est`) w j. i jako ułamek odległości; meIdR / meId — mój wzrok wobec nich.
+    themLvl: new Uint8Array(cap), meLvl: new Uint8Array(cap),
+    themIdR: new Float64Array(cap), themId: new Float64Array(cap),
+    meIdR: new Float64Array(cap), meId: new Float64Array(cap),
     leadErr: new Float64Array(cap),  // błąd miejsca lidera
     est: new Uint8Array(cap), count: new Uint16Array(cap),
     // członkowie (scratch): wpis, miejsce, odległość, ułamki, zasięgi, oszacowanie, kolejność po THEM malejąco
     _k: new Array(cap).fill(null),
     _x: new Float64Array(cap), _y: new Float64Array(cap), _d: new Float64Array(cap),
     _t: new Float64Array(cap), _s: new Float64Array(cap), _m: new Float64Array(cap), _tr: new Float64Array(cap), _mr: new Float64Array(cap),
+    _ir: new Float64Array(cap),
     _e: new Uint8Array(cap), _o: new Int32Array(cap),
     _g: new Int32Array(cap)
   };
@@ -373,6 +400,7 @@ function buildThreatGroups(P) {
       F._k[m] = k;
       F._x[m] = k.x; F._y[m] = k.y; F._d[m] = d;
       F._tr[m] = themR; F._mr[m] = meR;
+      F._ir[m] = est ? T.visionGuess[contactSizeClass(k.sigSeen)] : k.vision;
       F._t[m] = themR / d; F._m[m] = meR / d;
       F._s[m] = F._t[m] * (k.wasLead ? T.threatLeadHold : 1);
       F._e[m] = est ? 1 : 0;
@@ -406,6 +434,7 @@ function buildThreatGroups(P) {
       if (g < 0) {
         g = gn++;
         F.count[g] = 0; F.them[g] = -1; F.me[g] = -1;
+        F.themLvl[g] = 0; F.meLvl[g] = 0; F.themId[g] = -1; F.themIdR[g] = 0; F.meId[g] = -1; F.meIdR[g] = pl.vision;
         F.lead[g] = k;
         F.leadErr[g] = ex;
         F.x[g] = F._x[i]; F.y[g] = F._y[i];
@@ -416,6 +445,12 @@ function buildThreatGroups(P) {
       F.count[g]++;
       if (F._t[i] > F.them[g]) { F.them[g] = F._t[i]; F.themR[g] = F._tr[i]; F.themD[g] = F._d[i]; F.est[g] = F._e[i]; }
       if (F._m[i] > F.me[g]) { F.me[g] = F._m[i]; F.meR[g] = F._mr[i]; }
+      if (k.themLvl > F.themLvl[g]) F.themLvl[g] = k.themLvl;
+      if (k.level > F.meLvl[g]) F.meLvl[g] = k.level;
+      const idf = F._ir[i] / F._d[i];
+      if (idf > F.themId[g]) { F.themId[g] = idf; F.themIdR[g] = F._ir[i]; }
+      const mif = pl.vision / F._d[i];
+      if (mif > F.meId[g]) F.meId[g] = mif;
     }
     F.n = gn;
   }
@@ -427,6 +462,56 @@ function buildThreatGroups(P) {
   // bez trzymania wpisów bytów, których już nie ma
   for (let g = F.n; g < prevN; g++) F.lead[g] = null;
   for (let i = 0; i < m; i++) F._k[i] = null;
+}
+
+// ---------------------------------------------------------------- niewidziani obserwatorzy (mechanika obustronna)
+// Użytkownik 2026-11-11: „my mamy krótszy, przeciwnik ma dłuższy — widzimy tylko szarą linię sensora przeciwnika, a samego
+// przeciwnika nie widzimy (nawet tych X-ów) — ktoś nas namierza, ale nie mamy go w NASZEJ szarej strefie”. Wróg, którego
+// strona gracza teraz NIE wykrywa (ani kontakt, ani identyfikacja; duch też tu trafia — nie widzimy go teraz), a który ma
+// gracza co najmniej w KONTAKCIE: wpis niesie tylko jego GRANICĘ — środek koła (prawdziwe miejsce wroga, nie do rysowania
+// samego wroga), promień kontaktu wobec mnie (`R` = jego moc × mój ślad), wzroku (`idR`) i poziom (`lvl`: 1 / 2).
+// Bez grupowania: każda granica osobno (UI łączy je sumą kół, `sensorCoverage`).
+
+function createWatchers(cap) {
+  return {
+    n: 0,
+    k: new Array(cap).fill(null),
+    x: new Float64Array(cap), y: new Float64Array(cap),
+    R: new Float64Array(cap), idR: new Float64Array(cap), dist: new Float64Array(cap),
+    lvl: new Uint8Array(cap)
+  };
+}
+
+function buildWatchers(P) {
+  const list = P.knowList;
+  let need = 0;
+  for (let j = 0; j < list.length; j++) if (list[j].rec >= 0 && list[j].level === 0 && list[j].themLvl > 0) need++;
+  let Wt = P.watchers;
+  if (Wt.x.length < need) {
+    let cap = Wt.x.length;
+    while (cap < need) cap *= 2;
+    Wt = P.watchers = createWatchers(cap);
+  }
+  const prevN = Wt.n;
+  Wt.n = 0;
+  const pr = P.playerRec;
+  if (pr) {
+    const mySig = P.player.sigEff;
+    for (let j = 0; j < list.length; j++) {
+      const k = list[j];
+      if (k.rec < 0 || k.level !== 0 || k.themLvl === 0) continue;
+      const r = P.recs[k.rec];
+      const i = Wt.n++;
+      const dx = r.x - pr.x, dy = r.y - pr.y;
+      Wt.k[i] = k;
+      Wt.x[i] = r.x; Wt.y[i] = r.y;
+      Wt.R[i] = r.strength * mySig;
+      Wt.idR[i] = r.ident;
+      Wt.dist[i] = Math.sqrt(dx * dx + dy * dy);
+      Wt.lvl[i] = k.themLvl;
+    }
+  }
+  for (let i = Wt.n; i < prevN; i++) Wt.k[i] = null;
 }
 
 /** Wpis strefy wroga koła `i` sumy `P.enemy` (także w sumach pochodnych — znacznik koła = indeks wpisu). */
