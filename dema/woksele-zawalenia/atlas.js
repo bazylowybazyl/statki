@@ -87,6 +87,19 @@ export function poleKadluba(obraz, hx, hy) {
   return poleZMaski(wewn, W, Hh, hx, hy);
 }
 
+/** Średni kwadrat odległości od środka kadłuba po komórkach wnętrza pola (pole < 0) [j.²]: moment bezwładności płaskiej bryły to masa · ten średni kwadrat. */
+export function sredniKwadratPromienia(pole, hx, hy) {
+  const W = STATEK_SDF.szer, Hh = STATEK_SDF.wys;
+  let s = 0, n = 0;
+  for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) {
+    if (!(pole[j * W + i] < 0)) continue;
+    const lx = -hx + ((i + 0.5) * 2 * hx) / W, ly = -hy + ((j + 0.5) * 2 * hy) / Hh;
+    s += lx * lx + ly * ly;
+    n++;
+  }
+  return n ? s / n : (hx * hx + hy * hy) / 3;
+}
+
 /** Pole odległości [j., ujemne wewnątrz] z maski komórek kadłuba (1 = wnętrze) na prostokącie 2·hx × 2·hy. Granica leży w pół drogi między środkami komórek. */
 export function poleZMaski(wewn, W, Hh, hx, hy) {
   const zewn = new Uint8Array(W * Hh);
@@ -105,9 +118,11 @@ export async function createAtlas({ solver, obraz, camera, sterowanie, kanwa, re
   tex.anisotropy = 8;
   const L = DLUGOSC, Sz = Math.round((DLUGOSC * tex.image.height) / tex.image.width);
   const hx = L / 2, hy = Sz / 2;
-  solver.statek.ksztalt(poleKadluba(tex.image, hx, hy));
+  const pole = poleKadluba(tex.image, hx, hy);
+  solver.statek.ksztalt(pole);
   solver.statek.ustaw({ aktywny: false, h: [hx, hy, POL_WYS] });
-  const I = (masa * (L * L + Sz * Sz)) / 12;
+  // Moment bezwładności z obrysu kadłuba (komórki pola < 0), nie z prostokąta sprite'a 1800 × 806: kadłub ma 1700 × 594 i zwęża się ku dziobowi (druga opinia Fable 2026-11-11, U5).
+  const I = masa * sredniKwadratPromienia(pole, hx, hy);
 
   // ── Siatki ── Wierzch: sprite z gry, Lambert w świetle dema, cień na bazę. Burty: te same plastry ciemniej. Dysze: świecą przy ciągu (barwa > 1 w celu HDR).
   const grupa = new THREE.Group();

@@ -121,7 +121,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   // ?sztywnosc=2|3: sztywniejszy beton (K × s², podkroki solvera × s, wytrzymałość bez zmian). Też przeładowanie.
   // Bez parametru: sztywność sceny z adresu (B1R: 2, reszta 1).
   const SZTYW = KAWALKI ? Math.max(1, Math.min(4, Number(adres.get('sztywnosc')) || SCENY[adres.get('scena')]?.sztywnosc || 1)) : 1;
-  const opcjeKawalkow = KAWALKI ? { kawalki: adres.has('kawOp') ? JSON.parse(adres.get('kawOp')) : {}, zbrojenie: adres.has('zbrojenie') ? JSON.parse(adres.get('zbrojenie')) : {} } : null;
+  // ?ciagliwosc=3|8 (druga opinia Fable 2026-11-11): beton ciągliwy, droga mięknięcia klas 0–3 × c (budowa.js). Przy 8 i szyi ×3 wieża z klinem kładzie się z głową. Też przeładowanie.
+  // ?falaPion=1 (glowny.js): fala łamiąca w konstrukcji z kotwicami tylko z prędkości w dół, żeby przewrót nie kruszył głowy. Oba domyślnie wyłączone (decyzja użytkownika czeka).
+  const CIAGL = KAWALKI ? Math.max(1, Math.min(16, Number(adres.get('ciagliwosc')) || SCENY[adres.get('scena')]?.ciagliwosc || 1)) : 1;
+  const opcjeKawalkow =KAWALKI ? { kawalki: adres.has('kawOp') ? JSON.parse(adres.get('kawOp')) : {}, zbrojenie: adres.has('zbrojenie') ? JSON.parse(adres.get('zbrojenie')) : {} } : null;
   // AGENT: miasto dalekie tylko na stronie, która je pokazuje: nowy materiał i kernel, a stare sceny mają zostać bez zmian co do pipeline'u.
   const dalekie = adres.get('scena') === 'M3' ? (await import('./miastoDalekie.js')).createMiastoDalekie({ solver, obraz }) : null;
   const sterowanie = new OrbitControls(camera, kanwa);
@@ -185,7 +188,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? { ...(planeta ? { gruntZ: GRUNT_PLANETY } : {}), ...bazaAdresu } : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}), ...(KRUCH ? { kruchosc: KRUCH } : {}), ...(SZTYW > 1 ? { sztywnosc: SZTYW } : {}) });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? { ...(planeta ? { gruntZ: GRUNT_PLANETY } : {}), ...bazaAdresu } : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}), ...(KRUCH ? { kruchosc: KRUCH } : {}), ...(SZTYW > 1 ? { sztywnosc: SZTYW } : {}), ...(CIAGL > 1 ? { ciagliwosc: CIAGL } : {}) });
     }
     return czekajace.get(id).obietnica;
   }
@@ -414,6 +417,16 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         location.search = q.toString();
       }, `z:${s}`);
     }
+    // Ciągliwość i fala tylko w dół (druga opinia Fable 2026-11-11): przewrót wieży z klinem razem z głową. Przeładowanie strony, scena zostaje.
+    const przeladuj = (pole, wartosc) => {
+      const q = new URLSearchParams(location.search);
+      q.set(pole, String(wartosc));
+      q.set('scena', stan.scena);
+      location.search = q.toString();
+    };
+    for (const [c, opis] of [[1, 'Ciągliwość ×1'], [3, '×3'], [8, '×8']]) dodaj(panelBetonu, opis, () => { if (c !== CIAGL) przeladuj('ciagliwosc', c); }, `c:${c}`);
+    const falaPion = !!solver.falaPion;
+    dodaj(panelBetonu, falaPion ? 'Fala: tylko w dół' : 'Fala: każdy ruch', () => przeladuj('falaPion', falaPion ? 0 : 1), 'f:pion');
     panelBetonu.hidden = false;
   }
   // Narzędzia: klik w kadr bez przeciągania używa wybranego (klawisze 1–5), F trzymane strzela seriami w kursor, U: upadek jak przy HP 0 (tylko baza).
@@ -469,7 +482,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}`
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}` || k === `z:${SZTYW}` || k === `c:${CIAGL}` || (k === 'f:pion' && !!solver.falaPion)
         || (k === 'a:wl' && stan.atlasWl !== false) || (k === 'a:kam' && !!atlas?.kamera) || k === `p:${PLANETA_OPIS.id}`;
       b.classList.toggle('wl', wl);
     }

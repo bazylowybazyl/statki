@@ -162,6 +162,36 @@ Strojenie po kadrach: przy pierwszej wersji cała baza świeciła płaską biel�
 
 Otwarte: uderzenie w grunt Ziemi i Marsa to błysk i kłąb pyłu bez krateru na mapie (Hidalgo ma kratery z `planetaDema.js`); smugi z góry widać słabo, bo odłamki lecą prosto od kamery (smuga to wtedy punkt); duży dysk habitatu spada w ostatniej fali kotwic, więc z góry długo wydaje się większy od reszty.
 
+### Druga iteracja Fable (2026-11-11): przewrót wieży, spalanie, taran
+
+Użytkownik poprosił o drugą iterację przeglądu na nowym modelu (Fable 5.2, sesja „Silnik fizyki 3D”). Fable pracował w Node na kopii wzorca CPU z prawdziwym wypiekiem wieży B1R (zgodność z pomiarami GPU: klin 44 / 2243 j. wobec 37 / 2034, taran 5,04 mln pędu wobec 5,0). Pełny raport: `ANALIZA-2-woksele-taran-przewrot-spalanie.md` w jego scratchpadzie.
+
+Ustalenia i co z nimi zrobione:
+
+| | Ustalenie | Stan |
+|---|---|---|
+| U1 | Błąd: węzeł zabity w `kSpal` zeruje tylko własne maski, sąsiedzi zrywali linie zginania do jego zamrożonej pozycji (12–15 % zdrowych wiązań i kop ~200 j./s przy każdym wypaleniu warstwy czoła) | naprawione: po `kSpal` idą `kCzysc` i `kCzyscS` |
+| U2 | Wieża siada przez kruchość przy karbie, nie przez ciężar: po klinie przekrój nie jest przeciążony (p90 0,86 siły spoczynkowej), wiązanie przy ostrzu pęka przed przejęciem siły przez sąsiednie. Przy szyi ×3 szyja kładzie się jak pień, a głowa odrywa się od piasty za promieniem wzmocnienia (r 480) i spada pionowo | ciągliwość jako przełącznik (`?ciagliwosc=3|8`, panel), domyślnie wyłączona |
+| U3 | Tabela mięknięcia na GPU brała klasy z parametrów solvera, nie z wypieku (nakładka działała tylko na CPU) | naprawione |
+| U4 | Fala łamiąca w bryle z kotwicami liczy prędkość bezwzględną, a szczyt przewracającej się wieży przekracza próg przy 2,5°/s | flaga solvera `falaPion` (`?falaPion=1`, panel), domyślnie wyłączona |
+| U5 | Kernel kadłuba Atlasa bez błędów (masa 1, zaokrąglenie 1e−5, 0 węzłów w kadłubie, opóźnienie odczytu bez znaczenia); moment bezwładności z prostokąta sprite'a był ~1,4× za duży | moment z obrysu kadłuba |
+| U6 | Planeta i spalanie: rzędy wielkości się zgadzają; `w.g` w spalaniu nie istniało (zawsze 400), komentarz o błędzie przybliżenia nieprawdziwy | poprawione |
+
+Pomiar GPU (bez okna, 960 × 540, sztywność 2, beton kruchy, szyja ×3, bez tłumienia; klin 10 kraterów od +y). Przesunięcie środka głowy (w bok / w dół, j.):
+
+| Wariant | 5 s | 8 s | 10 s | Co widać (arkusz `.tmp/woksele-demo/KAW/arkusz_klin_ciagliwosc.png`) |
+|---|---|---|---|---|
+| dziś | 162 / 867 | 432 / 2056 | 640 / 3625 | głowa rozpada się w locie, szyja się kładzie, reszta siada |
+| ciągliwość 8 | 251 / 102 | 1117 / 1056 | 1758 / 2988 | cała wieża kładzie się z głową, głowa kruszy się trochę przed upadkiem |
+| ciągliwość 8, fala w dół | 251 / 102 | 1176 / 989 | 1918 / 2855 | cała wieża z całą głową, głowa pęka dopiero przy uderzeniu |
+| ciągliwość 3, fala w dół | 256 / 104 | 1186 / 1073 | 1961 / 2965 | jak przy 8 |
+
+S1 (sztywność 2, kruchy) z ciągliwością 8 nie robi się plastelinowy: dalej miażdży się pod własnym ciężarem, tylko wolniej i większymi kawałkami. Po 8 s węzły na poziomach kawałków (całe / części / bryłki): dziś 2777 / 1547 / 10 618, z ciągliwością 8 6276 / 3809 / 4857 (żwiru o połowę mniej, płyta dachu leży na hałdzie). Arkusz `.tmp/woksele-demo/KAW/arkusz_s1_ciagliwosc.png`.
+
+Ziemia po poprawce U1: żywe węzły po 25 s 79 628 (przed poprawką 79 617), bryły świecą spójne, smugi plazmy jak dotąd (arkusz `.tmp/woksele-demo/SPAL/ziemia-p1/arkusz_p1.png`); kernele spalania 0,026 ms GPU. Pipeline'y synchroniczne: 0 we wszystkich siedmiu przebiegach.
+
+Gra bez zmian: 63 kernele solvera bez nowych flag bajt w bajt jak w main, wypiek bez pola `ciagliwosc` jak dotąd (test `tests/wokseleCiagliwosc.test.mjs`).
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.
