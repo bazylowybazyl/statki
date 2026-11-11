@@ -340,7 +340,9 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 
 ## Statki robocze (złomowanie)
 
-- Stan: sześć presetów w demie kreatora (grupa `work` — „Statki robocze” w `HD_PRESET_GROUPS`), niewpięte do gry.
+- Stan: sześć presetów w demie kreatora (grupa `work` — „Statki robocze” w `HD_PRESET_GROUPS`). W GRZE są jako
+  zwykłe kadłuby ze sprite'a (punkt „KADŁUBY GRY” niżej) — sam kreator dalej nie jest wpięty (gra nie buduje kadłuba
+  z projektu).
   RUCHOME części (wysięgnik, dźwig, szczęki, walce, klapa rampy, podpora dampera) NIE są kadłubem — to modele gry na
   mocowaniach; kreator daje statyczny kadłub z GNIAZDAMI pod nie i wygląd „zamknięty”.
 - MODUŁY-GNIAZDA (`HD_MODULES`, kody 16–20, każdy z gałęzią w kompozytorze i kablem w `HD_POWER_LOAD`; bez `lock`):
@@ -373,6 +375,18 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   z pomostami zbiorników i złączami po obu burtach; frachtowiec z rampą VI — tunel na cały pancernik (Bellator),
   gondole na wysięgnikach poza rampą; dźwig IV — ponton z obrotnicą L i 4 damperami. Wymiary komór pilnuje test na
   pudłach presetów TN — zmiana obrysu Hasty albo Bellatora może wymagać powiększenia komory.
+- KADŁUBY GRY (`work_<klucz>`, 2026-11-11): sprite piecze kompozytor — `node scripts/webgpu/kreator-kadluby-gry.mjs`
+  → `assets/ships/work/<klucz>.png` (cały obraz projektu, dłuższy bok 1774 px), a tabele kadłuba liczy
+  `hullDesignGameHull.js` z mocowań projektu i zapisuje `src/data/workHulls.js` (plik GENEROWANY:
+  `node scripts/kreator-kadluby-tabele.mjs --zapisz`; test `tests/workHulls.test.mjs` porównuje go z rachunkiem).
+  Tabele gry biorą wpisy przez `workHullRows(...)`: profil renderu (długość = obraz projektu / 0,6), `TRAFFIC_HULLS`
+  (URL sprite'a jako literał), wpis edytora (dysze MAIN i SIDE), `ENGINE_FX_DEFAULTS`, rdzeń, zbiornik paliwa, strefa
+  mostka (obrys modelu poziomu klasy), lampy (para dziobowa i rufowa nie szersza niż „najszersza”), pancerz, rama
+  cywilna NPC, `DEV_HULL_SPAWNS`, model 3D z automatu (obrysy: `node scripts/webgpu/obrysy-floty.mjs`) i osprzęt
+  złomiarski `SCRAP_RIGS` (`rig` — ułamki SZEROKOŚCI PŁÓTNA od środka płótna, bo kotwica statku w grze = środek
+  sprite'a; `hullDesignWorkRig` liczy od środka sylwetki). Zmiana presetu statku roboczego albo wyglądu kompozytora →
+  wypiek + tabele + obrysy (trzy polecenia wyżej), inaczej test tabeli pada. Klasa `tug` świata ruchu = `work_zlomiarz`
+  (reguła `zlomowanie`); pozostałe pięć stoi w scenie `?scena=holowanie` na postoju (`TOW_SCENE.props`).
 - Stocznia: karty „Osprzęt roboczy” w zakładce Systemy (`WORK` w `dema/kreator-kadluba-stocznia.js`), „Kosz na złom”
   w Ładunku, paleta „Roboczy” w barwach cywilnych; Warsztat: warianty obrotnicy i liczba walców w `MOD_VARIANTS`.
 - Do decyzji użytkownika (tabele i lista: `docs/KREATOR-KADLUBA.md` § „Statki robocze złomowania”): czy obrotnica
