@@ -153,8 +153,9 @@ export const engineMain = {
 };
 
 // Silniki SIDE: mniejsze silniki rakietowe burt o pracy ciągłej. Decyzja użytkownika 2026-11-11: „sam syk nic nie
-// robi — bo side to też silniki rakietowe z ciągłą pracą”. Budowa jak silnik MAIN (dudnienie, ryk, ton), pasma
-// wyżej (mniejsza dysza), szybsze narastanie i gaśnięcie, zapłon z krótkim kopnięciem; syk dyszy to tylko dodatek.
+// robi — bo side to też silniki rakietowe z ciągłą pracą”. Dudnienie i ryk jak w silniku MAIN, pasma wyżej
+// (mniejsza dysza), do tego niski ton z pił pod filtrem (MAIN go nie ma), szybsze narastanie i gaśnięcie, zapłon
+// z krótkim kopnięciem; syk dyszy to tylko dodatek.
 export const engineSide = {
   id: 'silnikSide',
   group: 'Okręt',
@@ -178,7 +179,7 @@ export const engineSide = {
     const rof = V.bp(480, 0.7, t);
     const rog = V.gain(0);
     V.chain(V.noise('pink', 1, t), rof, rog, master);
-    // ton: piły w kwincie + sub, oktawę nad silnikiem MAIN
+    // ton: piły w kwincie + sub (72 / 108 / 36 Hz) pod filtrem dolnoprzepustowym
     const DR = [72, 108, 36];
     const dr = [V.osc('sawtooth', DR[0], t), V.osc('sawtooth', DR[1], t), V.osc('sine', DR[2], t)];
     const drf = V.lp(280, 2, t);
