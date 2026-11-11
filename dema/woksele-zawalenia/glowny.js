@@ -13,8 +13,9 @@ const PROFIL = parametryAdresu.get('profil') === '1';
 const KAWALKI = parametryAdresu.get('kawalki') === '1';
 // Twarde limity wiązań także w gałęzi sprężenia (solver.js, `limityF0`): w demie kawałków domyślnie tak, ?limityF0=0|1 do A/B. Gra bez tej flagi.
 const LIMITY_F0 = parametryAdresu.has('limityF0') ? parametryAdresu.get('limityF0') === '1' : KAWALKI;
-// ?falaPion=1 (druga opinia Fable 2026-11-11): fala łamiąca w konstrukcji połączonej z kotwicami tylko z prędkości w dół (solver.js, `falaPion`). Domyślnie wyłączona, gra bez flagi.
-const FALA_PION = KAWALKI && parametryAdresu.get('falaPion') === '1';
+// ?falaPion=1|0 (druga opinia Fable 2026-11-11): fala łamiąca w konstrukcji połączonej z kotwicami tylko z prędkości w dół (solver.js, `falaPion`).
+// Domyślnie włączona na scenie bazy B1R (decyzja użytkownika 2026-11-11: przewrót wieży nie kruszy głowy), reszta dema i gra bez flagi.
+const FALA_PION = KAWALKI && (parametryAdresu.has('falaPion') ? parametryAdresu.get('falaPion') === '1' : parametryAdresu.get('scena') === 'B1R');
 // ?atlas=1|0: Atlas w płaszczyźnie gry do testu taranowania (atlas.js; solver z flagą `statek`: kernel kadłuba po kI w każdym podkroku). Domyślnie w demie kawałków na scenie bazy.
 // Bez Atlasa w ?test=1 i ?profil=1: tam lista kroku ma być ta sama co dotąd (testy GPU, czasy kerneli po nazwach).
 const ATLAS = !TEST && !PROFIL && (parametryAdresu.has('atlas') ? parametryAdresu.get('atlas') === '1' : KAWALKI && /^B1/.test(parametryAdresu.get('scena') || ''));

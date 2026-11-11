@@ -192,6 +192,13 @@ Ziemia po poprawce U1: żywe węzły po 25 s 79 628 (przed poprawką 79 617), br
 
 Gra bez zmian: 63 kernele solvera bez nowych flag bajt w bajt jak w main, wypiek bez pola `ciagliwosc` jak dotąd (test `tests/wokseleCiagliwosc.test.mjs`).
 
+Decyzja użytkownika (2026-11-11): w B1R domyślnie ciągliwość 3 i fala tylko w dół (`?ciagliwosc=1&falaPion=0` wraca do kruchego betonu). Sprawdzenie na nowych domyślnych:
+- baza bez strzałów: 0 zerwanych z 998 510 wiązań przez 6 s;
+- klin: głowa 2007 j. w bok i 2946 j. w dół po 10 s, cała wieża kładzie się z głową;
+- taran Atlasa: szyb wycięty, wieża siada w dysk (głowa 3031 j. w dół, 188 j. ku tyłowi po 10 s), pęd oddany 6,1 mln (przy kruchym betonie 5,3 mln).
+
+Pipeline'y synchroniczne: 0.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.
