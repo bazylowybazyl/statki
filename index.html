@@ -1027,6 +1027,8 @@
     // hangary i drony; sygnatura spada z gaszeniem. Osłona gazu dla czujników — src/game/gasCover.js. Blok „ZASILANIE OKRĘTU”.
     import { shipPowerOf, powerStateOf, shipPowerOn, shipPowerDown, powerAllowsEngines, powerSignatureMul, powerSensorMul, powerDownShip, powerUpShip, toggleShipPower, setShipPowerState, stepShipPower, powerHudLabel, powerStartupLeft, powerSequenceProgress, POWER_OFF, POWER_STARTUP, POWER_ON, POWER_SHUTDOWN, SHIP_POWER_TUNE } from "./src/game/shipPower.js";
     import { gasCoverAt, gasSignatureMul } from "./src/game/gasCover.js";
+    import { hullPointPowered } from "./src/game/hullMounts.js";
+    import { hullPowerStats } from "./src/game/hullPower.js";
     // Alarmy okrętu gracza (2026-11-11, src/game/shipAlarms.js): szyna stanu i zdarzeń — blok „ALARMY OKRĘTU”.
     import { ShipAlarm, SHIP_ALARM, SHIP_ALARM_TUNE } from "./src/game/shipAlarms.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
@@ -10404,6 +10406,8 @@
       _alarmPrev.detected = det;
       ShipAlarm.step(dt);
       ship.__alarmCode = ShipAlarm.state.id;
+      // Światło bojowe floty (fleetCoordinator — szyk bojowy strony sojuszniczej): okręt gracza razem z flotą.
+      ship.__battleLights = !!getFleetPhase('friendly')?.battle;
     }
     ShipAlarm.on((ev) => {
       if (ev.active) pushZoneMessage(ev.label, 2.6, { label: 'ALARM', tone: 'alert' });
@@ -10434,6 +10438,27 @@
       c.restore();
     }
     window.ShipAlarmDev = { set: (id, sec = 5) => ShipAlarm.set(id, true, sec), state: () => ({ ...ShipAlarm.state }) };
+
+    // MIGOTANIE ŚWIATEŁ PO TRAFIENIU (decyzja użytkownika 2026-11-11: „migotanie świateł przy trafieniu dużego
+    // kalibru, jak spadek napięcia”): trafienie od `minDamage` przygasza lampy okrętu (`__powerFlick` 0..1 → migawka
+    // ENT.PWR_FLICK; render: lampy pokładowe migoczą, billboardy, rozlew i reflektory przygasają), gaśnie liniowo
+    // w czasie gry. Sam obraz — rozgrywka bez zmian.
+    const POWER_FLICK = { minDamage: 240, fullDamage: 1600, decay: 1.4 };
+    const _flickEntities = new Set();
+    function notePowerFlick(entity, damage) {
+      if (!entity || !(damage >= POWER_FLICK.minDamage) || !entity.beamHull) return;
+      const k = Math.min(1, 0.35 + 0.65 * (damage - POWER_FLICK.minDamage) / Math.max(1, POWER_FLICK.fullDamage - POWER_FLICK.minDamage));
+      if (!(entity.__powerFlick >= k)) entity.__powerFlick = k;
+      _flickEntities.add(entity);
+    }
+    function stepPowerFlicks(dt) {
+      if (_flickEntities.size === 0) return;
+      for (const e of _flickEntities) {
+        const f = (Number(e.__powerFlick) || 0) - dt * POWER_FLICK.decay;
+        if (f > 0 && !e.dead) e.__powerFlick = f;
+        else { e.__powerFlick = 0; _flickEntities.delete(e); }
+      }
+    }
 
     /** Komunikat odmowy systemu przy braku zasilania (zwraca true = zablokowane). */
     function playerPowerRefuse(what) {
@@ -11145,6 +11170,8 @@
       return HullBodies.sweep(entity, x0, y0, x1, y1, radius);
     }
     function applyHexImpact(entity, x, y, damage, vel, fxSource = null, fxVariant = 'impact') {
+      // Trafienie dużego kalibru: lampy okrętu na chwilę przygasają (spadek napięcia — blok „ZASILANIE OKRĘTU”).
+      notePowerFlick(entity, damage);
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
       // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C);
       // fxVariant — wariant stempla: 'impact', 'ricochet', 'exit', 'stuck' (przebicia 18-B).
@@ -26512,7 +26539,11 @@
       speedOf: (weapon) => (weapon.baseSpeed || 1000) * weaponSpeedMul(ship, weapon),
       rangeOf: (weapon) => getPlayerWeaponRange(weapon),
       chargeTime: chargeTimeOf,
-      skip: (group, lo) => lo.weapon.id === 'hexlance_siege',
+      // Hexlance ma własną ścieżkę; gniazdo w części kadłuba bez zasilania z komory reaktora (src/game/hullPower.js)
+      // nie strzela (stan zasilania okrętu — decyzja użytkownika 2026-11-11).
+      skip: (group, lo) => lo.weapon.id === 'hexlance_siege' || (!!lo.hp && !hullPointPowered(ship, lo.hp,
+        (Number(lo.hp.x) || 0) * (ship.__hardpointScaleX || ship.__hardpointScale || 1),
+        (Number(lo.hp.y) || 0) * (ship.__hardpointScaleY || ship.__hardpointScale || 1))),
       // Kierunek „na zewnątrz kadłuba” z miejsca wieży — wieże wolą cele po swojej burcie.
       outwardOf: (lo) => {
         const p = lo.hp.pos || lo.hp;
@@ -30269,6 +30300,7 @@
       syncPlayerWarpDrive();
       // Zasilanie okrętu (src/game/shipPower.js): rozruch / gaszenie — przed autopilotem i silnikami.
       stepPlayerPower(dt);
+      stepPowerFlicks(dt);
       stepTravelNav();
       updatePlayerCommand(dt);
       stepWarpCourse(dt);

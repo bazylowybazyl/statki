@@ -658,7 +658,7 @@ function bowPairAlive(entity, along, side) {
     rec.along = along;
     rec.side = side;
   }
-  refreshHullMountSet(set, hull);
+  refreshHullMountSet(set, hull, entity);
   return set.alive[0] | (set.alive[1] << 1);
 }
 

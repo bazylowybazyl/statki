@@ -342,7 +342,7 @@ function liveLightsBlock(entity, block) {
     rec.hsx = hsx;
     rec.hsy = hsy;
   }
-  refreshHullMountSet(set, hull);
+  refreshHullMountSet(set, hull, entity);
   if (rec.version !== set.version) {
     rec.version = set.version;
     rec.filtered = set.dead === 0 ? block : filterLightsBlock(block, set.alive);

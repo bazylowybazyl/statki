@@ -522,6 +522,11 @@ export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null, brid
 function applyCores(rm, v) {
   const out = rm.cores;
   out.length = 0;
+  // Rdzenie na lustrze gospodarza (`reactorCores` — jak w grze; zasilanie z siatki belek, src/game/hullPower.js):
+  // listy gospodarzy z poprzedniej strony od zera.
+  const prevHosts = rm._coreHosts || (rm._coreHosts = []);
+  for (let i = 0; i < prevHosts.length; i++) if (prevHosts[i].reactorCores) prevHosts[i].reactorCores.length = 0;
+  prevHosts.length = 0;
   const n = v.head[HEAD.N_CORES] | 0;
   const f64 = v.coreF64, i32 = v.coreI32, U = v.coreU8, dict = rm.dict;
   for (let i = 0; i < n; i++) {
@@ -544,6 +549,11 @@ function applyCores(rm, v) {
     const hs = i32[bi + CORE.I32.HOST_SLOT];
     const hm = hs >= 0 ? rm.entities[hs] : null;
     c.host = hm && hm.gen === (i32[bi + CORE.I32.HOST_GEN] >>> 0) ? hm : null;
+    if (c.host) {
+      if (!c.host.reactorCores) c.host.reactorCores = [];
+      if (c.host.reactorCores.length === 0) prevHosts.push(c.host);
+      c.host.reactorCores.push(c);
+    }
     c.state = dict.value(i32[bi + CORE.I32.STATE]);
     const inv = dict.value(i32[bi + CORE.I32.INVALID]);
     c.invalid = inv === undefined ? null : inv;

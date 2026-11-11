@@ -10,6 +10,7 @@ import { getBattleSlot } from './fleetCoordinator.js';
 import { AWARENESS_CONFIG, SIDE_FRIENDLY, fleetStanceOverride } from './fleetAwareness.js';
 import { isCloakHidden } from '../game/cloak.js';
 import { shipPowerOn } from '../game/shipPower.js';
+import { hullPointPowered } from '../game/hullMounts.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
 import { MOUNT_ARCS, mountFireArc } from '../game/weaponAim.js';
@@ -1750,6 +1751,9 @@ export function processAutonomousWeapons(npc, dt) {
     if (hpRef && (hpRef.destroyed || !hpRef.mount || (weapon.id && hpRef.mount !== weapon.id))) {
       continue;
     }
+    // Zasilanie z siatki belek (src/game/hullPower.js): wieża w części kadłuba odciętej od komory reaktora nie strzela.
+    if (hpRef && npc.beamHull && !hullPointPowered(npc, hpRef, (Number(hpRef.x) || 0) * (npc.__hardpointScaleX || npc.__hardpointScale || 1),
+      (Number(hpRef.y) || 0) * (npc.__hardpointScaleY || npc.__hardpointScale || 1))) continue;
     const restAngle = (npc.angle || 0) + weapon.mountAngle;
     if (weapon.visualAngle === undefined) weapon.visualAngle = restAngle;
 

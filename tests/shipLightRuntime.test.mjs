@@ -169,7 +169,11 @@ test('atlas default lights fit in one shader payload', () => {
   const { position, road } = ATLAS_EDITOR_DEFAULTS.lights;
   const floods = payload.lights.filter((l) => l.kind === 'flood');
   assert.equal(floods.length, 5);
-  assert.equal(payload.count, position.length + road.length + floods.length);
+  // Lampy pokładowe (stan zasilania okrętu, src/data/shipDeckLights.js) — na końcu payloadu, wszystkie się mieszczą.
+  const decks = payload.lights.filter((l) => l.kind === 'deck');
+  assert.ok(decks.length >= 6, `lampy pokładowe Atlasa: ${decks.length}`);
+  assert.equal(payload.count, position.length + road.length + floods.length + decks.length);
+  assert.equal(payload.ownCount, payload.count);
   assert.ok(payload.count <= MAX_SHADER_SHIP_LIGHTS);
   assert.equal(payload.lights.filter((l) => l.kind === 'road').length, road.length);
 });

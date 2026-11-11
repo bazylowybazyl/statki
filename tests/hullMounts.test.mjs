@@ -146,14 +146,19 @@ test('a lamp shot off goes out; a hit elsewhere keeps the block; the hulk agony 
   const lamp = full.position[0];
   // Trafienie daleko od lamp (środek kadłuba) — liczba węzłów się zmienia, lampy nie.
   let far = null, farD = 0;
-  for (let gx = -300; gx <= 300; gx += 50) {
-    let d = Infinity;
-    for (const k of KINDS) for (const m of full[k]) d = Math.min(d, Math.hypot(m.x * kx - gx, m.y * ky));
-    if (d > farD) { farD = d; far = gx; }
+  // Lampy wszystkich rodzajów, także pokładowe (`deck` — stan zasilania okrętu, 2026-11-11).
+  let farY = 0;
+  for (let gx = -300; gx <= 300; gx += 25) {
+    for (let gy = -150; gy <= 150; gy += 25) {
+      let d = Infinity;
+      for (const k of [...KINDS, 'deck']) for (const m of (full[k] || [])) d = Math.min(d, Math.hypot(m.x * kx - gx, m.y * ky - gy));
+      if (d > farD) { farD = d; far = gx; farY = gy; }
+    }
   }
-  assert.ok(farD > cs * 4, 'punkt trafienia z dala od lamp');
+  assert.ok(farD > cs * 2.5, 'punkt trafienia z dala od lamp');
   const nodes = e.beamHull.body.activeNodes;
-  HullBodies.impact(e, far, 0, 1, null, { craterRadius: cs * 0.9 });
+  const pf = spriteToWorld(e, far, farY);
+  HullBodies.impact(e, pf.x, pf.y, 1, null, { craterRadius: cs * 0.9 });
   assert.ok(e.beamHull.body.activeNodes < nodes, 'trafienie zabiło węzły');
   assert.equal(LR.getEntityLights(e), full, 'lampy bez zmian — ten sam blok');
 
@@ -201,4 +206,49 @@ test('field lights: no substitute bow pair for a ship whose own headlights died 
   addShipLights(g2, e, L, { time: 0 });
   assert.equal(spots(g2), 0, 'bez dziobu — bez pary reflektorów');
   window.wrecks.length = 0;
+});
+
+// Zasilanie z siatki belek (src/game/hullPower.js, stan zasilania okrętu 2026-11-11): prąd z komory reaktora po
+// poszyciu, wnętrzu i grodziach (bez wręgów); część odcięta — lampy gasną, wieże nie strzelają (hullPointPowered).
+test('hull power: komora reaktora zasila kadłub; przecięte przewody gaszą część za cięciem, rdzeń bez komory — wszystko', async () => {
+  const HP = await import('../src/game/hullPower.js');
+  window.wrecks.length = 0;
+  const e = ship('atlas', 0, 0, 0);
+  const body = e.beamHull.body, s = body.nodeStore, b = body.beamStore, d = body.dims;
+  assert.equal(HP.hullPowerMask(e), null, 'bez rdzenia — wszystko zasilane (null)');
+  // rdzeń w środku siatki: komora 2 × 2 komórki z żywymi węzłami
+  let cx = -1, cy = -1;
+  for (let i = 0; i < s.count && cx < 0; i++) {
+    if (s.active[i] && s.iz[i] === 0 && Math.abs(s.ix[i] - (d.x >> 1)) <= 1 && Math.abs(s.iy[i] - (d.y >> 1)) <= 1) { cx = s.ix[i]; cy = s.iy[i]; }
+  }
+  assert.ok(cx >= 0, 'węzeł przy środku kadłuba');
+  const core = { host: e, cellX: Int16Array.from([cx]), cellY: Int16Array.from([cy]), aliveCount: 1, elsewhereCount: 0 };
+  e.reactorCores = [core];
+  const all = HP.hullPowerMask(e);
+  assert.ok(all && all.unpowered === 0 && all.powered === body.activeNodes, `cały kadłub zasilany (${all?.powered}/${body.activeNodes})`);
+  // „przecięte okablowanie”: belki poszycia / wnętrza / grodzi przez kolumnę na rufie (wręgi zostają — nie przewodzą)
+  const cut = Math.max(2, cx - Math.floor(d.x * 0.3));
+  let n = 0;
+  for (let k = 0; k < b.count; k++) {
+    if (b.broken[k] || b.type[k] === 2) continue;
+    const xa = s.ix[b.a[k]], xb = s.ix[b.b[k]];
+    if ((xa < cut) !== (xb < cut)) { b.broken[k] = 1; n++; }
+  }
+  body.liveBeams -= n;
+  const half = HP.hullPowerMask(e);
+  assert.ok(half.unpowered > 0 && half.powered > 0, `część za cięciem bez prądu (${half.unpowered} węzłów)`);
+  for (let i = 0; i < s.count; i++) if (s.active[i] && s.iz[i] === 0 && s.ix[i] < cut - 1) { assert.equal(half.mask[i], 0); break; }
+  // gniazdo za cięciem nie ma zasilania, przy rdzeniu ma
+  const csz = body.cellSize, kx = e.__hardpointScaleX || 1;
+  const sternX = ((cut - 3 + 0.5) * csz - e.beamHull.anchorDX) / e.beamHull.scale;
+  const coreX = ((cx + 0.5) * csz - e.beamHull.anchorDX) / e.beamHull.scale;
+  const coreY = -((cy + 0.5) * csz - e.beamHull.anchorDY) / e.beamHull.scale;
+  assert.equal(HM.hullPointPowered(e, { id: 'rufa' }, sternX, coreY), false, 'wieża na odciętej rufie bez zasilania');
+  assert.equal(HM.hullPointPowered(e, { id: 'srodek' }, coreX, coreY), true, 'wieża przy rdzeniu zasilana');
+  void kx;
+  // rdzeń odcięty z odłamem: brak komory i sąsiadów na tym ciele (komórka poza siatką) — cały okręt bez prądu
+  core.cellX = Int16Array.from([-5]); core.cellY = Int16Array.from([-5]); core.aliveCount = 0; core.elsewhereCount = 1;
+  const none = HP.hullPowerMask(e);
+  assert.equal(none.powered, 0);
+  delete e.reactorCores;
 });
