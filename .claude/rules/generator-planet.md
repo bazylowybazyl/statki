@@ -222,9 +222,21 @@ paths:
   zdjęciu satelitarnym, a biom miejsca wyznacza resztę. Planeta i zbliżenie tego nie pokażą (komórka sieci rzecznej
   planety ~17 km, zdjęcie wzorca ~30 km): krajobraz w skali miejsca robi MAPA TERENU, nie dalsze strojenie planety.
 - `planetGenTerrainMap.js` (czysty JS — przeglądarka, worker, Node): `generateTerrainMap({ seed, size, extentKm,
-  biome, riverWidthM })` → warstwy: `albedo` (RGBA8 sRGB, wiersz 0 = północ), `height` [m], `cover`
-  (`TERRAIN_COVER`: woda, piasek, łąka, zarośla, las, torfowisko — także pod rozgrywkę), `river` (oś [m]). Biomy:
-  `TERRAIN_MAP_BIOMES` (dziś `tajga`). Niepołączone z planetą — miejsce = ziarno.
+  biome, river, veg, riverWidthM })` → warstwy: `albedo` (RGBA8 sRGB, wiersz 0 = północ), `height` [m], `cover`
+  (`TERRAIN_COVER`: woda, piasek, łąka, zarośla, las, torfowisko — także pod rozgrywkę), `river` (oś [m]), `sea`.
+  Biomy: `TERRAIN_MAP_BIOMES` (dziś `tajga`). Niepołączone z planetą — miejsce = ziarno.
+- STYLE RZEK (`TERRAIN_RIVERS`, wzorce — zdjęcia od użytkownika, § 10.14 opisu): `meandry` (symulacja), `wielka`
+  (szerokie koryto z wyspami i bocznymi ramionami, muł), `roztoki` (żwirowe łożysko z plecionką koryt), `delta`
+  (morze, ramiona delty z lejkami pływowymi, potoki pływowe, smugi osadu). Bok mapy dobieraj do stylu: wielka rzeka
+  i delta ~40 km, roztoki ~12–16 km. ROŚLINNOŚĆ (`TERRAIN_VEGETATION`): `tajga`, `tropik`, `czerwona`, `purpura`,
+  `zlota` — decyzja użytkownika: barwy roślin mogą być śmiałe („drzewa są nie tylko zielone”).
+- Współrzędne „wzdłuż / w poprzek” rzeki (wyspy, plecionka, boczne ramiona, pas doliny) liczone od NAJBLIŻSZEGO
+  węzła osi skaczą między węzłami o ~odległość × kąt załamania: oś gęsto (węzły co ⅛ szerokości koryta przy wzorach
+  daleko od osi), inaczej kształty są pocięte prostymi krawędziami. Brzeg wody z kół wokół węzłów — także z punktów
+  pośrednich (koła co pół szerokości dają brzeg jak sznur korali).
+- Wielka rzeka z symulacji meandrów wychodzi wężem o równych pętlach — jej koryto to oś doliny z kołysaniem, a wyspy
+  i ramiona są wzorem. Źródła smug osadu w morzu tylko w ujściach ramion delty; potoki pływowe tylko z większych
+  cieków blisko morza, z położeniem uśrednionym wzdłuż cieku.
 - Rzeka to SYMULACJA wędrówki koryta (`simulateMeanders`), nie wzór: zakola, odcięcia i starorzecza wynikają z modelu,
   a łachy, łuki dawnych koryt, zasięg doliny i sukcesja roślin — z rastra „kiedy ostatnio płynęła tu rzeka”.
   Zaburzenie startowe osi rzędu szerokości koryta i na całej długości (mniejsze zostawia górny odcinek prosty).
@@ -234,7 +246,8 @@ paths:
 - Wygląd oceniać OBOK zdjęcia wzorca w tej samej skali i z kwantyzacją palety (liczby w opisie), nie na oko.
 - Wzory regularne zdradzają generator także tu: równe kółka wysp drzew, kreska przy każdym strumyku, pasmo o stałej
   szerokości — losować obecność, kształt i szerokość.
-- Narzędzia: demo `dema/mapa-terenu.html`, PNG `node scripts/mapa-terenu-png.mjs`, testy
+- Narzędzia: demo `dema/mapa-terenu.html` (listy rzeki i roślinności, `?rzeka=`, `?ros=`), PNG
+  `node scripts/mapa-terenu-png.mjs --rzeka delta --ros tropik --km 40 --roz 2048 --ziarno 4 --out …`, testy
   `tests/planetGenTerrainMap.test.mjs`.
 
 ## Zasady i pułapki
