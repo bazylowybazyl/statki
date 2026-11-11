@@ -24,15 +24,14 @@ test('każdy dźwięk z tabeli sceny i z mapy zdarzeń jest w manifeście (pętl
   assert.ok(DZWIEKI_SYNTEZY.silnikMain && DZWIEKI_SYNTEZY.silnikSide && DZWIEKI_SYNTEZY.gatling);
 });
 
-test('poziomy: broń specjalna delikatnie głośniejsza niż main, wystrzały pod wybuchami, SIDE nie głośniej niż MAIN', () => {
+test('poziomy: broń specjalna delikatnie głośniejsza niż main, tarcza przy kadłubie, SIDE nie głośniej niż MAIN', () => {
   const cel = (id) => KATEGORIE[DZWIEKI[id].kat].cel + (DZWIEKI[id].poziom || 0);
   for (const [spec, main] of [['yamato', 'tempestIon'], ['supernovaStart', 'rakieta']]) {
     const d = cel(spec) - cel(main);
     assert.ok(d > 0 && d <= 4, `${spec} − ${main} = ${d} dB`);
   }
-  for (const strzal of ['tempestIon', 'yamato', 'rakieta', 'supernovaStart', 'autocannon', 'dzialo', 'railgun', 'flak']) {
-    assert.ok(cel(strzal) < cel('wybuchRakiety'), `${strzal} pod wybuchem rakiety`);
-  }
+  // Silnik ma być słyszalny pod strzałami: po naprawie podbicia szyny −22 dB było niesłyszalne (użytkownik).
+  assert.ok(DZWIEKI_SYNTEZY.silnikMain.poziom >= -10, 'silnik MAIN nie ciszej niż −10 dB');
   // Tarcza: nie głośniej niż trafienie w kadłub, ale i nie dużo ciszej (użytkownik: ciszej o 3 dB = „zbyt delikatna”).
   assert.ok(cel('tarcza') <= cel('kadlub') && cel('kadlub') - cel('tarcza') <= 2, 'tarcza blisko poziomu trafienia w kadłub');
   // Rozbicie tarczy to gaśnięcie pola, nie wybuch (użytkownik: „zbyt energetyczne”).

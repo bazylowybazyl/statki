@@ -16,22 +16,23 @@ const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
  * Kategorie i poziom docelowy (dB RMS głośnej części pliku, przed szyną). Kolejność głośności z opisu zadania:
  * superbronie i duże wybuchy najgłośniej, potem działa, trafienia, drobne, interfejs najciszej.
  */
-// Ocena użytkownika w scenie 2026-11-11: „wszystko jest zdecydowanie za głośne — wystrzały + silnik”.
-// Stąd: wszystkie kategorie −4 dB, wystrzały dodatkowo −6 dB (`POZIOM_WYSTRZALU`, razem −10 dB),
-// silnik MAIN −12 dB, seria CIWS −10 dB (poprawki `poziom` w tabelach niżej).
+// Poziomy pierwotne. Skargi „wszystko jest za głośne” (2026-11-11) brały się z podbicia szyny (`PODBICIE_SZYNY_DB`
+// w dzwiekiGry.js), nie z tej tabeli — ściszenia dokładane wtedy tutaj są cofnięte na polecenie użytkownika:
+// „skoro bug był w podbijaniu głośności — usuń wcześniejsze modyfikacje dźwięku, bo po naprawie bugu wcale nie
+// słyszę silników”. Nie ściszaj tabeli „na zapas”: najpierw sprawdź szynę i suwak efektów w opcjach.
 export const KATEGORIE = Object.freeze({
-  superbron: { cel: -17, opis: 'superbronie, duże wybuchy' },
-  dzialo: { cel: -21, opis: 'działa, rakiety, wybuchy, taran' },
-  trafienie: { cel: -25, opis: 'trafienia, tarcza, kadłub' },
-  drobne: { cel: -29, opis: 'drobne: dysze, małe wybuchy, tarcie' },
-  interfejs: { cel: -32, opis: 'interfejs' },
+  superbron: { cel: -13, opis: 'superbronie, duże wybuchy' },
+  dzialo: { cel: -17, opis: 'działa, rakiety, wybuchy, taran' },
+  trafienie: { cel: -21, opis: 'trafienia, tarcza, kadłub' },
+  drobne: { cel: -25, opis: 'drobne: dysze, małe wybuchy, tarcie' },
+  interfejs: { cel: -28, opis: 'interfejs' },
   // Hala K-7 (warstwa hali, tabela DZWIEKI_HALI): głos spikera ma być zrozumiały, tło hali — ciche łóżko pod resztą.
   glos: { cel: -25, opis: 'głos spikera' },
   tlo: { cel: -34, opis: 'tło miejsca (hala)' }
 });
 
-/** Poprawka wystrzałów [dB] względem kategorii: strzał powtarza się najczęściej, więc gra pod wybuchami. */
-export const POZIOM_WYSTRZALU = -6;
+/** Poprawka wystrzałów [dB] względem kategorii — zero (ściszenie −6 dB cofnięte razem z resztą, patrz wyżej). */
+export const POZIOM_WYSTRZALU = 0;
 /** Broń specjalna (Yamato, Supernova) — użytkownik: „specjalne delikatnie głośniejsze niż main”: +3 dB nad main. */
 export const POZIOM_SPECJALNEJ = POZIOM_WYSTRZALU + 3;
 
@@ -55,7 +56,7 @@ export const DZWIEKI = Object.freeze({
   autocannon: { kat: 'dzialo', limit: 6, odstep: 35, zwloka: 2, ton: 0.07, glos: 0.15, poziom: POZIOM_WYSTRZALU },
   dzialo: { kat: 'dzialo', limit: 5, odstep: 50, zwloka: 3, ton: 0.05, glos: 0.12, poziom: POZIOM_WYSTRZALU },
   railgun: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 3, ton: 0.04, glos: 0.1, poziom: POZIOM_WYSTRZALU },
-  laserPD: { kat: 'drobne', limit: 6, odstep: 30, zwloka: 2, ton: 0.06, glos: 0.15, poziom: -3 },
+  laserPD: { kat: 'drobne', limit: 6, odstep: 30, zwloka: 2, ton: 0.06, glos: 0.15 },
   flak: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 2, ton: 0.06, glos: 0.12, poziom: POZIOM_WYSTRZALU },
   wiazka: { kat: 'dzialo', petla: true, limit: 4, poziom: POZIOM_WYSTRZALU },
   // Trafienia
@@ -120,11 +121,11 @@ export const DZWIEKI_HALI = Object.freeze({
 /** Dźwięki z syntezy (nie z plików) — w panelu bez wariantów, tylko wyciszenie. */
 export const DZWIEKI_SYNTEZY = Object.freeze({
   // Synteza nie przechodzi przez wyrównanie plików — `poziom` to cała jej głośność [dB].
-  // Silnik po zdjęciu podbicia szyny i przy 30% efektów „nadal był trochę za głośno” (użytkownik) — jeszcze −4 dB.
-  silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -22 },
-  // Silniki SIDE: praca ciągła jak MAIN, nie pojedynczy syk (decyzja użytkownika 2026-11-11).
-  silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -24 },
-  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -14 }
+  // Poziomy pierwotne (silnik −6, CIWS −4): po naprawie podbicia szyny ściszony silnik (−22 dB) był niesłyszalny.
+  silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -6 },
+  // Silniki SIDE: praca ciągła jak MAIN, nie pojedynczy syk (decyzja użytkownika 2026-11-11); 2 dB pod MAIN.
+  silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -8 },
+  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -4 }
 });
 
 /**

@@ -26,9 +26,9 @@ const CZAS_CIWS_BEZ_STRZALU = 0.16; // s — seria CIWS wygasa, gdy tyle nie by�
 // nastawy w OfflineAudioContext: −50,0 → −42,8 dB; sam kompresor +6,1, sam limiter +1,1). Zmiana nastaw kompresora
 // albo limitera = nowy pomiar tej stałej.
 const PODBICIE_SZYNY_DB = 7.2;
-// Poziom szyny [dB] po zdjęciu podbicia: suwak efektów na 100% brzmi jak dawne 30% (−10,5 dB), które użytkownik
-// uznał za „w miarę” — razem −11,2 dB względem szyny bez korekty.
-const POZIOM_SZYNY_DB = -4;
+// Poziom szyny [dB] po zdjęciu podbicia — zero: szyna tylko zdejmuje własne podbicie i nic nie ścisza (dodatkowe
+// −4 dB z dnia naprawy cofnięte na polecenie użytkownika razem ze ściszeniami tabeli). Głośność ustawia suwak opcji.
+const POZIOM_SZYNY_DB = 0;
 const PROG_CIAGU_SIDE = 0.05; // ciąg burty, od którego silniki SIDE grają
 const CZAS_SIDE_BEZ_CIAGU = 0.18; // s — silniki SIDE gasną, gdy tyle nie było ciągu (impulsy automatu dysz to jedna praca)
 
