@@ -52,11 +52,6 @@ export const DZWIEKI = Object.freeze({
   yamato: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 3, ton: 0.03, glos: 0.08, poziom: POZIOM_SPECJALNEJ },
   rakieta: { kat: 'dzialo', limit: 6, odstep: 45, zwloka: 4, ton: 0.06, glos: 0.12, poziom: POZIOM_WYSTRZALU },
   supernovaStart: { kat: 'dzialo', limit: 3, odstep: 90, zwloka: 3, ton: 0.04, glos: 0.08, poziom: POZIOM_SPECJALNEJ },
-  // Superbronie gracza: plik = ładowanie + strzał. Gra od chwili ustawionej tak, żeby najgłośniejsze okno pliku
-  // (strzał) wypadło w chwili strzału w grze (`ODSZCZYTU`): Mjolnir — od startu ładowania (stałe 3 s), Hexlance —
-  // końcówka przy strzale (ładowanie dwutaktowe: uzbrojenie czeka na drugie naciśnięcie, długość nieznana).
-  hexlance: { kat: 'superbron', limit: 2, odstep: 150, zwloka: 0, ton: 0, glos: 0 },
-  mjolnir: { kat: 'superbron', limit: 2, odstep: 150, zwloka: 0, ton: 0, glos: 0 },
   // Broń piratów (wg kategorii broni)
   autocannon: { kat: 'dzialo', limit: 6, odstep: 35, zwloka: 2, ton: 0.07, glos: 0.15, poziom: POZIOM_WYSTRZALU },
   dzialo: { kat: 'dzialo', limit: 5, odstep: 50, zwloka: 3, ton: 0.05, glos: 0.12, poziom: POZIOM_WYSTRZALU },
@@ -214,24 +209,13 @@ export function kategoriaBroniNpc(weaponId, def = null) {
 }
 
 /**
- * Superbronie z dźwiękiem ustawionym na strzał (`grajDoSzczytu` w dzwiekiGry.js): id broni → id dźwięku i ile
- * sekund przed strzałem w grze zaczyna się odtwarzanie najgłośniejszego okna. `ladowanie` — dźwięk startuje z
- * ładowaniem (przerwane ładowanie wycisza go), inaczej — w chwili strzału (sama końcówka pliku).
- */
-export const ODSZCZYTU = Object.freeze({
-  siege_railgun: { id: 'mjolnir', przed: 3.0, ladowanie: true },
-  hexlance: { id: 'hexlance', przed: 0.3, ladowanie: false }
-});
-
-/**
- * Strzał z szyny broni → id dźwięku (bez CIWS — seria z syntezy, i bez superbroni z `ODSZCZYTU` u gracza — mają
- * własny odtwarzacz). Broń gracza spoza `STRZAL_GRACZA` gra dźwiękiem swojej kategorii jak broń NPC.
+ * Strzał z szyny broni → id dźwięku (bez CIWS — seria z syntezy). Broń gracza spoza `STRZAL_GRACZA` gra dźwiękiem
+ * swojej kategorii jak broń NPC.
  */
 export function dzwiekStrzalu(weaponId, def, gracza) {
   if (gracza) {
     const id = STRZAL_GRACZA[weaponId];
     if (id) return id;
-    if (ODSZCZYTU[weaponId]) return null;
   }
   return kategoriaBroniNpc(weaponId, def);
 }
@@ -245,21 +229,6 @@ export function slyszalne(x, y, kadr, zasieg = 3.2) {
   const ex = (x - kadr.x) / Math.max(1, kadr.polW);
   const ey = (y - kadr.y) / Math.max(1, kadr.polH);
   return ex * ex + ey * ey < 2 * zasieg * zasieg;
-}
-
-/** Chwila [s] najgłośniejszego okna `oknoS` pliku (strzał w pliku „ładowanie + strzał”). */
-export function chwilaSzczytu(kanaly, sampleRate, oknoS = 0.05) {
-  const n = kanaly[0]?.length || 0;
-  const okno = Math.max(1, Math.round(sampleRate * oknoS));
-  let best = -1;
-  let bestAt = 0;
-  for (let a = 0; a < n; a += okno) {
-    const b = Math.min(n, a + okno);
-    let s = 0;
-    for (const ch of kanaly) for (let i = a; i < b; i++) s += ch[i] * ch[i];
-    if (s > best) { best = s; bestAt = a; }
-  }
-  return (bestAt + okno / 2) / sampleRate;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

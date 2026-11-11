@@ -193,24 +193,17 @@ test('linia wyboru w formacie strony odsłuchu', () => {
 });
 
 // --- warstwa w zwykłej grze (2026-11-11): broń gracza spoza tabeli, słyszalność, zapis wyboru, migracja głośności
-test('broń gracza spoza STRZAL_GRACZA gra dźwiękiem kategorii; superbronie z ODSZCZYTU mają własny odtwarzacz', async () => {
+test('broń gracza spoza STRZAL_GRACZA gra dźwiękiem kategorii (także superbronie — własny dźwięk robi inna sesja)', async () => {
   const L = await import('../src/audio/dzwiekiLogika.js');
   const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
   assert.equal(L.dzwiekStrzalu('railgun_mk2', MASTER_WEAPONS.railgun_mk2, true), 'tempestIon');
   assert.equal(L.dzwiekStrzalu('special_yamato_l', MASTER_WEAPONS.special_yamato_l, true), 'yamato');
   assert.equal(L.dzwiekStrzalu('heavy_autocannon', MASTER_WEAPONS.heavy_autocannon, true), 'autocannon');
   assert.equal(L.dzwiekStrzalu('armata_mk1', MASTER_WEAPONS.armata_mk1, true), 'dzialo');
-  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, true), null, 'Mjolnir gracza — plik z ładowaniem');
-  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, false), 'railgun', 'NPC — kategoria');
-  for (const [bron, o] of Object.entries(L.ODSZCZYTU)) {
-    assert.ok(L.DZWIEKI[o.id], `${bron} → ${o.id} w tabeli`);
-    assert.ok(o.przed >= 0);
-  }
-  // Mjolnir: dźwięk od startu ładowania — `przed` = czas ładowania broni
-  assert.equal(L.ODSZCZYTU.siege_railgun.przed, MASTER_WEAPONS.siege_railgun.chargeTime);
+  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, true), 'railgun', 'Mjolnir — kategoria');
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     const d = L.dzwiekStrzalu(id, def, true);
-    assert.ok(d === null || L.DZWIEKI[d], `${id} → ${d}`);
+    assert.ok(L.DZWIEKI[d], `${id} → ${d}`);
   }
 });
 
@@ -223,16 +216,6 @@ test('słyszalność: w kadrze i do 3,2 półprzekątnych tak, dalej nie; bez po
   assert.equal(slyszalne(NaN, NaN, kadr), true);
   // odpada tylko to, co i tak byłoby ciche
   for (const x of [5000, 8000, 20000]) if (!slyszalne(x, 0, kadr)) assert.equal(polozenie(x, 0, kadr).glos, 0);
-});
-
-test('chwila szczytu: najgłośniejsze okno pliku', async () => {
-  const { chwilaSzczytu } = await import('../src/audio/dzwiekiLogika.js');
-  const sr = 8000;
-  const a = new Float32Array(sr * 4);
-  for (let i = 0; i < a.length; i++) a[i] = 0.05 * Math.sin(i * 0.3);
-  for (let i = sr * 3; i < sr * 3 + 200; i++) a[i] = 0.9;
-  const t = chwilaSzczytu([a], sr);
-  assert.ok(Math.abs(t - 3.0) < 0.06, `szczyt ${t}`);
 });
 
 test('zapis wyboru wariantów: znane id, warianty 1–9, wyciszenia; śmieci odpadają; obieg zapis → odczyt', async () => {

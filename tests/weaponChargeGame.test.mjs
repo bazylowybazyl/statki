@@ -46,8 +46,6 @@ function p1Game(f) {
   const messages = [];
   const fx = { charges: 0, available: true };
   const scope = {
-    // warstwa dźwięku (blok „SCENA DŹWIĘKI”) wyłączona — hak dźwięku ładowania to `if (SND)`
-    SND: null,
     Game: { player: { weapons: f.ship.weapons } }, HP: { SPECIAL: 'special', SPECIAL_MISSILE: 'special_missile' },
     ship: f.ship, p1WeaponCtrl: f.controller, getMountedWeaponAim,
     getCombinedSpecialLoadouts: () => f.ship.weapons.special,

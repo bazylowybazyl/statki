@@ -62,10 +62,10 @@ Przebiegi `scripts/webgpu/dzwieki-gra.mjs` (tryb off, Chrome headless, 1600 × 9
   otwarty; znacznik migracji głośności `sc_audio_glowna_v2` postawiony. Lot, strzał grupą 1 i auto-wieże w pancernik
   bez mózgu: tempestIon 18, yamato 4, rakieta 6, trafienie 15, trafieniePlazma 4, tarcza 5, rozbicie tarczy 1,
   wybuchRakiety 5, wybuchOkretu 1, silnik MAIN, grupa, namiar; szczyt po limiterze −11,8 dB, przester 0, 34 głosy.
-  Superbronie: Hexlance (4, 4) — 1 odtworzenie, Mjolnir w 6 gniazdach special (LPM na postoju) — 1 odtworzenie.
+  (Podpięcie Hexlance i Mjolnira z pomiarem szczytu pliku — commit e5d8b87c — wycofane: superbronie przejęła sesja
+  „Dźwięki broni: reszta uzbrojenia i wiązki”; pomysł do wzięcia stamtąd.)
 - `--tryb stary` (`?dzwiek=stary`): warstwa nie powstaje, stary `AudioSys` ma swoje 5 dźwięków i pętlę silnika.
 - `--tryb wojna --czas 50` (`?wojna`): 6690 strzałów z szyny, najwięcej 59 głosów, szczyt przed limiterem −3,1 dBFS,
   po −12,8 dB, przester 0; odrzucenia limitu m.in. tarcza 1669, trafienie 1044, railgun 1013, autocannon 484;
   konsola bez błędów (poza favicon).
-- Scena (`?scena=dzwieki`) na wspólnej warstwie: 35 / 38 (Hexlance i Mjolnir — Atlas sceny ich nie ma; rykoszet
-  zależy od kąta), przester 0; hala K-7 (`hala-dzwieki-gra.mjs`) bez zmian.
+- Scena (`?scena=dzwieki`) na wspólnej warstwie: 35 / 36 (rykoszet zależy od kąta), przester 0; hala K-7 (`hala-dzwieki-gra.mjs`) bez zmian.

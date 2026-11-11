@@ -1464,7 +1464,7 @@
     import { utworzPanelDzwiekow } from "./src/ui/dzwiekiPanel.js";
     // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): reżyser z pozami obsługi stanowisk i zaworami, osobna warstwa dźwięku.
     import {
-      DZWIEKI_HALI, DZWIEKI, DZWIEKI_SYNTEZY, ODSZCZYTU, KLUCZ_WYBORU, parsujWybor, tekstZapisuWyboru, slyszalne,
+      DZWIEKI_HALI, DZWIEKI, DZWIEKI_SYNTEZY, KLUCZ_WYBORU, parsujWybor, tekstZapisuWyboru, slyszalne,
       migrujGlosnoscGlowna, GLOSNOSC_GLOWNA_DOMYSLNA
     } from "./src/audio/dzwiekiLogika.js";
     import { createK7HallSound, stepK7HallSound, K7_HALL_SOUND_TUNE } from "./src/game/k7HallSound.js";
@@ -1581,7 +1581,7 @@
     } from "./src/game/projectileMechanics.js";
     import {
       chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge, isStationary,
-      CHARGE_FIRE, CHARGE_CHARGING, CHARGE_CANCEL
+      CHARGE_FIRE, CHARGE_CHARGING
     } from "./src/game/weaponCharge.js";
     import { weaponImpactScale } from "./src/game/weaponFeel.js";
     import { planBarrageTargets } from "./src/game/barrage.js";
@@ -11916,8 +11916,6 @@
         angVel: Number(ship.angVel) || 0,
         ready: !(Number(hp.specialCd) > 0)
       }, weapon);
-      // Dźwięk broni z ładowaniem (Mjolnir: plik od startu ładowania, szczyt w chwili strzału — blok „SCENA DŹWIĘKI”).
-      if (SND && (st.event === 'start' || res === CHARGE_CANCEL || res === CHARGE_FIRE)) soundSpecialCharge(weapon, st, res);
       if (res === CHARGE_FIRE) {
         fireSpecialLoadout(loadout, hp, slot);
       } else if (res === CHARGE_CHARGING && RenderCommands.ready && dt > 0) {
@@ -18773,7 +18771,6 @@
       try { SND_LAYER.wczytajWybor(parsujWybor(localStorage.getItem(KLUCZ_WYBORU), SOUND_KNOWN_IDS)); } catch { /* bez zapisu */ }
       window.__dzwieki = SND_LAYER;
       WeaponShotBus.on(soundSceneShot);
-      window.addEventListener('game_weapon_fired', soundSuperweaponShot);
       SND_LOADING = SND_LAYER.wczytaj().catch((err) => console.warn('[Dźwięki]', err));
       return SND_LAYER;
     }
@@ -19061,33 +19058,6 @@
       if (def && (def.category === 'rocket' || def.category === 'torpedo')) return;
       const shooter = d.shooter;
       SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous');
-    }
-    /**
-     * Superbroń z `CustomEvent('game_weapon_fired')` (Hexlance — poza szyną strzałów): plik „ładowanie + strzał”
-     * ustawiony szczytem na strzał (ładowanie dwutaktowe — gra sama końcówka, `ODSZCZYTU.hexlance`).
-     */
-    function soundSuperweaponShot(e) {
-      const d = e?.detail;
-      const o = d ? ODSZCZYTU[d.weaponId] : null;
-      if (!SND || !o || o.ladowanie || !soundHere(d.x, d.y)) return;
-      SND.grajDoSzczytu(o.id, d.x, d.y, o.przed);
-    }
-    /**
-     * Broń z ładowaniem gracza (stepSpecialCharge): Mjolnir — plik od startu ładowania, szczyt w chwili strzału
-     * (`ODSZCZYTU.siege_railgun.przed` = czas ładowania); przerwane ładowanie wycisza go. Uchwyt na stanie ładowania gniazda.
-     */
-    function soundSpecialCharge(weapon, st, res) {
-      const o = ODSZCZYTU[weapon?.id];
-      if (!o || !o.ladowanie || !st) return;
-      if (st.event === 'start') {
-        if (st.__snd) st.__snd.stop();
-        st.__snd = SND.grajDoSzczytu(o.id, ship.pos.x, ship.pos.y, o.przed);
-      } else if (res === CHARGE_CANCEL) {
-        if (st.__snd) st.__snd.stop();
-        st.__snd = null;
-      } else if (res === CHARGE_FIRE) {
-        st.__snd = null;
-      }
     }
     /** Obrona punktowa gracza (poza szyną strzałów): CIWS — seria z syntezy, laser PD, flak. */
     function soundScenePdShot(kind, x, y) {

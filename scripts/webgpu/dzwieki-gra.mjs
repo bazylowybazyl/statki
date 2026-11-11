@@ -120,23 +120,6 @@ try {
         await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
         for (let i = 0; i < 6; i++) await step(60);
         await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
-        // Superbronie (plik „ładowanie + strzał” ustawiony szczytem na strzał): Hexlance — 4 (ładowanie), 4 (strzał);
-        // Mjolnir w gniazdach special (dev), grupa 2 w ręku, LPM na postoju — 3 s ładowania i strzał.
-        const z = (id) => ev(`(window.__dzwieki.statystyki().dzwieki['${id}']?.zagral || 0)`);
-        const h0 = await z('hexlance');
-        await tap('4');
-        for (let i = 0; i < 2; i++) await step(60);
-        await tap('4');
-        for (let i = 0; i < 2; i++) await step(60);
-        const m0 = await z('mjolnir');
-        report.mjolnirGniazda = await ev(`window.DevScene.mountSpecial ? window.DevScene.mountSpecial('siege_railgun') : 0`);
-        await ev('(() => { const s = window.ship; s.vel.x = 0; s.vel.y = 0; s.angVel = 0; return true; })()');
-        await tap('2');
-        await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
-        for (let i = 0; i < 5; i++) await step(60);
-        await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
-        report.superbronie = { hexlance: (await z('hexlance')) - h0, mjolnir: (await z('mjolnir')) - m0, mjolnirGniazda: report.mjolnirGniazda };
-        console.log('superbronie:', JSON.stringify(report.superbronie));
       }
       for (let i = 0; i < 2; i++) await step(60);
     }
