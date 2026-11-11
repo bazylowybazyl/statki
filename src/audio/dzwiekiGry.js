@@ -18,6 +18,7 @@ import {
 } from './dzwiekiLogika.js';
 import { SoundEngine, paramDefaults } from './synteza.js';
 import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
+import { utworzSilnikiObcych } from './silnikiObcych.js';
 
 const CZAS_PETLI_BEZ_ODSWIEZENIA = 0.25; // s — pętla nieodświeżona tyle czasu gaśnie (zdarzenie się skończyło)
 const CZAS_WYGASZENIA_BEZ_KLATKI = 0.4; // s — pętla gaśnie w wątku audio, gdy klatki gry przestaną ją odświeżać
@@ -422,6 +423,12 @@ export function utworzDzwiekiGry(opts) {
     if (Math.abs(c - sideCiag) > 0.03) { side.set('throttle', c); sideCiag = c; }
   }
 
+  // Silniki obcych okrętów w pobliżu kadru (synteza MAIN, src/audio/silnikiObcych.js; wybór okrętów — reżyser obszarów)
+  const obce = zSynteza ? utworzSilnikiObcych({
+    ctx, syntezator: E, kadr: kadrFn, poziomDb: DZWIEKI_SYNTEZY.silnikObcy?.poziom ?? -12,
+    czyWyciszony: () => wylaczony || !!wycisz.silnikObcy, liczStart: () => { zagral.silnikObcy = (zagral.silnikObcy || 0) + 1; }
+  }) : null;
+
   const ciws = []; // { klucz, h, ostatnio }
   /** Strzał CIWS strzelca `klucz` — seria z syntezy trwa, dopóki przychodzą strzały. */
   function ciwsStrzal(klucz, x, y) {
@@ -463,6 +470,7 @@ export function utworzDzwiekiGry(opts) {
       }
     }
     if (side && teraz - sideOstatnio > CZAS_SIDE_BEZ_CIAGU) { side.release(); side = null; }
+    if (obce) obce.klatka(teraz);
     pomiarPrzed.getFloatTimeDomainData(probkiPrzed);
     pomiarPo.getFloatTimeDomainData(probkiPo);
     let a = 0, b = 0;
@@ -483,6 +491,7 @@ export function utworzDzwiekiGry(opts) {
     ciws.length = 0;
     if (silnik) { silnik.release(); silnik = null; }
     if (side) { side.release(); side = null; }
+    if (obce) obce.zatrzymaj();
     if (syntezator) syntezator.stopAll();
   }
 
@@ -554,12 +563,12 @@ export function utworzDzwiekiGry(opts) {
    * ta sama szyna co w grze, także gdy dźwięk jest wyciszony w scenie. Pętla gra jeden obieg bufora; synteza — krótki
    * pokaz (silniki na 80% ciągu, seria CIWS).
    */
-  const ODSLUCH_SYNTEZY = { silnikMain: 2.5, silnikSide: 2, gatling: 1.2 };
+  const ODSLUCH_SYNTEZY = { silnikMain: 2.5, silnikSide: 2, gatling: 1.2, silnikObcy: 2.5 };
   function odsluch(id) {
     if (wylaczony) return false;
     if (zSynteza && Object.prototype.hasOwnProperty.call(ODSLUCH_SYNTEZY, id) && DZWIEKI_SYNTEZY[id]) {
       const at = { dist: 0, pan: 0, gain: dbToGain(DZWIEKI_SYNTEZY[id].poziom), reverb: 0.3 };
-      const h = id === 'silnikMain' ? engineMain.play(E(), paramDefaults(engineMain, { throttle: 0.8, boost: 0 }), at)
+      const h = id === 'silnikMain' || id === 'silnikObcy' ? engineMain.play(E(), paramDefaults(engineMain, { throttle: 0.8, boost: 0 }), at)
         : id === 'silnikSide' ? engineSide.play(E(), paramDefaults(engineSide, { throttle: 0.8 }), at)
           : gatling.play(E(), paramDefaults(gatling, {}), at);
       if (!h) return false;
@@ -590,6 +599,7 @@ export function utworzDzwiekiGry(opts) {
 
   return {
     ctx, wczytaj, graj, zdarzenie, petla, silnikMain, silnikSide, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
+    silnikObcy: (klucz, ciag, dopalacz, x, y) => { if (obce && !wylaczony) obce.silnik(klucz, ciag, dopalacz, x, y); },
     statystyki, wyzerujStatystyki, lista, tekstWyboru, odsluch,
     ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); },
     ustawWyciszenie(id, b) { wycisz[id] = !!b; },

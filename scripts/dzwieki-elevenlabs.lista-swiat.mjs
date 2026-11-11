@@ -57,4 +57,31 @@ export const DZWIEKI_SWIATA = [
     opis: 'Detonacja rdzenia: trzask, rozdarcie, gasnąca plazma.',
     prompt: 'Starship reactor core detonating with instant attack: blinding sharp electric crack, violent energy blast with tearing metal and crackling plasma fading out, punchy mid-range, no long bass rumble',
   },
+  // ── Etap 2: walka i lot ──────────────────────────────────────────────────────────────────────────────────────────
+  {
+    id: 'rakietyOstrzezenie', grupa: 'Walka', nazwa: 'Ostrzeżenie: rakiety w Atlasa (pętla)', s: 3, petla: true, styl: S,
+    opis: 'Wroga rakieta albo torpeda z namiarem na gracza — szybkie sygnały, dopóki leci.',
+    prompt: 'Incoming missile warning tone of a warship cockpit: rapid repeating high-pitched electronic beeps at a steady fast tempo, urgent but clean, no voice, seamless loop',
+  },
+  {
+    id: 'hcRozruch', grupa: 'Hipercruise', nazwa: 'Hipercruise — rozruch', s: 2.5, styl: S,
+    opis: 'Rozruch napędu przelotowego (2–4 s wg klasy): narastający gwizd turbiny i ryk.',
+    prompt: 'Starship cruise drive spooling up with instant onset: rising turbine whine and building engine roar over two seconds, high and mid frequencies only, no low end, no rumble',
+  },
+  {
+    id: 'hcKop', grupa: 'Hipercruise', nazwa: 'Hipercruise — wejście', s: 1.5, styl: S,
+    opis: 'Koniec rozruchu: zryw silników i szum przyspieszenia.',
+    prompt: 'Starship engaging high-speed cruise with instant attack: bright engine surge and a quick rushing whoosh forward, high and mid frequencies only, no low end, no rumble',
+  },
+  {
+    id: 'hcLot', grupa: 'Hipercruise', nazwa: 'Hipercruise — lot (pętla)', s: 6, petla: true, styl: S,
+    opis: 'Przelot: równy szum pędu i cichy gwizd napędu.',
+    // Pierwszy przebieg („…airy rushing flow with a soft constant engine whine…”) — 77–82% basem; „engine” ciągnie w dół.
+    prompt: 'Fast steady airy rushing hiss with a soft constant high whistle, like air streaming past at great speed, no melody, high and mid frequencies only, no low end, no rumble, seamless loop',
+  },
+  {
+    id: 'hcWyjscie', grupa: 'Hipercruise', nazwa: 'Hipercruise — wyjście', s: 1.5, styl: S,
+    opis: 'Wyjście z przelotu: zryw się urywa, szum opada.',
+    prompt: 'Starship dropping out of high-speed cruise with instant attack: engine surge cutting off and a falling rushing whoosh as it slows down, high and mid frequencies only, no low end, no rumble',
+  },
 ];

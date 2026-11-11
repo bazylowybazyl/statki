@@ -94,3 +94,42 @@ detonacji) + sama detonacja. Plik `reaktor` zostaje w manifeście, poza warstwą
 - Kredyty etapu 1: ok. 975 (103,5 s efektów po ~9,4 kredytu/s — z różnicy konta przy pierwszym przebiegu: 617 za
   65,5 s). W tym ok. 130 na powtórzenie przebiegu ze starymi opisami (mój błąd: skrypt poprawek opisów przerwał się,
   a generacja poszła). Licznik konta jest wspólny z innymi sesjami — zużycie liczę z sekund efektów.
+
+## Etap 2 — świadomość w walce i lot
+
+| Obszar | Zdarzenie w kodzie | Moment / czas | Dźwięk |
+|---|---|---|---|
+| Rakiety w gracza | `ciwsStep` po `syncThreats`: bufor `_pdEnemyRocketBuffer`, cel `rb.slot.target` (rakieta 3D) / `rb.target` (pocisk) `=== ship`, `life > 0`, nie `dead` (`liczRakietyNaGracza`) | dopóki leci choć jedna | pętla `rakietyOstrzezenie` (bez położenia) |
+| Hipercruise gracza | `hypercruise.state` idle → spool (`startPlayerHypercruise`) | rozruch 2–4 s wg klasy (`driveModes.js`), krótki odcinek TRAVEL TO min. 1 s | `hcRozruch` (2,5 s, narastanie) |
+| | spool → active (zdarzenie `'engage'`) | koniec rozruchu | `hcKop` |
+| | `state === 'active'` | przelot | pętla `hcLot` |
+| | active → drop / idle (`stopPlayerHypercruise`, przechwyt) | hamowanie do 1 000 j/s | `hcWyjscie` |
+| Silniki obcych | `npcs`: `npc.thrusterInput.main` ≥ 0,06, dopalacz `npc.__flightIntent.boost`, żywy, w kadrze (`__inDrawBox`), nie ukryty (`SensorSystem.hides`, maska) | co klatkę, 3 najbliższe środka kadru w 1,6 półprzekątnej | synteza `silnikObcy` (przepis silnika MAIN, −12 dB, położenie i filtr odległości z `polozenie`) |
+
+Ostrzeżenie o rakietach a alarmy okrętu: sesja „Włączanie/wyłączanie statku” robi szynę `ShipAlarm`
+(`src/game/shipAlarms.js`; alarm MISSILE, priorytet 70 — jeden alarm naraz) z obrazem (koguty, ramka HUD). Dźwięk
+ostrzeżenia liczy się z bufora zagrożeń niezależnie od priorytetu alarmów (rakiety w powietrzu przy alarmie kadłuba
+też są słyszalne).
+
+### Pomiary
+
+| plik | dł. [s] | szczyt | RMS | start | atak | słyszalny do | < 150 Hz | |
+|---|---|---|---|---|---|---|---|---|
+| rakietyOstrzezenie_1 (pętla) | 3,00 | −2,9 | −16,5 | — | — | 3,00 | 0% | |
+| rakietyOstrzezenie_2 (pętla) | 3,00 | −0,2 | −11,1 | — | — | 3,00 | 0% | |
+| rakietyOstrzezenie_3 (pętla) | 3,00 | −7,0 | −17,3 | — | — | 3,00 | 0% | |
+| hcRozruch_1 | 2,48 | −0,1 | −6,6 | 0,00 | 0,04 | 2,24 | 8% | |
+| hcRozruch_2 | 2,48 | −0,5 | −10,9 | 0,00 | 0,26 | 2,34 | 51% | narastanie |
+| hcRozruch_3 | 2,48 | −1,6 | −11,5 | 0,00 | 0,73 | 1,77 | 1% | narastanie |
+| hcKop_1 | 1,48 | 0,0 | −9,0 | 0,00 | 0,11 | 0,79 | 72% | ✗ bas |
+| hcKop_2 | 1,48 | −0,7 | −12,4 | 0,00 | 0,00 | 0,91 | 25% | |
+| hcKop_3 | 1,48 | −0,5 | −11,4 | 0,00 | 0,02 | 0,78 | 31% | |
+| hcLot_1 (pętla) | 6,00 | −0,1 | −13,0 | — | — | 6,00 | 0% | |
+| hcLot_2 (pętla) | 6,00 | 0,0 | −13,1 | — | — | 6,00 | 0% | |
+| hcWyjscie_1 | 1,48 | −0,2 | −4,6 | 0,00 | 0,00 | 1,33 | 64% | |
+| hcWyjscie_2 | 1,48 | −0,3 | −8,4 | 0,00 | 0,00 | 1,34 | 57% | |
+| hcWyjscie_3 | 1,48 | −1,0 | −11,3 | 0,00 | 0,00 | 0,68 | 67% | |
+
+- `hcLot` z opisem „…airy rushing flow with a soft constant engine whine…” wyszedł w 77–82% basem; bez słowa „engine”
+  („…airy rushing hiss with a soft constant high whistle, like air streaming past…”) — 0%.
+- Kredyty etapu 2: ok. 465 (49,5 s efektów, w tym 12 s powtórki `hcLot`).

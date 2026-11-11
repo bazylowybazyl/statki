@@ -134,3 +134,43 @@ test('tło mostka i klik bez położenia', () => {
   assert.deepEqual(s.petle.map((p) => p[1]), ['mostek']);
   assert.deepEqual(s.graj, ['klik']);
 });
+
+test('hipercruise: rozruch, wejście, pętla lotu, wyjście; przerwany rozruch cicho', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  for (const st of ['idle', 'spool', 'idle', 'spool', 'active', 'active', 'drop', 'idle']) r.hipercruise(st, 0, 0);
+  assert.deepEqual(s.graj, ['hcRozruch', 'hcRozruch', 'hcKop', 'hcWyjscie']);
+  assert.equal(r.stats.hcPrzerwany, 1);
+  assert.equal(s.petle.filter((p) => p[1] === 'hcLot').length, 2);
+});
+
+test('ostrzeżenie o rakietach: pętla tylko przy rakietach w gracza; licznik po buforze zagrożeń', async () => {
+  const { liczRakietyNaGracza } = await import('../src/game/dzwiekiObszarow.js');
+  const gracz = {};
+  const inny = {};
+  const bufor = [
+    { rocket3d: true, slot: { target: gracz }, life: 3 },
+    { rocket3d: false, target: gracz, life: 1 },
+    { rocket3d: false, target: inny, life: 1 },
+    { rocket3d: false, target: gracz, life: 0 },
+    { rocket3d: true, slot: { target: gracz }, life: 2, dead: true }
+  ];
+  assert.equal(liczRakietyNaGracza(bufor, gracz), 2);
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  r.ostrzezenieRakiet(0);
+  r.ostrzezenieRakiet(2);
+  assert.deepEqual(s.petle.map((p) => p[1]), ['rakietyOstrzezenie']);
+});
+
+test('silniki obcych: najbliższe z ciągiem, w zasięgu, najwyżej maks', () => {
+  const r = utworzRezyserObszarow(ujscie().u, { ustawienia: { silnikMaks: 3 } });
+  const npcs = [
+    { x: 500, y: 0, c: 1 }, { x: 100, y: 0, c: 0.5 }, { x: 50, y: 0, c: 0.01 }, { x: 300, y: 0, c: 0.8 },
+    { x: 200, y: 0, c: 0.9, ukryty: true }, { x: 5000, y: 0, c: 1 }, { x: 400, y: 0, c: 0.7 }
+  ];
+  const grane = [];
+  const n = r.silnikiObcych(npcs, 0, 0, 1000, (e) => e.c, () => false, (e) => !e.ukryty, (e, c) => grane.push(e.x));
+  assert.equal(n, 3);
+  assert.deepEqual(grane, [100, 300, 400]);
+});

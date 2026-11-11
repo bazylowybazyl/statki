@@ -1,6 +1,6 @@
 // Dźwięki obszarów gry, które były nieme: warp gracza, przyloty i odloty obcych okrętów, maskowanie, rdzeń reaktora,
-// tło mostka, klik interfejsu (dalsze obszary — kolejne etapy). Czyste dane (bez Web Audio i DOM): wpisy dołączane
-// do tabeli warstwy `DZWIEKI` jednym rozwinięciem w src/audio/dzwiekiLogika.js, zdarzenia — do `ZDARZENIA`.
+// tło mostka, klik interfejsu (etap 1); ostrzeżenie o rakietach, hipercruise, silniki obcych okrętów (etap 2).
+// Czyste dane (bez Web Audio i DOM): wpisy dołączane do tabeli warstwy `DZWIEKI` jednym rozwinięciem w src/audio/dzwiekiLogika.js, zdarzenia — do `ZDARZENIA`.
 // Pola wpisu jak w `DZWIEKI` (kategoria, limit, odstęp, zwłoka, wariacja, pętla, `ui`, `poziom`) oraz:
 //   `obszar`   — grupa w panelu sceny `?scena=dzwieki` (odsłuch obszarami, nie kategoriami),
 //   `warianty` — numery plików z manifestu, które warstwa wczytuje (reszta zostaje w manifeście; wykluczone są pliki
@@ -28,7 +28,23 @@ export const DZWIEKI_SWIATA = Object.freeze({
   reaktorWybuch: { kat: 'superbron', obszar: 'Rdzeń reaktora', limit: 3, odstep: 150, zwloka: 2, ton: 0.04, glos: 0.08 },
   // ── Tło i interfejs (użytkownik: „tło mostka i klik ok”) ──
   mostek: { kat: 'tlo', obszar: 'Okręt gracza', petla: true, limit: 1, ui: true },
-  klik: { kat: 'interfejs', obszar: 'Interfejs', limit: 3, odstep: 40, zwloka: 1, ton: 0.03, glos: 0, ui: true }
+  klik: { kat: 'interfejs', obszar: 'Interfejs', limit: 3, odstep: 40, zwloka: 1, ton: 0.03, glos: 0, ui: true },
+  // ── Etap 2: walka i lot ──
+  // Wroga rakieta / torpeda z celem = gracz (bufor zagrożeń obrony punktowej) — pętla, dopóki leci.
+  rakietyOstrzezenie: { kat: 'interfejs', obszar: 'Walka', petla: true, limit: 1, ui: true },
+  // Hipercruise gracza (`hypercruise.state`): spool (2–4 s wg klasy, min. 1 s) → active → drop / idle.
+  hcRozruch: { kat: 'trafienie', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.02, glos: 0.05 },
+  hcKop: { kat: 'dzialo', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08, warianty: [2, 3] },
+  hcLot: { kat: 'drobne', obszar: 'Hipercruise', petla: true, limit: 1 },
+  hcWyjscie: { kat: 'trafienie', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08 }
+});
+
+/**
+ * Dźwięki z syntezy obszarów (dołączane do `DZWIEKI_SYNTEZY`): silniki obcych okrętów w pobliżu kadru — przepis
+ * silnika MAIN gracza, do 3 głosów (src/audio/silnikiObcych.js), 6 dB pod silnikiem gracza.
+ */
+export const SYNTEZA_SWIATA = Object.freeze({
+  silnikObcy: { kat: 'drobne', obszar: 'Silniki obcych', nazwa: 'Silniki obcych okrętów (synteza)', poziom: -12 }
 });
 
 /** Zdarzenie gry → id dźwięku (dołączane do `ZDARZENIA`). Pętle (tunel warpa, stopienie, mostek) idą przez `petla`. */
@@ -44,5 +60,8 @@ export const ZDARZENIA_SWIATA = Object.freeze({
   maskowanieWyl: 'maskaWyl',
   maskowanieZerwane: 'maskaZerwanie',
   rdzenDetonacja: 'reaktorWybuch',
+  hipercruiseRozruch: 'hcRozruch',
+  hipercruiseWejscie: 'hcKop',
+  hipercruiseWyjscie: 'hcWyjscie',
   klik: 'klik'
 });

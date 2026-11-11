@@ -8,7 +8,7 @@
 // Dźwięki z plików to ROBOCZE nagrania z generatora AI (public/sounds/ai/, manifest.json — pochodzenie);
 // dwa dźwięki są z syntezy (src/audio/przepisySyntezy.js): silnik MAIN i seria CIWS.
 
-import { DZWIEKI_SWIATA, ZDARZENIA_SWIATA } from './dzwiekiSwiata.js';
+import { DZWIEKI_SWIATA, ZDARZENIA_SWIATA, SYNTEZA_SWIATA } from './dzwiekiSwiata.js';
 
 export const dbToGain = (db) => Math.pow(10, db / 20);
 export const gainToDb = (g) => (g > 0 ? 20 * Math.log10(g) : -Infinity);
@@ -131,7 +131,8 @@ export const DZWIEKI_SYNTEZY = Object.freeze({
   silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -6 },
   // Silniki SIDE: praca ciągła jak MAIN, nie pojedynczy syk (decyzja użytkownika 2026-11-11); 2 dB pod MAIN.
   silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -8 },
-  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -4 }
+  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -4 },
+  ...SYNTEZA_SWIATA
 });
 
 /**

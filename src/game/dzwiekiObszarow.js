@@ -19,8 +19,19 @@
 //                  rośnie z postępem stopienia), `onDetonate` zamyka sloty gospodarza i gra `reaktorWybuch`.
 //   tło mostka   — pętla `mostek` bez położenia, gdy klej uzna lot za „na pokładzie” (`tloMostka(obecność)`).
 //   klik         — `klik()` z delegacji kliknięć przycisków interfejsu.
+//
+// Obszary (etap 2):
+//   rakiety      — `ostrzezenieRakiet(n)`: pętla `rakietyOstrzezenie`, dopóki n > 0 wrogich rakiet / torped z celem =
+//                  gracz (licznik `liczRakietyNaGracza` po buforze zagrożeń obrony punktowej, bez alokacji).
+//   hipercruise  — `hypercruise.state`: idle → spool (`hcRozruch`), spool → active (`hcKop`), active → pętla `hcLot`,
+//                  active → drop / idle (`hcWyjscie`); przerwany rozruch nie gra nic.
+//   silniki obcych — `silnikiObcych(npcs, …)`: do `maks` najbliższych kamerze okrętów z ciągiem MAIN > próg, w zasięgu
+//                  kadru; ujście `silnik(npc, ciąg, dopalacz, x, y)` (warstwa: `silnikObcy`, synteza MAIN).
 
 export const DZWIEKI_OBSZAROW_DOMYSLNE = Object.freeze({
+  silnikProg: 0.06,          // ciąg MAIN okrętu, od którego jest słyszalny
+  silnikZasieg: 1.6,         // okręt najdalej tyle półprzekątnych kadru od środka (dalej `polozenie` i tak wycisza)
+  silnikMaks: 3,             // tyle najbliższych okrętów naraz (głosy syntezy)
   spoznienieS: 0.6,          // zdarzenie osi warpa NPC zastane później — bez dźwięku
   stopienieMin: 0.45,        // głośność pętli stopienia na starcie (rośnie do 1 przy detonacji)
   stopienieZapas: 0.35,      // pętla gra jeszcze tyle po planowanym końcu stopienia (detonacja w następnym kroku)
@@ -51,7 +62,8 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     warpLadowanie: 0, warpSkok: 0, warpZejscie: 0, warpPrzerwane: 0,
     przylotZwiastun: 0, przylotWyrzut: 0, odlotLadowanie: 0, odlotSkok: 0, spoznione: 0,
     maskowanieWl: 0, maskowanieWyl: 0, maskowanieZerwane: 0,
-    rdzenStopienie: 0, rdzenDetonacja: 0, klik: 0
+    rdzenStopienie: 0, rdzenDetonacja: 0, klik: 0,
+    hcRozruch: 0, hcWejscie: 0, hcWyjscie: 0, hcPrzerwany: 0, rakietyKlatki: 0
   };
 
   // --- warp gracza
@@ -155,6 +167,63 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     ujscie.graj('klik', NaN, NaN, 1);
   }
 
+  // --- etap 2: rakiety w gracza, hipercruise, silniki obcych
+  function ostrzezenieRakiet(liczba) {
+    if (!(liczba > 0)) return;
+    stats.rakietyKlatki++;
+    ujscie.petla('rakiety', 'rakietyOstrzezenie', 1, NaN, NaN);
+  }
+
+  let hcPoprz = null;
+  function hipercruise(stan, x, y) {
+    const s = stan || 'idle';
+    const p = hcPoprz;
+    hcPoprz = s;
+    if (s === 'active') ujscie.petla('hc:lot', 'hcLot', 1, x, y);
+    if (p === null || p === s) return;
+    if (s === 'spool') { stats.hcRozruch++; ujscie.graj('hcRozruch', x, y, 1); }
+    else if (s === 'active' && p === 'spool') { stats.hcWejscie++; ujscie.graj('hcKop', x, y, 1); }
+    else if (p === 'active') { stats.hcWyjscie++; ujscie.graj('hcWyjscie', x, y, 1); }
+    else if (p === 'spool' && s === 'idle') stats.hcPrzerwany++;
+  }
+
+  const wybrane = new Array(8).fill(null);
+  const wybraneD = new Float64Array(8);
+  /**
+   * Silniki obcych okrętów: z `npcs` do `silnikMaks` najbliższych środka kadru (cx, cy) okrętów z ciągiem MAIN
+   * (`ciag(npc)` ≥ próg) w zasięgu `silnikZasieg` × półprzekątna `polD`; `slyszalny(npc)` — filtr kleju (żywy, nie
+   * ukryty mgłą ani maską, nie gracz). Ujście `silnik(npc, ciąg, dopalacz, x, y)`.
+   */
+  function silnikiObcych(npcs, cx, cy, polD, ciag, dopalacz, slyszalny, silnik) {
+    const maks = Math.min(wybrane.length, U.silnikMaks | 0);
+    let n = 0;
+    const zasieg = U.silnikZasieg * polD;
+    const z2 = zasieg * zasieg;
+    if (npcs) for (let i = 0; i < npcs.length; i++) {
+      const e = npcs[i];
+      if (!e || !slyszalny(e)) continue;
+      const c = ciag(e);
+      if (!(c >= U.silnikProg)) continue;
+      const dx = e.x - cx;
+      const dy = e.y - cy;
+      const d2 = dx * dx + dy * dy;
+      if (!(d2 <= z2)) continue;
+      // wstawienie do krótkiej listy najbliższych (posortowanej rosnąco)
+      let k = n < maks ? n++ : maks;
+      if (k === maks && !(d2 < wybraneD[maks - 1])) continue;
+      if (k === maks) k = maks - 1;
+      while (k > 0 && wybraneD[k - 1] > d2) { wybrane[k] = wybrane[k - 1]; wybraneD[k] = wybraneD[k - 1]; k--; }
+      wybrane[k] = e;
+      wybraneD[k] = d2;
+    }
+    for (let i = 0; i < n; i++) {
+      const e = wybrane[i];
+      silnik(e, ciag(e), dopalacz(e), e.x, e.y);
+      wybrane[i] = null;
+    }
+    return n;
+  }
+
   /** Raz na klatkę: pętle stopienia (głośność z postępu, położenie gospodarza). `czas` — zegar gry [s]. */
   function klatka(czas) {
     for (let i = 0; i < SLOTY_RDZENIA; i++) {
@@ -171,11 +240,29 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     warpPoprz = null;
     maskaPoprz = null;
     zerwaniePoprz = null;
+    hcPoprz = null;
     for (let i = 0; i < SLOTY_RDZENIA; i++) slotHost[i] = null;
   }
 
   return {
     warpGracza, osieWarpa, maskowanieGracza, maskowanieZdarzenie, rdzenStopienie, rdzenDetonacja, tloMostka, klik,
+    ostrzezenieRakiet, hipercruise, silnikiObcych,
     klatka, wyzeruj, stats, ustawienia: U
   };
+}
+
+/**
+ * Wrogie rakiety i torpedy z celem = gracz w buforze zagrożeń obrony punktowej (`_pdEnemyRocketBuffer` w `ciwsStep`;
+ * rakieta 3D — cel w `rb.slot.target`, pocisk z `bullets` — `rb.target`). Bez alokacji.
+ */
+export function liczRakietyNaGracza(bufor, gracz) {
+  if (!bufor || !gracz) return 0;
+  let n = 0;
+  for (let i = 0; i < bufor.length; i++) {
+    const rb = bufor[i];
+    if (!rb || rb.dead || !(rb.life > 0)) continue;
+    const cel = rb.rocket3d ? (rb.slot ? rb.slot.target : null) : rb.target;
+    if (cel === gracz) n++;
+  }
+  return n;
 }
