@@ -183,4 +183,50 @@ export const DZWIEKI_SWIATA = [
     opis: 'Kapsuła odpala silnik po dryfie.',
     prompt: 'Small escape pod rocket motor igniting with instant attack: short bright hissing thrust that settles into a steady small jet, high and mid frequencies only, no low end',
   },
+  // ── Etap 5: interfejs (krótko i cicho, w rodzinie `grupa` / `potwierdzenie` / `blad`) ─────────────────────────────
+  {
+    id: 'menuFokus', grupa: 'Interfejs obszarów', nazwa: 'Menu — przejście fokusu', s: 0.5, styl: S,
+    opis: 'Fokus przechodzi na inny przycisk menu (mysz, klawiatura, pad).',
+    prompt: 'Very short soft clean high tick for moving the highlight between menu buttons of a starship interface, no bass, not retro',
+  },
+  {
+    id: 'menuWidok', grupa: 'Interfejs obszarów', nazwa: 'Menu — zmiana widoku', s: 0.6, styl: S,
+    opis: 'Menu przechodzi do innego widoku (opcje, kampania, powrót).',
+    prompt: 'Short soft airy swish of a starship interface panel sliding to the next screen, clean, high frequencies only, no bass, not retro',
+  },
+  {
+    id: 'panelOtwarcie', grupa: 'Interfejs obszarów', nazwa: 'Panel — otwarcie', s: 0.6, styl: S,
+    opis: 'Otwarcie panelu stacji albo mapy CIC.',
+    prompt: 'Starship console panel opening: short rising electronic chirp with a soft mechanical slide, clean, no bass, not retro',
+  },
+  {
+    id: 'panelZamkniecie', grupa: 'Interfejs obszarów', nazwa: 'Panel — zamknięcie', s: 0.6, styl: S,
+    opis: 'Zamknięcie panelu stacji albo mapy CIC.',
+    prompt: 'Starship console panel closing: short falling electronic chirp with a soft mechanical slide, clean, no bass, not retro',
+  },
+  {
+    id: 'terminalPolaczenie', grupa: 'Interfejs obszarów', nazwa: 'Terminal stacji — połączenie', s: 0.8, styl: S,
+    opis: 'Terminal stacji łączy się (0,42–0,68 s).',
+    prompt: 'Station terminal connecting: quick sequence of soft data chirps ending in a clean connection tone, no bass, not retro',
+  },
+  {
+    id: 'handelTransakcja', grupa: 'Interfejs obszarów', nazwa: 'Handel — transakcja', s: 0.6, styl: S,
+    opis: 'Kupno albo sprzedaż przyjęta.',
+    prompt: 'Trade transaction confirmed on a starship terminal: short crisp double chime with a soft digital click, clean, no bass, not retro',
+  },
+  {
+    id: 'skanPing', grupa: 'Interfejs obszarów', nazwa: 'Skan X — ping', s: 1.5, styl: S,
+    opis: 'Fala skanera X wychodzi z okrętu.',
+    prompt: 'Active sensor sweep of a warship: single clean sonar-like ping with a short airy echo tail, mid and high frequencies only, no bass boom',
+  },
+  {
+    id: 'kontaktBlip', grupa: 'Interfejs obszarów', nazwa: 'Skan — nowy kontakt', s: 0.5, styl: S,
+    opis: 'Fala skanu odsłoniła kontakt.',
+    prompt: 'New radar contact detected: single short soft electronic blip, clean, high frequencies only, no bass, not retro',
+  },
+  {
+    id: 'komunikat', grupa: 'Interfejs obszarów', nazwa: 'Komunikat HUD', s: 0.6, styl: S,
+    opis: 'Komunikat z etykietą na HUD (NAPĘD, SILNIKI…).',
+    prompt: 'Short attention tone for a status message on a warship display: two soft clean notes, no bass, not retro',
+  },
 ];

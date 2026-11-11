@@ -243,3 +243,57 @@ silnika kapitałowego do nich nie pasuje); słychać je przez przelot.
 
 - `wiazkaZbiorki` 3–4 bez „hum” w opisie (0% basu; wariant 2 z „…humming energy field…” — 89%), `kontenerZbior` 4–5 z „the sound starts immediately at the very first moment” (atak 0,05–0,14 s; warianty 1–2 z „with instant attack” — 0,26–0,37 s).
 - Kredyty etapu 4: ok. 640 (67,8 s efektów, w tym 9,6 s dogenerowania).
+
+## Etap 5 — interfejs
+
+| Obszar | Zdarzenie w kodzie | Dźwięk |
+|---|---|---|
+| Menu główne | `menuGamepad.updateHighlight` (klawiatura, pad), `pointerover` na `#main-menu` | `menuFokus` |
+| | `setMenuView` (opcje, kampania, powrót) | `menuWidok` |
+| | kliknięcie przycisku (`button.menu-btn-styled`, `menuGamepad.confirm`) | `klik` |
+| Panele | `openStationUI` / `closeStationUI`, akcja `ui.cicMap` (`CICDisplay.toggle()` — stan po przełączeniu) | `panelOtwarcie` / `panelZamkniecie` |
+| | `openStationTerminal` (faza `connecting`) | `terminalPolaczenie` |
+| | `handleTrade` przyjęte (kupno, sprzedaż), `purchaseShip`, `handleRepair` | `handelTransakcja`; odmowa (`toast`) — `blad` |
+| | przyciski paneli DOM (delegacja `click` na `#top-drawer`, panel wyposażenia) | `klik` |
+| Radar i CIC | `triggerScanWave` (skan X) | `skanPing` (+3 dB nad kategorią) |
+| | `revealScannerContact` (kontakt odsłonięty falą) | `kontaktBlip` (limit 3, odstęp 90 ms — fala z wieloma kontaktami gra serię) |
+| | rozkazy RTS (`issue*Order`, `cicAttackOrder`) | `potwierdzenie` raz na rozkaz (nie na jednostkę) |
+| HUD | `pushZoneMessage(…, { label })` | `komunikat` (odstęp 0,4 s) |
+
+Menu przed `startGame` nie ma jeszcze `AudioSys.ctx` (powstaje w `AudioSys.init()`); kliknięcie w menu jest gestem
+użytkownika, więc warstwa interfejsu menu może utworzyć kontekst sama — do ustalenia przy hakach z sesją, która włącza
+warstwę w zwykłej grze.
+
+### Pomiary
+
+| plik | dł. [s] | szczyt | RMS | start | atak | słyszalny do | < 150 Hz | |
+|---|---|---|---|---|---|---|---|---|
+| menuFokus_1 | 0,48 | −9,9 | −35,4 | 0,00 | 0,01 | 0,48 | 1% | cichy (RMS −35) |
+| menuFokus_2 | 0,48 | −15,7 | −36,8 | 0,00 | 0,00 | 0,48 | 30% | cichy (RMS −37) |
+| menuFokus_3 | 0,48 | −11,4 | −29,8 | 0,00 | 0,03 | 0,16 | 0% |  |
+| menuWidok_1 | 0,60 | −9,7 | −24,2 | 0,00 | 0,00 | 0,28 | 0% |  |
+| menuWidok_2 | 0,60 | −1,0 | −14,2 | 0,12 | 0,30 | 0,56 | 0% | ✗ atak po 0,3 s |
+| menuWidok_3 | 0,60 | 0,0 | −10,5 | 0,03 | 0,14 | 0,49 | 50% |  |
+| panelOtwarcie_1 | 0,60 | 0,0 | −15,3 | 0,00 | 0,01 | 0,46 | 0% |  |
+| panelOtwarcie_2 | 0,60 | −1,5 | −15,3 | 0,00 | 0,00 | 0,47 | 0% |  |
+| panelOtwarcie_3 | 0,60 | −3,5 | −15,1 | 0,00 | 0,00 | 0,60 | 0% |  |
+| panelZamkniecie_1 | 0,60 | −1,7 | −13,7 | 0,00 | 0,04 | 0,51 | 0% |  |
+| panelZamkniecie_2 | 0,60 | −9,1 | −23,7 | 0,00 | 0,00 | 0,53 | 44% |  |
+| panelZamkniecie_3 | 0,60 | −4,7 | −19,8 | 0,00 | 0,01 | 0,35 | 0% |  |
+| terminalPolaczenie_1 | 0,80 | −1,9 | −13,8 | 0,00 | 0,00 | 0,76 | 0% |  |
+| terminalPolaczenie_2 | 0,80 | −3,7 | −17,2 | 0,00 | 0,00 | 0,76 | 0% |  |
+| terminalPolaczenie_3 | 0,80 | −1,4 | −14,2 | 0,00 | 0,00 | 0,59 | 0% |  |
+| handelTransakcja_1 | 0,60 | −1,5 | −22,3 | 0,00 | 0,02 | 0,34 | 0% |  |
+| handelTransakcja_2 | 0,60 | −2,8 | −9,6 | 0,00 | 0,00 | 0,46 | 0% |  |
+| handelTransakcja_3 | 0,60 | −2,5 | −9,4 | 0,00 | 0,07 | 0,49 | 0% |  |
+| skanPing_1 | 1,48 | −3,8 | −14,7 | 0,00 | 0,00 | 1,11 | 0% |  |
+| skanPing_2 | 1,48 | −3,6 | −17,2 | 0,00 | 0,02 | 1,42 | 0% |  |
+| skanPing_3 | 1,48 | −10,5 | −20,9 | 0,00 | 0,01 | 1,30 | 0% |  |
+| kontaktBlip_1 | 0,48 | −6,6 | −23,9 | 0,00 | 0,00 | 0,28 | 0% |  |
+| kontaktBlip_2 | 0,48 | −10,6 | −23,9 | 0,00 | 0,04 | 0,30 | 0% |  |
+| kontaktBlip_3 | 0,48 | −2,7 | −15,1 | 0,00 | 0,00 | 0,21 | 0% |  |
+| komunikat_1 | 0,60 | −1,8 | −6,6 | 0,00 | 0,00 | 0,60 | 0% |  |
+| komunikat_2 | 0,60 | −0,1 | −6,0 | 0,00 | 0,00 | 0,40 | 0% |  |
+| komunikat_3 | 0,60 | −0,1 | −12,6 | 0,00 | 0,00 | 0,16 | 0% |  |
+
+- Kredyty etapu 5: ok. 180 (18,9 s efektów).

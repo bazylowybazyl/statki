@@ -1,6 +1,7 @@
 // Dźwięki obszarów gry, które były nieme: warp gracza, przyloty i odloty obcych okrętów, maskowanie, rdzeń reaktora,
 // tło mostka, klik interfejsu (etap 1); ostrzeżenie o rakietach, hipercruise, silniki obcych okrętów (etap 2); myśliwce i hangary (etap 3);
-// praca w przestrzeni: kopalnia, zbiórka łupu, drony naprawcze, holownik, kapsuły ratunkowe (etap 4).
+// praca w przestrzeni: kopalnia, zbiórka łupu, drony naprawcze, holownik, kapsuły ratunkowe (etap 4);
+// interfejs: menu, panele stacji i CIC, terminal, handel, skan X, komunikaty HUD (etap 5).
 // Czyste dane (bez Web Audio i DOM): wpisy dołączane do tabeli warstwy `DZWIEKI` jednym rozwinięciem w src/audio/dzwiekiLogika.js, zdarzenia — do `ZDARZENIA`.
 // Pola wpisu jak w `DZWIEKI` (kategoria, limit, odstęp, zwłoka, wariacja, pętla, `ui`, `poziom`) oraz:
 //   `obszar`   — grupa w panelu sceny `?scena=dzwieki` (odsłuch obszarami, nie kategoriami),
@@ -68,7 +69,21 @@ export const DZWIEKI_SWIATA = Object.freeze({
   zaciskiZwolnienie: { kat: 'trafienie', obszar: 'Holownik', limit: 2, odstep: 200, zwloka: 1, ton: 0.03, glos: 0.08 },
   // Kapsuły ratunkowe (`stepEscapePods`): wyrzut z kadłuba (PENDING → COAST), zapłon po dryfie (COAST → FLY).
   kapsulaWyrzut: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 110, zwloka: 2, ton: 0.08, glos: 0.12, warianty: [1, 2, 3] },
-  kapsulaSilnik: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 110, zwloka: 2, ton: 0.08, glos: 0.12 }
+  kapsulaSilnik: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 110, zwloka: 2, ton: 0.08, glos: 0.12 },
+  // ── Etap 5: interfejs (bez położenia, kategoria `interfejs` — najciszej) ──
+  // Menu główne: przejście fokusu (`menuGamepad.updateHighlight`, mysz `pointerover`), zmiana widoku (`setMenuView`);
+  // kliknięcie przycisku — `klik`. Panele: stacja (`openStationUI` / `closeStationUI`), mapa CIC (`ui.cicMap`),
+  // terminal (`openStationTerminal`), transakcja (`handleTrade` przyjęta; odmowa — `blad`). Skan X: fala
+  // (`triggerScanWave`) i odsłonięty kontakt (`revealScannerContact`). Komunikat HUD z etykietą (`pushZoneMessage`).
+  menuFokus: { kat: 'interfejs', obszar: 'Interfejs', limit: 2, odstep: 35, zwloka: 0, ton: 0.02, glos: 0, ui: true },
+  menuWidok: { kat: 'interfejs', obszar: 'Interfejs', limit: 1, odstep: 120, zwloka: 0, ton: 0, glos: 0, ui: true, warianty: [1, 3] },
+  panelOtwarcie: { kat: 'interfejs', obszar: 'Interfejs', limit: 1, odstep: 150, zwloka: 0, ton: 0, glos: 0, ui: true },
+  panelZamkniecie: { kat: 'interfejs', obszar: 'Interfejs', limit: 1, odstep: 150, zwloka: 0, ton: 0, glos: 0, ui: true },
+  terminalPolaczenie: { kat: 'interfejs', obszar: 'Interfejs', limit: 1, odstep: 300, zwloka: 0, ton: 0, glos: 0, ui: true },
+  handelTransakcja: { kat: 'interfejs', obszar: 'Interfejs', limit: 2, odstep: 80, zwloka: 1, ton: 0.02, glos: 0, ui: true },
+  skanPing: { kat: 'interfejs', obszar: 'Interfejs', limit: 1, odstep: 400, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: 3 },
+  kontaktBlip: { kat: 'interfejs', obszar: 'Interfejs', limit: 3, odstep: 90, zwloka: 3, ton: 0.04, glos: 0.08, ui: true },
+  komunikat: { kat: 'interfejs', obszar: 'Interfejs', limit: 1, odstep: 400, zwloka: 0, ton: 0, glos: 0, ui: true }
 });
 
 /**
@@ -104,5 +119,14 @@ export const ZDARZENIA_SWIATA = Object.freeze({
   kontenerZbior: 'kontenerZbior',
   holownikZacisk: 'zaciskiZalaczenie',
   holownikZwolnienie: 'zaciskiZwolnienie',
+  menuFokus: 'menuFokus',
+  menuWidok: 'menuWidok',
+  panelOtwarty: 'panelOtwarcie',
+  panelZamkniety: 'panelZamkniecie',
+  terminalPolaczenie: 'terminalPolaczenie',
+  transakcja: 'handelTransakcja',
+  skanFala: 'skanPing',
+  skanKontakt: 'kontaktBlip',
+  komunikatHud: 'komunikat',
   klik: 'klik'
 });
