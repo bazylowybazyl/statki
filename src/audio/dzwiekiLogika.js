@@ -65,10 +65,12 @@ export const DZWIEKI = Object.freeze({
   rykoszet: { kat: 'drobne', limit: 3, odstep: 70, zwloka: 1, ton: 0.08, glos: 0.15 },
   // Tarcza
   // Użytkownik 2026-11-11: tarcza „łagodniejsza i szybsza”, wzorzec — Starsector: krótki plik (0,5 s), ciszej.
-  tarcza: { kat: 'trafienie', limit: 5, odstep: 35, zwloka: 2, ton: 0.06, glos: 0.15, poziom: -3 },
+  // Potem: „tarcza teraz jest zbyt delikatna” — plik krótki, ale wyraźny (0,6 s) i poziom jak trafienie w kadłub.
+  tarcza: { kat: 'trafienie', limit: 5, odstep: 35, zwloka: 2, ton: 0.06, glos: 0.15 },
   tarczaWl: { kat: 'interfejs', limit: 1, odstep: 200, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: 6 },
   tarczaWyl: { kat: 'interfejs', limit: 1, odstep: 200, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: 6 },
-  tarczaPekniecie: { kat: 'dzialo', limit: 2, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08 },
+  // Użytkownik 2026-11-11: rozbicie tarczy „zbyt energetyczne” — spokojne gaśnięcie pola, poziom trafienia (+1 dB).
+  tarczaPekniecie: { kat: 'trafienie', limit: 2, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08, poziom: 1 },
   // Rakiety i wybuchy
   wybuchRakiety: { kat: 'dzialo', limit: 5, odstep: 40, zwloka: 3, ton: 0.07, glos: 0.15 },
   supernovaWybuch: { kat: 'superbron', limit: 3, odstep: 80, zwloka: 2, ton: 0.04, glos: 0.08 },

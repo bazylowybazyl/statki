@@ -33,7 +33,10 @@ test('poziomy: broń specjalna delikatnie głośniejsza niż main, wystrzały po
   for (const strzal of ['tempestIon', 'yamato', 'rakieta', 'supernovaStart', 'autocannon', 'dzialo', 'railgun', 'flak']) {
     assert.ok(cel(strzal) < cel('wybuchRakiety'), `${strzal} pod wybuchem rakiety`);
   }
-  assert.ok(cel('tarcza') < cel('kadlub'), 'tarcza łagodniejsza niż trafienie w kadłub');
+  // Tarcza: nie głośniej niż trafienie w kadłub, ale i nie dużo ciszej (użytkownik: ciszej o 3 dB = „zbyt delikatna”).
+  assert.ok(cel('tarcza') <= cel('kadlub') && cel('kadlub') - cel('tarcza') <= 2, 'tarcza blisko poziomu trafienia w kadłub');
+  // Rozbicie tarczy to gaśnięcie pola, nie wybuch (użytkownik: „zbyt energetyczne”).
+  assert.ok(cel('tarczaPekniecie') < cel('wybuchRakiety'), 'rozbicie tarczy pod wybuchem');
   assert.ok(DZWIEKI_SYNTEZY.silnikSide.poziom <= DZWIEKI_SYNTEZY.silnikMain.poziom);
 });
 

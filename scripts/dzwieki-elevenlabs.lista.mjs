@@ -124,9 +124,11 @@ export const DZWIEKI = [
 
   // ── Kadłub i tarcza ─────────────────────────────────────────────────────────────────────
   {
-    id: 'kadlub', grupa: 'Kadłub i tarcza', nazwa: 'Trafienie w kadłub', s: 1.5,
-    opis: 'Głuche uderzenie, drgania płyty pancerza, rwanie blachy.',
-    prompt: 'Heavy shell impact on thick steel warship armor heard from inside the ship: dull massive thud, resonating armor plate, short metal tearing',
+    // Użytkownik 2026-11-11 o pierwszej wersji („dull massive thud, resonating armor plate”): „brzmi jak bicie
+    // w bęben”. Trafienie w kadłub to twardy metal (trzask, pęknięcie płyty, iskry), bez głuchego, strojonego dudnienia.
+    id: 'kadlub', grupa: 'Kadłub i tarcza', nazwa: 'Trafienie w kadłub', s: 1, warianty: 4,
+    opis: 'Twardy metaliczny trzask pancerza, iskry i odłamki — bez głuchego dudnienia.',
+    prompt: 'Projectile hitting thick starship armor plating with instant attack: sharp hard metallic clang and crack, armor fracturing, burst of sparks and small debris rattling, dry and tight, no drum-like boom, no hollow resonance',
   },
   {
     id: 'rykoszet', grupa: 'Kadłub i tarcza', nazwa: 'Rykoszet', s: 1,
@@ -134,11 +136,12 @@ export const DZWIEKI = [
     prompt: 'Projectile ricochet off thick metal armor: bright metallic clang followed by a fast whining whizz flying away',
   },
   {
-    // Decyzja użytkownika 2026-11-11: „tarcza musi być łagodniejsza i szybsza”, wzorzec charakteru — trafienie
-    // w tarczę w Starsectorze (miękkie, stłumione, krótkie; bez dzwonienia i szklistego ogona).
-    id: 'tarcza', grupa: 'Kadłub i tarcza', nazwa: 'Trafienie w tarczę', s: 0.5,
-    opis: 'Miękkie, stłumione, krótkie pochłonięcie trafienia przez pole.',
-    prompt: 'Soft energy shield absorbing a projectile hit with instant attack: very short muffled low thump with a faint quick electric fizz, damped and gentle, quick decay, no ringing, no glassy shimmer, subtle',
+    // Użytkownik 2026-11-11, trzy podejścia: (1) szklisty rezonans 1,5 s — „musi być łagodniejsza i szybsza”, wzorzec
+    // charakteru: trafienie w tarczę w Starsectorze; (2) stłumione „muffled low thump… subtle” 0,5 s — „teraz jest
+    // zbyt delikatna”; (3) to: krótkie, ale wyraźne — zwarty trzask energii ze środkiem pasma, bez długiego dzwonienia.
+    id: 'tarcza', grupa: 'Kadłub i tarcza', nazwa: 'Trafienie w tarczę', s: 0.6, warianty: 4,
+    opis: 'Krótkie, wyraźne odbicie trafienia przez pole: zwarty trzask energii i krótkie skwierczenie.',
+    prompt: 'Energy shield deflecting a projectile with instant attack: short defined electric zap with a tight mid-range thump and a brief crackling fizz, clear but not harsh, quick decay, no long ringing',
   },
   {
     id: 'zgrzyt', grupa: 'Kadłub i tarcza', nazwa: 'Zgrzyt kadłubów', s: 4,
@@ -171,9 +174,13 @@ export const DZWIEKI = [
     prompt: 'Starship energy shield powering down: shimmering field collapsing with a falling electric hum and a soft discharge, sleek',
   },
   {
-    id: 'tarczaPekniecie', grupa: 'Kadłub i tarcza', nazwa: 'Tarcza — pęknięcie', s: 2,
-    opis: 'Przeciążenie i zapadnięcie pola pod ostrzałem.',
-    prompt: 'Energy shield overloading and collapsing under fire with instant attack: loud electric crack, shattering glassy burst and a crackling discharge fading out',
+    // Użytkownik 2026-11-11 o pierwszej wersji („loud electric crack, shattering glassy burst”): „zbyt energetyczne”.
+    // Rozbicie tarczy to gaśnięcie pola (opadający ton zasilania), nie eksplozja.
+    // (Pierwsza próba spokojnej wersji — „soft low electric thump… power-down hum” — wyszła z generatora jako samo
+    // niskie buczenie poniżej 150 Hz, czyli znów „bęben”; stąd środek pasma i zakaz basu w opisie.)
+    id: 'tarczaPekniecie', grupa: 'Kadłub i tarcza', nazwa: 'Tarcza — pęknięcie', s: 1.2, warianty: 4,
+    opis: 'Pole gaśnie: opadający ton zasilania i krótkie skwierczenie — spokojnie, bez wybuchu i bez basu.',
+    prompt: 'Starship energy shield failing and switching off with instant attack: quick descending electric power-down tone with a soft crackling fizzle, mid-range and light, calm and restrained, not explosive, no shattering, no bass boom, no thump',
   },
   {
     id: 'uderzenieKadluba', grupa: 'Kadłub i tarcza', nazwa: 'Uderzenie kadłubów', s: 1.5,
