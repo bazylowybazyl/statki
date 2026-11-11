@@ -229,6 +229,8 @@ try {
   const wszystkie = [...Object.keys(DZWIEKI_SWIATA), ...Object.keys(SYNTEZA_SWIATA)];
   const zagraneGra = new Set();
   for (const e of report.etapy) if (!/odsłuch/.test(e.nazwa)) for (const k of Object.keys(e.zagraly)) zagraneGra.add(k);
+  // pętla tła gra od startu gry (przed zerowaniem liczników) — etap tła sprawdza ją stanem bezwzględnym
+  if (report.etapy.some((e) => e.wynik && e.wynik.mostekGra >= 1)) zagraneGra.add('mostek');
   report.brak = wszystkie.filter((k) => !zagraneGra.has(k));
   report.ostrzezenia = s.ostrzezenia;
   report.reżyser = await ev('window.__dzwiekiObszarow.stats');
