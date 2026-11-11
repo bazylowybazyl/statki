@@ -3,6 +3,8 @@
 // Node czyta PNG z dysku). Encja NPC jak w grze: typ, frakcja i profil renderu wybierają klucz
 // mostka (resolveBridgeHullKey) i profil kadłuba (getNpcHullRenderProfileId w index.html).
 
+import { WORK_HULLS, WORK_HULL_IDS, workHullSpritePath } from '../../src/data/workHulls.js';
+
 export const BRIDGE_DEMO_HULLS = Object.freeze({
   atlas: Object.freeze({
     key: 'atlas', label: 'Atlas', faction: 'atlas', sprite: 'assets/capital_ship_rect_v1.png', profile: 'atlas',
@@ -133,7 +135,12 @@ export const BRIDGE_DEMO_HULLS = Object.freeze({
   colony_liner: Object.freeze({
     key: 'colony_liner', label: 'Liniowiec dalekiego zasięgu', faction: 'civil', sprite: 'assets/long_haul_freighter.png', profile: 'colony_liner',
     npc: Object.freeze({ type: 'colony_liner', isPirate: false, shipFrame: 'colony_liner', mass: 20000 })
-  })
+  }),
+  // statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js)
+  ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, Object.freeze({
+    key: id, label: WORK_HULLS[id].label, faction: 'civil', sprite: workHullSpritePath(id), profile: id,
+    npc: Object.freeze({ type: id, isPirate: false, shipFrame: id, mass: 6000 + 4000 * WORK_HULLS[id].cls })
+  })]))
 });
 
 export const BRIDGE_DEMO_ORDER = Object.freeze([
@@ -142,5 +149,5 @@ export const BRIDGE_DEMO_ORDER = Object.freeze([
   'inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter', 'heavy_harvester', 'belter',
   'surveyor', 'refinery_tender', 'tanker', 'salvage_hauler', 'construction_tug', 'smuggler',
   'pirate_raider', 'distress_beacon_ship', 'repair_drone', 'bounty_hunter', 'police_cutter', 'rescue_ship',
-  'crew_shuttle', 'crew_liner', 'colony_liner'
+  'crew_shuttle', 'crew_liner', 'colony_liner', ...WORK_HULL_IDS
 ]);
