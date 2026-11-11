@@ -297,3 +297,26 @@ warstwę w zwykłej grze.
 | komunikat_3 | 0,60 | −0,1 | −12,6 | 0,00 | 0,00 | 0,16 | 0% |  |
 
 - Kredyty etapu 5: ok. 180 (18,9 s efektów).
+
+## Haki etapów 1–2 i alarmy okrętu — harness w grze
+
+`node scripts/webgpu/dzwieki-obszary-gra.mjs --baza vite` (tryb off, Chrome headless, 1600 × 900; zwykła gra swobodna,
+potem scena dźwięków). Wynik przebiegu 2026-11-11 (dźwięki tylko obszarów; w etapach sceny grają też strzały i trafienia):
+
+| Etap | Dźwięki obszarów, które zagrały | Liczniki reżysera |
+|---|---|---|
+| tło mostka (2 s lotu) | `mostek` — pętla od startu gry (1 aktywna, poza pauzą, dokiem i halą) | — |
+| klik (przycisk DOM) | `klik` ×1 | klik ×1 |
+| maskowanie Atlasa (I, I, I + zerwanie) | `maskaWl` ×2, `maskaWyl` ×1, `maskaZerwanie` ×1 | maskowanieWl ×2, Wyl ×1, Zerwane ×1 |
+| hipercruise (O, lot, O) | `hcRozruch`, `hcKop`, `hcLot`, `hcWyjscie` ×1 (stany spool ×3 s → active → idle) | hcRozruch, hcWejscie, hcWyjscie ×1 |
+| warp (9 trzymane, puszczone, 9) | `warpLadowanie`, `warpKop`, `warpTunel`, `warpZejscie` ×1 | warpLadowanie, warpSkok, warpZejscie ×1 |
+| alarmy (`ShipAlarmDev` 2, 3, 4) | `alarm`, `rakietyOstrzezenie`, `komunikat` ×1 | alarmKomunikat ×1 |
+| przylot okrętu z warpa (panel) | `warpZwiastun`, `przylotWyrzut` ×1, `silnikObcy` ×5 | przylotZwiastun, przylotWyrzut ×1 |
+| stopienie rdzenia pirata (panel) | `reaktorStopienie`, `reaktorWybuch` ×1 | rdzenStopienie, rdzenDetonacja ×1 |
+| ▶ wszystkich dźwięków obszarów | 49 / 49 | — |
+| piraci strzelają 12 s | `silnikObcy` (głosy syntezy 9 od zerowania) | — |
+
+Konsola: dwa błędy 404 favicon (serwer Vite harnessu), ostrzeżeń warstwy brak. Przycisk „przylot” najpierw tworzył
+manekina `spawnCallInShip(…, 'dummy')` — bez osi warpa (okręt pojawia się od razu); teraz `callInSupport` z punktem
+(zwiastun → rozdarcie → wyrzut). Ostrzeżenie rakietowe z bufora zagrożeń w 12 s ognia piratów nie zagrało — piraci
+sceny w tym czasie nie odpalili rakiet; sprawdzone alarmem MISSILE z `ShipAlarmDev`.

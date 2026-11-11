@@ -258,3 +258,25 @@ test('zbiórka łupu: pętla tylko z celami', () => {
   r.zbiorka(2, 0, 0);
   assert.deepEqual(s.petle.map((p) => p[1]), ['wiazkaZbiorki']);
 });
+
+test('alarmy okrętu: MISSILE → pętla ostrzeżenia, HULL / REACTOR → klakson, BRIDGE / SHIELD / DETECTED → komunikat raz', async () => {
+  const { ALARM } = await import('../src/game/dzwiekiObszarow.js');
+  const { SHIP_ALARM } = await import('../src/game/shipAlarms.js');
+  assert.deepEqual({ ...ALARM }, { ...SHIP_ALARM });
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  r.alarmOkretu(ALARM.HULL, true, 1);
+  r.alarmOkretu(ALARM.HULL, true, 0.35);
+  r.alarmOkretu(ALARM.MISSILE, true, 1);
+  r.alarmOkretu(ALARM.SHIELD, true, 1);
+  r.alarmOkretu(ALARM.SHIELD, true, 1);
+  r.alarmOkretu(ALARM.SHIELD, false, 0);
+  r.alarmOkretu(ALARM.DETECTED, true, 0.2);
+  assert.deepEqual(s.petle.map((p) => p[1]), ['alarm', 'alarm', 'rakietyOstrzezenie']);
+  assert.equal(s.petle[1][2], 0.35, 'głośność z szyny');
+  assert.deepEqual(s.graj, ['komunikat', 'komunikat']);
+  // ostrzeżenie z bufora i alarm MISSILE — ten sam klucz pętli (jeden głos)
+  r.ostrzezenieRakiet(2, 0.6);
+  assert.equal(s.petle.at(-1)[0], 'rakiety');
+  assert.equal(s.petle[2][0], 'rakiety');
+});

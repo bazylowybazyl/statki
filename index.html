@@ -1468,6 +1468,7 @@
     // Scena dźwięków (?scena=dzwieki, blok „SCENA DŹWIĘKI”): warstwa dźwięku gry i panel sceny — reguła `dzwiek`.
     import { utworzDzwiekiGry } from "./src/audio/dzwiekiGry.js";
     import { utworzPanelDzwiekow } from "./src/ui/dzwiekiPanel.js";
+    import { utworzRezyserObszarow, liczRakietyNaGracza } from "./src/game/dzwiekiObszarow.js";
     // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): reżyser z pozami obsługi stanowisk i zaworami, osobna warstwa dźwięku.
     import {
       DZWIEKI_HALI, DZWIEKI, DZWIEKI_SYNTEZY, KLUCZ_WYBORU, parsujWybor, tekstZapisuWyboru, slyszalne,
@@ -18968,6 +18969,10 @@
       try { SND_LAYER.wczytajWybor(parsujWybor(localStorage.getItem(KLUCZ_WYBORU), SOUND_KNOWN_IDS)); } catch { /* bez zapisu */ }
       window.__dzwieki = SND_LAYER;
       WeaponShotBus.on(soundSceneShot);
+      // Dźwięki obszarów: maskowanie fregaty zwiadu (szyna ScoutBay), klik przycisków interfejsu (delegacja kliknięć).
+      ScoutBay.on('cloak', soundSceneScoutCloak);
+      ScoutBay.on('cloakBroken', soundSceneScoutCloakBroken);
+      document.addEventListener('click', soundSceneClick, true);
       SND_LOADING = SND_LAYER.wczytaj().catch((err) => console.warn('[Dźwięki]', err));
       return SND_LAYER;
     }
@@ -19077,6 +19082,11 @@
             piraciStrzelaja: (on) => { SoundScene.pirFire = !!on; },
             odnow: () => soundSceneRenew()
           },
+          zdarzenia: [
+            { nazwa: 'Rdzeń celu', przycisk: 'stopienie', tytul: 'Stopienie rdzenia najbliższego pirata (3,5 s) i detonacja', fn: soundSceneMeltTarget },
+            { nazwa: 'Okręt z warpa', przycisk: 'przylot', tytul: 'Okręt przylatuje z warpa przed Atlasem (zwiastun i wyrzut)', fn: soundSceneArrival },
+            { nazwa: 'Maskowanie Atlasa', przycisk: 'wł. / wył.', tytul: 'Maskowanie Atlasa (klawisz I)', fn: soundSceneCloak }
+          ],
           stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED, glosnoscZastepcza: !!SoundScene.masterFallback })
         });
       }
@@ -19243,6 +19253,110 @@
       soundSceneSpawnPirates();
     }
 
+    // --- DŹWIĘKI OBSZARÓW (reguła `dzwiek`, „Dźwięki obszarów”; tabela src/audio/dzwiekiSwiata.js, reżyser
+    // src/game/dzwiekiObszarow.js — czysty, zdarzenia z różnicy stanu): warp gracza i osie warpa obcych okrętów,
+    // maskowanie (Atlas i fregata zwiadu), rdzeń reaktora (stopienie, detonacja), tło mostka, klik interfejsu,
+    // ostrzeżenie o rakietach w gracza, hipercruise, silniki obcych okrętów w pobliżu kadru (synteza MAIN).
+    const SOUND_AREAS = utworzRezyserObszarow({
+      graj: (id, x, y, g) => (SND ? SND.graj(id, x, y, g) : false),
+      petla: (klucz, id, g, x, y) => { if (SND) SND.petla(klucz, id, g, x, y); }
+    });
+    window.__dzwiekiObszarow = SOUND_AREAS;
+    const soundNpcThrust = (n) => Number(n.thrusterInput?.main) || 0;
+    const soundNpcBoost = (n) => !!n.__flightIntent?.boost;
+    // Silniki obcych: żywy okręt (nie gracz, nie myśliwiec — przepis silnika kapitałowego), w kadrze, nie ukryty mgłą ani
+    // maską.
+    const soundNpcAudible = (n) => !n.dead && !n.destroyed && n !== ship && n.type !== 'fighter' && n.type !== 'interceptor'
+      && n.__inDrawBox !== false && !SensorSystem.hides(n) && !isCloakHidden(n);
+    const soundNpcEngine = (n, c, b, x, y) => { SND.silnikObcy(n, c, b, x, y); };
+    /** Klatka dźwięków obszarów (z `soundSceneFrame`, przed `SND.klatka()`): różnice stanu gry z poprzedniej klatki. */
+    function soundAreasFrame() {
+      const px = ship.pos.x;
+      const py = ship.pos.y;
+      SOUND_AREAS.warpGracza(ship.destroyed ? 'idle' : warp.state, px, py);
+      SOUND_AREAS.osieWarpa(warpTraffic.records, warpTraffic.time);
+      const c = ship.cloak;
+      SOUND_AREAS.maskowanieGracza(c ? c.state : 'off', c ? c.lastBreak : null, px, py);
+      SOUND_AREAS.hipercruise(hypercruise.state, px, py);
+      // Alarmy okrętu (szyna ShipAlarm, blok „ALARMY OKRĘTU”): MISSILE → ostrzeżenie rakietowe, HULL / REACTOR →
+      // klakson `alarm`, BRIDGE / SHIELD / DETECTED → `komunikat`; głośność opada jak w szynie (`state.volume`).
+      // Ostrzeżenie z bufora zagrożeń gra tym samym głosem (klucz `rakiety`) — przy wyższym alarmie ciszej.
+      const al = ShipAlarm.state;
+      SOUND_AREAS.alarmOkretu(al.id, al.active && !ship.destroyed, al.volume);
+      SOUND_AREAS.ostrzezenieRakiet(ship.destroyed ? 0 : liczRakietyNaGracza(_pdEnemyRocketBuffer, ship),
+        al.active && al.id === SHIP_ALARM.MISSILE ? al.volume : 0.6);
+      const kadr = soundSceneCamera();
+      SOUND_AREAS.silnikiObcych(npcs, kadr.x, kadr.y, Math.sqrt(kadr.polW * kadr.polW + kadr.polH * kadr.polH),
+        soundNpcThrust, soundNpcBoost, soundNpcAudible, soundNpcEngine);
+      // Tło mostka (gra nie ma widoku mostka): ciche tło lotu — poza pauzą, dokiem (panel stacji) i halą K-7 (ma swoje).
+      SOUND_AREAS.tloMostka(PAUSED || ship.destroyed || stationUI.open ? 0 : 1 - (HallSound.presence || 0));
+      SOUND_AREAS.klatka(SimClock.sim);
+    }
+    /** ReactorGame `onState`: stopienie rdzenia (czas do detonacji z góry) → pętla stopienia narastająca z postępem. */
+    function soundSceneReactorState(ev) {
+      if (!SND || !ev || ev.to !== REACTOR_CORE_STATE.MELTDOWN) return;
+      const h = ev.host;
+      if (!h || h.destroyed || h.dead) return;
+      const p = h.pos || h;
+      if (h !== ship && !soundHere(p.x, p.y)) return;
+      SOUND_AREAS.rdzenStopienie(h, SimClock.sim, ev.duration);
+    }
+    /** ReactorGame `onDetonate`: detonacja rdzenia (też śmierć z puli HP — bez zapowiedzi). */
+    function soundSceneReactorBlast(ev) {
+      if (!SND || !ev || (ev.host !== ship && !soundHere(ev.x, ev.y))) return;
+      SOUND_AREAS.rdzenDetonacja(ev.host || null, ev.x, ev.y);
+    }
+    /** Fregata zwiadu (`ScoutBay.on`): maskowanie włączone / wyłączone / zerwane. */
+    function soundSceneScoutCloak(d) {
+      const n = ScoutBay.npc;
+      if (!SND || !n || !soundHere(n.x, n.y)) return;
+      SOUND_AREAS.maskowanieZdarzenie(d && d.on ? 'wl' : 'wyl', n.x, n.y);
+    }
+    function soundSceneScoutCloakBroken() {
+      const n = ScoutBay.npc;
+      if (!SND || !n || !soundHere(n.x, n.y)) return;
+      SOUND_AREAS.maskowanieZdarzenie('zerwanie', n.x, n.y);
+    }
+    /** Klik interfejsu: delegacja kliknięć przycisków DOM (menu, panele stacji, okna), poza panelem sceny dźwięków. */
+    function soundSceneClick(e) {
+      if (!SND) return;
+      const t = e.target;
+      if (!t || typeof t.closest !== 'function' || t.closest('#dzwieki-panel')) return;
+      if (!t.closest('button, [role="button"], .menu-btn-styled, select, input[type="checkbox"], input[type="radio"]')) return;
+      SOUND_AREAS.klik();
+    }
+    // Przyciski panelu sceny: zdarzenia obszarów trudne do wywołania w grze.
+    /** Stopienie rdzenia najbliższego pirata sceny (3,5 s; cel przestaje być „niezniszczalny” — rdzeń liczy się w kroku). */
+    function soundSceneMeltTarget() {
+      let best = null;
+      let bd = Infinity;
+      for (const p of SoundScene.pirates) {
+        const n = p.npc;
+        if (!n || n.dead) continue;
+        const d = (n.x - ship.pos.x) ** 2 + (n.y - ship.pos.y) ** 2;
+        if (d < bd) { bd = d; best = n; }
+      }
+      if (!best) return false;
+      best.__dzwiekiNiezniszczalny = false;
+      return !!ReactorGame.forceMeltdown(best, 3.5);
+    }
+    /** Okręt przylatuje z warpa przed Atlasem (manekin bez broni i mózgu walki): zwiastun osi i wyrzut. */
+    function soundSceneArrival() {
+      const def = SOUND_SCENE.pirates[0];
+      const a = (ship.angle || 0) + (fxRandomGame.next() - 0.5) * 1.2;
+      const at = { x: ship.pos.x + Math.cos(a) * 5200, y: ship.pos.y + Math.sin(a) * 5200 };
+      // callInSupport z punktem — przylot tunelem z wyprzedzeniem (zwiastun → rozdarcie → wyrzut), jak wezwanie wsparcia.
+      return !!callInSupport(def.key, { mode: 'dummy', spawnPos: at });
+    }
+    /** Maskowanie Atlasa wł. / wył. (jak klawisz I). */
+    function soundSceneCloak() {
+      if (!ship.cloak) { pushZoneMessage('MASKOWANIE: ATLAS BEZ MASKOWANIA', 1.6); return false; }
+      if (isPlayerCloakOn()) toggleCloak(ship.cloak);
+      else tryEnterPlayerCloak();
+      syncShipMode();
+      return true;
+    }
+
     // --- haki zdarzeń (wołane tylko przy SND ≠ null: zwykła gra albo scena). Zdarzenie poza słyszalnością odpada na
     // wejściu (`slyszalne` — ten sam zasięg, w którym `polozenie` daje zero), zanim warstwa zrobi cokolwiek innego.
     function soundHere(x, y) {
@@ -19383,9 +19497,7 @@
         SND.petla('zgrzyt', 'zgrzytPetla', Math.min(1, 0.2 + S.grind / SOUND_SCENE.grindFull), S.grindX, S.grindY);
         S.grind = 0;
       }
-      // kadłub krytyczny
-      const crit = ship.hull && ship.hull.max > 0 && ship.hull.val / ship.hull.max < SOUND_SCENE.hullCritical;
-      if (crit) SND.petla('alarm', 'alarm', 1, NaN, NaN);
+      // kadłub krytyczny: alarm HULL z szyny ShipAlarm (soundAreasFrame — jeden alarm naraz, jak koguty i ramka HUD)
       // tarcza gracza: zapadnięcie (breaking)
       const st = ship.shield?.state || null;
       if (st !== S.lastShield) {
@@ -19408,6 +19520,7 @@
       if (locks > S.lastLocks) SND.zdarzenie(fcPaint.added > (S.lastPaint | 0) ? 'malowanieCelu' : 'namiar', NaN, NaN);
       S.lastLocks = locks;
       S.lastPaint = fcPaint.added;
+      soundAreasFrame();
       SND.klatka();
     }
 
@@ -27382,6 +27495,7 @@
       // budowle w bańce gracza (kawałki doku — src/game/worldBodies.js): fala reaktora jako front ciśnienia
       onDetonate: (ev) => {
         spawnReactorDetonationGas(ev);
+        if (SND) soundSceneReactorBlast(ev);
         if (ev?.blast && (worldBodies.stats.live > 0 || worldBodies.stats.solids > 0)) worldBodies.detonateDamage(ev.x, ev.y, Number(ev.blast.aoeRadius) || 0, Number(ev.blast.aoeDamage) || 0);
         // fala reaktora zmiata drony naprawcze w zasięgu (bez strony)
         if (ev?.blast && RepairSwarm.out > 0) RepairSwarm.blast(ev.x, ev.y, Number(ev.blast.aoeRadius) || 0, Number(ev.blast.aoeDamage) || 0, null);
@@ -27393,6 +27507,7 @@
         if (d < shakeR) camera.addShake?.(7 * power * (1 - d / shakeR), 0.6);
       },
       onState: (ev) => {
+        if (SND) soundSceneReactorState(ev);
         const host = ev.host;
         // Śmierć z puli / gracza detonuje od razu (stopienie bez odliczania) — bez komunikatu.
         if (ev.to !== REACTOR_CORE_STATE.MELTDOWN || host?.destroyed || host?.dead) return;

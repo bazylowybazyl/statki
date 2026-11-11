@@ -42,6 +42,9 @@
 //   zbiórka łupu — `zbiorka(liczbaCelow, x, y)`: pętla `wiazkaZbiorki`, dopóki wiązka ma cele (`targetCount`).
 //   drony        — `dronyNaprawcze(rigs)`: pierścień `rig.fx` (LAUNCH `dronWylot`, DOCK `dronDok`, REGROWN `dronLata`,
 //                  DRONE_LOST `wybuchMaly`), pętla `dronSpaw` na rig przy pierwszym dronie w stanie WORK.
+//   alarmy okrętu — `alarmOkretu(id, aktywny, głośność)` z szyny `ShipAlarm` (jeden alarm naraz, głośność opada po
+//                  4 s): MISSILE → pętla `rakietyOstrzezenie` (ten sam klucz co ostrzeżenie z bufora zagrożeń — jeden głos),
+//                  HULL i REACTOR → pętla `alarm`, BRIDGE / SHIELD / DETECTED → jednorazowo `komunikat` przy włączeniu.
 //   kapsuły      — `kapsuly(st)`: z liczności stanów (PENDING maleje → wyrzut, COAST → FLY → zapłon; indeksy puli
 //                  przestawiają się przy usuwaniu, więc różnica liczności, nie indeksów), położenie — kapsuła w stanie.
 
@@ -66,6 +69,8 @@ export const FX_KOPALNI = Object.freeze({ BLAST: 1, CONTAINED: 2, SPLIT: 3, COLL
 export const FX_DRONOW = Object.freeze({ REGROWN: 1, DRONE_LOST: 2, LAUNCH: 3, DOCK: 4, SOCKET: 5, WELD_START: 6 });
 export const DRON_PRACA = 2;
 export const KAPSULA = Object.freeze({ PENDING: 0, COAST: 1, FLY: 2 });
+/** Kopia `SHIP_ALARM` (src/game/shipAlarms.js; strażnik równości w teście). */
+export const ALARM = Object.freeze({ NONE: 0, REACTOR: 1, HULL: 2, MISSILE: 3, BRIDGE: 4, SHIELD: 5, DETECTED: 6 });
 const KLUCZE_RDZENIA = Object.freeze(Array.from({ length: SLOTY_RDZENIA }, (_, i) => `rdzen:${i}`));
 
 /**
@@ -91,7 +96,7 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     rdzenStopienie: 0, rdzenDetonacja: 0, klik: 0,
     hcRozruch: 0, hcWejscie: 0, hcWyjscie: 0, hcPrzerwany: 0, rakietyKlatki: 0, mysliwiecPrzelot: 0,
     skalaWybuch: 0, skalaPekniecie: 0, urobekZbior: 0, dronWylot: 0, dronDok: 0, dronLata: 0, dronUtracony: 0,
-    kapsulaWyrzut: 0, kapsulaSilnik: 0
+    kapsulaWyrzut: 0, kapsulaSilnik: 0, alarmKomunikat: 0, alarmKlatki: 0
   };
 
   // --- warp gracza
@@ -196,10 +201,25 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
   }
 
   // --- etap 2: rakiety w gracza, hipercruise, silniki obcych
-  function ostrzezenieRakiet(liczba) {
+  function ostrzezenieRakiet(liczba, glos = 1) {
     if (!(liczba > 0)) return;
     stats.rakietyKlatki++;
-    ujscie.petla('rakiety', 'rakietyOstrzezenie', 1, NaN, NaN);
+    ujscie.petla('rakiety', 'rakietyOstrzezenie', glos, NaN, NaN);
+  }
+
+  let alarmPoprz = ALARM.NONE;
+  /** Alarm okrętu gracza z szyny `ShipAlarm` (stan co klatkę): `id`, `aktywny`, `glos` — `state.volume`. */
+  function alarmOkretu(id, aktywny, glos) {
+    const a = aktywny ? id | 0 : ALARM.NONE;
+    const g = glos > 0 ? glos : 0;
+    if (a !== ALARM.NONE) stats.alarmKlatki++;
+    if (a === ALARM.MISSILE) ujscie.petla('rakiety', 'rakietyOstrzezenie', g, NaN, NaN);
+    else if (a === ALARM.HULL || a === ALARM.REACTOR) ujscie.petla('alarm', 'alarm', g, NaN, NaN);
+    if (a !== alarmPoprz && (a === ALARM.BRIDGE || a === ALARM.SHIELD || a === ALARM.DETECTED)) {
+      stats.alarmKomunikat++;
+      ujscie.graj('komunikat', NaN, NaN, g > 0.35 ? g : 0.35);
+    }
+    alarmPoprz = a;
   }
 
   let hcPoprz = null;
@@ -391,12 +411,13 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     zerwaniePoprz = null;
     hcPoprz = null;
     kapsulyPending = -1;
+    alarmPoprz = ALARM.NONE;
     for (let i = 0; i < SLOTY_RDZENIA; i++) slotHost[i] = null;
   }
 
   return {
     warpGracza, osieWarpa, maskowanieGracza, maskowanieZdarzenie, rdzenStopienie, rdzenDetonacja, tloMostka, klik,
-    ostrzezenieRakiet, hipercruise, silnikiObcych, przelotyMysliwcow, kopalnia, zbiorka, dronyNaprawcze, kapsuly,
+    ostrzezenieRakiet, alarmOkretu, hipercruise, silnikiObcych, przelotyMysliwcow, kopalnia, zbiorka, dronyNaprawcze, kapsuly,
     klatka, wyzeruj, stats, ustawienia: U
   };
 }

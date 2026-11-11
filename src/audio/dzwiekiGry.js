@@ -552,14 +552,18 @@ export function utworzDzwiekiGry(opts) {
     const out = [];
     for (const id of Object.keys(TAB)) {
       const w = dzwieki.get(id);
-      out.push({ id, kat: TAB[id].kat, pliki: w ? w.pliki : [], wybor: wybor[id] | 0, wyciszony: !!wycisz[id], synteza: false });
+      out.push({ id, kat: TAB[id].kat, obszar: TAB[id].obszar || null, pliki: w ? w.pliki : [], wybor: wybor[id] | 0, wyciszony: !!wycisz[id], synteza: false });
     }
     if (zSynteza) for (const id of Object.keys(DZWIEKI_SYNTEZY)) {
-      out.push({ id, kat: DZWIEKI_SYNTEZY[id].kat, nazwa: DZWIEKI_SYNTEZY[id].nazwa, pliki: [], wybor: 0, wyciszony: !!wycisz[id], synteza: true });
+      out.push({ id, kat: DZWIEKI_SYNTEZY[id].kat, obszar: DZWIEKI_SYNTEZY[id].obszar || null, nazwa: DZWIEKI_SYNTEZY[id].nazwa, pliki: [], wybor: 0, wyciszony: !!wycisz[id], synteza: true });
     }
-    // kolejność kategorii (od najgłośniejszej), w kategorii — kolejność tabeli
+    // kolejność kategorii (od najgłośniejszej), w kategorii — kolejność tabeli; dźwięki obszarów (pole `obszar`,
+    // src/audio/dzwiekiSwiata.js) na końcu, grupami obszarów w kolejności tabeli
     const rank = Object.keys(KATEGORIE);
-    return out.map((r, i) => ({ r, i })).sort((a, b) => (rank.indexOf(a.r.kat) - rank.indexOf(b.r.kat)) || (a.i - b.i)).map((x) => x.r);
+    const obszary = [];
+    for (const r of out) if (r.obszar && !obszary.includes(r.obszar)) obszary.push(r.obszar);
+    const ranga = (r) => (r.obszar ? 100 + obszary.indexOf(r.obszar) : rank.indexOf(r.kat));
+    return out.map((r, i) => ({ r, i })).sort((a, b) => (ranga(a.r) - ranga(b.r)) || (a.i - b.i)).map((x) => x.r);
   }
 
   function tekstWyboru() {
