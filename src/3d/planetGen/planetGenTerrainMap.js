@@ -365,7 +365,7 @@ export const PLANET_VEGETATION = Object.freeze({
 });
 /** Barwy wody i osadu (sRGB 0–255): ciemna woda leśna, muł wielkiej rzeki, mleczny błękit z lodowca, osad w morzu, piasek. */
 export const TERRAIN_WATER = Object.freeze({
-  dark: [27, 40, 48], mud: [150, 134, 88], ice: [...WATER.lodowa.edge], silt: [218, 226, 196], sand: [...GROUND.sand]
+  dark: [27, 40, 48], mud: [150, 134, 88], ice: [...WATER.lodowa.edge], silt: [186, 206, 178], sand: [...GROUND.sand]
 });
 /** Barwa lasu palety (sRGB 0–255) — odniesienie dla odcienia z palety planety (`vegTint`, planetGenPlace.js). */
 export const terrainForestColor = (veg) => [...VEG[veg].forestB];

@@ -998,3 +998,41 @@ cztery własne zestawy roślinności, a demo pokazywało jedną planetę (oliwko
 Czego nadal nie ma: style rzek z map terenu (ramiona delty, rzeka roztokowa z plecionką koryt, wielka rzeka
 z wyspami) — planeta ma jeden model rzeki; to osobny etap. Pliki planety przygotowanej wypalone ponownie (zmienił
 się brzeg i barwa płycizny).
+
+### 10.21. Pustynie: wydmy jako rzeźba (2026-11-11, demo)
+
+Polecenie użytkownika: „kolejny krok — pustynie”, z pięcioma wzorcami (pole wydm złożonych z płaskimi dnami
+i mocnymi cieniami, struktura kolista w skalnej pustyni, ośnieżone grzbiety nad pomarańczową równiną, wydmy
+podłużne i barchany widziane skośnie, Sahara z orbity).
+
+Stan przed: pustynia była barwą z dwoma układami pasków (sinus) i płatami hamady — bez rzeźby; cieki regionu
+rysowały w niej wodę z zielonymi pasami; planeta dema prawie nie ma pustyń (najsuchsze ciepłe miejsce: wilgotność
+0,275 — step).
+
+Zrobione:
+
+- **Wydmy w polu wysokości** (`duneField`): megawydmy co 2,1–3,3 km o wysokości do 100 m, drobne wydmy co 0,42 km
+  (8 m, płatami) — materiał liczy od nich światło i cień. Trzy ciągi grzbietów o stałych kierunkach, wagi z szumu
+  (wydmy podłużne / sieci), profil niesymetryczny, grzbiety łamane szumem.
+- **Barwy**: piasek mórz piasku pomarańczowy, grzbiety jaśniejsze, dna między wydmami blade; paski barwy usunięte.
+- **Pustynia skalista**: płaskowyże z progami i żebra w polu (`hamadaMask`), wspólna maska z barwami.
+- **Klimat w polu** (ta sama funkcja co w barwach): cieki regionu w pustyni suche — zostaje dolina w rzeźbie.
+- Demo: `?wilg=`, `?temp=` (klimat planety) — do oglądania pustyń `?wilg=0.3&temp=0.15`.
+- Przy okazji: wysokość „otoczki pól” nie wchodzi już do rzeźby poza klimatem lasu (na stepie dawała wytłoczone
+  obrysy), grzbiety dna morza × 0,2 (było 0,45), smugi osadu małych rzek słabsze, płycizna morza nieco ciemniejsza.
+
+Błędy po drodze: pierwsza wersja wyglądała jak paski tygrysa (połowa pola to szare dna, ciągi zbyt równe, profil
+z sinusa bez linii grzbietu); wydmy miały barwę, ale nie rzeźbę — przyczynę wziąłem najpierw za wykluczenie przy
+rzekach i górach (zawężenie nic nie dało), odczyt mapy rzeźby pokazał zakres 7–16 m na całym kadrze, a próba
+z wyłączoną maską — że gasi je `landW` (ta pustynia leży na wąskim lądzie); drobne wydmy na całym polu wyglądały
+jak sztruks → płaty i mniejsza wysokość; kadr przy słońcu 28° nad horyzontem był wybielony płową mgiełką suchej
+planety (ocena przy 45°).
+
+Pomiar rzeźby (okno poziomu 10, teksel 9 m, osiem bloków 4,6 km wzdłuż kadru, maska wyłączona na próbę): zakres
+wysokości 58–94 m, średni spadek 3,2–6,1%. Koszt wypieku okna z klimatem i wydmami w polu nie był mierzony.
+
+Czego brakuje względem wzorców: kontrast i nasycenie są niższe niż na zdjęciach (cień wydm krótki przy słońcu
+45°, mgiełka); nie ma barchanów ani wydm gwiaździstych jako osobnego kształtu; nie ma struktur kolistych, kraterów,
+solnisk ani śniegu na grzbietach w pustyni; rzeźba skalna jest rzadka — duże połacie pustyni poza morzami piasku
+są płaskie i puste; w części płytkich mórz gęste ławice przy wyspach wyglądają plamiście (istniały wcześniej,
+po rozjaśnieniu płycizny są bardziej widoczne — przyciemniona, nie usunięte).

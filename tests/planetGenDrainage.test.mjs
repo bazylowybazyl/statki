@@ -331,3 +331,29 @@ test('brzeg nie zmienia kształtu przy zbliżaniu: ogon szeregu szumu; roślinno
   for (const p of ['tropik', 'czerwona', 'purpura', 'zlota']) assert.equal(terrainLandscape(p).accent.length, 3);
   assert.match(solid, /mix\(forestC, accentC, accent\.mul\(0\.8\)\)\.mul\(canopy\)/);
 });
+
+test('pustynia: wydmy są rzeźbą (wysokość w polu), wspólna funkcja dla pola i barw, suche koryta', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../src/3d/planetGen/planetGenSolid.tsl.js', import.meta.url), 'utf8');
+  const { DUNES } = await import('../src/3d/planetGen/planetGenSolid.tsl.js');
+  // rozmiary jak w naturze: megawydmy co 2–3,5 km o wysokości rzędu 100 m, drobne co kilkaset metrów
+  assert.equal(DUNES.megaKm.length, 3);
+  for (const km of DUNES.megaKm) assert.ok(km >= 1.5 && km <= 4);
+  assert.ok(DUNES.heightKm >= 0.05 && DUNES.heightKm <= 0.2 && DUNES.smallKm < 1 && DUNES.smallHeightKm < DUNES.heightKm / 4);
+  // wysokość wydm dodana do terenu w polu (światło i cień liczy materiał), nie paski barwy
+  assert.match(src, /hLand\.addAssign\(DN\.h\.mul\(DUNES\.heightKm\)\.add\(DN\.small\.mul\(DUNES\.smallHeightKm\)\)\.mul\(erg\)\)/);
+  assert.ok(!/const mega = sin\(duneP/.test(src), 'bez dawnych pasków barwy');
+  // ta sama funkcja i te same maski w polu i w barwach
+  assert.equal((src.match(/const DN = duneField\(U, C, ps\)/g) || []).length, 2);
+  assert.ok((src.match(/ergMask\(ps\)/g) || []).length >= 2);
+  assert.ok((src.match(/hamadaMask\(ps, /g) || []).length >= 2);
+  // wydmy tylko w pełnym polu (wejście spływu i próba bez wydm), nie gaszone powoli rosnącą wagą lądu
+  assert.match(src, /If\(U\.uDr\.z\.greaterThan\(0\.5\)\.and\(desertK\.greaterThan\(0\.01\)\)/);
+  assert.match(src, /const shoreK = smoothstep\(0\.0, 0\.03, d\)\.toVar\(\)/);
+  // klimat w polu ten sam co w barwach; cieki regionu w pustyni suche
+  assert.match(src, /const KF = earthClimate\(U, C, hLand, d\)/);
+  assert.match(src, /uK: \[L\.temp, L\.wet, L\.axisTilt, 0\]/);
+  assert.match(src, /\.mul\(float\(1\.0\)\.sub\(desertK\)\)\)\);/);
+  // profil wydmy niesymetryczny (łagodny stok dowietrzny, stromy zawietrzny)
+  assert.match(src, /pow\(min\(t\.div\(0\.72\), float\(1\.0\)\.sub\(t\)\.div\(0\.28\)\), 1\.35\)/);
+});

@@ -277,7 +277,8 @@ export function computeDrainage(height, rain, W, H, {
       const cosL = Math.max(0.2, cosRow[y0]);
       const ry = Math.ceil(rad);
       const rx = Math.min(W >> 1, Math.ceil(rad / cosL));
-      const peak = 0.4 + 0.6 * s;
+      // (małe rzeki — ledwie ślad: przy gęstej siatce ujść jest dużo i ich smugi zlewały się w plamiste, jasne morze)
+      const peak = 0.12 + 0.88 * s;
       for (let dy = -ry; dy <= ry; dy++) {
         const yy = y0 + dy;
         if (yy < 0 || yy >= H) continue;

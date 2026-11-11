@@ -91,7 +91,7 @@ function lookTerran(rng) {
       snow: srgb('#e8edf2'),
       ice: jitter(rng, srgb('#d6e2ea'), 0.04),
       // (płycizna turkusowa — jak morze przy brzegu na mapach terenu)
-      shallow: jitter(rng, srgb(rng.pick(['#237f8c', '#27858e', '#2a7d88'])), 0.1),
+      shallow: jitter(rng, srgb(rng.pick(['#1f6f7c', '#23757e', '#266e78'])), 0.1),
       ocean: jitter(rng, srgb(rng.pick(['#0a1e3a', '#0b2240', '#0a1a34', '#0c2438'])), 0.08),
       deep: jitter(rng, srgb(rng.pick(['#050e22', '#06102a', '#040c1e'])), 0.08)
     }

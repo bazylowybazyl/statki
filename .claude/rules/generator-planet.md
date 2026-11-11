@@ -312,6 +312,28 @@ paths:
 - Style rzek mapy terenu (ramiona delty, rzeka roztokowa, wielka rzeka z wyspami) NIE są jeszcze na planecie —
   planeta ma jeden model rzeki (łuki z zakolami); to osobny etap.
 
+## Pustynie (planety z wodą; opis, wzorce i błędy po drodze: `docs/OPIS-generator-planet.md` § 10.21)
+
+- WYDMY SĄ RZEŹBĄ: wysokość dodana do terenu w POLU (`duneField` → `hLand`), światło i cień liczy materiał —
+  nie paski barwy. Trzy ciągi grzbietów o STAŁYCH kierunkach (kierunek zmienny z szumu rozjeżdża długość fali),
+  wagi ciągów z szumu niskiej częstości: jeden ciąg — wydmy podłużne, krzyżujące się — sieć ze szczytami
+  w przecięciach i płaskimi dnami. Profil niesymetryczny (stok dowietrzny 72% fali, zawietrzny stromy). Rozmiary
+  w km (`DUNES`: megawydmy 2,1–3,3 km / 100 m, drobne 0,42 km / 8 m — płatami), promień planety z `uGeo.x`;
+  dziedzina surowa (`C.dir`). Nierozdzielone przez teksel wchodzą średnią.
+- Ta sama funkcja i te same maski w polu i w barwach: `duneField`, `ergMask` (morza piasku), `hamadaMask`
+  (pustynia skalista: płaskowyże z progami, żebra). Barwy: piasek mórz piasku pomarańczowy, grzbiety jaśniejsze,
+  dna między wydmami blade (szare tylko płatami).
+- Pole liczy KLIMAT tą samą funkcją co barwy (`earthClimate`, uniform `uK` także w polu): pustynia = `desertK`.
+  Wydmy tylko w pełnym polu (`uDr.z`): wejście spływu i próba liczą teren bez wydm. Cieki regionu w pustyni są
+  suche (dolina zostaje w rzeźbie, bez wody i bez zielonego pasa).
+- Maski pustyni nie mnożyć przez `landW` (rośnie powoli w głąb lądu — gasił wydmy na całych wąskich lądach);
+  pas przy brzegu: `shoreK`. Diagnoza „barwa jest, rzeźby nie ma” — odczyt mapy rzeźby okna (zakres wysokości
+  i średni spadek w blokach), nie oglądanie zrzutów przy wysokim słońcu.
+- Do oceny pustyń: planeta z suchym klimatem (`?wilg=0.3&temp=0.15`), słońce niżej (`--slonce 45` w serii);
+  przy bardzo niskim słońcu płowa mgiełka suchej planety wybiela kadr.
+- NIE zrobione: barchany, wydmy gwiaździste jako osobny kształt (są tylko przecięcia ciągów), struktury koliste
+  i kratery, ośnieżone grzbiety w pustyni, suche jeziora (solniska), gęstsza rzeźba skalna.
+
 ## Planety przygotowane: mapy jako pliki (opis, liczby, format: `docs/OPIS-generator-planet.md` § 10.17)
 
 - Decyzja użytkownika (2026-11-11): planety pierwszego przejścia gry (kampania) są PRZYGOTOWANE i dostarczane jako
@@ -457,6 +479,7 @@ paths:
   (demo: `?ultra=1|0`, `?mapa=2048|4096|8192`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`,
   `?plik=<nazwa>` — planeta z plików map, `?poziom=1…11` — najgłębszy poziom okna, `?strumienie=0`,
   `?ros=zielona|czerwona|purpurowa|zlota|morska|oliwkowa` — roślinność (także lista w panelu),
+  `?wilg=0…1,1` i `?temp=−0,3…0,3` — klimat planety (mało wilgoci — pustynie),
   `?region=512|1024|1536|2048` — strumienie regionu;
   orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
   `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,

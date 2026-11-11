@@ -133,6 +133,53 @@ function curvatureAt(F, U, C, hC) {
   return axis.mul(2.0).add(diag).div(12.0).sub(hC);
 }
 
+// ── WYDMY (pustynie planet z wodą; wzorce — zdjęcia satelitarne od użytkownika: pola wydm gwiaździstych z płaskimi
+//    dnami między nimi, wydmy podłużne, cienie stoków) ──────────────────────────────────────────────────────────────
+// Wydmy są RZEŹBĄ (wysokość w polu — światło i cień liczy materiał), nie paskami barwy. Trzy ciągi grzbietów
+// o stałych kierunkach (kierunek zmienny z szumu rozjeżdżałby długość fali), wagi ciągów z szumu niskiej częstości
+// (reżim wiatru): jeden ciąg — wydmy podłużne, dwa–trzy krzyżujące się — sieć wydm gwiaździstych ze szczytami
+// w przecięciach i płaskimi dnami pomiędzy. Fale grzbietów łamane szumem (zakręty, rozwidlenia). Długości fal w km
+// (promień planety z uGeo.x); wydmy, których teksel celu nie rozdziela, wchodzą średnią. Dziedzina surowa (C.dir).
+export const DUNES = Object.freeze({ megaKm: [2.6, 3.3, 2.1], smallKm: 0.42, heightKm: 0.1, smallHeightKm: 0.008, mean: 0.22 });
+const DUNE_DIRS = [[0.83, 0.21, 0.52], [-0.31, 0.9, 0.3], [0.44, -0.41, -0.8]];
+/** Zwraca { h — wysokość megawydm 0…1 (0 — dno między wydmami), small — drobne wydmy 0…1, flat — płaskie dno 0…1 }. */
+function duneField(U, C, ps) {
+  const R = U.uGeo.x;
+  const texKm = C.stN.mul(R).toVar();
+  const pd = C.dir;
+  const nR = vec3(pgNoise(ps.mul(7.0).add(vec3(1.9, 4.2, -3.3))), pgNoise(ps.mul(7.0).add(vec3(-6.1, 0.7, 2.8))),
+    pgNoise(ps.mul(7.0).add(vec3(3.4, -5.5, 8.1)))).toVar();
+  // (drugi ciąg prawie wszędzie, trzeci w części pól: sieci i wydmy gwiaździste są regułą, same pręgi — wyjątkiem)
+  const w = vec3(smoothstep(-0.3, 0.0, nR.x), smoothstep(-0.2, 0.15, nR.y), smoothstep(0.0, 0.3, nR.z)).toVar();
+  const wob = pgFbm(ps.mul(260.0).add(vec3(2.2, 9.1, -4.4)), 3).toVar();
+  const wob2 = pgNoise(pd.mul(2400.0).add(vec3(0.3, 0.6, 0.9))).toVar();
+  const train = (i) => {
+    const k = R.mul(2 * Math.PI / DUNES.megaKm[i]);
+    // profil wydmy: łagodny stok dowietrzny (72% fali), stromy zawietrzny, ostry grzbiet — trójkąt niesymetryczny
+    // lekko zaokrąglony potęgą (sinus dawał obłe wały bez linii grzbietu)
+    const t = fract(dot(pd, vec3(...DUNE_DIRS[i])).mul(k).add(wob.mul(9.0 + i * 2.5)).add(wob2.mul(1.2)).add(i * 2.1).div(2 * Math.PI));
+    return pow(min(t.div(0.72), float(1.0).sub(t).div(0.28)), 1.35);
+  };
+  const avg = train(0).mul(w.x).add(train(1).mul(w.y)).add(train(2).mul(w.z)).div(w.x.add(w.y).add(w.z).add(0.05)).toVar();
+  // dno między wydmami: wszystko poniżej progu jest płaskie
+  const hh = max(avg.sub(0.1), 0.0).div(0.9).toVar();
+  const on = float(1.0).sub(smoothstep(DUNES.megaKm[2] / 9, DUNES.megaKm[2] / 4.5, texKm)).toVar();
+  // drobne wydmy na ciałach megawydm i na piasku między nimi (w poprzek pierwszego ciągu)
+  const kS = R.mul(2 * Math.PI / DUNES.smallKm);
+  // (pola drobnych wydm płatami i o zmiennej wysokości — równe prążki na całym polu wyglądały jak sztruks)
+  const patchS = smoothstep(-0.25, 0.3, pgNoise(pd.mul(900.0).add(vec3(5.5, 1.5, -2.5)))).toVar();
+  const sS = sin(dot(pd, vec3(-0.5, 0.33, 0.8)).mul(kS).add(wob2.mul(9.0)).add(wob.mul(31.0))).mul(0.5).add(0.5).toVar();
+  const onS = float(1.0).sub(smoothstep(DUNES.smallKm / 9, DUNES.smallKm / 4.5, texKm)).toVar();
+  return {
+    h: mix(float(DUNES.mean), hh, on), small: mix(float(0.5), sS.mul(sS), onS).mul(float(0.35).add(hh.mul(0.65))).mul(patchS),
+    flat: float(1.0).sub(smoothstep(0.0, 0.1, hh)).mul(on)
+  };
+}
+/** Morza piasku (ergi) w pustyni — ta sama maska w polu (rzeźba wydm) i w barwach. */
+const ergMask = (ps) => smoothstep(0.02, 0.2, pgFbm(ps.mul(9.0).add(vec3(8.8, -1.4, 6.6)), 4));
+/** Pustynia skalista (hamada, płaskowyże, ostańce) poza morzami piasku — wspólna dla rzeźby i barw. */
+const hamadaMask = (ps, erg) => smoothstep(-0.05, 0.18, pgFbm(ps.mul(6.0).add(vec3(-3.3, 5.7, 1.2)), 4)).mul(float(1.0).sub(erg));
+
 /** Ogon szeregu detalu wybrzeża i granic pokrycia: oktawy ≥ `from` gasną z `gain` (gain · 2,03 < 1). */
 export const COAST_TAIL = Object.freeze({ from: 5, gain: 0.45 });
 export const COVER_TAIL = Object.freeze({ from: 3, gain: 0.42 });
@@ -417,7 +464,8 @@ function earthField(type) {
   // uDr2 jak uDr (rozmiar siatki, 1 — włączona, ziarno), uRg = (kąt a i b początku siatki, kąt komórki, skala
   // głębokości dolin), uRg2 = (numer komórki początku siatki na kracie planety: x, y)
   const U = bakeUniforms({
-    ...COMMON_DEFS, uE1: 'vec4', uE2: 'vec4', uE3: 'vec4', uE4: 'vec4', uDr: 'vec4', uDr2: 'vec4', uRg: 'vec4', uRg2: 'vec4',
+    // uK — klimat jak w barwach (temperatura, wilgotność, nachylenie osi): pustynia w polu = rzeźba wydm, suche koryta
+    ...COMMON_DEFS, uE1: 'vec4', uE2: 'vec4', uE3: 'vec4', uE4: 'vec4', uDr: 'vec4', uDr2: 'vec4', uRg: 'vec4', uRg2: 'vec4', uK: 'vec4',
     ...(ocean ? slotDefs('uChain') : {})
   });
   const D = drainNode();
@@ -458,6 +506,9 @@ function earthField(type) {
     const bar = float(0.0).toVar();
     const mud = float(0.0).toVar();
     const plume = float(0.0).toVar();
+    // klimat miejsca (ten sam co w barwach): pustynia = mało wilgoci, nie mróz
+    const KF = earthClimate(U, C, hLand, d);
+    const desertK = float(1.0).sub(smoothstep(0.17, 0.3, KF.M)).mul(smoothstep(0.1, 0.25, KF.T)).toVar();
     If(U.uDr.z.greaterThan(0.5), () => {
       const cosL = max(cos(C.lat), 0.05).toVar();
       const cellsPerRad = U.uDr.y.div(PI).toVar();
@@ -521,9 +572,10 @@ function earthField(type) {
             .add(nz2(1.3, 8.6).mul(0.12).mul(float(1.0).sub(smoothstep(0.1, 0.25, stC2))))
             .mul(float(1.0).sub(smoothstep(0.05, 0.4, R.wet))).toVar();
           const R2 = riverNet(D2, { uDr: U.uDr2 }, g2.add(warp2), float(1.0), stC2, flatK, { ox: int(U.uRg2.x), oy: int(U.uRg2.y) });
-          fresh.assign(max(fresh, R2.line.mul(inR).mul(float(1.0).sub(smoothstep(2.6, 4.6, hLand)))));
+          // (w pustyni cieki regionu są SUCHE: dolina zostaje w rzeźbie — wadi — ale bez wody)
+          fresh.assign(max(fresh, R2.line.mul(inR).mul(float(1.0).sub(smoothstep(2.6, 4.6, hLand))).mul(float(1.0).sub(desertK))));
           hLand.subAssign(min(R2.carve.mul(U.uRg.w).mul(inR).mul(landW), max(hLand.sub(0.16), 0.0)));
-          wetV.assign(max(wetV, R2.wet.mul(inR).mul(0.8)));
+          wetV.assign(max(wetV, R2.wet.mul(inR).mul(0.8).mul(float(1.0).sub(desertK.mul(0.92)))));
         });
       });
       // SMUGI OSADU w morzu przy ujściach rzek (kanał A siatki spływu — planetGenDrainage.js): próbka dwuliniowa
@@ -540,7 +592,31 @@ function earthField(type) {
       const plAt = (dx, dy) => D.load(ivec2(mod(int(s0.x).add(dx).add(DW.mul(2)), DW), clamp(int(s0.y).add(dy), int(0), DH.sub(1)))).a;
       const plRaw = mix(mix(plAt(0, 0), plAt(1, 0), fs.x), mix(plAt(0, 1), plAt(1, 1), fs.x), fs.y).toVar();
       const plN = pgFbm(wp.div(kS).mul(0.9).add(vec3(4.4, -7.1, 2.6)), 4).toVar();
-      plume.assign(clamp(plRaw.mul(float(1.0).add(plN.mul(1.1))).mul(1.2).sub(0.05), 0.0, 1.0));
+      plume.assign(clamp(plRaw.mul(float(1.0).add(plN.mul(0.7))).mul(1.2).sub(0.05), 0.0, 1.0));
+    });
+    // WYDMY w morzach piasku pustyni (nie w dolinach rzek, nie na górach) — tylko pełne pole (wejście spływu i próba
+    // liczą teren bez wydm: zagłębienia między wydmami rozbiłyby spływ)
+    If(U.uDr.z.greaterThan(0.5).and(desertK.greaterThan(0.01)), () => {
+      const erg0 = ergMask(ps).toVar();
+      // (wydm nie ma tylko w samym dnie doliny wielkiej rzeki i na wysokich górach — szersze wykluczenie gasiło je
+      // kilka kilometrów od każdego cieku)
+      // (`landW` rośnie powoli w głąb lądu — gasił wydmy na całych wąskich lądach; tu wystarczy pas przy samym brzegu)
+      const shoreK = smoothstep(0.0, 0.03, d).toVar();
+      const erg = erg0.mul(desertK).mul(shoreK).mul(float(1.0).sub(smoothstep(0.5, 0.8, wetV)))
+        .mul(float(1.0).sub(smoothstep(0.6, 1.6, mtn))).toVar();
+      If(erg.greaterThan(0.01), () => {
+        const DN = duneField(U, C, ps);
+        hLand.addAssign(DN.h.mul(DUNES.heightKm).add(DN.small.mul(DUNES.smallHeightKm)).mul(erg));
+      });
+      // PUSTYNIA SKALISTA: płaskowyże z progami i ostańce (grzbiety szumu ~17 km z tarasowaniem — stoki progów
+      // dostają w barwach skałę, bo są strome), drobniejsze żebra ~4 km
+      const ham = hamadaMask(ps, erg0).mul(desertK).mul(shoreK).toVar();
+      If(ham.greaterThan(0.01), () => {
+        const rg = pgRidged(ps.mul(320.0).add(vec3(4.1, -2.7, 6.3)), 4, 2.1, 0.5, 1.0, 2.0).toVar();
+        const mesa = smoothstep(0.38, 0.5, rg).mul(0.55).add(smoothstep(0.62, 0.72, rg).mul(0.45)).toVar();
+        const ribs = pgRidged(ps.mul(1400.0).add(vec3(-1.6, 3.3, 0.4)), 3, 2.1, 0.5, 1.0, 2.0).mul(float(1.0).sub(smoothstep(2.0e-4, 5.0e-4, st)));
+        hLand.addAssign(mesa.mul(0.22).add(ribs.mul(0.035).mul(float(0.3).add(mesa))).mul(ham));
+      });
     });
     // jeziora na nizinach: płaska tafla w zagłębieniu szumu
     const lakeN = pgFbm(P.q.mul(12.0).add(vec3(-4.2, 9.3, 1.1)), 4).toVar();
@@ -552,7 +628,9 @@ function earthField(type) {
     const mor = inv(0.0, 0.1, P.border).mul(float(1.0).sub(P.cont1)).mul(pgFbm(P.q.mul(9.0), 3).mul(0.4).add(0.6));
     const abyss = pgFbm(P.q.mul(14.0), 4).mul(0.3);
     const hSea0 = float(-0.1).sub(U.uE3.x.mul(smoothstep(0.0, 0.3, d.negate()))).add(mor.mul(U.uE3.y)).add(abyss)
-      .add(mtnSea.mul(0.45)).toVar();
+      // (× 0,2: grzbiety dna mają częstość gór lądu — przy × 0,45 wychodziły tuż pod powierzchnię i z jasną barwą
+      // płycizny dawały na płytkich morzach plamisty wzór; wyspy robią stożki szelfu i łańcuchy)
+      .add(mtnSea.mul(0.2)).toVar();
     // osad z rzeki spłyca morze przy ujściu (stożek delty): materiał pokazuje dno przez wodę z wagą e^(−28 · głębokość),
     // więc głębokość liczy się z ŻĄDANEJ widoczności mętnego dna (0,8 · smuga → ~8 m w sercu smugi, ~125 m na jej
     // skraju — tam zostaje barwa szelfu). Liniowe spłycenie do kilku metrów dawało płaską półkę o ostrym brzegu,
@@ -722,12 +800,25 @@ function earthColor(type) {
       // ── PUSTYNIA: morza piasku z wydmami (dwie skale grzbietów, widoczne dopiero gdy teksel je rozdziela),
       //    kamienista hamada w ciemniejszych płatach o wyraźnym brzegu ──
       const land = vec3(desertC).toVar();
-      const erg = smoothstep(0.02, 0.2, pgFbm(ps.mul(9.0).add(vec3(8.8, -1.4, 6.6)), 4)).toVar();
-      const duneP = dot(ps, vec3(0.83, 0.21, 0.52)).toVar();
-      const mega = sin(duneP.mul(1257.0).add(nMo.mul(5.0)).add(nP.mul(9.0))).mul(float(1.0).sub(smoothstep(1.0e-3, 2.0e-3, st)));
-      const rip = sin(duneP.mul(8976.0).add(nD.mul(4.0)).add(nMo.mul(11.0))).mul(float(1.0).sub(smoothstep(1.4e-4, 2.8e-4, st)));
-      land.mulAssign(float(1.0).add(erg.mul(mega.mul(0.1).add(rip.mul(0.07)))).add(nD.mul(0.1)));
-      const ham = smoothstep(0.08, 0.14, nMo.add(nV.mul(0.5))).mul(float(1.0).sub(erg));
+      const erg = ergMask(ps).toVar();
+      // wydmy są w rzeźbie (pole) — tu tylko barwa: grzbiety jaśniejsze i cieplejsze, płaskie dna między wydmami
+      // blade, szarawe (twardy grunt, pył), wszystko na piasku nasyconym ku pomarańczowi
+      const duneH = float(DUNES.mean).toVar();
+      const duneFlat = float(0.0).toVar();
+      If(erg.mul(float(1.0).sub(smoothstep(0.17, 0.3, M))).greaterThan(0.01), () => {
+        const DN = duneField(U, C, ps);
+        duneH.assign(DN.h);
+        duneFlat.assign(DN.flat);
+      });
+      // (piasek mórz piasku wyraźnie pomarańczowy — wzorce; reszta pustyni zostaje płowa)
+      const duneSand = mix(desertC, U.uDesertRed, 0.35).mul(vec3(1.3, 0.98, 0.66)).mul(float(0.86).add(duneH.mul(0.34)));
+      // (dno między wydmami to też piasek, tylko bledszy; szare, twarde dna — w części pól, płatami)
+      const pan = smoothstep(0.05, 0.3, nV.add(nP.mul(0.6))).toVar();
+      const flatC = mix(desertC.mul(vec3(1.06, 0.98, 0.86)), vec3(0.5, 0.46, 0.4), pan.mul(0.6));
+      land.assign(mix(land, mix(duneSand, flatC, duneFlat), erg));
+      land.mulAssign(float(1.0).add(nD.mul(0.1)));
+      // (kamienista hamada tam, gdzie pole ma płaskowyże i ostańce — wspólna maska; brzeg płata strzępiony szumem)
+      const ham = hamadaMask(ps, erg).mul(smoothstep(-0.12, 0.1, nMo.add(nV.mul(0.5))));
       land.assign(mix(land, mix(U.uRock, U.uDesertRed, 0.45).mul(float(1.15).add(nD.mul(0.2))), ham.mul(0.55)));
       // ── STEP (sucha trawa) i ŁĄKA (zielona): przejścia płatami, nie gradientem ──
       const dry = smoothstep(0.15, 0.27, Mv.add(nMo.mul(0.07))).toVar();
@@ -919,7 +1010,8 @@ function earthColor(type) {
       // światło i cień także od lasu — skraj lasu rzuca cień na torfowisko, korony mają fakturę (jak cieniowanie
       // mapy terenu). Z daleka bez znaczenia (20 m na tekselu wielu kilometrów). Na morzu alfa to dalej lód.
       const canopyM = forest.mul(float(1.0).sub(rocky.mul(0.85))).mul(float(1.0).sub(clamp(snow, 0.0, 1.0)))
-        .mul(mix(float(17.0), float(27.0), stand)).mul(crownsH).add(fenRim.mul(5.0)).mul(float(1.0).sub(clamp(water, 0.0, 1.0)));
+        .mul(mix(float(17.0), float(27.0), stand)).mul(crownsH).add(fenRim.mul(smoothstep(0.36, 0.48, Mv)).mul(treeT).mul(5.0))
+        .mul(float(1.0).sub(clamp(water, 0.0, 1.0)));
       const alpha = mix(seaIce, clamp(canopyM.div(EARTH_CANOPY_KM * 1000), 0.0, 1.0), step(0.0, h));
       return vec4(mix(mix(land, U.uIce, seaIce), land, isLand), alpha);
     })();
@@ -965,7 +1057,8 @@ function earthUniforms(spec, ctx) {
     // (częstość grzbietów × EARTH_RIDGE_FREQ: pierwsza oktawa to grzbiety pasma, nie kopuła wielkości kontynentu)
     uE2: [L.mountainKm, L.mountainFreq * EARTH_RIDGE_FREQ, L.border, L.hillKm],
     uE3: [L.oceanKm, L.ridgeKm, L.islands, Math.min(0.9, (1 - L.water) * 1.25 + 0.05)],
-    uE4: [0, 0, 0, 0]
+    uE4: [0, 0, 0, 0],
+    uK: [L.temp, L.wet, L.axisTilt, 0]
   };
   if (ocean) {
     Object.assign(field, emptySlots('uChain'));

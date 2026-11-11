@@ -285,7 +285,11 @@ async function build(style = S.style, seed = null) {
     const volcanic = type === 'volcanic';
     if (!filed) await baker.compile([type]);
     // roślinność wprost (`?ros=`, lista w panelu) — tylko planety z lasem
-    const vegO = S.veg && type === 'terran' ? { vegetation: S.veg } : {};
+    // klimat wprost: `?wilg=0…1,1` (mało — pustynie), `?temp=−0,3…0,3` (cieplej / zimniej)
+    const lookO = {};
+    if (params.has('wilg')) lookO.wet = num('wilg', 0.7);
+    if (params.has('temp')) lookO.temp = num('temp', 0);
+    const vegO = { ...(S.veg && type === 'terran' ? { vegetation: S.veg } : {}), ...(type === 'terran' && Object.keys(lookO).length ? { look: lookO } : {}) };
     const spec0 = describePlanet({ type, seed: S.seed, ...vegO });
     // wulkaniczna — noc bez lawy: żar daje materiał zbliżenia (w dzień i w nocy), mapa nocy zostaje dla świateł kolonii
     // bohater dema (domyślne ziarno planety z wodą): zachmurzenie ze środka zakresu generatora (0,26–0,48; z ziarna
