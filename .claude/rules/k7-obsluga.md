@@ -28,6 +28,11 @@ paths:
   przepływ, upust, komunikaty spikera) liczy reżyser `src/game/k7HallSound.js` z tych samych póz i z harmonogramu
   zaworów — nowy klucz pozy albo nowy rodzaj zdarzenia → też zdarzenie w reżyserze (reguła `dzwiek`, „Hala K-7”).
 
+- REFLEKTORY PODEJŚCIA (2026-11-11): automat obsługi stanowisk liczy też poziom reflektora stanowiska capital
+  (`approachLight` w rejestrze — gracz w pasie podejścia, dziobem albo rufą ku stanowisku, wolno; pełny przy obsłudze
+  i zajętości), hala mnoży nim moc reflektora ściany tylnej — opis w regule `pyl-hal-k7`, „REFLEKTORY PODEJŚCIA”. Nowy
+  pisarz zajętości stanowiska (`occupied` / `reserved`) zapala reflektor sam (cel poziomu).
+
 - GEOMETRIA (`K7_FUEL_STATION` — jedno źródło brył, kolizji i fizyki): cokół z kolumną (kolizja `FUEL PEDESTAL`), bęben
   przewodu na licu ku stanowisku, obrotnica barku; człony 300 / 280 j. na wysokościach 330 / 300 K-7 (nad płaszczyzną lotu
   — nie kolidują z kadłubem), łokieć ku bramie (`elbowSide`); wlewy Atlasa `K7_ATLAS_FUEL_PORTS` (0,36 długości od
