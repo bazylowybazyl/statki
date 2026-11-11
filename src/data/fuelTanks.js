@@ -13,6 +13,8 @@
 //
 // Klucz = id profilu renderu kadłuba (HULL_RENDER_PROFILES, getNpcHullRenderProfileId).
 
+import { workHullRows } from './workHulls.js';
+
 const tank = (m) => Object.freeze([Object.freeze(m)]);
 
 export const FUEL_TANK_MARKERS = Object.freeze({
@@ -34,6 +36,8 @@ export const FUEL_TANK_MARKERS = Object.freeze({
   refinery_tender: tank({ id: 'refinery_tender_fuel', x: -300, y: -20, r: 55.4 }),
   tanker: tank({ id: 'tanker_fuel', x: -250, y: -60, r: 49.5 }),
   salvage_hauler: tank({ id: 'salvage_hauler_fuel', x: 60, y: -20, r: 63.4 }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v, id) => (v.fuel ? tank({ id: `${id}_fuel`, ...v.fuel }) : null)),
   construction_tug: tank({ id: 'construction_tug_fuel', x: -110, y: -20, r: 110.9 }),
   smuggler: tank({ id: 'smuggler_fuel', x: -100, y: -20, r: 110.9 }),
   pirate_raider: tank({ id: 'pirate_raider_fuel', x: -400, y: -20, r: 92.4 }),
@@ -41,7 +45,11 @@ export const FUEL_TANK_MARKERS = Object.freeze({
   repair_drone: tank({ id: 'repair_drone_fuel', x: -30, y: 150, r: 180 }),
   bounty_hunter: tank({ id: 'bounty_hunter_fuel', x: -165, y: -5, r: 90.7 }),
   police_cutter: tank({ id: 'police_cutter_fuel', x: -440, y: -150, r: 133.1 }),
-  rescue_ship: tank({ id: 'rescue_ship_fuel', x: -320, y: -180, r: 83.2 })
+  rescue_ship: tank({ id: 'rescue_ship_fuel', x: -320, y: -180, r: 83.2 }),
+  // Promy z ludźmi (workforce W7): zbiornik kadłuba bazowego (ten sam sprite do PNG z generatora — AGENT: potem ustawić na nowo).
+  crew_shuttle: tank({ id: 'crew_shuttle_fuel', x: -20, y: -10, r: 160.9 }),
+  crew_liner: tank({ id: 'crew_liner_fuel', x: -455, y: -10, r: 76.8 }),
+  colony_liner: tank({ id: 'colony_liner_fuel', x: -420, y: 15, r: 59.1 })
 });
 
 /**

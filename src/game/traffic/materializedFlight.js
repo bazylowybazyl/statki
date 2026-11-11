@@ -62,7 +62,8 @@ import {
   portApproachPoint, writeInbound, writeOutbound, berthCaptureOk, inPortCap,
   CAPTURE_DEFAULTS, PORT_PATH_SPEED
 } from './portPaths.js';
-import { routeRing, ringAt, isRingCorePoint, ringFunnelPoint } from './ringRouter.js';
+import { ringAt, isRingCorePoint, ringFunnelPoint } from './ringRouter.js';
+import { routeAroundDiscs, pushDockDisc } from './dockDetour.js';
 
 const TAU = Math.PI * 2;
 const S = PATH_STRIDE;
@@ -100,6 +101,11 @@ export const FLIGHT_DEFAULTS = Object.freeze({
   separationStrength: 0.55,
   /** Ile encji wolno utrzymywać naraz. Bańka ma być ograniczona, nie nieskończona. */
   maxActors: 400,
+  /**
+   * Holownik z wrakiem na linie (E24, kurs złomiarza `salvageMode: 'tow'`, przelot powrotny) leci najwyżej tyle [j./s];
+   * 0 — bez limitu (prędkość trybu etapu jak każdy przelot). Gra ustawia z adresu `?hol=` (`config.bubble`).
+   */
+  towHaulSpeed: 0,
   /** Poza tym ułamkiem promienia bańki encja wraca do rekordu (histereza). */
   releaseMargin: 1.25,
   /** Wyprzedzenie punktu celowania [s] i jego granice w swobodnym locie [j.]. */
@@ -220,16 +226,24 @@ function driveFor(stage, course) {
   return driveModeFor(stage?.mode, vanClass) || DRIVE_MODES.conventional;
 }
 
-/** Prędkość przelotowa etapu — z napędu kursu; brama i nieznany tryb lecą konwencjonalnym. */
-function cruiseFor(stage, course) {
+/**
+ * Prędkość przelotowa etapu — z napędu kursu; brama i nieznany tryb lecą konwencjonalnym. Holownik z wrakiem
+ * na linie (kurs złomiarza w trybie hol, `salvageMode`, przelot powrotny) — najwyżej `towHaulSpeed` konfiguracji bańki
+ * (E24; 0 = bez limitu — prędkość trybu jak każdy przelot; `?hol=wolny` w grze = prędkość z rachunku złomiarzy).
+ */
+function cruiseFor(stage, course, config = null) {
   const speed = driveFor(stage, course).speed;
-  return Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+  const v = Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+  const cap = Number(config?.towHaulSpeed) || 0;
+  if (cap > 0 && course?.salvageMode === 'tow' && stage && stage === course.stages?.[course.stages.length - 1]
+    && stage.kind === STAGE_KIND.TRAVEL) return Math.min(v, cap);
+  return v;
 }
 
 /** Napęd etapu na encję: prędkość przelotowa i — gdy tabela je ma (hipercruise) — rozpęd i hamowanie. */
-function applyDrive(actor, stage, course) {
+function applyDrive(actor, stage, course, config = null) {
   const mode = driveFor(stage, course);
-  actor.cruise = cruiseFor(stage, course);
+  actor.cruise = cruiseFor(stage, course, config);
   actor.driveCruise = actor.cruise;
   actor.mode = stage?.mode || null;
   actor.driveAccel = mode.accel > 0 ? mode.accel : 0;
@@ -312,13 +326,7 @@ export function createBubble(options = {}) {
   return bubble;
 }
 
-/** Krok łuku objazdu dysku budowli doku — cięciwa nie schodzi pod `keepR`. */
-const DOCK_ARC_STEP = 12 * Math.PI / 180;
-/**
- * Łuk objazdu tyle za dyskiem zapasu: w swobodnym locie statek ścina zakręt o do
- * 1500 j. (`pathApplyCornerSpeeds`, otwarta przestrzeń) — ścięty łuk nie wchodzi w dysk.
- */
-const DOCK_ARC_MARGIN = 1600;
+// Stałe objazdu dysków (DOCK_ARC_STEP, DOCK_ARC_MARGIN) — `dockDetour.js` (wspólne z kapsułami ratunkowymi).
 
 /** Dyski zapasu budowli doków z układów w indeksie portów (`layout.model`). */
 function refreshDockDiscs(bubble) {
@@ -326,7 +334,7 @@ function refreshDockDiscs(bubble) {
   for (const layout of bubble.ports.layouts.values()) {
     const m = layout?.model;
     if (!m || !(m.keepR > 0)) continue;
-    list.push(m.x, m.y, m.keepR, m.keepR / Math.cos(DOCK_ARC_STEP * 0.5) + DOCK_ARC_MARGIN);
+    pushDockDisc(list, m.x, m.y, m.keepR);
   }
   bubble.dockDiscs = Float64Array.from(list);
 }
@@ -567,67 +575,7 @@ function resolveCore(bubble, x, y, tx, ty, out) {
  * a prosta między nimi potrafi przeciąć płytę ringu planety po drodze.
  */
 function routeAround(bubble, path, ax, ay, bx, by, vmax, flags) {
-  const discs = bubble.dockDiscs;
-  let cx = ax;
-  let cy = ay;
-  for (let iter = 0; iter < 4 && discs.length; iter++) {
-    let best = -1;
-    let bestT = Infinity;
-    const vx = bx - cx;
-    const vy = by - cy;
-    const len2 = vx * vx + vy * vy;
-    if (len2 < 1) break;
-    for (let i = 0; i < discs.length; i += 4) {
-      const ox = discs[i];
-      const oy = discs[i + 1];
-      const r = discs[i + 2];
-      const r2 = r * r;
-      if ((cx - ox) ** 2 + (cy - oy) ** 2 < r2 || (bx - ox) ** 2 + (by - oy) ** 2 < r2) continue;
-      let t = ((ox - cx) * vx + (oy - cy) * vy) / len2;
-      if (t <= 0 || t >= 1) continue;
-      const px = cx + vx * t - ox;
-      const py = cy + vy * t - oy;
-      if (px * px + py * py >= r2) continue;
-      if (t < bestT) { bestT = t; best = i; }
-    }
-    if (best < 0) break;
-    pushDiscDetour(path, bubble.rings, discs, best, cx, cy, bx, by);
-    const o = (path.count - 1) * S;
-    cx = path.data[o];
-    cy = path.data[o + 1];
-  }
-  routeRing(path, bubble.rings, cx, cy, bx, by, vmax, flags);
-}
-
-function wrap2Pi(a) {
-  const v = a % TAU;
-  return v < 0 ? v + TAU : v;
-}
-
-/**
- * Objazd dysku `i` z P do Q (oba poza dyskiem): punkty na łuku promienia objazdu. Odcinek
- * z P do zejścia na łuk idzie przez router ringu (bez ringu po drodze — ten sam punkt).
- */
-function pushDiscDetour(path, rings, discs, i, px, py, qx, qy) {
-  const ox = discs[i];
-  const oy = discs[i + 1];
-  const R = discs[i + 3];
-  const dp = Math.hypot(px - ox, py - oy);
-  const dq = Math.hypot(qx - ox, qy - oy);
-  const fp = Math.atan2(py - oy, px - ox);
-  const fq = Math.atan2(qy - oy, qx - ox);
-  const ap = Math.acos(Math.min(1, R / Math.max(R, dp)));
-  const aq = Math.acos(Math.min(1, R / Math.max(R, dq)));
-  const ccw = wrap2Pi((fq - aq) - (fp + ap));
-  const cw = wrap2Pi((fp - ap) - (fq + aq));
-  const a0 = ccw <= cw ? fp + ap : fp - ap;
-  const delta = ccw <= cw ? ccw : -cw;
-  const n = Math.max(1, Math.ceil(Math.abs(delta) / DOCK_ARC_STEP));
-  routeRing(path, rings, px, py, ox + Math.cos(a0) * R, oy + Math.sin(a0) * R, Infinity, 0);
-  for (let k = 1; k <= n; k++) {
-    const a = a0 + delta * (k / n);
-    pathPush(path, ox + Math.cos(a) * R, oy + Math.sin(a) * R, Infinity, 0);
-  }
+  routeAroundDiscs(path, bubble.rings, bubble.dockDiscs, ax, ay, bx, by, vmax, flags);
 }
 
 /** Czy postój to obsługa w porcie znanym bańce (dyspozytor przydzieli miejsce). */
@@ -725,7 +673,7 @@ function planTravel(bubble, network, course, stage, actor) {
   if (next) {
     const brake = freeBrake(bubble.config, actor);
     if (next.kind === STAGE_KIND.TRAVEL) {
-      vEnd = Math.min(actor.cruise, cruiseFor(next, course));
+      vEnd = Math.min(actor.cruise, cruiseFor(next, course, bubble.config));
       fEnd = 0;
     } else if (next.pos) {
       const dist = Math.hypot(next.pos.x - ex, next.pos.y - ey);
@@ -922,7 +870,7 @@ function materialize(bubble, network, course, focus, inner) {
   const stage = currentStage(course);
   if (!stage) return null;
   const actor = createActor(bubble, course);
-  applyDrive(actor, stage, course);
+  applyDrive(actor, stage, course, bubble.config);
   const ok = stage.kind === STAGE_KIND.TRAVEL
     ? placeTravel(bubble, network, course, stage, actor)
     : placeDwell(bubble, network, course, stage, actor);
@@ -1606,7 +1554,7 @@ function enterStage(bubble, network, course, actor) {
   const stage = currentStage(course);
   actor.stageIndex = course.stageIndex;
   if (!stage) return;
-  applyDrive(actor, stage, course);
+  applyDrive(actor, stage, course, bubble.config);
   actor.dwell = Math.max(0, Number(course.stageElapsed) || 0);
   actor.pathStart = 0;
   if (stage.kind === STAGE_KIND.DWELL) planDwell(bubble, network, course, stage, actor);

@@ -13,12 +13,16 @@
 // FRACHTOWCE (statki cywilne, `role: 'civil'`) — każdy w osobnym pliku src/game/hullDesign/freighters/ (rejestr
 // ./freighters/index.js, zestaw ./freighters/freighterKit.js); tu dokładane na koniec listy (grupa 'civil').
 //
+// STATKI ROBOCZE złomowania (rola cywilna, paleta „Roboczy”, gniazda pod ruchome części) — plik na statek w
+// src/game/hullDesign/workships/ (rejestr ./workships/index.js, zestaw ./workships/workKit.js), grupa 'work'.
+//
 // OKRĘTY Z PLIKÓW (src/game/hullDesign/warships/, ten sam format `{ key, label, cls, make }` i zestaw klocków co
 // frachtowce): superkapitał Hyperion — linia Atlasa (klasa w HD_PRESET_CLASS, grupa 'tn').
 
 import { normalizeHullDesign } from './hullDesignSchema.js';
 import { applySystemSlots } from './hullDesignSystemSlots.js';
 import { HD_FREIGHTER_CLASS, HD_FREIGHTER_PRESETS } from './freighters/index.js';
+import { HD_WORKSHIP_CLASS, HD_WORKSHIP_PRESETS } from './workships/index.js';
 import hyperion from './warships/hyperion.js';
 
 /** Bloki prostokąta bx0..bx1 × by0..by1 (włącznie) na poziomie `level`. */
@@ -627,7 +631,10 @@ function tnParts2() {
   };
 }
 
-/** Gotowe projekty: { label, make, group } — grupa listy w interfejsie: 'tn' (flota Terra Novy), 'other', 'civil'. */
+/**
+ * Gotowe projekty: { label, make, group } — grupa listy w interfejsie: 'tn' (flota Terra Novy), 'other', 'civil'
+ * (frachtowce), 'work' (statki robocze złomowania).
+ */
 export const HD_PRESETS = Object.freeze({
   custos: { label: 'TN · fregata Custos', make: custos, group: 'tn' },
   hasta: { label: 'TN · niszczyciel Hasta', make: hasta, group: 'tn' },
@@ -643,14 +650,17 @@ export const HD_PRESETS = Object.freeze({
   destroyer: { label: 'Niszczyciel Hasta-D', make: destroyer, group: 'other' },
   pirate: { label: 'Szakal — asymetryczny pirat', make: pirate, group: 'other' },
   ...HD_FREIGHTER_PRESETS,
+  ...HD_WORKSHIP_PRESETS,
   empty: { label: 'Pusty (od zera)', make: empty, group: 'other' }
 });
 export const HD_PRESET_KEYS = Object.freeze(Object.keys(HD_PRESETS));
 /** Grupy listy presetów (kolejność w interfejsie). */
-export const HD_PRESET_GROUPS = Object.freeze({ tn: 'Terra Nova', civil: 'Statki cywilne', other: 'Inne' });
+export const HD_PRESET_GROUPS = Object.freeze({ tn: 'Terra Nova', civil: 'Statki cywilne', work: 'Statki robocze', other: 'Inne' });
+/** Klasa [mostek, rdzeń] presetów z plików (frachtowce, statki robocze) — opts.cls dla applySystemSlots. */
+const FILE_PRESET_CLASS = Object.freeze({ ...HD_FREIGHTER_CLASS, ...HD_WORKSHIP_CLASS });
 
 /** Świeża kopia gotowego projektu (znormalizowana) ze slotami systemów (hullDesignSystemSlots.js). */
 export function hullDesignPreset(key) {
   const k = HD_PRESETS[key] ? key : 'orbis';
-  return normalizeHullDesign(applySystemSlots(k, HD_PRESETS[k].make(), { cls: HD_FREIGHTER_CLASS[k] }));
+  return normalizeHullDesign(applySystemSlots(k, HD_PRESETS[k].make(), { cls: FILE_PRESET_CLASS[k] }));
 }

@@ -5,6 +5,8 @@
 //   node scripts/webgpu/woksele-baza-narzedzia.mjs [--out .tmp/woksele-demo/KAW/baza] [--rozmiar 1280x720] [--port 5432] [--zbrojenie 1]
 //        [--kruchosc 0|1|2] [--baza '{"giecieSzyi":8}'] [--scenariusz szyja]
 // --scenariusz szyja: dwa kratery z boku u podstawy szyi (z ≈ 300), głowa przechyla się. Kadry z boku: czy szyja gnie się jak guma, czy pęka (zgłoszenie 2026-11-08).
+// --scenariusz spalanie --planeta ziemia|mars [--spalT '6,14,18,21,24,30']: baza nad planetą z atmosferą, U (upadek), kadry z góry jak w misji 1 i z boku
+//   na słup atmosfery, liczba żywych węzłów (spalone i rozbite o grunt giną), drobin gruzu i odcinków smug (2026-11-09).
 // --scenariusz klin: klin kraterami od +y u podstawy szyi, przesunięcie środka głowy w bok i w dół (czy wieża przewraca się jak wieżowiec, 2026-11-09).
 import os from 'node:os';
 os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
@@ -45,7 +47,7 @@ const Z_GORY = { az: 0, el: 88, cel: [1200, 200, 0], odl: 9800 };
 
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc !== undefined ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}${args.zap ? `&${args.zap}` : ''}`; // --zap 'limityF0=0&jakWGrze=0': dodatkowe pola adresu do A/B
+  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc !== undefined ? `&kruchosc=${args.kruchosc}` : ''}${args.sztywnosc ? `&sztywnosc=${args.sztywnosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}${args.planeta ? `&planeta=${args.planeta}` : ''}${args.zap ? `&${args.zap}` : ''}`; // --zap 'limityF0=0&jakWGrze=0': dodatkowe pola adresu do A/B
   await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zap}` });
   await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
   if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.gotowe || window.__wok.blad))', 600000, 200)) throw new Error('strona nie wstała');
@@ -83,6 +85,54 @@ try {
       console.log(`stoi t = ${t}: zerwanych wiązań ${a.zerwanych} z ${a.zerwanych + a.zywych}, NaN ${a.nan}, pękło L0 ${st.peklo[0]}/${st.K0}`);
       await kadr('stoi', t);
     }
+  } else if (args.scenariusz === 'spalanie') {
+    const BOK = await ev('window.__wok.pokaz.kameraBoku()');
+    const BLISKO = await ev('window.__wok.pokaz.kameraBoku(true)');
+    if (!BOK) throw new Error('strona bez planety z atmosferą (--planeta ziemia|mars)');
+    const stan = `(async () => { const w = window.__wok.pokaz.solver.wypiek; const r = await window.__wok.odczyt(); let zywe = 0, nizej = 0, zMin = 1e9; const zs = []; for (let i = 0; i < w.n; i++) { if (r.poz[3 * i] !== r.poz[3 * i]) continue; const zy = r.aktywny ? r.aktywny[i] : 1; if (!zy) continue; zywe++; const z = r.poz[3 * i + 2]; zs.push(z); if (z < -2000) nizej++; if (z < zMin) zMin = z; } zs.sort((a, b) => a - b); const q = (f) => Math.round(zs[Math.floor(f * (zs.length - 1))] ?? 0); let v = 0; for (let i = 0; i < w.n; i++) if (r.aktywny[i]) v = Math.max(v, Math.hypot(r.vel[3 * i], r.vel[3 * i + 1], r.vel[3 * i + 2])); return { n: w.n, zywe, nizej, zMin: Math.round(zMin), z10: q(0.1), z50: q(0.5), z90: q(0.9), vMax: Math.round(v) }; })()`;
+    const kadrS = async (nazwa, t) => {
+      for (const [kam, k] of [['gora', Z_GORY], ['bok', BOK], ['blisko', BLISKO]]) {
+        await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+        await ev('window.__wok.pokaz.przerysuj()');
+        const plik = `${nazwa}_t${t.toFixed(1)}_${kam}.png`;
+        await screenshotPng(cdp, join(wyDir, plik));
+        raport.kadry.push(plik);
+      }
+      const st = await ev(stan);
+      raport.stan.push({ nazwa, t, ...st });
+      console.log(`${nazwa} t = ${t}: żywe węzły ${st.zywe}/${st.n}, poniżej bazy ${st.nizej}, najniżej z = ${st.zMin}, z (10/50/90 %) ${st.z10} / ${st.z50} / ${st.z90}, v maks ${st.vMax}`);
+      zapisz();
+    };
+    await ev('window.__wok.pokaz.doChwili(0.5)');
+    await kadrS('s0', 0.5);
+    await ev(`${N}.uzyj('upadek')`);
+    for (const t of String(args.spalT || '6,12,16,19,22,25,30').split(',').map(Number)) {
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrS('s', t);
+    }
+    // Koszt GPU w chwili --kosztT (domyślnie 23 s, najwięcej płonie): kernele spalania (mediana 7 list) i rysunek obrazu z głowicami i smugami kontra bez nich (mediana 9 klatek).
+    const KOSZT = `(async () => {
+      const P = window.__wok.pokaz, sp = P.spalanie, R = window.__HARNESS_RENDERER__, b = R.backend, o = window.__wok.obraz, cam = window.__wok.camera;
+      const med = (l) => { l.sort((x, y) => x - y); return l[l.length >> 1]; };
+      const k = [];
+      for (let i = 0; i < 7; i++) k.push(await window.__wok.zmierzListe([sp.kernele.kSpal, sp.kernele.kSpalG]));
+      P.stan.rysowac = false;
+      const rys = async () => { const l = []; for (let i = 0; i < 9; i++) { await new Promise((ok) => requestAnimationFrame(ok)); b.trackTimestamp = true; o.rysuj(R, cam, 0); l.push(await R.resolveTimestampsAsync('render')); b.trackTimestamp = false; b.timestampQueryPool?.render?.timestamps?.clear?.(); } return med(l); };
+      const z = await rys();
+      for (const m of sp.siatki()) m.visible = false;
+      const bez = await rys();
+      for (const m of sp.siatki()) m.visible = true;
+      P.stan.rysowac = true;
+      return { kerneleMs: med(k), rysunekMs: z, rysunekBezSpalaniaMs: bez };
+    })()`;
+    await ev(`window.__wok.pokaz.doChwili(${Number(args.kosztT || 23)})`);
+    for (const [kam, k] of [['gora', Z_GORY], ['blisko', BLISKO]]) {
+      await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+      const kz = await ev(KOSZT);
+      raport[`koszt_${kam}`] = kz;
+      console.log(`koszt (${kam}, t = ${args.kosztT || 23}): kernele spalania ${kz.kerneleMs.toFixed(3)} ms, rysunek ${kz.rysunekMs.toFixed(2)} ms, bez głowic i smug ${kz.rysunekBezSpalaniaMs.toFixed(2)} ms`);
+    }
+    zapisz();
   } else if (args.scenariusz === 'szyja') {
     // Kamera po skosie (+x, −y): wieżowce W-1 i W-2 stoją na osi x, więc z boku zasłaniały szyję.
     const BOK = { az: 45, el: 8, cel: [0, 0, 900], odl: 4800 };

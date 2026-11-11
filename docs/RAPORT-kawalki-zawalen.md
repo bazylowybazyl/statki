@@ -126,6 +126,42 @@ Atlas przy 1500 j./s przechodzi przez szyb habitatu: kadłub wycina szyb w pasie
 
 Otwarte: z boku Atlas to stos plastrów sprite'a (z góry wygląda jak w grze). Kamera „Z planetą” w pierwszym przebiegu wpadała w limit orbity 30 km i kadr był pusty, teraz limit przy planecie to 500 km.
 
+### Ziemia i Mars: spalanie odłamków w atmosferze (2026-11-09)
+
+Prośba użytkownika: „gdyby baza była np. nad Ziemią/Marsem — planetą z atmosferą … palące się odłamki tak jak w realu. Wiadomo, że największe dolecą — ale muszą się bardziej pomniejszyć na tak dużej planecie.”
+
+- **Jak obejrzeć:** w panelu „Hidalgo / Ziemia / Mars” (albo `?planeta=ziemia|mars`, strona się przeładowuje), U zrzuca bazę. „Z boku” pokazuje cały słup od bazy do gruntu, „Z boku, bliżej” pas, w którym odłamki płoną. Hidalgo zostaje taki jak wyżej.
+- **Skala:** odłamki mają rozmiar prawdziwy, więc planety też: Ziemia R 6371 km, Mars 3390 km, powietrze z prawdziwych danych (skala wysokości 8,5 i 11,1 km, gęstość przy gruncie 1,225 i 0,020 kg/m³). Planety gry są ściśnięte około 170 razy wobec okrętów: z ich promieniem cała atmosfera byłaby niższa od bazy. Baza wisi 110 km nad Ziemią i 60 km nad Marsem, grawitacja jak w grze (Mars × 0,38), więc odłamki wchodzą w gęste powietrze z prędkością 5–9 km/s, jak śmieci wracające z orbity.
+- **Model:** strumień ciepła na czoło ∝ ρ·v³, czoło się cofa (ablacja), opór hamuje tylko czoło i przechodzi wiązaniami na resztę bryły, temperatura z równowagi promienistej z bezwładnością. Grzeje się tylko węzeł bez sąsiada przed sobą w kierunku lotu, więc wielka bryła traci warstwę po warstwie, a płyta grubości jednego węzła pali się cała. Stałe materiału są skuteczne dla konstrukcji (pomieszczenia i cienkie ścianki): lity beton prawie by się nie spalił.
+
+Wzorzec CPU (`tests/wokseleSpalanie.test.mjs`, spadek pionowy z wysokości bazy):
+
+| Odłamek | Ziemia | Mars |
+|---|---|---|
+| gruz 3–20 m | spala się na 20–8 km | dolatuje, ubytek 2–9 %, żar do 5600 K |
+| węzeł 40 m | spala się na 14 km | dolatuje, ubytek 2 % |
+| 5 warstw (200 m) | spala się tuż nad gruntem (1,7 km) | dolatuje cały |
+| 10 warstw (400 m) | dolatuje z 44 % grubości, 8,8 km/s | dolatuje cały, 4,3 km/s |
+| 20 warstw (800 m) | dolatuje z 72 % grubości | dolatuje cały |
+
+Na Ziemi plazma przed czołem ma do ~28 000 K (biała kula ognia), na Marsie do ~6000 K (strumień ciepła ponad 20 razy mniejszy). Ścianki odłamka świecą najwyżej jak materiał przy wrzeniu (~2800 K, żółtobiałe), biel daje plazma.
+
+Bez okna (`node scripts/webgpu/woksele-baza-narzedzia.mjs --scenariusz spalanie --planeta ziemia|mars --noc 1 --rozmiar 960x540`), U w 0,5 s:
+
+| Chwila | Ziemia: żywe węzły, wysokość nad gruntem (mediana / najniżej) | Mars |
+|---|---|---|
+| 14 s | 79 914 z 80 882, 90 / 71 km | — |
+| 19 s | 79 914, 64 / 38 km, 7,5 km/s | — |
+| 23 s | 79 849, 36 / 15 km, 8,1 km/s | 79 914, najniżej 12 km |
+| 25 s | 79 617, 19 / 15 km (niżej czoło się wypala) | 79 914, najniżej 3,5 km |
+| 28 s | 28 143 (spłonęły albo uderzyły w grunt) | 68 446 (reszta uderzyła w grunt, nic nie spłonęło) |
+
+Z kamery z góry (6,7 km nad bazą przy 540 px, w teście 9,8 km) odłamki przy gruncie są około 10 razy mniejsze niż baza na starcie; na Hidalgo w grze około 6 razy. Koszt (960 × 540, 23 s, najwięcej płonie): kernele spalania 0,016 ms GPU, rysunek obrazu 0,50 → 0,70 ms z głowicami i smugami; pipeline'y synchroniczne 0 na obu planetach. Kadry: `.tmp/woksele-demo/SPAL/ziemia5/arkusz.png` i `mars5/arkusz.png` (góra: z góry, dół: z boku bliżej; 16, 21, 23, 25, 28 s), pojedyncze `s_t*_gora|bok|blisko.png`, liczby `ziemia6/raport.json`, koszt `ziemia-koszt/`, `mars-koszt/`.
+
+Strojenie po kadrach: przy pierwszej wersji cała baza świeciła płaską bielą (ścianki liczone jak plazma do 28 000 K, głowice i smugi setek węzłów czoła nakładały się addytywnie, gęsty dym leżał nad odłamkami i z góry przykrywał bazę). Teraz ścianki do 2800 K, jedna głowica i jeden odcinek smugi to ułamek docelowej jasności, a dym jest rzadki i nieregularny.
+
+Otwarte: uderzenie w grunt Ziemi i Marsa to błysk i kłąb pyłu bez krateru na mapie (Hidalgo ma kratery z `planetaDema.js`); smugi z góry widać słabo, bo odłamki lecą prosto od kamery (smuga to wtedy punkt); duży dysk habitatu spada w ostatniej fali kotwic, więc z góry długo wydaje się większy od reszty.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

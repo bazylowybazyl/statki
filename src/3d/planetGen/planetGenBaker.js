@@ -18,20 +18,24 @@ import { resizeRenderTarget } from '../renderTargetResize.js';
 import { describePlanet, plannedMaps, plannedBytes } from './planetGenSpec.js';
 import { PLANET_GEN_TYPE } from './planetGenTypes.js';
 import {
-  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, setBakeUniforms, CLOUD_CYCLONES
+  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, buildMaskGraph, buildCopyGraph, buildHeightCopyGraph,
+  setBakeUniforms, drainTexture, CLOUD_CYCLONES
 } from './planetGenBake.tsl.js';
+import { computeDrainage } from './planetGenDrainage.js';
+import { PLACE_T, PLACE_M, encodeClimate } from './planetGenPlace.js';
 import { SOLID_TYPES } from './planetGenSolid.tsl.js';
 import { GAS_BAKE, gasBakeUniforms } from './planetGenGasBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
+import { cycloneAt } from './planetGenWeather.js';
 
 export const PROBE_W = 192;
 export const PROBE_H = 96;
 const DEG = Math.PI / 180;
 
-function makeTarget(w, h, { srgb = false, red = false, float32 = false, half = false, mips = true, name = '' } = {}) {
+function makeTarget(w, h, { srgb = false, red = false, rg = false, float32 = false, half = false, mips = true, name = '', clamp = false } = {}) {
   const rt = new THREE.RenderTarget(w, h, {
     type: float32 ? THREE.FloatType : (half ? THREE.HalfFloatType : THREE.UnsignedByteType),
-    format: red ? THREE.RedFormat : THREE.RGBAFormat,
+    format: red ? THREE.RedFormat : (rg ? THREE.RGFormat : THREE.RGBAFormat),
     depthBuffer: false, stencilBuffer: false,
     generateMipmaps: mips,
     minFilter: float32 ? THREE.NearestFilter : (mips ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter),
@@ -40,7 +44,7 @@ function makeTarget(w, h, { srgb = false, red = false, float32 = false, half = f
   const t = rt.texture;
   t.name = name;
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  t.wrapS = float32 ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+  t.wrapS = (float32 || clamp) ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
   t.wrapT = THREE.ClampToEdgeWrapping;
   t.generateMipmaps = mips;
   t.anisotropy = mips ? 8 : 1;
@@ -86,11 +90,15 @@ export class PlanetGenBaker {
     const [pass, type] = key.split(':');
     if (pass === 'field') g = SOLID_TYPES[type].field();
     else if (pass === 'day') g = SOLID_TYPES[type].color(F);
+    else if (pass === 'drain') g = SOLID_TYPES[type].drain(F);
     else if (pass === 'relief') g = buildReliefGraph(F);
     else if (pass === 'spec') g = buildSpecGraph(F);
     else if (pass === 'night') g = buildNightGraph(F);
     else if (pass === 'clouds') g = buildCloudGraph();
+    else if (pass === 'mask') g = buildMaskGraph(F);
     else if (pass === 'gas') g = GAS_BAKE.build();
+    else if (pass === 'copy8') g = buildCopyGraph();
+    else if (pass === 'copyH') g = buildHeightCopyGraph();
     else throw new Error(`planetGen: nieznane przejście „${key}”`);
     this._graphs.set(key, g);
     return g;
@@ -99,7 +107,19 @@ export class PlanetGenBaker {
   /** Przejścia potrzebne rodzajowi: [klucz grafu, format celu]. */
   passesFor(type) {
     if (PLANET_GEN_TYPE[type].kind === 'gas') return [['gas', 'srgb']];
-    return [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['relief', 'half'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb']];
+    const passes = [[`field:${type}`, 'float'], [`day:${type}`, 'srgb'], ['relief', 'half'], ['spec', 'red'], ['night', 'srgb'], ['clouds', 'srgb'], ['mask', 'rgba']];
+    // rodzaje z rzekami: wejście spływu wody (wysokość i opad do odczytu CPU — planetGenDrainage.js)
+    if (SOLID_TYPES[type].drain) passes.push([`drain:${type}`, 'float']);
+    return passes;
+  }
+
+  // Tekstura spływu planety w grafie pola rodzaju (graf jest jeden na rodzaj — tekstura podstawiana przed rysunkiem).
+  // Zwraca wartość `uDr`: bez spływu gałąź rzek jest wyłączona, a jej uniformy skończone (rozmiar 1 × 1).
+  _bindDrain(type, drainage) {
+    const g = this.graph(`field:${type}`);
+    if (!g.drain || !drainage) return [1, 1, 0, 0];
+    g.drain.value = drainage.texture;
+    return drainage.uniforms;
   }
 
   /** Rozgrzewka pipeline'ów przejść dla rodzajów (w tle; obietnica — gotowe). */
@@ -107,13 +127,21 @@ export class PlanetGenBaker {
     const r = this.renderer;
     const dummies = {
       float: this.field, srgb: makeTarget(4, 2, { srgb: true, mips: false }), half: makeTarget(4, 2, { half: true, mips: false }),
-      red: makeTarget(4, 2, { red: true, mips: false })
+      red: makeTarget(4, 2, { red: true, mips: false }), rgba: makeTarget(4, 2, { mips: false }),
+      rg32: makeTarget(4, 2, { rg: true, float32: true, mips: false })
     };
     const prev = r.getRenderTarget();
     const jobs = [];
     const keys = new Set();
     for (const t of types) for (const [k, fmt] of this.passesFor(t)) if (!this._compiled.has(`${k}|${fmt}`)) keys.add(`${k}|${fmt}`);
     if (!keys.size) return;
+    // AGENT (three r183, pułapka 45 w regule webgpu-tsl): compileAsync liczy węzły pod tymczasowym numerem renderu
+    // „poprzedni + 1” (poza renderem = 1), a zwykły render bierze numer z licznika `info.calls` — PIERWSZY render
+    // w życiu renderera też ma 1. Kompilacja przed pierwszym renderem zostawia więc węzły odświeżane „raz na
+    // render” i grupę uniformów „render” oznaczone jako aktualne i pierwszy rysunek idzie ze stanem z kompilacji:
+    // wypiek próby rysował pusty cel, kwantyle wychodziły 1 i planeta z wodą była samym oceanem (strona bez klatek
+    // rAF przed wypiekiem — karta w tle, harness). Licznik podbity przed kompilacją usuwa zbieżność numerów.
+    if (r.info && r.info.calls === 0) r.info.calls = 1;
     try {
       for (const kf of keys) {
         const [k, fmt] = kf.split('|');
@@ -127,7 +155,7 @@ export class PlanetGenBaker {
       r.setRenderTarget(prev);
     }
     await Promise.all(jobs);
-    for (const k of ['srgb', 'half', 'red']) dummies[k].dispose();
+    for (const k of ['srgb', 'half', 'red', 'rgba', 'rg32']) dummies[k].dispose();
   }
 
   _draw(graphKey, target, values) {
@@ -158,9 +186,14 @@ export class PlanetGenBaker {
    * pełnej rozdzielczości bez czekania, (3) jedno czekanie na koniec pracy GPU. `size` — szerokość map (wysokość
    * size / 2), `sizes` — per planeta. Czas GPU (`gpuMs` wyniku całego układu) — ze znaczników czasu, gdy renderer
    * ma `trackTimestamp` (liczy wszystkie przejścia renderu od poprzedniego odczytu — rysunki klatek w tym czasie też).
-   * Wynik: tablica { spec, size, maps: { day, relief?, spec?, night?, clouds? }, levels, gas?, bytes, ms, dispose() }.
+   * Wynik: tablica { spec, size, maps: { day, relief?, spec?, night?, clouds?, mask? }, levels, gas?, bytes, ms,
+   * dispose() }. `mask: true` — dodatkowo mapa masek pola (lawa, osady — materiał zbliżenia, buildMaskGraph).
+   * Planety z rzekami (terran, ocean) dostają `drainage` — drzewo rzek ze spływu wody ({ texture, width, height,
+   * data, stats, uniforms }; dane jak w planetGenDrainage.js — także dla gry: ujścia, biegi rzek); siatka spływu
+   * ma szerokość mapy planety, najwyżej `drainSize`. `drainage: false` — bez rzek. W `drainage` zostają też dane
+   * MIEJSC dla mapy terenu (planetGenPlace.js): `heightM` (Int16, metry), `temp` i `moist` (klimat w 8 bitach).
    */
-  async bakeSystem(list, { size = 2048, sizes = null } = {}) {
+  async bakeSystem(list, { size = 2048, sizes = null, mask = false, drainage = true, drainSize = 2048 } = {}) {
     const r = this.renderer;
     const t0 = performance.now();
     const timed = !!r.backend?.trackTimestamp;
@@ -171,12 +204,19 @@ export class PlanetGenBaker {
       const texKm = 2 * Math.PI * spec.rKm / W;
       const ctx = { size: W, rKm: spec.rKm, texKm };
       const out = { spec, size: W, maps: {}, targets: [], rt: {}, levels: null, gas: null, bytes: plannedBytes(spec, W), ms: {} };
-      out.dispose = () => { for (const t of out.targets) t.dispose(); out.targets.length = 0; if (out.gas) out.gas.dispose(); };
+      out.dispose = () => {
+        for (const t of out.targets) t.dispose();
+        out.targets.length = 0;
+        if (out.gas) out.gas.dispose();
+        if (out.drainage) { out.drainage.texture.dispose(); out.drainage = null; }
+      };
       const tu = spec.kind === 'gas' ? null : SOLID_TYPES[spec.type].uniformsFor(spec, ctx);
       return { spec, W, H: W / 2, texKm, ctx, out, tu };
     });
     const common = (it, w, h, extra = {}) => ({
-      uSeed: [...it.spec.seedOffset, it.spec.seedInt], uRes: [w, h, 1 / w, 1 / h], uGeo: [it.spec.rKm, it.texKm, 0, 0], ...extra
+      uSeed: [...it.spec.seedOffset, it.spec.seedInt], uRes: [w, h, 1 / w, 1 / h], uGeo: [it.spec.rKm, it.texKm, 0, 0],
+      // cała mapa: gałąź wycinka wyłączona (w = 0), jej uniformy skończone i niezdegenerowane
+      uWin: [0, 0, 1e-3, 0], uFrX: [1, 0, 0], uFrY: [0, 1, 0], uFrZ: [0, 0, 1], ...extra
     });
     const prev = r.getRenderTarget();
     try {
@@ -186,7 +226,7 @@ export class PlanetGenBaker {
         const oct = [it.tu.octaves.x, it.tu.octaves.y, it.tu.octaves.z, it.tu.octaves.w];
         it.oct = oct;
         const rt = this._probeTarget(k);
-        this._draw(`field:${it.spec.type}`, rt, { ...common(it, PROBE_W, PROBE_H), uOct: oct, uLevels: [0, 1, 0, 0], ...it.tu.field });
+        this._draw(`field:${it.spec.type}`, rt, { ...common(it, PROBE_W, PROBE_H), uOct: oct, uLevels: [0, 1, 0, 0], ...it.tu.field, uDr: [1, 1, 0, 0] });
         return r.readRenderTargetPixelsAsync(rt, 0, 0, PROBE_W, PROBE_H);
       });
       const pixels = await Promise.all(reads);
@@ -204,6 +244,57 @@ export class PlanetGenBaker {
         it.out.levels = { uQ: it.uQ, uQ2: it.uQ2, sea: it.tu.water ? 0 : null };
         it.out.ms.probe = tProbe;
       });
+      // (1b) SPŁYW WODY (planety z rzekami): pole bez rzek w rozdzielczości siatki spływu → wysokość, opad i klimat (RGBA32F)
+      // → jeden odczyt na układ → drzewo rzek na CPU (planetGenDrainage.js) → tekstura dla grafu pola
+      const wet = drainage ? solids.filter((it) => it.tu.drainage && SOLID_TYPES[it.spec.type].drain) : [];
+      if (wet.length) {
+        const tDrain = performance.now();
+        const drainReads = wet.map((it) => {
+          const DW = Math.min(it.W, drainSize);
+          const DH = DW / 2;
+          const texKm = 2 * Math.PI * it.spec.rKm / DW;
+          const tuD = DW === it.W ? it.tu : SOLID_TYPES[it.spec.type].uniformsFor(it.spec, { size: DW, rKm: it.spec.rKm, texKm });
+          const base = {
+            ...common(it, DW, DH), uGeo: [it.spec.rKm, texKm, 0, 0], uLevels: [0, tuD.landTop || 3, 1, 0], uQ: it.uQ, uQ2: it.uQ2,
+            uOct: [tuD.octaves.x, tuD.octaves.y, tuD.octaves.z, tuD.octaves.w]
+          };
+          this._ensureField(DW, DH);
+          this._draw(`field:${it.spec.type}`, this.field, { ...base, ...tuD.field, uDr: [1, 1, 0, 0] });
+          const rt = makeTarget(DW, DH, { float32: true, mips: false, name: 'planetGenDrainIn' });
+          this._draw(`drain:${it.spec.type}`, rt, { ...base, ...tuD.color });
+          it.drain = { W: DW, H: DH };
+          return r.readRenderTargetPixelsAsync(rt, 0, 0, DW, DH).then((px) => { rt.dispose(); return px; });
+        });
+        const drainPx = await Promise.all(drainReads);
+        wet.forEach((it, k) => {
+          const { W: DW, H: DH } = it.drain;
+          const px = drainPx[k];
+          const n = DW * DH;
+          const hh = new Float32Array(n);
+          const rain = new Float32Array(n);
+          // dane miejsc dla mapy terenu: wysokość [m] i klimat (temperatura, wilgotność — te same co w barwach lądu)
+          const heightM = new Int16Array(n);
+          const temp = new Uint8Array(n);
+          const moist = new Uint8Array(n);
+          for (let i = 0; i < n; i++) {
+            const h = px[i * 4];
+            hh[i] = h;
+            rain[i] = px[i * 4 + 1];
+            heightM[i] = Math.max(-32000, Math.min(32000, Math.round(h * 1000)));
+            temp[i] = encodeClimate(px[i * 4 + 2], PLACE_T);
+            moist[i] = encodeClimate(px[i * 4 + 3], PLACE_M);
+          }
+          const d = computeDrainage(hh, rain, DW, DH, { seed: it.spec.seedInt | 0 });
+          const texture = drainTexture(d.data, DW, DH);
+          r.initTexture(texture);
+          it.out.drainage = {
+            texture, width: DW, height: DH, data: d.data, stats: d.stats, uniforms: [DW, DH, 1, it.spec.seedInt % 65521], heightM, temp, moist
+          };
+          it.out.bytes += n * 8;
+          it.out.ms.drain = performance.now() - tDrain;
+          it.out.ms.drainCpu = d.stats.ms;
+        });
+      }
       // (2) przejścia pełnej rozdzielczości
       for (const it of items) {
         const { spec, W, H, out } = it;
@@ -225,7 +316,7 @@ export class PlanetGenBaker {
         const plan = plannedMaps(spec);
         const levels = { uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: it.uQ, uQ2: it.uQ2, uOct: it.oct };
         this._ensureField(W, H);
-        this._draw(`field:${spec.type}`, this.field, { ...common(it, W, H), ...levels, ...tu.field });
+        this._draw(`field:${spec.type}`, this.field, { ...common(it, W, H), ...levels, ...tu.field, uDr: this._bindDrain(spec.type, out.drainage) });
         const day = makeTarget(W, H, { srgb: true, name: name('day') });
         out.targets.push(day);
         this._draw(`day:${spec.type}`, day, { ...common(it, W, H), ...levels, ...tu.color });
@@ -257,6 +348,14 @@ export class PlanetGenBaker {
           out.maps.clouds = t.texture;
           out.rt.clouds = t;
         }
+        if (mask) {
+          const t = makeTarget(W, H, { name: name('mask') });
+          out.targets.push(t);
+          this._draw('mask', t, { ...common(it, W, H), ...levels });
+          out.maps.mask = t.texture;
+          out.rt.mask = t;
+          out.bytes += Math.round(W * H * 4 * 4 / 3);
+        }
       }
     } finally {
       r.setRenderTarget(prev);
@@ -270,6 +369,291 @@ export class PlanetGenBaker {
     this.stats.lastGpuMs = gpuMs;
     for (const it of items) { it.out.ms.total = total; it.out.ms.system = items.length; it.out.ms.gpu = gpuMs; }
     return items.map((it) => it.out);
+  }
+
+  /**
+   * PLANETA Z PLIKÓW (planetGenFiles.js): wynik o tym samym kształcie co `bakeSystem`, złożony z map wczytanych
+   * z dysku — bez próby, pola i liczenia spływu. `pack`: { spec, size, levels, maps (opis z meta.json), images
+   * { day, dayA?, night, clouds, spec, mask… } (tekstury z bajtami jak w celu wypieku), height (Float32Array, km,
+   * size × size / 2), drainage { width, height, data, heightM, temp, moist, uniforms, stats } albo null }.
+   * Mapy idą do celów tych samych rodzajów co po wypieku (te same próbniki i mipmapy); mapę rzeźby liczy z wysokości
+   * ten sam graf co w wypieku. Okna pod kamerą piecze dalej wypiekacz (poziomy i siatka spływu są w wyniku).
+   * Pierwsze wywołanie tworzy pipeline'y dwóch przejść przepisania synchronicznie — wołać na ekranie ładowania.
+   */
+  importPlanet(pack) {
+    const r = this.renderer;
+    const { spec, size: W, levels } = pack;
+    const H = W / 2;
+    const texKm = 2 * Math.PI * spec.rKm / W;
+    const out = { spec, size: W, maps: {}, targets: [], rt: {}, levels, gas: null, bytes: plannedBytes(spec, W), ms: {}, fromFiles: true };
+    out.dispose = () => {
+      for (const t of out.targets) t.dispose();
+      out.targets.length = 0;
+      if (out.drainage) { out.drainage.texture.dispose(); out.drainage = null; }
+    };
+    const name = (m) => `planetGen:${spec.type}:${spec.seed}:${m}`;
+    const prev = r.getRenderTarget();
+    try {
+      if (pack.drainage) {
+        const texture = drainTexture(pack.drainage.data, pack.drainage.width, pack.drainage.height);
+        r.initTexture(texture);
+        out.drainage = { ...pack.drainage, texture };
+      }
+      const g8 = this.graph('copy8');
+      const copy = (key, opts) => {
+        const src = pack.images[key];
+        const m = pack.maps[key];
+        if (!src || !m) return;
+        const alpha = pack.images[`${key}A`] || null;
+        g8.srcA.value = src;
+        g8.srcB.value = alpha || src;
+        const t = makeTarget(m.w, m.h, { ...opts, name: name(key) });
+        out.targets.push(t);
+        this._draw('copy8', t, { uCopy: [alpha ? 1 : 0, opts.srgb ? 1 : 0, 0, 0] });
+        out.maps[key] = t.texture;
+        out.rt[key] = t;
+      };
+      copy('day', { srgb: true });
+      // rzeźba: wysokość do kanału x celu pola, potem graf rzeźby jak w wypieku (nachylenia, szorstkość)
+      const tu = SOLID_TYPES[spec.type].uniformsFor(spec, { size: W, rKm: spec.rKm, texKm });
+      const hTex = new THREE.DataTexture(pack.height, W, H, THREE.RedFormat, THREE.FloatType);
+      hTex.minFilter = THREE.NearestFilter;
+      hTex.magFilter = THREE.NearestFilter;
+      hTex.generateMipmaps = false;
+      hTex.colorSpace = THREE.NoColorSpace;
+      hTex.needsUpdate = true;
+      this._ensureField(W, H);
+      this.graph('copyH').src.value = hTex;
+      this._draw('copyH', this.field, { uCopy: [0, 0, 0, 0] });
+      const relief = makeTarget(W, H, { half: true, name: name('relief') });
+      out.targets.push(relief);
+      this._draw('relief', relief, {
+        uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+        uWin: [0, 0, 1e-3, 0], uFrX: [1, 0, 0], uFrY: [0, 1, 0], uFrZ: [0, 0, 1],
+        uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: levels.uQ, uQ2: levels.uQ2, uRel: spec.relief.rough
+      });
+      out.maps.relief = relief.texture;
+      out.rt.relief = relief;
+      hTex.dispose();
+      copy('spec', { red: true });
+      copy('night', { srgb: true });
+      copy('clouds', { srgb: true });
+      copy('mask', {});
+    } finally {
+      r.setRenderTarget(prev);
+    }
+    this.stats.imports = (this.stats.imports || 0) + 1;
+    return out;
+  }
+
+  /**
+   * Cele WYCINKA pod kamerą (planetGenPatch.js): dzień sRGB, rzeźba RGBA16F, maski RGBA8 — z mipmapami, bez
+   * zawijania. Wynik: { day, relief, mask, width, height, bytes, dispose() }.
+   */
+  createPatchTargets(width, height, tag = '') {
+    const day = makeTarget(width, height, { srgb: true, clamp: true, name: `planetGenPatch:${tag}:day` });
+    const relief = makeTarget(width, height, { half: true, clamp: true, name: `planetGenPatch:${tag}:relief` });
+    const mask = makeTarget(width, height, { clamp: true, name: `planetGenPatch:${tag}:mask` });
+    const set = {
+      day, relief, mask, width, height, bytes: Math.round(width * height * (4 + 8 + 4) * 4 / 3),
+      dispose() { day.dispose(); relief.dispose(); mask.dispose(); }
+    };
+    // cele na GPU od razu (węzły tekstur per obiekt nie wgrywają pustych — pusty próbnik w grupie wiązań)
+    const r = this.renderer;
+    const prev = r.getRenderTarget();
+    for (const t of [day, relief, mask]) { r.setRenderTarget(t); r.clear(); }
+    r.setRenderTarget(prev);
+    return set;
+  }
+
+  /**
+   * Wypiek WYCINKA mapy planety do celów `set` (createPatchTargets) — synchronicznie, bez odczytów: POLE (cel pola
+   * wypiekacza w rozmiarze wycinka — nie wołaj `releaseScratch` między wycinkami), DZIEŃ, RZEŹBA, MASKI. `base` —
+   * wynik `bakeSystem` tej planety (progi z próby całej planety — te same morza i kwantyle), `win` — okno:
+   * { frame: { x, y, z } (osie układu wycinka), a0, b0 (kąt lewej górnej krawędzi [rad]), st (kąt teksela [rad]) }.
+   * `tu` — `uniformsFor` rodzaju dla rozdzielczości wycinka (liczby oktaw, kratery; pamięć po poziomie u wołającego).
+   */
+  bakePatch(base, win, set, tu = null) {
+    const r = this.renderer;
+    const spec = base.spec;
+    if (spec.kind === 'gas') throw new Error('planetGen: wycinek tylko dla planet z powierzchnią');
+    const W = set.width;
+    const H = set.height;
+    const texKm = spec.rKm * win.st;
+    const ctx = { size: Math.round(2 * Math.PI / win.st), rKm: spec.rKm, texKm };
+    const t = tu || SOLID_TYPES[spec.type].uniformsFor(spec, ctx);
+    const common = {
+      uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+      uWin: [win.a0, win.b0, win.st, 1], uFrX: win.frame.x, uFrY: win.frame.y, uFrZ: win.frame.z,
+      uLevels: [t.water ? 0 : -1e3, t.landTop || 3, t.water ? 1 : 0, 0], uQ: base.levels.uQ, uQ2: base.levels.uQ2,
+      uOct: [t.octaves.x, t.octaves.y, t.octaves.z, t.octaves.w]
+    };
+    const prev = r.getRenderTarget();
+    try {
+      this._ensureField(W, H);
+      this._draw(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage) });
+      this._draw(`day:${spec.type}`, set.day, { ...common, ...t.color });
+      this._draw('relief', set.relief, { ...common, uRel: spec.relief.rough });
+      this._draw('mask', set.mask, common);
+    } finally {
+      r.setRenderTarget(prev);
+    }
+    this.stats.patches = (this.stats.patches || 0) + 1;
+    return t;
+  }
+
+  /**
+   * Kroki wypieku wycinka W PASACH (planetGenPatch.js piecze krok na klatkę): [{ pass, band, bands }]. Pas = poziomy
+   * pasek celu (nożyce); `mpPerStep` — ile megapikseli pola na krok (pole ~1 ms GPU na megapiksel, dzień ~0,7).
+   * Kolejność przejść jak w `bakePatch`: całe POLE przed DNIEM, RZEŹBĄ i MASKAMI (czytają sąsiednie teksele pola).
+   */
+  patchSteps(set, kind = 'surface', mpPerStep = 2.2) {
+    const B = Math.max(1, Math.ceil(set.width * set.height / 1e6 / mpPerStep));
+    const steps = [];
+    const add = (pass, n) => { for (let i = 0; i < n; i++) steps.push({ pass, band: i, bands: n }); };
+    if (kind === 'clouds') { add('clouds', Math.max(1, Math.ceil(B * 0.8))); return steps; }
+    // (pole z rzekami ze spływu: ~1,4 ms GPU na megapiksel — więcej pasów, krok zostaje przy ~2–3 ms)
+    add('field', Math.max(1, Math.ceil(set.width * set.height / 1e6 / (mpPerStep / 1.4))));
+    add('day', Math.max(1, Math.ceil(B * 0.7)));
+    add('relief', Math.max(1, Math.ceil(B / 3)));
+    add('mask', Math.max(1, Math.ceil(B / 4)));
+    return steps;
+  }
+
+  // Rysunek jednego pasa przejścia do celu: nożyce na pas, bez czyszczenia celu (czyszczenie w WebGPU nie zna nożyc —
+  // starłoby pasy już wypieczone), mipmapy dopiero po ostatnim pasie.
+  _drawBand(graphKey, target, values, band, bands) {
+    const g = this.graph(graphKey);
+    setBakeUniforms(g.U, values);
+    this.quad.material = g.material;
+    const r = this.renderer;
+    const y0 = Math.round(target.height * band / bands);
+    const y1 = Math.round(target.height * (band + 1) / bands);
+    const tex = target.texture;
+    const mips = tex.generateMipmaps;
+    const auto = r.autoClear;
+    // AGENT: prostokąt nożyc bierze się z CELU (renderTarget.scissor), ale włącza je flaga RENDERERA
+    // (setScissorTest) — sama flaga celu nic nie robi i każdy „pas” rysował cały cel (wypiek ×4 droższy, obraz ten sam)
+    const st = r.getScissorTest();
+    target.scissor.set(0, y0, target.width, y1 - y0);
+    if (band < bands - 1) tex.generateMipmaps = false;
+    r.autoClear = bands === 1;
+    r.setScissorTest(bands > 1);
+    try {
+      r.setRenderTarget(target);
+      this.quad.render(r);
+    } finally {
+      r.setScissorTest(st);
+      r.autoClear = auto;
+      tex.generateMipmaps = mips;
+      target.scissor.set(0, 0, target.width, target.height);
+    }
+  }
+
+  /**
+   * Jeden krok wypieku wycinka (`step` z `patchSteps`) — jak `bakePatch` / `bakeCloudPatch`, ale jeden pas jednego
+   * przejścia. Zwraca `tu` (uniformsFor rodzaju dla rozdzielczości okna — podaj je w kolejnych krokach). `wx` — stan
+   * pogody zamrożony na cały wypiek okna chmur (pasy jednego okna muszą mieć tę samą chwilę).
+   */
+  bakePatchStep(base, win, set, tu, step, wx = null) {
+    const r = this.renderer;
+    const spec = base.spec;
+    const W = set.width;
+    const H = set.height;
+    const texKm = spec.rKm * win.st;
+    const ctx = { size: Math.round(2 * Math.PI / win.st), rKm: spec.rKm, texKm };
+    const frame = {
+      uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+      uWin: [win.a0, win.b0, win.st, 1], uFrX: win.frame.x, uFrY: win.frame.y, uFrZ: win.frame.z
+    };
+    const prev = r.getRenderTarget();
+    try {
+      if (step.pass === 'clouds') {
+        this._drawBand('clouds', set.clouds, { ...frame, ...cloudUniforms(spec, ctx, wx) }, step.band, step.bands);
+        return null;
+      }
+      const t = tu || SOLID_TYPES[spec.type].uniformsFor(spec, ctx);
+      const common = {
+        ...frame, uLevels: [t.water ? 0 : -1e3, t.landTop || 3, t.water ? 1 : 0, 0], uQ: base.levels.uQ, uQ2: base.levels.uQ2,
+        uOct: [t.octaves.x, t.octaves.y, t.octaves.z, t.octaves.w]
+      };
+      if (step.pass === 'field') {
+        this._ensureField(W, H);
+        this._drawBand(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage) }, step.band, step.bands);
+      } else if (step.pass === 'day') this._drawBand(`day:${spec.type}`, set.day, { ...common, ...t.color }, step.band, step.bands);
+      else if (step.pass === 'relief') this._drawBand('relief', set.relief, { ...common, uRel: spec.relief.rough }, step.band, step.bands);
+      else this._drawBand('mask', set.mask, common, step.band, step.bands);
+      if (step.band === step.bands - 1 && step.pass === 'mask') this.stats.patches = (this.stats.patches || 0) + 1;
+      return t;
+    } finally {
+      r.setRenderTarget(prev);
+    }
+  }
+
+  /** Cel WYCINKA MAPY CHMUR pod kamerą (sRGB z mipmapami, bez zawijania). Wynik: { clouds, width, height, bytes, dispose() }. */
+  createCloudPatchTarget(width, height, tag = '') {
+    const clouds = makeTarget(width, height, { srgb: true, clamp: true, name: `planetGenPatch:${tag}:clouds` });
+    const r = this.renderer;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(clouds);
+    r.clear();
+    r.setRenderTarget(prev);
+    return { clouds, width, height, bytes: Math.round(width * height * 4 * 4 / 3), dispose() { clouds.dispose(); } };
+  }
+
+  /** Wypiek WYCINKA mapy chmur do `set.clouds` (okno `win` jak w `bakePatch`, w układzie kuli chmur). */
+  bakeCloudPatch(base, win, set, wx = null) {
+    const r = this.renderer;
+    const spec = base.spec;
+    const W = set.width;
+    const H = set.height;
+    const texKm = spec.rKm * win.st;
+    const ctx = { size: Math.round(2 * Math.PI / win.st), rKm: spec.rKm, texKm };
+    const prev = r.getRenderTarget();
+    try {
+      this._draw('clouds', set.clouds, {
+        uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+        uWin: [win.a0, win.b0, win.st, 1], uFrX: win.frame.x, uFrY: win.frame.y, uFrZ: win.frame.z,
+        ...cloudUniforms(spec, ctx, wx)
+      });
+    } finally {
+      r.setRenderTarget(prev);
+    }
+    this.stats.patches = (this.stats.patches || 0) + 1;
+    return null;
+  }
+
+  /** Cel MAPY POGODY (mapa chmur planety przeliczana w biegu — planetGenWeather.js): sRGB z mipmapami, jak mapa chmur. */
+  createWeatherTarget(size, tag = '') {
+    const t = makeTarget(size, size / 2, { srgb: true, name: `planetGenWeather:${tag}` });
+    const r = this.renderer;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(t);
+    r.clear();
+    r.setRenderTarget(prev);
+    return t;
+  }
+
+  /**
+   * Jeden pas (`band` z `bands`) mapy chmur planety w chwili pogody `wx` do celu `target` — ten sam graf co mapa
+   * wypieczona raz, z czasem. Mipmapy po ostatnim pasie.
+   */
+  bakeWeather(base, target, wx, band = 0, bands = 1) {
+    const r = this.renderer;
+    const spec = base.spec;
+    const W = target.width;
+    const H = target.height;
+    const texKm = 2 * Math.PI * spec.rKm / W;
+    const prev = r.getRenderTarget();
+    try {
+      this._drawBand('clouds', target, {
+        uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+        uWin: [0, 0, 1e-3, 0], uFrX: [1, 0, 0], uFrY: [0, 1, 0], uFrZ: [0, 0, 1],
+        ...cloudUniforms(spec, { size: W, rKm: spec.rKm, texKm }, wx)
+      }, band, bands);
+    } finally {
+      r.setRenderTarget(prev);
+    }
   }
 
   /** Zwalnia cel pola (wspólny dla planet — po wypieku układu). */
@@ -297,7 +681,8 @@ function nightUniforms(spec, tu) {
   };
 }
 
-function cloudUniforms(spec, ctx) {
+// `wx` — stan pogody ({ time, wind, spin, humidity } z PlanetGenWeather.snapshot) albo null: mapa nieruchoma.
+function cloudUniforms(spec, ctx, wx = null) {
   const c = spec.clouds;
   const rng = rngFor(spec.seed, `${spec.type}:cyklony`);
   const out = {
@@ -305,15 +690,23 @@ function cloudUniforms(spec, ctx) {
     uCloud2: [c.sizeMul * Math.sqrt(6371 / spec.rKm) ** 0.35, c.style === 0 ? 0.15 : 0.2, spec.look.bands ?? 0.6, (spec.look.swirl ?? 0.5) * 0.9],
     uTint: c.tint,
     uTint2: c.tint2 || c.tint,
-    uOct: [0, 0, 0, Math.max(3, Math.min(8, Math.floor(Math.log2(ctx.size / 64)) + 2))]
+    // (sufit 13: mapy planety ≤ 4096 px mają ≤ 8 oktaw — więcej liczą tylko wycinki pod kamerą)
+    uOct: [0, 0, 0, Math.max(3, Math.min(13, Math.floor(Math.log2(ctx.size / 64)) + 2))]
   };
   for (let i = 0; i < CLOUD_CYCLONES; i++) {
     const hemi = rng.next() < 0.5 ? 1 : -1;
     // co trzeci tropikalny (12–28°, mały z okiem), reszta pozatropikalne (35–62°, duże, luźne — fronty)
     const tropical = i % 3 === 2;
     const d = tropical ? rng.dirInLat(12 * hemi, 28 * hemi) : rng.dirInLat(35 * hemi, 62 * hemi);
-    out[`uCyc${i}`] = [...d, tropical ? rng.range(0.05, 0.09) : rng.range(0.16, 0.28)];
+    const rad = tropical ? rng.range(0.05, 0.09) : rng.range(0.16, 0.28);
+    if (wx) {
+      // pogoda: oś przeniesiona wiatrem, kąt obrotu własnego i kąt przeniesienia (z fazą stałą cyklonu)
+      const cy = cycloneAt(d, rad, wx.time, wx);
+      out[`uCyc${i}`] = [...cy.axis, rad];
+      out[`uCycS${i}`] = [cy.spin, cy.theta + i * 1.7, 0, 0];
+    } else out[`uCyc${i}`] = [...d, rad];
   }
+  if (wx) out.uWx = [wx.time, wx.wind, wx.humidity, 1];
   return out;
 }
 

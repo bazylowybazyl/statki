@@ -1,5 +1,6 @@
 import { FIGHTER_SQUADRON_DEFS } from './fighterSquadrons.js';
 import { flightTemplateStats } from './shipFlightSpecs.js';
+import { workHullRows } from './workHulls.js';
 
 export const SHIP_SENSOR_PROFILES = {
   fighter_combat: { passiveRange: 8000, activeRange: 10000, lockRange: 8000, asteroidScanRange: 8000, scanWaveSpeed: 12000, role: 'combat' },
@@ -241,6 +242,8 @@ export const HULL_RENDER_PROFILES = {
   refinery_tender: { id: 'refinery_tender', length: 800, radius: 260 },
   tanker: { id: 'tanker', length: 900, radius: 260 },
   salvage_hauler: { id: 'salvage_hauler', length: 700, radius: 240 },
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v, id) => ({ id, length: v.length, radius: v.radius })),
   construction_tug: { id: 'construction_tug', length: 360, radius: 140 },
   pirate_raider: { id: 'pirate_raider', length: 480, radius: 170 },
   smuggler: { id: 'smuggler', length: 360, radius: 130 },
@@ -255,6 +258,11 @@ export const HULL_RENDER_PROFILES = {
   bounty_hunter: { id: 'bounty_hunter', length: 440, radius: 150 },
   police_cutter: { id: 'police_cutter', length: 300, radius: 110 },
   rescue_ship: { id: 'rescue_ship', length: 400, radius: 150 },
+  // Promy z ludźmi (workforce W7): gabaryty frachtowca tej samej ładowni — te same stanowiska, obrys doku i kolizje
+  // (do PNG z generatora rysują się jego sprite'em, D14).
+  crew_shuttle: { id: 'crew_shuttle', length: 200, radius: 80 },
+  crew_liner: { id: 'crew_liner', length: 520, radius: 180 },
+  colony_liner: { id: 'colony_liner', length: 900, radius: 260 },
   // Holownik serwisowy (2026-10-08, src/game/serviceTug.js): naprawia rojem dronów i zabiera „na pakę” statek bez
   // napędu — pokład (ładownia sprite'a, 648 × 344 px płótna 1774) mieści Atlasa (1800 × ~600 j.): 8300 × 0,6 =
   // 4980 j. kadłuba, ~1820 × 970 j. pokładu. Za duży na stanowiska portu (berthClassForHull → null) — przy K-7 stoi

@@ -566,9 +566,11 @@ function surfaceFor(type, look) {
 // Rzeźba w materiale powierzchni (planetGenSurface.tsl.js): normal — przesadzenie normalnych, shadow — przesadzenie
 // wysokości w cieniu terenu, pen — półcień [rad], detail — amplituda detalu ponad mapę (× teksel [km] · 0,03),
 // detailAlbedo — siła detalu w jasności, rough — szorstkość z wypieku (bazowa, przyrost z nachyleniem, przy brzegu).
+// terran / ocean: cień × 3,6 (pasma gór mają stoki kilkudziesięciu procent — przy × 5 cień zalewał całe doliny),
+// normalne × 5 z nasyceniem na stromym (materiał).
 const RELIEF = {
-  terran: { normal: 5, shadow: 5, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.15, 3.0, 0.6, 0] },
-  ocean: { normal: 5, shadow: 5, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.2, 3.0, 0.7, 0] },
+  terran: { normal: 5, shadow: 3.6, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.15, 3.0, 0.6, 0] },
+  ocean: { normal: 5, shadow: 3.6, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.2, 3.0, 0.7, 0] },
   desert: { normal: 4, shadow: 4.5, pen: 0.012, detail: 0.9, detailAlbedo: 0.12, rough: [0.3, 3.0, 0, 0] },
   rocky: { normal: 3.5, shadow: 4, pen: 0.01, detail: 1.0, detailAlbedo: 0.12, rough: [0.35, 2.5, 0, 0] },
   ice: { normal: 3, shadow: 3.5, pen: 0.012, detail: 0.6, detailAlbedo: 0.06, rough: [0.2, 2.5, 0, 0] },
@@ -638,7 +640,10 @@ export function describePlanet(desc) {
   const rngGeo = rngFor(seed, `${type}:domena`);
   const look = { ...LOOKS[type](rngLook), ...(desc.look || {}) };
   const rKm = Number(desc.rKm) || round(rngGeo.range(T.rKm[0], T.rKm[1]), 0);
-  const seedOffset = [round(rngGeo.range(20, 420), 3), round(rngGeo.range(20, 420), 3), round(rngGeo.range(20, 420), 3)];
+  // AGENT: przesunięcie dziedziny MAŁE (|kierunek + przesunięcie| < 8): float32 ma tam krok ~5·10⁻⁷ rad. Przy
+  // przesunięciu rzędu setek krok to ~3·10⁻⁵ rad — tyle, co teksel wycinka pod kamerą (planetGenPatch.js), i rzeźba
+  // wycinka wychodziła w schodkach. Zakres wchodzi do wyglądu każdej planety z ziarna (zmiana = inne planety).
+  const seedOffset = [round(rngGeo.range(1.5, 6.5), 4), round(rngGeo.range(1.5, 6.5), 4), round(rngGeo.range(1.5, 6.5), 4)];
   const atm = atmosphereFor(type, look, rngAtm);
   const clouds = desc.clouds === null ? null : (desc.clouds || cloudsFor(type, look, rngAtm));
   const night = { ...nightFor(type, look, rngAtm), ...(desc.night || {}) };

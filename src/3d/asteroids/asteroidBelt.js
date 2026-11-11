@@ -374,6 +374,8 @@ export class AsteroidBelt {
     });
     this.miningView = new MiningView({ parent: root, layer: BELT_LAYER_PLAY, shared, grid: this.grid, sparks: this.sparks });
     this.miningView.attach(this.rig);
+    // Górnicy NPC w bańce (E24): lasery na skałach pola obrazu (warstwa PLAY), bez skał przejętych przez platformę.
+    this.miningView.setNpcField(this.field, BELT_BAND.PLAY, this.rig.taken);
     // Pieczenie światła olbrzymów: JEDEN kernel compute dla wszystkich widoków (pipeline compute powstaje synchronicznie —
     // rozgrzewka pustym dispatchem w _prewarmCompute; dawniej kernel na olbrzyma kompilował się w klatce jego pierwszego widoku).
     this.giantBake = new GiantBakeKernel();
@@ -522,6 +524,14 @@ export class AsteroidBelt {
    * świata pasa — world.time), dt klatki (world.frameDt: 0 w pauzie) i statki do świateł pola.
    * Bez alokacji — zapamiętane referencje.
    */
+  /**
+   * Górnicy NPC w bańce (E24): ramka pracy statków ruchu z bloku `trafficWork` (`{ list, count }`; rodzaj MINE —
+   * drony i lasery platformy na skałach pola). Strona (`off`) i worker renderu wołają ją przed `Core3D.render`.
+   */
+  setNpcWork(frame) {
+    this.miningView?.setNpcWork(frame);
+  }
+
   prepareFrame(time, dt, ship, player2, npcs) {
     this._lensGiants();
     const i = this._in;

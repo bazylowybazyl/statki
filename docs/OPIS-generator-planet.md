@@ -243,3 +243,638 @@ wypieku bez zmian; terran i ocean bez mapy połysku (morze w shaderze).
 7. „Poprawiaj grafikę” — runda 2 (§ 1a).
 - Księżyce i małe ciała z generatora — ten sam opis (`barren`, `ice`, `volcanic`) na materiale księżyców
   (`moonSurface.tsl.js`) — do zrobienia przy wpięciu.
+
+## 10. Planeta z bliska: wycinek mapy pod kamerą, lawa, erupcja, chmury (2026-11-09, demo)
+
+Prośba użytkownika (2026-11-09): „piękne proceduralne planety, z wolumetrycznymi chmurami, wulkanami … brakuje mi …
+grafiki na zbliżeniu. Może cała proceduralna planeta 3D bez tekstur?” — i w trakcie pracy: „odpicuj też terrańską”.
+Odpowiedź: planeta liczona w całości szumem co klatkę — nie (§ 1: duże kształty wymagają wypieku, koszt klatki);
+potrzebę (ostry obraz przy każdym zbliżeniu) załatwia WYPIEK W BIEGU SAMEGO WYCINKA POD KAMERĄ. Demo:
+`dema/planeta-zblizenie.html` (wulkaniczna w trzech stylach i terrańska), w grę niewpięte.
+
+### 10.1. Wycinek pod kamerą (`planetGenPatch.js`, `PlanetGenBaker.bakePatchStep`)
+
+- Te same grafy wypieku co mapa planety (to samo pole, progi z próby całej planety), cel = OKNO siatki długość /
+  szerokość w układzie OBRÓCONYM (sześć układów — ściany sześcianu; okno leży przy „równiku” układu, teksele prawie
+  kwadratowe także na biegunach planety). `bakeCoords` ma gałąź okna (`uWin`, `uFrX / Y / Z`): kierunek z kątów okna,
+  prawdziwa szerokość i długość z kierunku (klimat, pasy), odległości tekseli w układzie siatki (`latGrid`, `stE`,
+  `stN` — nachylenia). `fieldAt` w oknie przycina obie osie.
+- SIATKA STAŁA: poziom k ma teksel = teksel mapy planety / 2^k, początek okna = wielokrotność 16 tekseli. Po
+  przesunięciu okna ten sam punkt trafia w ten sam teksel — pomiar: kadr przed przesunięciem okna i po powrocie różni
+  się o 0 / 255. Obraz zmienia się przy zmianie poziomu (zbliżenie o oktawę) i układu (krawędź ściany: średnio
+  ~1 / 255, najwyżej ~24 / 255) — wtedy stare okno przenika w nowe (dwa miejsca A / B, 0,3 s).
+- WYPIEK W PASACH: okno 4096 × 2048 to ~16 ms GPU naraz (wulkaniczna; terrańska z oknem chmur ~22 ms), okno
+  2048 × 1024 — 4–5 ms. Kroki `patchSteps`: pasy pola, potem dnia, rzeźby, masek (nożyce, bez czyszczenia celu,
+  mipmapy po ostatnim pasie), krok na klatkę (~1,6 ms GPU), ~10 klatek dla okna 4096; wypiek rusza, gdy kadr podejdzie
+  na 6% okna do jego brzegu (okno = kadr × 1,5). Suma kosztu ta sama, obraz identyczny (pomiar jw.).
+- Pamięć: dwa miejsca powierzchni (dzień sRGB, rzeźba RGBA16F, maski RGBA8, z mipmapami) i dwa okna chmur =
+  107 MiB przy oknie 2048 × 1024 (ekran do ~3000 px szerokości) albo 427 MiB przy 4096 × 2048, do tego cel pola
+  (RGBA32F) 32 / 128 MiB. DO DECYZJI przy wpięciu: okno 4096 tylko na Ultra albo jedno miejsce bez przenikania.
+- WARUNEK: przesunięcie dziedziny szumu MAŁE (`seedOffset` 1,5–6,5 zamiast 20–420). float32 przy wartościach rzędu
+  setek ma krok ~3·10⁻⁵ rad — tyle, co teksel wycinka poziomu 6; rzeźba wychodziłaby w schodkach. Zmiana zakresu
+  zmieniła wygląd WSZYSTKICH planet z ziarna (generator niewpięty — bez skutków w grze).
+- WARUNEK: pole zgodne między poziomami — fbm z dzielnikiem stałym (`full`: suma całego szeregu, nie policzonych
+  oktaw), sufity oktaw ponad mapy planety, obiekty rodzaju (wulkany, rzeki, kłęby) wchodzące bramką z rozmiaru
+  w tekselach. Zrobione dla `volcanic` i `terran` / `ocean` (pole, dzień) i dla chmur; pozostałe rodzaje pieką się
+  w oknie, ale bez tej zgodności (krzywizna w barwie zależy od teksela, normowanie do policzonych oktaw).
+
+### 10.2. Błędy generatora odsłonięte przez zbliżenie (poprawione)
+
+- RZEŹBA ODWRÓCONA W OSI PÓŁNOC–POŁUDNIE: `buildReliefGraph` negował pochodną na północ (komentarz zakładał wiersz
+  celu rosnący ku południowi; wiersz rośnie ku północy). Przy słońcu z północy oświetlona ściana krateru była ciemna.
+  W grze słońce leży w płaszczyźnie gry, więc światło z osi N–S pada na planetę zawsze, gdy stoi „nad” albo „pod”
+  słońcem na mapie.
+- SKOKI NA KRAWĘDZIACH KOMÓREK: stożki, kaldery, potoki i pierścienie opadu rodzaju `volcanic` liczyły się z „haszu
+  najbliższej komórki × profil odległości” — profil urywał się na krawędzi komórki (uskoki ~100 m, wielokątne łaty
+  osadów w stylu siarki). Teraz pętla po 27 komórkach, każde miejsce dokłada własny profil (`forSites`).
+- NaN Z GAŁĘZI WYŁĄCZONEJ: gałąź okna w `bakeCoords` z zerami w uniformach (cała mapa) liczyła normalize(0) i
+  atan2(0, 0) — kompilator GPU wykonał ją spekulatywnie i pole całej planety wyszło NaN (czarne mapy, bez błędu).
+
+### 10.3. Rodzaj `volcanic` z bliska
+
+- Trzy skale wulkanów (`volcanoLayer`): tarcze z kalderą (5 komórek / rad), stożki z kraterem, żlebami i strugami
+  lawy (24), stożki żużlowe tylko w wycinku (105); styl siarki — w ich miejscu patery (niecka, jezioro lawy w części
+  dna, płaty potoków, pierścień opadu). Pola zastygłych potoków: płaty jeden na drugim, czoło potoku = próg szumu
+  (skarpa łapiąca niskie słońce). Styl lawy: szwy skorupy w czterech skalach, nie węższe niż teksel.
+- LAWA W MATERIALE (`planetGenSurfaceNear.tsl.js`): żar z maski cieczy (HDR, w dzień i w nocy — mapa nocy piecze się
+  wtedy bez lawy): jeziora — płyty skorupy (Worley dwóch skal) dryfujące w dół stoku (kierunek z mapy rzeźby, dwie
+  fazy przenikane) i z wolnym wirem na płaskim; strugi — gorący rdzeń, ku brzegom kry. Barwa z temperatury; odcień
+  z palety planety tylko słaby (pełna barwa palety, liniowo ~(1; 0,15; 0,01), zostawiała samą czerwień).
+- ERUPCJA (`planetGenPlume.tsl.js`): pióropusz = jedna gęstość analityczna (kolumna + parasol znoszony wiatrem,
+  szum kłębów) w trzech miejscach: bryła liczona marszem promienia (36 kroków w powłoce nad powierzchnią, światło
+  3 krokami ku słońcu, cień planety — szczyt łapie słońce za terminatorem, wyładowania w parasolu), cień na gruncie
+  (8 kroków ku słońcu w materiale powierzchni), światło fontanny lawy na okolicy.
+
+### 10.4. Rodzaj `terran` z bliska
+
+- Pole: rzeki z drzewa spływu wody i jeziora w kanale cieczy (dolina wycięta w rzeźbie, nie niżej niż 160 m n.p.m.),
+  barwy lądu jako mozaika klas pokrycia — § 10.10 (dawne rzeki z linii zera szumu i jednolita plamistość zastąpione).
+- Morze w materiale: fale (normalna z czterech oktaw szumu), iskrzenie (wąski odblask na normalnej fal, płatami
+  wiatru), przybój; szeroki odblask grafu gry słabnie z rozmiarem piksela (z bliska dawał mleczną taflę na cały kadr).
+- CHMURY (`planetGenCloudsNear.tsl.js`): okno mapy chmur w układzie kuli chmur; z bliska drobne oktawy i kłęby w
+  dziedzinie SUROWEJ (izotropowej) — w dziedzinie skręconej przez cyklony i odkształconej wychodziły rozmazane smugi,
+  a komórki Worleya dawały równe owalne „cekiny”. Bryłowatość BEZ marszu promienia: maska = grubość, światło gaśnie
+  z grubością chmur po drodze ku słońcu (dwie próbki maski przesunięte o wysokość chmur / tangens wysokości słońca).
+  Cień chmur na gruncie: mapa chmur planety w punkcie przesuniętym ku słońcu (materiał powierzchni, `uGnCloud`).
+- Maska bez marszu promienia jest domyślna w widoku gry: kamera patrzy z góry bez paralaksy — boków chmur nie widać,
+  głębię niesie światło i cień. Chmury jako bryła (marsz promienia, § 10.8) są domyślne w widoku orbitalnym i do
+  włączenia w widoku gry (klawisz B). Okręt wlatujący w chmury (pokład olbrzyma w płaszczyźnie gry) — nie zrobione.
+
+### 10.5. Koszt (headless Chrome, RTX; kadr w całości na planecie przy 1 px = 1 j. gry, promień planety 12 600 j.)
+
+| kadr | 5120 × 1440, okno 4096 × 2048 [ms GPU] | 1920 × 1080, okno 2048 × 1024 [ms GPU] |
+|---|---|---|
+| wulkaniczna, wycinek | 1,7 | 0,53 |
+| wulkaniczna, sama mapa planety (drabina detalu od poziomu 0) | 2,4 | 0,78 |
+| wulkaniczna, pióropusz na cały kadr | 4,3 | 2,5 |
+| wulkaniczna, pióropusz przy 0,45 px / j. | 2,7 | 1,2 |
+| terrańska z chmurami, wycinek | 2,3 | 0,70 |
+| terrańska, sama mapa planety | 3,5 | 1,0 |
+| cała tarcza | 0,8–0,9 | 0,5–0,6 |
+| wypiek okna (suma kroków): wulkaniczna / terrańska z chmurami | 15,8 / 21,6 | 4,2 / 5,3 |
+
+Czasy klatki z postem dema (bloom, ACES — sam post 0,45 ms przy 5120 × 1440). Rozkład (A/B na jednym kadrze,
+5120 × 1440): cień terenu ~0,6 ms (12 próbek rzeźby), morze ~0,3 ms, chmury ~0,35 ms; każdy szum liczony na cały
+kadr to ~0,1–0,15 ms. Najdroższy jest pióropusz z bliska — przy wpięciu: mniej kroków albo pół rozdzielczości.
+
+### 10.6. Narzędzia
+
+- Demo: `dema/planeta-zblizenie.html` (`?styl=popiol|lawa|siarka|terran`, `?ziarno=N`, `?wycinek=2048|4096`,
+  `?wycinki=0`, `?erupcja=0`, `?pora=`, `?x=&y=&zoom=`, `?test=1`, `?gpu=1`; widok: `?widok=orbita|gora`,
+  `?bryla=0|1`, `?az=&el=&odl=&px=&py=`, `?chmury=0…1`), `window.__zbl` (`setView`, `goVent`, `setViewMode`,
+  `orbitAt`, `advance(s)`, `measureGpu(n)`, `snapshot()`, `viewDirs()`). Klawisze: O — widok, B — chmury jako
+  bryła, Z — zorza, C — chmury, E — erupcja.
+- Zrzuty: `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
+  (kadry widoku gry: daleko, wulkan, blisko, bardzo-blisko, bez-wycinka, noc, planeta albo `nazwa:x,y,zoom`;
+  orbitalne: orbita, orbita-plaska, orbita-blisko, orbita-daleko, orbita-noc, orbita-zorza albo
+  `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`).
+- Testy: `node --test tests/planetGenNear.test.mjs` (układy i siatka okna, wypiek w pasach, uniformy, WGSL).
+
+### 10.7. Do decyzji i dalsze kroki
+
+- Wpięcie: planeta, przy której jest gracz, na materiale `genSolidNear` (dalsze zostają na `genSolid`); kierunki
+  kadru z kamery gry; kroki wypieku w kroku efektów Core3D; rozgrzewka trzech nowych materiałów.
+- Rozgrywka (nie zrobiona): pióropusz sięgający płaszczyzny gry jako strefa (zagrożenie, osłona przed czujnikami),
+  trwałe blizny po ostrzale (rekord krateru + ponowny wypiek okna).
+- Zgodność poziomów dla pozostałych rodzajów (desert, rocky, ice, barren, toxic) — jak w § 10.1.
+- Pasma cirrusów z bliska: smugi bez drobnego detalu (pręgowane łaty) — osłabione w wycinku, nie zastąpione.
+- Wąskie zatoki-ryfty kontynentów (`rift` w `plates`) z bliska rwą się w łańcuch ciemnych odcinków morza.
+
+### 10.8. Widok orbitalny: chmury jako bryła, atmosfera po promieniu, zorza, sieci świateł (2026-11-09, demo)
+
+Wzór: render planety z Blendera (objętość chmur i atmosfery, zorza, światła miast) i plansze innego generatora —
+przysłane przez użytkownika. Demo dostało drugą kamerę (perspektywiczna, przy krawędzi tarczy) i cztery nowe części.
+Wszystkie działają też w widoku gry (kamera z góry, ortho) — promień widzenia liczy wspólny pomocnik `shellRay`.
+
+- SZUM 3D (`planetGenNoise3D.js`): tekstura 64³ RGBA8 o okresie 1, liczona raz na CPU z własnego haszu (~0,3 s):
+  R — kłęby (szum gradientowy × odwrócony Worley), G, B — Worley średni i drobny (erozja), A — gładki szum (zorza).
+  Jedna próbka tekstury zamiast szumu liczonego w shaderze (marsz promienia bierze ich dziesiątki na piksel).
+- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`, siatka = kula jednostkowa, powłoka 0,3–1,7% promienia nad
+  gruntem): marsz promienia widzenia, 16–44 kroków z długości odcinka w powłoce. Pokrycie z mapy chmur planety,
+  kształt z szumu 3D: kłąb jest tam, gdzie szum (dwie skale: kłęby i ~3× większe masy) przekracza próg, a próg spada
+  z pokryciem i rośnie z wysokością — udział kłębów ≈ pokrycie, wierzchołki w kopułach, małe pokrycie = niskie kłęby.
+  Brzegi strzępi drobny Worley. Pod kłębami cienka ława warstwowa przy dużym pokryciu (niesie wzór frontów i cyklonów
+  widziany z daleka). Światło: dwie próbki gęstości ku słońcu (bliska z kłębami, daleka z rzadszej mipmapy mapy),
+  osłabienie z drugim, wolniej gasnącym członem, rozjaśnienie pod słońce (przycięte), światło nieba z wysokości,
+  barwa zachodu i cień planety. Nocna strona bez próbek światła; odcinek z zerowym średnim pokryciem (jedna próbka
+  z mipmapy obejmującej odcinek) nie zaczyna marszu.
+- CIEŃ KŁĘBÓW NA GRUNCIE (`planetGenSurfaceNear.tsl.js`, `uGnCloud.w`, `uGnCloudVol`): materiał powierzchni liczy
+  te same kłęby (ten sam próg i szum — `puffShape`, `puffThreshold`) w dwóch punktach promienia ku słońcu, nisko
+  i wysoko w powłoce. Cień ma kształt chmur; z miękkiej mapy pokrycia nie było go widać.
+- ATMOSFERA (`planetGenShell.tsl.js`, `createGenAtmosphereMaterial`): rozpraszanie pojedyncze, 10 próbek po
+  promieniu, gęstość e^(−h / Hs), droga słońca z funkcji Chapmana (za terminatorem — przez punkt promienia
+  najbliższy planecie), cień planety. Daje cienką błękitną krawędź, mgiełkę pod kątem i ciepły pas zmierzchu z
+  jednego wzoru. Mieszanie addytywne; graf gry zostawia ekstynkcję gruntu, a jego barwa mgiełki idzie ×0,6
+  (`setAtmosphere` — pełna barwa + powłoka liczyły mgiełkę dwa razy).
+- ZORZA (`createGenAuroraMaterial`): świecąca objętość nad owalem ~20° od bieguna magnetycznego (oś z ziarna,
+  odchylona od osi obrotu), 22 próbki; kurtyny = wstęgi wzdłuż poziomic szumu zależnego tylko od kierunku (pionowe
+  promienie), zieleń u dołu, róż u góry; tylko po nocnej stronie. Planety `terran`, `ocean`, `ice`.
+- SIECI ŚWIATEŁ MIAST (`uGnCity`): w skupiskach mapy nocy żyłki z grzbietów szumu wielofraktalnego (gęstsze
+  w środku skupiska) — arterie zamiast samych plam; planety z cywilizacją.
+
+Błędy po drodze (zostają jako zasady w regule `generator-planet`):
+- faza Rayleigha bez podzielenia przez 4π wybielała cały kadr (w jednostkach grafu gry współczynnik 3 / 16);
+- chmury z gęstością „pokrycie × profil + szum” były gładką bitą śmietaną, prześwietloną przez fazę pod słońce (do
+  ×4,9) — pomógł dopiero próg szumu zależny od pokrycia i wysokości oraz faza przycięta do 1,9;
+- pole kłębów jednej skali wyglądało z daleka jak popcorn — druga skala i ława warstwowa;
+- zorza z jasnością dobraną „na oko” zalewała zielenią pół kadru (bloom): jasność ×0,2, maska nocy przed terminatorem;
+- powietrze za terminatorem świeciło blado (droga słońca liczona jak na horyzoncie) — szaroróżowy pas zamiast
+  czerwieni zmierzchu;
+- pierwszy wypiek na stronie bez klatek rAF (karta w tle, panel przeglądarki aplikacji) dawał planetę z wodą jako sam
+  ocean: próba rysowała pusty cel, kwantyle wychodziły 1. Przyczyna w three r183 (pułapka 45 w regule `webgpu-tsl`):
+  numer renderu kompilacji = numer pierwszego renderu w życiu renderera. `PlanetGenBaker.compile` podbija licznik
+  renderów przed kompilacją; sprawdzenie: `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --bez-raf 1`
+  (`requestAnimationFrame` wyłączony przed wczytaniem strony) — przed poprawką 0 wybrzeży, po niej 32.
+
+Koszt GPU klatki (headless Chrome, RTX; planeta `terran` ziarno 21, zachmurzenie 0,33; czas z postem):
+
+| kadr | 5120 × 1440, okno 4096: cała klatka / chmury płaskie / bez chmur [ms] | 1920 × 1080, okno 2048 [ms] |
+|---|---|---|
+| orbita (krawędź tarczy w kadrze) | 2,7 / 2,2 / 1,7 | 1,2 / 0,9 / 0,75 |
+| orbita średnio (pole kłębów na pół kadru) | 3,8 / 2,9 / 2,3 | 1,3 / 1,0 / 0,85 |
+| orbita blisko (kłęby na cały kadr) | 4,5 / 3,3 / 2,6 | 1,2 / 0,9 / 0,8 |
+| cała planeta z daleka | 1,9 / 1,0 / 0,95 | 1,3 / 0,7 / 0,6 |
+| noc z sieciami świateł | 2,5 / 1,7 / 1,4 | 1,0 / 0,7 / 0,6 |
+| noc z zorzą na pół kadru | 3,3 / 2,0 / 1,7 | 2,0 / 1,2 / 1,1 |
+| widok gry 1 px = 1 j., chmury jako bryła | 4,3 / 3,1 / 2,5 | 1,3 / 0,9 / 0,8 |
+
+Osobno (różnica do pełnej klatki): bryła chmur ponad płaskie +0,5…1,3 ms przy 5120 × 1440 (+0,25…0,8 przy 1080p),
+z tego cień kłębów na gruncie ~0,2–0,35 ms; atmosfera +0,2–0,3 ms (+0,07…0,12); zorza +0,1 ms, w kadrze na pół ekranu
++0,5 ms (+0,3). Pusta powłoka chmur (planeta bez chmur w kadrze) ~0,2–0,3 ms. Dźwignie przy wpięciu: bryła chmur
+w połowie rozdzielczości z rozmyciem przy składaniu (4× mniej pikseli marszu), mniej kroków (16 zamiast do 44:
+−0,3…0,4 ms), bryła tylko na planecie przy graczu i tylko od presetu Wysokie.
+
+### 10.9. Pogoda: ruchome chmury bez symulacji płynu (2026-11-10, demo)
+
+Pytanie użytkownika: „chmury się nie ruszają? nie ma symulacji pogody?”. Stan przed: układ chmur to mapa wypieczona
+raz; ruszał się tylko powolny dryf szumu kłębów i obrót całej warstwy z suwaka „doba”.
+
+Rozwiązanie (`planetGenWeather.js`, graf chmur w `planetGenBake.tsl.js`): wzór chmur zostaje funkcją ziarna, dochodzi
+CZAS — obraz w chwili t to funkcja (ziarno, t), bez stanu (zapis gry trzyma sam czas pogody).
+
+- WIATR STREFOWY W PASACH: 9 pasów szerokości (środki co 20°), prędkość kątowa pasa = −cos 3φ · wiatr (pasaty przy
+  równiku w jedną stronę, wiatry średnich szerokości w drugą, bieguny stoją). Pas obraca swój szum SZTYWNO wokół osi
+  planety; mieszanie dwóch pasów tylko w strefie między nimi (40% szerokości pasa), z zachowaniem wariancji szumu.
+- CYKLONY: oś jedzie z wiatrem swojej szerokości (CPU, `cycloneAt`), w tarczy szum jedzie z cyklonem i obraca się
+  wokół jego osi sztywno (ramiona się kręcą); przy brzegu tarczy przenika w pasy.
+- WILGOTNOŚĆ: szum niskiej częstości obracany wokół osi pochylonej dokłada się do pokrycia — chmury w miejscu
+  gęstnieją i rzedną, obraz się nie zapętla.
+- MAPA POGODY (`PlanetGenWeather`): mapa chmur 1024 × 512 przeliczana tym samym grafem w 3 pasach celu (pas na
+  klatkę) do drugiego celu, potem zamiana. Nowa mapa dopiero po przesunięciu chmur o 0,35 teksela (przy tempie ×1
+  ~6 map na sekundę). Czytają ją bryła chmur, chmury płaskie i cień na gruncie.
+- KŁĘBY bryły chmur jadą z tym samym pasem wiatru co pokrycie (`puffNoise` — obrót punktu przed próbką szumu 3D),
+  cień kłębów na gruncie tak samo. Między przeliczeniami mapa ŚLIZGA się z wiatrem pasa (`wxGlideU` — przesunięcie
+  współrzędnej u), więc pokrycie i kłęby płyną razem co klatkę.
+- Chmury płaskie z bliska (wycinki): okno pieczone z zamrożoną chwilą pogody, ślizg okna z wiatrem do następnego
+  wypieku, przepiekanie co ~0,4 s pogody.
+- Demo: suwak „pogoda” (×0…12, `?pogoda=`, `?pogoda=off`), chwila startu dobierana tak, żeby nad miejscem startowym
+  było umiarkowane zachmurzenie (`?czas=` — wprost), `?mapaPogody=2048`.
+
+Błędy po drodze (zasady w regule `generator-planet`):
+- pierwsza wersja mieszała sąsiednie pasy na całej szerokości (funkcja „daszek”): wzory mijały się wszędzie i chmury
+  zamiast płynąć zmieniały kształt w miejscu — stąd pasy sztywne z wąską strefą mieszania;
+- mapa pogody 2048 × 1024 przeliczana co klatkę (12 pasów): +0,3 ms na każdą klatkę przy 1080p — mapa 1024 i
+  przeliczanie dopiero po przesunięciu o ułamek teksela zdjęły to do zera w medianie klatki;
+- kłęby brały czas mapy w użyciu: przy mapie odświeżanej kilka razy na sekundę skakałyby; kłęby dostały czas bieżący,
+  a mapa ślizg między przeliczeniami;
+- pokrycie przesuwane nad nieruchomymi kłębami wyglądało jak chmura rosnąca z jednej strony i parująca z drugiej;
+- po dodaniu pogody mapa chmur planety przy WYŁĄCZONEJ pogodzie różniła się od dawnej (1,36 mln z 2,1 mln tekseli),
+  choć graf z tymi samymi uniformami daje te same piksele: pierwszy wypiek po kompilacji szedł z flagą pogody
+  `uWx.w` = 1 — domyślne w wektora, którego wypiek nie podaje. three r183 nie wysyła na GPU wartości, która po
+  kompilacji wraca do samych zer (pułapka 46 w regule `webgpu-tsl`). Uniformy wypieku startują od zer; po poprawce
+  mapa planety = wypiek starym grafem (0 różnych tekseli), pierwszy rysunek = drugi.
+
+Koszt (headless Chrome, RTX; planeta `terran` ziarno 21, widok orbitalny):
+
+| | 5120 × 1440 | 1920 × 1080 |
+|---|---|---|
+| klatka, pogoda biegnie (mediana) | 3,06 ms (krawędź tarczy), 2,19 ms (cała planeta) | 1,33 / 1,45 ms |
+| klatka, pogoda stoi | 3,06 / 2,18 ms | 1,33 / 1,43 ms |
+| klatka, pogoda wyłączona (mapa wypieczona raz — inny układ chmur) | 2,93 / 1,97 ms | 1,22 / 1,30 ms |
+| cała mapa pogody 1024 × 512 | 0,59 ms (3 pasy po ~0,2 ms) | 0,59 ms |
+
+Przeliczanie mapy nie zmienia mediany klatki; klatki z pasem (kilkanaście na sekundę przy tempie ×1) są droższe
+o ~0,2 ms. Różnica „włączona — wyłączona” (+0,1…0,2 ms) to kłęby jadące z wiatrem (obrót punktu, drugi komplet
+próbek w strefie między pasami) i inny układ chmur w kadrze — nierozdzielone. Mapa 2048 × 1024: 2,9–3,7 ms na całość.
+
+Sprawdzenie ruchu: `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry orbita --pogoda "0,1,2,3,13"`
+(ten sam kadr po kolejnych sekundach pogody). Kolejne sekundy różnią się równo (średnia różnica jasności 2,9 / 255 na
+sekundę w kadrze „orbita”, 0,34 przy stojącej pogodzie) — bez skoków.
+
+Nie zrobione: pogoda dla pokładu chmur planet toksycznych (styl 1 — smugi stoją), cyklony nie powstają i nie giną
+(stały zestaw z ziarna), opady i burze z wyładowaniami, wpływ pogody na rozgrywkę.
+
+### 10.10. Ląd terrański z bliska: rzeki ze spływu wody i mozaika biomów (2026-11-10, demo)
+
+Powód: użytkownik pokazał zbliżenie niziny planety terrańskiej obok zdjęcia Ziemi z Google Earth — „nasza to po
+prostu plama”: rzeki jako zamknięte pętle krzyżujące się w „X”, ląd w jednej barwie z miękką plamistością. Wskazał
+brak biomów (las, łąka, pustynia, dolina rzeczna, góry). Zapowiedział też rozgrywkę na powierzchni: desant kapsuł
+z wojskiem i proceduralne miasta, o które toczy się walka.
+
+**Rzeki ze spływu** (`planetGenDrainage.js` — czysty JS, wynik `baked.drainage`):
+
+- Dawne rzeki były liniami zera gładkiego szumu: poziomice zamykają się w pętle, dwie skale szumu przecinają się,
+  szerokość jest stała, nie ma dopływów ani ujść. Poprawki tej metody nie dają drzewa rzek.
+- Wypiekacz rysuje pole planety bez rzek w rozdzielczości siatki spływu (szerokość mapy, najwyżej 2048), osobnym
+  przejściem (`drain:<rodzaj>`, cel RG32F) wysokość i opad (z tego samego klimatu co barwy — `earthClimate`),
+  odczytuje je raz na układ i na CPU liczy drzewo: zalewanie z kolejką priorytetową w kubełkach poziomów (każda
+  komórka lądu dostaje drogę do morza, zagłębienia wypełniają się do progu przelewu), wybór odbiorcy, przepływ
+  (opad × pole komórki sumowany w dół drzewa). Wynik to tekstura RGBA8 (kierunek do odbiorcy, przepływ w skali
+  logarytmicznej, głębokość wypełnienia), którą graf pola czyta przez `textureLoad`.
+- Graf pola (`riverNet`, `planetGenSolid.tsl.js`) dla każdego teksela przegląda 5 × 5 komórek siatki: bieg wody
+  komórki to łuk Béziera od połowy odcinka do odbiorcy, przez węzeł odbiorcy, do połowy jego odcinka (odległość
+  dokładna — pierwiastki równania 3. stopnia). Na łuk nałożony jest meander (sinusoida w poprzek, zero w węzłach).
+  Z odległości: woda (szerokość ∝ przepływ^0,4), dolina w rzeźbie, pas wilgotności / dolina zalewowa, a przy wielkich
+  rzekach pasy starorzeczy i jeziora-starorzecza.
+
+Błędy po drodze (każdy widoczny na zrzucie, poprawiony u źródła):
+
+- „odbiorca = komórka, z której zalewanie odkryło tę komórkę” daje na równym stoku proste, równoległe rzeki
+  w ośmiu kierunkach siatki, a w zagłębieniach promienie od progu przelewu („grzebienie”, gwiazdy);
+- losowanie kierunku osobno w każdej komórce (Rho8) usuwa równoległość, ale daje zygzak co komórkę — z daleka
+  ząbkowana linia; wybór ważony gładkim polem „ulubionego kierunku” (krata co 8 komórek) trzyma kierunek przez
+  dłuższy odcinek;
+- szerokość odcinka interpolowana do przepływu odbiorcy pogrubiała każdy dopływ przed ujściem do dużej rzeki —
+  w zbiegach powstawały gwiazdy;
+- odcinki proste między węzłami: z najbliższego zbliżenia rzeka była łamaną;
+- meander z szumu przesuwającego punkt: falowanie bez kształtu zakola; dolina idąca za każdym zakrętem wyglądała
+  w świetle jak zamek błyskawiczny (dolina idzie teraz wzdłuż łuku bez meandra i mieści pas meandrów);
+- pełna sieć strumieni rysowana z daleka wyglądała jak żyłki na całym lądzie — próg widoczności rośnie z tekselem
+  celu (stała gęstość linii na ekranie).
+
+**Mozaika biomów** (`earthColor`): klasy pokrycia zamiast jednego gradientu — pustynia (morza piasku z wydmami
+w dwóch skalach, kamienista hamada), step i łąka (płaty odcieni), las (granica z szumu płatów, skupiska drzew
+i luki na skraju, faktura koron, płaty drzewostanów), polany i torfowiska, dolina zalewowa (łąki zamiast lasu,
+pasy starorzeczy), tundra z oczkami, skała, śnieg, plaża i jasna płycizna. Wilgotność miejsca = klimat + dolina
+rzeki: w stepie wychodzą lasy wzdłuż rzek, w pustyni zielone wstęgi. Granice klas są progami z szerokością
+z pochodnej ekranu celu wypieku (`edge`), szum granic ma okres od ~6 tekseli: przy powiększeniu wycinka nie ma
+schodków tekseli. Błędy po drodze: szum ziarna w progu klasy dawał poszarpane krawędzie o schodkach tekseli; szum
+grzbietowy jako wzór polan wyglądał z daleka jak „robaczki” na całym lądzie; zależność lasu od wystawy stoku
+(nachylenie z drobnych oktaw) dawała kreski.
+
+Koszt (headless Chrome, RTX, planeta `terran` ziarno 21):
+
+| | po zmianie | przed (§ 10.5) |
+|---|---|---|
+| spływ wody, siatka 2048 × 1024 (raz na planetę z wodą): odczyt + CPU | ~0,29 s (CPU 0,28 s) | — |
+| wypiek planety 2048 × 1024, GPU | 5,6 ms | — |
+| okno 2048 × 1024: pole / dzień / razem | 2,9 / 1,8 / 4,8 ms GPU | razem z chmurami 5,3 ms |
+| okno 4096 × 2048: pole / dzień / razem | 11,3 / 7,1 / 18,5 ms GPU (w pasach) | razem z chmurami 21,6 ms |
+
+Pole kosztuje ~1,4 ms GPU na megapiksel (dawniej ~1,0), dzień ~0,87 (dawniej ~0,7); pole piecze się w większej
+liczbie pasów (`patchSteps`). Materiał klatki bez zmian — koszt klatki ten sam.
+
+Nie zrobione: faktura otwartego terenu z najbliższego zbliżenia (łąka i step są gładkie), jeziora w wypełnionych
+zagłębieniach (kanał A tekstury spływu niesie głębokość wypełnienia), delty i ujścia lejkowate, drobniejsza siatka
+spływu albo spływ liczony dla okna (z bliska komórka ma ~120 px), spływ w workerze, zatoki-ryfty (§ 10.7), miasta
+z danych spływu (`riverMouths` — ujścia rzek posortowane po przepływie).
+
+### 10.11. Spójność między poziomami zbliżenia i pasma gór ze śniegiem (2026-11-10, demo)
+
+Powód: użytkownik przysłał sześć zrzutów jednego obszaru w różnych zbliżeniach — „nie podoba mi się, że podczas
+zoomowania tak mocno się wszystko zmienia” — i poprosił o „góry ze śnieżnobiałymi szczytami”.
+
+Co zmieniało się ze zbliżeniem i dlaczego:
+
+- **Kałuże z pianą na nizinach („konfetti”) i ląd dziurawy jak ser z daleka.** Oba materiały powierzchni liczyły
+  brzeg morza z wysokości mapy PLUS detalu wysokości dokładanego co klatkę. Na płaskiej nizinie (wysokość bliska zera
+  na dużym obszarze) detal wybijał w lądzie kałuże, każdą z pianą przyboju — duże z daleka (niskie oktawy detalu),
+  drobne z bliska. Detal przesuwa teraz linię brzegu tylko na stromym brzegu (`coastK` z nachylenia mapy), piana
+  tylko do 30 m głębokości.
+- **Prostokąt wody i doliny zalewowej przy ujściu rzeki.** Łuk Béziera odcinka z odbiorcą-morzem ma B = C, więc
+  styczna na końcu łuku jest zerowa; odległość liczona ze stycznej wychodziła 0 w całym obszarze za końcem łuku,
+  a granice obszaru wyznaczało sąsiedztwo 5 × 5 komórek. Zerową styczną zastępuje cięciwa (`bezierNear`).
+- **Rzeki: z daleka jasnozielone pasy, z bliska niebieskie linie.** Pas zalewowy był poszerzany do teksela celu
+  i z daleka zastępował rzekę jasnym pasem; woda węższa niż teksel prawie znikała, a połysk tafli (pełny z daleka)
+  ją wybielał. Teraz: pas zalewowy tylko przy dużych rzekach na płaskim i tylko gdy cel go rozdziela, pokrycie
+  wody (w / wt)^0,5, połysk wody słodkiej × 0,3.
+- **Rzeki z daleka jak ścieżki obwodu drukowanego** (proste odcinki po osiach i przekątnych siatki). Dwie długie
+  fale odkształcenia biegu (okres ~6 i ~2,5 komórki) na każdym poziomie; przy morzu gasną (kanał B siatki spływu =
+  odległość od morza, czytany dwuliniowo), żeby ujście trafiało w brzeg. Krata pola kierunku spływu co 5 komórek.
+- **Łąki rosnące przy zbliżaniu.** Człon skupisk drzew w progu lasu miał średnią ujemną (stała 0,42 zamiast średniej
+  odległości komórek 0,516) i włączał się dopiero z bliska; krzywizna w progu lasu zależała od skali teksela.
+- **Beżowe równiny przy morzu.** Plaża była progiem samej wysokości; teraz pas stałej szerokości z odległości od
+  brzegu ≈ |wysokość| / nachylenie.
+
+Sprawdzanie: seria zrzutów JEDNEGO miejsca w kilku odległościach kamery (narzędzie robocze
+`.tmp/planeta-zblizenie/seria.mjs` — cel: bohater, największe ujście rzeki, najwyższe góry z odczytu mapy rzeźby).
+
+**Góry.** Pomiar mapy rzeźby planety dema (ziarno 21): 83% lądu poniżej 1 km, najwyższy szczyt 3,8 km przy
+`mountainKm` = 7 — pasma były tylko na zbieżnych granicach płyt, a iloczyn pasmo × grzbiet rzadko dochodził do
+połowy wysokości. Zmiany w `earthField`:
+
+- łańcuchy śródlądowe (`rangeN`: grzbiety szumu niskiej częstości — długie i wąskie) obok pasm na granicach płyt;
+- częstość grzbietów × 12 (`EARTH_RIDGE_FREQ`): przy częstości z opisu planety pierwsza oktawa szumu grzbietowego
+  była kopułą szeroką na ~20° — „pasmo” wychodziło płaskowyżem w całości nad linią śniegu (biała plama z szarą
+  obwódką); przy × 3,5 grzbiet miał wciąż ~570 km i stoki ~5%;
+- profil: 12% przedgórza + grzbiet² × 1,35 (wąskie szczyty, głębokie doliny), dno morza po staremu (łuki wysp).
+
+Po zmianie: 77% lądu poniżej 1 km, 18% w pasie 1–2 km, 3,8% w 2–3 km, 1,1% w 3–4 km, 0,3% powyżej 4 km, szczyty
+do 5,5 km. Barwy: spadek temperatury 0,16 / km (dawniej 0,10 — granica lasu i linia śniegu wypadały za wysoko),
+piętra las → hale → skała i piarg → śnieg, śnieg z ostrą linią w górach i bez śniegu na ścianach o nachyleniu
+ponad ~30%. W materiałach (planety z wodą): przesadzenie normalnych z nasyceniem na stromym, cień terenu × 2,6
+(dawniej × 5 — zalewał doliny), światło nieba na stokach odwróconych od słońca (graf gry nie ma światła otoczenia —
+ściany w cieniu były czarne i w śniegu wyglądały jak dziury); albedo śniegu × 0,88, żeby nie wchodził w bloom.
+
+Koszt (5120 × 1440): klatka 3,09 ms (przed 3,06 — bez zmiany), okno 4096 × 2048 19,3 ms GPU w pasach (przed 18,5),
+spływ wody ~0,4 s CPU na planetę (przed 0,28 s; więcej gór i nowa mapa odległości od morza).
+
+Nie zrobione: pasmo plaży ma szerokość ~2 tekseli celu na każdym poziomie (z bliska cienka obwódka brzegu), drobne
+wysepki i zatoczki nadal dochodzą z bliska z kolejnych oktaw kształtu kontynentów, lodowce w dolinach, jeziora
+górskie; wygląd gór na pozostałych rodzajach planet bez zmian.
+
+### 10.12. Rzeka nizinna pod wzorzec ze zdjęcia satelitarnego (2026-11-10, demo)
+
+Powód: po § 10.11 użytkownik zgłosił regres rzek („jasnozielone to, co jest teraz; ciemniejsze to, co było
+wcześniej”) i przypomniał wzorzec — zdjęcie rzeki nizinnej z Google Earth: ciemne koryto z ciasnymi zakolami, jasne
+łachy po wewnętrznej stronie zakoli, dolina zalewowa soczyście zielona z łukami dawnych koryt, jasne tarasy na jej
+brzegu, ciemny las z beżowymi, rozgałęzionymi polanami.
+
+Co było źle po § 10.11: dolina zalewowa jako blady, równy pas (wyglądała jak pobocze), starorzecza jako niebieskie
+„strzałki”, kropki pasa zalewowego wzdłuż strumyków (szum DODANY do progu wilgotności), rzeźba dolin spłaszczona
+(nasycenie normalnych od zera i światło nieba dopłacane także płaskiemu gruntowi przy niskim słońcu).
+
+Zmiany:
+
+- **Meander z szerokości koryta**: długość fali ≈ 12 szerokości — liczba półfal na łuku z szerokości (wielka rzeka:
+  jedno zakole na łuk, strumyk do czterech), amplituda do ~⅓ długości fali (do 0,42 komórki), koryto węższe
+  (`RIVER_W_MAX` 0,12). Stała liczba półfal dawała wielkiej rzece zęby zamka błyskawicznego.
+- **Dno doliny** (`riverNet`): łachy — piasek po wewnętrznej stronie zakola tuż przy korycie; łuki dawnych koryt —
+  pasy w stałej odległości od koryta (od najbliższego odcinka wielkiej rzeki). Kanał z pola: −0,49 · pasy
+  (0…−0,49) albo −(0,5 + 0,5 · łacha). Starorzecza jako cienkie łuki wody usunięte (wychodziły jasnymi kreskami
+  bez kształtu). Łachy, pasy i tarasy tylko gdy teksel celu je rozdziela (inaczej „koraliki” wzdłuż rzeki).
+- **Barwy**: dolina zalewowa = soczysta zieleń łęgów z pasami, brzeg pasa poszarpany szumem; tarasy — jasne płaty
+  na zewnętrznym brzegu; woda ciemna; polany = beżowe pasma wzdłuż drobnych cieków (rozgałęziają się jak sieć
+  rzeczna) + drobne płaty na grzbietach szumu, całe okolice bez polan.
+- **Plaża tylko przy wodzie** (w promieniu 3 tekseli punkt poniżej poziomu morza) — sam próg wysokości rysował
+  jasne kreski-poziomice na niskich pagórkach przy ujściach.
+- **Materiały**: nasycenie przesadzenia normalnych dopiero powyżej ~10% nachylenia (doliny niziny z pełnym
+  cieniowaniem), światło nieba tylko tam, gdzie jest ciemniej niż na płaskim gruncie, cień terenu × 3,6.
+
+Nie zrobione: dolina ma szerokość ograniczoną sąsiedztwem 5 × 5 komórek (do ~0,75 komórki od osi — we wzorcu jest
+szersza względem koryta), zakola są sinusoidą (bez pętli-podków i odciętych starorzeczy), dopływy uchodzą bez delt.
+
+Koszt po zmianie (5120 × 1440): okno 4096 × 2048 19,2 ms GPU w pasach (pole 12,0, dzień 7,1), spływ wody ~0,36 s CPU.
+
+### 10.13. Mapa terenu — trzeci poziom szczegółowości (2026-11-11, prototyp, demo)
+
+Powód: po § 10.12 użytkownik wyjaśnił, o co chodzi od początku — nie o samą rzekę, tylko o cały krajobraz wokół niej
+(paleta, teren), bo chce ostrzeliwać miasta z orbity i lądować jednostkami (minigra RTS o przejmowanie miast), a wtedy
+wokół miasta ma być widać teren jak na zdjęciu satelitarnym; biom miejsca ma wyznaczać resztę (rzeka, drzewa, plaże,
+meandry; pustynia; góry). Zapytał, czy to w ogóle da się zrobić.
+
+Dlaczego strojenie planety tego nie da: zdjęcie wzorca pokazuje ~30 km terenu, najbliższe zbliżenie planety ~770 km
+na monitorze użytkownika, a najdrobniejsza dana planety (komórka sieci rzecznej) to ~17 km — całe zdjęcie mieści się
+w niecałych dwóch komórkach. Rzeka szerokości 100 m ma na planecie mniej niż piksel.
+
+Rozwiązanie: **mapa terenu** (`planetGenTerrainMap.js`, czysty JS) — wycinek kilkudziesięciu kilometrów generowany na
+żądanie dla jednego miejsca, teksel ~20 m. Planeta ma mówić, co tam jest (biom, rzeka, brzeg); mapa buduje krajobraz
+w swojej skali. Prototyp: jeden biom, „tajga z rzeką nizinną”, bez połączenia z planetą (miejsce = ziarno).
+
+- **Rzeka = symulacja wędrówki koryta** (model Howarda–Knutsona w postaci z meanderpy): prędkość przesuwania brzegu
+  z krzywizny odcinka i ważonej krzywizny w górę rzeki, odcięcia zakoli. Koryto co kilka kroków odciska się
+  w rastrze „kiedy ostatnio płynęła tu rzeka” — z niego wychodzą łachy (teren świeżo opuszczony), łuki dawnych koryt
+  (pasy równego wieku), zasięg doliny o nieregularnym brzegu, sukcesja roślin od piasku do lasu i starorzecza. To,
+  czego na planecie nie dało się narysować wzorem (§ 10.12: „zakola są falą, nie pętlami”), tu wynika z symulacji.
+- **Cieki i torfowiska**: spływ wody po rzeźbie (`computeDrainage` w trybie mapy lokalnej: `wrapX: false`,
+  `rowWeight: false`, `keep: true`), wysokość nad najbliższym ciekiem → torfowiska na płaskim i wąskie jasne pasma
+  wzdłuż części strumyków, wyspy drzew w nieregularnych komórkach („plaster miodu” ze zdjęcia), ciemny łęg wzdłuż
+  większych strumieni.
+- **Barwy**: paleta z próbek zdjęć (kwantyzacja wzorca: las `#2a3f3e`–`#344843`, torfowisko `#77805f`; mapa po
+  dostrojeniu: las `#263c38`–`#2f443f`, torfowisko `#677359`), cieniowanie rzeźby i wysokości koron (skraj lasu).
+- **Warstwy wyniku**: barwa, wysokość, pokrycie terenu w klasach (woda, piasek, łąka, zarośla, las, torfowisko — pod
+  rozgrywkę: przejezdność, osłona), oś rzeki.
+
+Błędy po drodze: zaburzenie startowe osi mniejsze niż szerokość koryta zostawiało górny odcinek rzeki prosty (zakola
+rosną, wędrując w dół); piasek łach obrysowywał rzekę z obu stron (teren pod korytem z ostatnich kroków to brzeg, nie
+łacha); wyspy drzew jako równe kółka w kracie; czarne kreski każdego strumyka; surowa wysokość nad ciekiem i surowa
+„wielkość cieku” dawały torfowiska i łęgi o schodkowych brzegach (wygładzone rastry); słabe, szerokie pasmo wilgoci
+wzdłuż strumyków dawało wszędzie plamy zarośli we wzór maskujący (pasmo wąskie i pełne, tylko przy części strumyków).
+
+Czas (Node, jeden wątek): 1024 × 1024 (20 km) ~2,3 s, 2048 × 2048 (40 km) ~6,3 s (symulacja rzeki 2,7 s, spływ 1,3 s,
+barwy 1,2 s); w demie liczy worker. Nie mierzone na słabszym sprzęcie.
+
+Różnice wobec wzorca (stan prototypu): las bez faktury koron (miękkie plamy — teksel 20 m), brzegi torfowisk za
+gładkie i bez zielonej otoczki przejścia, dolina rzeki zbyt jednolicie zielona („malowana”), brak małych krętych
+strumieni z własnymi zakolami, starorzecza tylko jako ciemne łuki.
+
+Nie zrobione (kolejne kroki): połączenie z planetą (biom, kierunek i wielkość rzeki, brzeg morza z danych miejsca),
+pozostałe biomy (pustynia, góry, wybrzeże, step), miasto na mapie, materiał TSL i widok w grze (celownik ostrzału,
+mapa desantu), drobniejszy teksel albo tekstury detalu, ślady ostrzału.
+
+Narzędzia: demo `dema/mapa-terenu.html` (`?ziarno=`, `?roz=1024|2048`, `?km=`, `?rzeka=`; przeciąganie, kółko,
+„Losuj miejsce”), PNG bez przeglądarki `node scripts/mapa-terenu-png.mjs --ziarno 7 --roz 2048 --km 40 --out …`,
+testy `node --test tests/planetGenTerrainMap.test.mjs`.
+
+Życzenie użytkownika z tej samej rozmowy (nie zrobione): tryb „ultra” — planeta bardziej szczegółowa z daleka
+(większa mapa planety i drobniejsza siatka spływu; koszt: pamięć i czas wypieku).
+
+### 10.14. Mapa terenu: style rzek, wpływ morza, palety roślinności (2026-11-11, prototyp)
+
+Powód: użytkownik przysłał sześć nowych wzorców rzek (wielka rzeka niosąca muł z wyspami i jeziorami w dolinie, rzeka
+roztokowa na żwirze, delta z kanałami pływowymi i smugami osadu w morzu, meandry ze starorzeczami, delta typu „ptasia
+stopa”, ujście wielkiej rzeki w barwach umownych) i napisał: „masz też wpływ od morza, możesz też szaleć z kolorami
+roślinności — czerwień, why not? Drzewa są nie tylko zielone”.
+
+`generateTerrainMap` dostał parametry `river` (`TERRAIN_RIVERS`) i `veg` (`TERRAIN_VEGETATION`):
+
+- **meandry** — jak w § 10.13 (symulacja wędrówki koryta).
+- **wielka** — szerokie, łagodne koryto (oś doliny z kołysaniem), rozszerzenia z wyspami-soczewkami, boczne ramiona
+  odchodzące od koryta i wracające, dolina zalewowa jako pas wokół koryta z „wiekiem” rosnącym od brzegu (łuki dawnych
+  koryt równoległe do rzeki), jeziora niosące muł. Symulacja meandrów dawała tu węża o równych pętlach — odrzucona.
+- **roztoki** — żwirowe łożysko o zmiennej szerokości i nierównym brzegu; plecionka koryt = linie zera trzech szumów
+  rozciągniętych wzdłuż spływu (łachy-soczewki), nurt główny, zarośnięte stare łachy, terasa wokół.
+- **delta** — morze w mapie: brzeg w poprzek spływu z zatokami, rzeka kończy się w wierzchołku delty i rozdziela na
+  ramiona (`growDistributaries`), których szerokość rośnie ku morzu (lejki pływowe; siła z ziarna), wały ujściowe
+  wysunięte w morze, potoki pływowe ze spływu wody po nizinie, namorzyny / trzcinowiska / błota, w morzu głębia →
+  szelf → smugi osadu z ujść ramion (dwa rozmycia czytane z przesunięciem: wiry, znoszenie wzdłuż brzegu).
+- **roślinność**: `tajga`, `tropik`, `czerwona`, `purpura`, `zlota` — ten sam krajobraz w innych barwach, z kępami
+  drugiego gatunku drzew (`accent`); udział torfowisk zależy od palety (`VEG_FEN`).
+
+Błędy po drodze: potoki pływowe z każdego strumyka niziny (gęsty „system korzeni”) i smuga osadu ze wszystkich
+potoków (równy pas wzdłuż brzegu — źródła tylko w ujściach ramion); wały ujściowe długie jak palce; cienkie potoki
+rysowane wprost po ścieżce spływu (zygzak po ośmiu kierunkach — położenie uśrednione z kilku komórek w dół cieku,
+ciemna barwa); jasny brzeg wąskich ramion jak krawężnik; współrzędne „wzdłuż / w poprzek” liczone od najbliższego
+węzła osi skaczą między węzłami o ~odległość × kąt załamania — przy węzłach co pół szerokości koryta wyspy i jeziora
+wielkiej rzeki były pocięte prostymi krawędziami, a brzeg koryta z kół wyglądał jak sznur korali (węzły co ⅛
+szerokości, brzeg także z punktów pośrednich); jeziora w każdym obniżeniu między łukami (przerywane kreski jak
+ścieg); kępy drugiego gatunku gęste i nasycone (konfetti).
+
+Czas (Node, 2048 × 2048): 4–8 s w spokojnym przebiegu, 9–14 s w przebiegu przy obciążonej maszynie; 1024 × 1024:
+1,5–3 s. Wzorce oceniane tym razem tylko wzrokowo (bez kwantyzacji palety).
+
+Znane wady: potoki pływowe i strumienie wysoczyzny nadal kanciaste; wyspy wielkiej rzeki miewają ostre, ścięte końce;
+ramiona delty kończą się zaokrąglonymi „czubkami” z ciemną obwódką; brzeg morza dość prosty (bez lagun, mierzei,
+wysp barierowych); nurt rzeki roztokowej zbyt prosty i równy; brak chmur, fal i przyboju na morzu.
+
+Demo: `dema/mapa-terenu.html` — listy „rzeka” i „roślinność” (`?rzeka=`, `?ros=`), domyślnie delta + tropik.
+
+### 10.15. Tajga dopracowana, mapa terenu połączona z planetą (2026-11-11, prototyp, demo)
+
+Polecenie użytkownika: „dokończ tajgę i połącz z planetą”.
+
+**Tajga** (`planetGenTerrainMap.js`): linie cieków z wygładzonego rastra pokrycia (`streamCov`) zamiast czarnych
+kresek po ścieżce spływu; brzeg torfowisk z szumem i zielonym pasem zarośli (bez pasa przy wyspach drzew); granica
+lasu łęgowego z szumem; faktura lasu z szumu wysokości koron (kępy + ziarno, tylko dla koron powyżej 6 m) —
+cieniowanie od słońca daje nierówny las zamiast płaskiej plamy; paleta doliny odrobinę mniej nasycona.
+
+**Złącze** (`planetGenPlace.js`, czysty JS): planeta zostawia na CPU dane miejsca, mapa terenu dostaje z nich opcje.
+
+- Wypiek: przejście `drain:<rodzaj>` zwraca teraz cztery kanały (wysokość, opad, temperatura, wilgotność — cel
+  RGBA32F zamiast RG32F; ten sam jeden odczyt na układ). W `baked.drainage` zostają: `heightM` (Int16, metry),
+  `temp`, `moist` (Uint8). Koszt: 16 B zamiast 8 B na komórkę celu przejścia, 4 B na komórkę na CPU.
+- `describePlace(baked, kierunek)`:
+  - punkt w morzu przy brzegu → najbliższy ląd; otwarte morze → odmowa;
+  - największa rzeka w promieniu 14 km → mapa staje nad nią;
+  - bieg w dół rzeki po odbiorcach: kierunek spływu z pierwszych pięciu kroków (`flowAngle`; mapa: x — wschód,
+    y — południe) i droga do morza (do 60 km);
+  - styl: morze bliżej niż 20 km rzeką → `delta` (40 km, koryto 220–700 m); góry albo rzeźba okolicy ponad 1500 m →
+    `roztoki` (16 km); przepływ ≥ 1500 → `wielka` (40 km, 600–1400 m); inaczej `meandry` (30 km; 40 km przy korycie
+    ponad 220 m); bez rzeki — mała rzeka 60 m na mapie 20 km. Szerokość koryta 38 · przepływ^0,33 [m];
+  - biom z klimatu (progi jak barwy lądu planety): lód i śnieg, góry, tundra, pustynia, step, las; przepis mapy ma
+    dziś tylko las (`supported`);
+  - roślinność: chłodno — `tajga`, ciepło (T > 0,62) — `tropik`, planeta o rdzawej roślinności — `czerwona`; odcień
+    palety w połowie ku barwie lasu planety w tym klimacie (`vegTint`);
+  - ziarno mapy = (ziarno planety, komórka) — to samo miejsce daje tę samą mapę.
+- `generateTerrainMap` dostał `flowAngle` (oś doliny obrócona w zadanym kierunku; przy delcie morze po tej stronie)
+  i `vegTint` (mnożniki barw palety roślinności; układ mapy bez zmian — pilnuje test).
+
+**Demo** (`dema/planeta-zblizenie.html?styl=terran`): dwuklik na lądzie (widok z góry i orbitalny) otwiera panel
+z mapą terenu miejsca; mapa liczy się w workerze (1024 × 1024, `?teren=2048`), pod mapą opis miejsca (biom, rzeka,
+bok mapy, szerokość geograficzna, wysokość).
+
+Sprawdzone na planecie dema (headless, prawdziwy dwuklik, konsola bez błędów):
+
+| Miejsce | Wynik |
+|---|---|
+| ujście największej rzeki | delta, koryto 700 m, mapa 40 km, tropik z odcieniem planety, przepływ 9194, morze 17 km rzeką |
+| największa rzeka w głębi lądu | wielka rzeka, koryto 772 m, mapa 40 km |
+| mała rzeka | meandry, koryto 192 m, tajga, mapa 30 km |
+| najwyższe góry | biom „lód i śnieg” — bez przepisu, pokazana mapa lasu z dopiskiem |
+| otwarte morze | odmowa („wskaż ląd”) |
+
+Czas mapy w panelu (1024 × 1024, worker): 1,9–3,2 s; opis miejsca — poniżej milisekundy.
+
+Błąd po drodze: pierwsze przypisanie „paleta planety → paleta mapy” (planeta oliwkowa → mapa `zlota`) dało mapę
+złotobrązową przy planecie oliwkowozielonej; zastąpione układem palety z klimatu i odcieniem ku barwie planety.
+
+Czego złącze nie robi: mapa nie odtwarza kształtu brzegu morza ani biegu rzeki z planety (zgadza się styl, wielkość,
+kierunek i strona morza); biomy inne niż las nie mają przepisu; na mapie nie ma miasta; planeta nie pokazuje, gdzie
+leży otwarta mapa (brak znacznika); mapa nie jest jeszcze rysowana jako teren pod kamerą gry.
+
+### 10.16. Planeta z daleka: krajobraz jak na mapie terenu, tryb ultra (2026-11-11, demo)
+
+Powód: po pokazaniu mapy terenu w panelu obok planety użytkownik napisał: „po to robimy to takie szczegółowe, żeby
+CAŁA PLANETA była taka szczegółowa”, „czyli de facto to ten tryb ultra”, a na propozycję zaczęcia od głębokiego
+zbliżenia: „zacznijmy od ulepszenia oddalonej planety. Ją potrzebuję bardziej szczegółową i zbliżoną do map terenów”.
+
+Stan przed (seria zbliżeń jednego miejsca, widok z góry): ląd gładki, oliwkowy, mało zróżnicowany; rzadkie beżowe
+kreski polan; rzeki jaskrawoniebieskie; wokół każdego lądu szara obwódka; mapa planety dema 2048 × 1024 (na ekranie
+5120 × 1440 tarcza planety ma ~0,7 teksela na piksel, a okno pod kamerą 0,27–0,53).
+
+Zrobione:
+
+- **Barwy z palet mapy terenu** (`terrainLandscape`, `TERRAIN_WATER`): torfowiska, łąki doliny zalewowej, woda, muł
+  i piasek planety to te same barwy co na mapie miejsca; zestaw chłodny (tajga) i ciepły (las równikowy) mieszane
+  temperaturą, lekki odcień ku barwie lasu planety (stosunek^0,25, 0,8–1,25).
+- **Mozaika pól w trzech skalach** zamiast rzadkich kresek: komórka szumu ~120, ~33 i ~9 km, dziedzina odkształcona
+  szumem warstwy, obrys strzępiony drobnym szumem; gęstość z klimatu (płasko, wilgotno, chłodno — najwięcej) i krain
+  (szum niskiej częstości). Warstwa nierozdzielona przez teksel celu wchodzi średnią.
+- **Woda słodka**: ciemna w lesie, mętna w wielkich rzekach (muł w kanale z pola w pikselu wody), mleczny błękit
+  w górach. Pas zalewowy wielkich rzek widoczny także z daleka (gaśnie ze stosunkiem szerokości do teksela).
+- **Smugi osadu w morzu** przy ujściach rzek: stempel w kanale A siatki spływu (siła i zasięg z przepływu, do ~10
+  komórek siatki 2048 ≈ 180 km), w polu próbka przesunięta szumem, morze spłycone tak, żeby dno prześwitywało
+  w zadanym stopniu, dno w barwie mułu.
+- **Brzeg**: plaża ~1 km z pokryciem zamiast pasa dwóch tekseli; przybój z daleka 0,08 zamiast 0,45 i tylko przy
+  opadającym dnie.
+- **Tryb ultra** w demie planety: mapa 4096 × 2048, siatka rzek 4096, okno 6144 × 3072.
+
+Liczby (planeta dema, ultra): wypiek planety 1,5–1,7 s, z tego spływ na CPU 1,0–1,1 s (siatka 4096 × 2048,
+2,1 mln komórek lądu) i próba 0,13 s; dwa miejsca okna 6144 × 3072 — 768 MB. Koszt klatki nie był mierzony ponownie
+(w materiałach zmienił się tylko przybój); czas GPU wypieku okna 6144 × 3072 nie był mierzony.
+
+Błędy po drodze: torfowiska z jednego progu szumu o gasnących oktawach — wielkie gładkie plamy (naklejki); po
+przejściu na warstwy z małym udziałem pola — okrągłe kropki (konfetti) → odkształcenie dziedziny i większy udział;
+odcień ku barwie lasu planety pierwiastkiem stosunku zrobił z torfowisk pomarańcz → stosunek^0,25; smuga osadu jako
+liniowe spłycenie do 4 m — półka o ostrym brzegu wyniesiona detalem nad wodę (blady ląd z niebieskimi dziurami)
+→ głębokość z widoczności dna; barwa mułu na wyspach szelfu (leżą po stronie morza) → tylko pod wodą; funkcja `log`
+nieimportowana z TSL (jest `log2`).
+
+Znane wady: smuga osadu ma jeszcze zbyt okrągły obrys; mozaika pól w ciepłych lasach jest gęsta i dość równa (do
+oceny użytkownika); pasy wilgotności wzdłuż strumieni z daleka miejscami wychodzą kreskowane; udział pola warstw
+(`fenMean`) jest z oszacowania odchylenia szumu, nie z pomiaru — jasność krainy między poziomami może się nieco
+różnić; palety roślinności planety (oliwkowa, zielona…) bez zmian; zakola wielkiej rzeki nadal ostre („zęby”).
+
+Narzędzia: seria zbliżeń `.tmp/planeta-zblizenie/seria.mjs` dostała cel `tajga` (chłodny wilgotny las w głębi lądu)
+i wypisuje czasy wypieku; testy — `tests/planetGenDrainage.test.mjs` (smugi osadu, barwy wspólne z mapą terenu).
+
+### 10.17. Planety przygotowane: mapy jako pliki, planeta 8192 × 4096 (2026-11-11, demo)
+
+Decyzja użytkownika po rozmowie o Star Citizen: na pierwsze przejście gry przygotowujemy zestaw planet („gracz,
+grając po raz pierwszy, nie wie, jakie są planety”), tryb „sandbox” z generowaniem przyjdzie później z ostrzeżeniem
+o czekaniu. Planety przygotowane mają być plikami map: „to jest pewniak”. Polecenie: „jedziemy z mapami. Rób,
+planeta ultra”.
+
+Dlaczego pliki, a nie przepis liczony u gracza: każdy gracz widzi dokładnie tę samą planetę (różne karty i sterowniki
+mogą dać minimalnie inne wysokości, a na płaskim terenie to zmienia bieg rzeki — miejsce postawione ręcznie przy
+ujściu mogłoby stać obok rzeki; różnicy między kartami nie mierzyliśmy, mamy jedną maszynę), to, co sprawdzone,
+trafia do gracza, i nie ma czekania.
+
+Zrobione:
+
+- `src/3d/planetGen/planetGenFiles.js` — zapis wypieczonej planety do plików i wczytanie (format w nagłówku pliku
+  i w regule obszaru), `PlanetGenBaker.importPlanet` — wynik o kształcie `bakeSystem` z map z dysku; dwa przejścia
+  przepisania w `planetGenBake.tsl.js` (`copy8`, `copyH`).
+- `scripts/webgpu/planeta-wypal.mjs` — piecze planetę w demie (domyślnie mapa 8192 × 4096, siatka rzek 4096)
+  i ściąga pliki na dysk; demo planety: `?plik=<nazwa>`, `?mapa=8192`.
+
+Planeta bohater dema (terran, ziarno 21), mapa 8192 × 4096:
+
+| Plik | Rozmiar |
+|---|---|
+| day.webp (dzień, jakość 0,95) | 6,90 MB |
+| day.a.png (lód morski) | 5,78 MB |
+| night.webp | 0,03 MB |
+| clouds.webp | 2,86 MB |
+| mask.png | 11,55 MB |
+| height.i16.bin (wysokość) | 25,98 MB |
+| drain.*.bin (rzeki i dane miejsc) | 12,15 MB |
+| razem | 65,3 MB |
+
+Czasy (headless, ta maszyna): wypiek na żywo 8192 — 1,8–2,7 s (spływ na CPU 1,1–1,8 s); zapis do plików
+w przeglądarce 20–27 s (kodowanie obrazów); wczytanie z plików 1,3–1,4 s (pobranie i dekodowanie 0,7–0,8 s,
+przepisanie na karcie 0,56–0,66 s).
+
+Zgodność z wypiekiem na żywo (ten sam kadr z orbity, sama mapa planety, 1600 × 900): średnia różnica 0,06–0,21
+na 255, największa 19, żaden piksel ponad 8 w jasności — ślad stratnej kompresji mapy dnia. Kadry rysowane przez
+okno pod kamerą są identyczne co do bitu albo różnią się o 1–2 (okno liczy się tak samo w obu przypadkach).
+
+Błąd po drodze: pliki z rozszerzeniem `.gz` serwer deweloperski podaje z `Content-Encoding: gzip`, więc przeglądarka
+rozpakowywała je sama, a moduł próbował drugi raz („Failed to fetch”, demo nie wstawało) → rozszerzenie `.bin`
+i rozpoznawanie gzipa po pierwszych bajtach.
+
+Czego nie ma / nie sprawdzono: pamięć karty przy mapie 8192 nie była mierzona (z rozmiarów celów: mapy planety
+~0,9 GB z mipmapami, do tego cel pola 536 MB na czas wczytania); słabsze presety powinny dostać pomniejszoną mapę
+z tego samego pliku — nie zrobione; wybór miejsca na pliki w wydaniu (repozytorium / LFS / osobna paczka) — do
+decyzji, dziś `.tmp/planety/`; narzędzie wypala jedną planetę naraz (bez listy planet kampanii); olbrzymy gazowe
+nie mają zapisu do plików; pipeline'y przepisania powstają synchronicznie przy pierwszym wczytaniu.

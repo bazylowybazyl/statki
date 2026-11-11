@@ -545,6 +545,105 @@
       color: #f87171;
     }
 
+    /* Komputer handlowy w karcie „Handel” (E23a): najechanie na towar — kupcy poza tym portem. */
+    .station-card-aero.trade-market-card {
+      position: relative;
+    }
+
+    /* Okienko przy wierszu pod kursorem (top ustawia najechanie), nie łapie myszy — wiersze pod nim dalej reagują. */
+    .trade-partners-tip {
+      position: absolute;
+      right: 14px;
+      z-index: 5;
+      width: min(560px, calc(100% - 28px));
+      pointer-events: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+      background: rgba(10, 18, 36, 0.96);
+      padding: 7px 9px;
+      border: 1px solid rgba(96, 165, 250, 0.28);
+      border-radius: 8px;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .trade-partners-tip[hidden] {
+      display: none;
+    }
+
+    .trade-partners-title {
+      margin-bottom: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #7f9ad0;
+    }
+
+    .trade-partners-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) auto auto minmax(0, 1.6fr);
+      gap: 10px;
+      padding: 3px 0;
+      color: #dfe7ff;
+    }
+
+    .trade-partners-row + .trade-partners-row {
+      border-top: 1px solid rgba(70, 94, 140, 0.32);
+    }
+
+    .trade-partners-row.is-closed {
+      opacity: 0.5;
+    }
+
+    .trade-partners-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .trade-partners-price {
+      color: #4ade80;
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .trade-partners-qty,
+    .trade-partners-way {
+      color: #9fb4e6;
+      white-space: nowrap;
+    }
+
+    /* HUD: rozgrzewka świata ruchu trwa po starcie gry (D17) — mały znacznik u góry, znika po końcu. */
+    .economy-warmup-hud {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      z-index: 60;
+      transform: translateX(-50%);
+      padding: 3px 10px;
+      border: 1px solid rgba(255, 170, 51, 0.45);
+      border-radius: 4px;
+      background: rgba(8, 8, 8, 0.72);
+      color: #ffaa33;
+      font: 600 11px/1.4 monospace;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      pointer-events: none;
+      animation: economy-warmup-pulse 1.6s ease-in-out infinite;
+    }
+
+    .economy-warmup-hud[hidden] {
+      display: none;
+    }
+
+    @keyframes economy-warmup-pulse {
+      50% { opacity: 0.55; }
+    }
+
+    .trade-partners-wait {
+      color: #9fb4e6;
+    }
+
     .trade-market-actions {
       white-space: nowrap;
       text-align: right;

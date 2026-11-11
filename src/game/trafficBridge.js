@@ -26,8 +26,9 @@ import {
   TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD,
   TRAFFIC_WARMUP_FALLBACK_SECONDS
 } from './traffic/trafficProtocol.js';
-import { BELT_MSG } from './traffic/trafficProtocol.js';
+import { BELT_MSG, SALVAGE_MSG } from './traffic/trafficProtocol.js';
 import { moveStock } from './traffic/marketStock.js';
+import { findTradePartners as computeTradePartners, TRADE_PARTNER_TUNE } from './tradePartners.js';
 import { describeWorkforce } from './workforce.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
@@ -105,6 +106,15 @@ export class TrafficBridge {
     this.stationIndex = new Map();
     /** `stationId` → kopia magazynu `{ resources, capacity, duress, bid, ask }`. */
     this.market = new Map();
+    /**
+     * Numer stanu kopii rynku: rośnie przy każdym buforze rynku z workera, zmianie gry (`stockDelta`) i nowej tabeli
+     * stacji. Komputer handlowy (`findTradePartners`) trzyma wyniki zapytań do następnej zmiany numeru.
+     */
+    this.marketSeq = 0;
+    /** Ile buforów rynku przyszło z workera (0 — kopia jeszcze pusta, komputer handlowy „liczy”). */
+    this.marketBuffers = 0;
+    this._partnerCache = new Map();
+    this._partnerCacheSeq = -1;
     /** Kursy w bańce: `data` (Float64Array, `COURSE_STRIDE`), `count`, `clock`. */
     this.courses = { data: new Float64Array(0), count: 0, clock: 0, time: 0 };
     /**
@@ -120,6 +130,11 @@ export class TrafficBridge {
     this.actorDocks = new Map();
     /** Ładunek encji bańki (kontenery-łup K1): numer kursu → { id, cargo, mass, value }. Worker przysyła zmiany. */
     this.actorManifests = new Map();
+    /**
+     * Praca encji bańki (E24, `WorkRecord` z `trafficProtocol.js`): numer kursu → { id, kind, phase, x, y, t0, dur, gid } —
+     * górnik w etapie wydobycia, złomiarz przy wraku albo z wrakiem na linie. Worker przysyła zmiany.
+     */
+    this.actorWorks = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -284,6 +299,7 @@ export class TrafficBridge {
     this._enter();
     try {
       const applied = applyToMirror(this.market.get(id), bag);
+      this.marketSeq++;
       const seq = ++this._stockSeq;
       this._pendingStock.push({ seq, stationId: id, bag: { ...bag } });
       this._post({ type: TRAFFIC_MSG.STOCK, seq, stationId: id, bag: { ...bag }, reason: String(reason) });
@@ -316,6 +332,11 @@ export class TrafficBridge {
 
   /** Encja bez kursu zniszczona w grze: strata zapasu frakcji albo statku firmy. `options`: `x`, `y`, `reason`. */
   entityLost(id, options = {}) { this._send({ type: TRAFFIC_MSG.ENTITY_LOST, id, ...options }); }
+
+  /** Kapsuły ratunkowe (E22 K4): kapsuła z ludźmi promu `course` doleciała do `stationId` (magazyn stacji dolotu). */
+  podsLanded(course, stationId, people) {
+    this._send({ type: TRAFFIC_MSG.PODS_LANDED, course, stationId: String(stationId || ''), people: Math.max(0, Math.floor(Number(people) || 0)) });
+  }
 
   destroyCourse(course, options = {}) {
     this._send({ type: TRAFFIC_MSG.DESTROYED, course, ...options });
@@ -421,6 +442,31 @@ export class TrafficBridge {
     this._send({ type: BELT_MSG.MINED, x: Number(x), y: Number(y), tons: amount });
   }
 
+  // ============================================================
+  // Złomiarze i wraki gry (E24)
+  // ============================================================
+
+  /**
+   * Wraki gry w bańce gracza do rejestru złomiarzy świata ruchu: `[{ gid, x, y, classId, scale, towable, factionId,
+   * source }]` (`SALVAGE_MSG.WRECK_REPORT`). Złomiarz, który skończy pracę, wraca zdarzeniem `salvage-taken`.
+   */
+  reportWrecks(wrecks) {
+    if (!Array.isArray(wrecks) || !wrecks.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_REPORT, wrecks });
+  }
+
+  /** Gracz pracuje przy zgłoszonych wrakach (`on`) albo je zostawił — złomiarze ich nie ruszają, dopóki trwa praca gracza. */
+  wrecksHold(gids, on = true) {
+    if (!Array.isArray(gids) || !gids.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_HOLD, gids, on: !!on });
+  }
+
+  /** Zgłoszone wraki gry, których już nie ma (zabrał je gracz, przepadły) — złomiarz w drodze wraca pusty. */
+  wrecksGone(gids) {
+    if (!Array.isArray(gids) || !gids.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_GONE, gids });
+  }
+
   /** Wyrwy z workera: kopia `beltHoles` i zdarzenie `belt-holes` ze zmianami (depth 0 = usunięta). */
   _onBeltHoles(message) {
     const list = Array.isArray(message.holes) ? message.holes : [];
@@ -459,6 +505,11 @@ export class TrafficBridge {
           this._emit('error', message);
           break;
         case BELT_MSG.HOLES: this._onBeltHoles(message); break;
+        // Kapsuły ratunkowe (E22 K4): cel kapsuł promu zniszczonego w grze (port nadania, ludzie z kontraktu).
+        case TRAFFIC_MSG.PODS_TARGET: this._emit('pods-target', message); break;
+        case SALVAGE_MSG.TAKEN:
+          if (Array.isArray(message.taken) && message.taken.length) this._emit('salvage-taken', message.taken);
+          break;
         default: break;
       }
     } finally {
@@ -504,6 +555,7 @@ export class TrafficBridge {
     for (const entry of stations) {
       if (!this.market.has(entry.id)) this.market.set(entry.id, createMirror(this.tables.resources));
     }
+    this.marketSeq++;
   }
 
   _onTick(message) {
@@ -568,6 +620,8 @@ export class TrafficBridge {
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.
     this._pendingStock = this._pendingStock.filter(entry => entry.seq > stockSeq);
     for (const entry of this._pendingStock) applyToMirror(this.market.get(entry.stationId), entry.bag);
+    this.marketBuffers++;
+    this.marketSeq++;
   }
 
   /** Obsada portów (W5): bufor `tick.crew` w układzie tabeli `stations` → `mirror.crew`. */
@@ -619,6 +673,9 @@ export class TrafficBridge {
     if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
     if (Array.isArray(message.unmanifested)) for (const id of message.unmanifested) this.actorManifests.delete(id);
     if (Array.isArray(message.manifests)) for (const rec of message.manifests) this.actorManifests.set(rec.id, rec);
+    if (Array.isArray(message.unworked)) for (const id of message.unworked) this.actorWorks.delete(id);
+    if (Array.isArray(message.works)) for (const rec of message.works) this.actorWorks.set(rec.id, rec);
+    if (!actors.count && this.actorWorks.size) this.actorWorks.clear();
     // Pusta bańka (wyjście z zasięgu portów) — postoje i manifesty znikają razem z encjami.
     if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
     if (!actors.count && this.actorManifests.size) this.actorManifests.clear();
@@ -650,6 +707,39 @@ export class TrafficBridge {
    */
   getEconomy(stationId) {
     return this.market.get(String(stationId || '')) || null;
+  }
+
+  /**
+   * KOMPUTER HANDLOWY (E23a, `src/game/tradePartners.js`): kto skupi (`side = 'buy'`) albo sprzeda (`'sell'`) towar
+   * `resourceId` w układzie strony — cena z reputacją jak w terminalu, ile port przyjmie, odległość i czas lotu,
+   * frakcja i stosunki, kolejność po zysku z uwzględnieniem drogi. Liczone na żądanie z kopii rynku; wynik zostaje
+   * w pamięci do następnego bufora rynku (albo zmiany gry — `marketSeq`), więc karta, która pyta co klatkę, nie
+   * alokuje. Klucz: towar, strona, ilość, cena zakupu, pominięta stacja i kubełek pozycji gracza
+   * (`TRADE_PARTNER_TUNE.positionBucket`). Wynik jest wspólny — tylko do odczytu. Filtry: `findTradePartners`
+   * w `tradePartners.js` (`hidden` — mgła wojny, `positionOf`, `drives`, `reputation`, `limit`).
+   */
+  findTradePartners(resourceId, side = 'buy', filters = {}) {
+    if (this._partnerCacheSeq !== this.marketSeq) {
+      this._partnerCache.clear();
+      this._partnerCacheSeq = this.marketSeq;
+    }
+    const bucket = TRADE_PARTNER_TUNE.positionBucket;
+    const fx = Number(filters.from?.x);
+    const fy = Number(filters.from?.y);
+    const cacheKey = `${resourceId}|${side}|${Math.round(Number(filters.amount) || 0)}|`
+      + `${Math.round((Number(filters.costBasis) || 0) * 10)}|${filters.excludeId ?? ''}|${filters.limit ?? ''}|`
+      + `${Number.isFinite(fx) ? Math.round(fx / bucket) : 'x'}|${Number.isFinite(fy) ? Math.round(fy / bucket) : 'y'}`;
+    const cached = this._partnerCache.get(cacheKey);
+    if (cached) return cached;
+    const result = computeTradePartners({ stations: this.tables?.stations || [], market: this.market, ready: this.marketBuffers > 0 },
+      resourceId, side, filters);
+    result.marketSeq = this.marketSeq;
+    // Przed pierwszym buforem rynku nie zapamiętujemy — karta pyta dalej i pokazuje „liczę…”.
+    if (!result.pending) {
+      if (this._partnerCache.size >= TRADE_PARTNER_TUNE.cacheSize) this._partnerCache.clear();
+      this._partnerCache.set(cacheKey, result);
+    }
+    return result;
   }
 
   /**

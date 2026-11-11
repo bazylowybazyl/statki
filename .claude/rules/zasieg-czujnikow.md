@@ -12,17 +12,28 @@ paths:
   - "tests/sensorDetection.test.mjs"
   - "tests/sensorCoverage.test.mjs"
   - "tests/sensorPicture.test.mjs"
+  - "tests/zasiegiJednostek.test.mjs"
+  - "src/data/sensorUnits.js"
+  - "src/game/sensorUnitAudit.js"
+  - "scripts/webgpu/zasiegi-jednostek-gra.mjs"
 ---
 
 # Zasięg czujników (radarów): wykrywanie, sygnatura, pokrycie, ocena obustronna w grze i w CIC
 
 > Reguła obszaru. Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Odnośnik „§ X” = nagłówek sekcji w tej albo innej regule (`grep -rn "## X" .claude/rules`). Nową wiedzę o obszarze dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i wyniki pomiarów — do `docs/`.
 
-## Stan (2026-11-04): prototyp w grze za flagą, rozgrywka bez zmian
+## Stan (2026-11-11): prototyp w grze za flagą, rozgrywka bez zmian; zasięgi każdej jednostki jawne, dane obustronne
 
 - Plan, propozycje wyglądu i decyzje użytkownika: `docs/PLAN-zasieg-czujnikow.md`. Użytkownik chce oceniać wygląd w prawdziwej grze i w CIC, nie na szkicu; demo 2D z 5 propozycjami map (`dema/radar-zasiegi.html`) zostaje jako szkic.
 - Decyzje użytkownika (2026-11-04): znak zasięgu STOI przy okręcie i pokazuje OBUSTRONNIE mój zasięg względem nich i ich zasięg względem mnie („żeby obustronnie można było ocenić”); każda strona ma SWÓJ znak („wachlarz ode mnie i OD przeciwnika, przeciwnik też ma swój, a nie że ja mam dwa”). Lecąca fala to nie HUD, tylko przyszła umiejętność („wysyłasz falę, a ona sprawdza, co jest po drodze”). Nieznany kontakt: OBŁOK, skały: ECHO (shadery: gałąź sesji kontaktów, `docs/PLAN-kontakt-czujnikow.md`; jeszcze nie w grze).
 - Prototyp w grze tylko z adresem `?radarZasiegi` (bez flagi obraz czujników nie powstaje, nakładka nie rysuje, Z w CIC zostaje myśliwców). Rozgrywki NIE zmienia: AI widzi kołem pasywnym × klasa (`fleetAwareness.js`), gracz — wzrokiem mgły wojny (reguła `mgla-wojny`). Wpięcie modelu w AI i mgłę (etap 2) czeka na decyzje z § 5 planu.
+
+## Zasięgi KAŻDEJ jednostki (audyt 2026-11-11, `docs/AUDYT-zasiegi-jednostek-2026-11-11.md`)
+
+- Każda jednostka gry ma JAWNĄ moc czujników (KONTAKT), wykrywalność (sygnatura) i wzrok (IDENTYFIKACJA), bez gałęzi awaryjnych: okręty z profilu `sensors` kadłuba / szablonu, reszta z `src/data/sensorUnits.js` (`SENSOR_PROFILE_BY_UNIT`, `SENSOR_SIGNATURE_BY_UNIT`; klucz: `type`, potem `shipFrame`) — myśliwce z hangarów i misji, `spawnPirate`, holownik, kadłuby ruchu v2, okręty z awansu ruchu; wzrok kadłubów cywilnych — klasa `frigate` w `shipRanges.js`; stacje — `SENSOR_PICTURE_TUNE` (moc 60 km, sygnatura 1,5, wzrok 30 km = mgła). Wartości = dawne wyniki gałęzi awaryjnych (rozgrywka bez zmian).
+- Jedyny wyjątek: `SIGNATURE_PENDING_DECISION` — fregata z wezwań (`frigate_pd`, `frigate_laser`) zostaje na kubełkach promienia (0,7 przy spawnie → 1,0 po kadłubie na belkach) do decyzji użytkownika D1. Pozostałe decyzje (D2–D7: niszczyciel / pancernik 1,3, wzrok holownika 18 km, gracz zawsze 1,3, megafrachtowiec z awansu 18 km, klasy cywili) — w audycie.
+- NOWA JEDNOSTKA (kadłub, typ ze spawnu) → profil `sensors` w szablonie albo wpis w `sensorUnits.js` + klasa wzroku (`shipRanges.js` / klasa lotu); strażnik `tests/zasiegiJednostek.test.mjs` (kształty bytów ze wszystkich miejsc tworzenia, kadłuby `SHIPS`, ruchu v2, `DEV_HULL_SPAWNS`; moc z tabeli = dawny profil z typu). Liczby zmieniające rozgrywkę — tylko po decyzji użytkownika.
+- Źródła wartości bytu: `src/game/sensorUnitAudit.js` (`auditSensorUnit`, `sensorStrengthSourceOf`, `visionSourceOf`, `signatureSourceOf` z `sensorSystem.js`, `sensorPair` — oba promienie i poziomy gracz ↔ byt).
 
 ## Model wykrywania (`src/game/sensorDetection.js`, czysty)
 
@@ -43,6 +54,7 @@ paths:
 
 - `createSensorPicture(adaptery)` + `updateSensorPicture(P, dt, { player, npcs, stations, extraSources })` — przebudowa co `refreshSec` (0,2 s czasu logiki): rekordy bytów stron (gracz pierwszy — `det.seenBy[0]` to wykrycie gracza), stacji i źródeł bez bytu (sondy, drony, stacje czujników z `SensorSystem.getSensorSources`) → `computeDetectionPicture` → WIEDZA strony gracza (`knowList`, wpis na byt wroga: identyfikacja = `adapters.identified` — w grze `!SensorSystem.hides`, KONTAKT = model, ponowny kontakt po zgubieniu — bez identyfikacji, duch `ghostSec` 25 s, odkryta stacja zostaje; byt martwy / usunięty wypada od razu) → sumy kół: `P.enemy` (znane radary wroga, promień = moc × sygnatura gracza × osłona przy graczu; moc kontaktu zgadnięta z rozmiaru — `strengthGuess`, wpis `enemyInfo[tag].est`) i `P.own` (własne, cel `refSignature`).
 - GRUPY ZAGROŻEŃ `P.threats` (dane oceny obustronnej): znani wrogowie (live / odkryte stacje) bliżej niż `threatGroupRadius` (15 km + błędy miejsca) od lidera to jedna grupa — grupowanie po MIEJSCU, nie po namiarze, bo znak wroga stoi przy wrogu; dotychczasowy członek zostaje przy swoim liderze do promienia × `threatStayMul` (+ 2 × błędy miejsca), inaczej wędrujące miejsca kontaktów rozbijały stojącą flotę. Lider = największe `them`, z histerezą `threatLeadHold` (×1,15 dla dotychczasowego — miejsce kontaktu wędruje, bez tego znak wroga przeskakiwałby między stojącymi okrętami); wpis wiedzy `lead`, miejsce `x`, `y`, `ang`, `dist`. `them` / `themR` = ich czujniki (zgadnięte z rozmiaru, gdy `est`) × moja sygnatura, jako ułamek odległości i w j., najlepszy członek grupy (`themD` — jego odległość, `dist` — odległość lidera); `me` / `meR` = moje czujniki × ich sygnatura, też najlepszy. Ułamek ≥ 1 = sięga.
+- OBUSTRONNIE (mechanika użytkownika 2026-11-11: „zależy, kto ma dalszy sensor”): grupa zagrożeń niesie też `themLvl` (czy ONI mają MNIE — prawda gry: 0 / 1 kontakt / 2 identyfikacja; najlepszy członek), `meLvl` (mój poziom strony: 1 — obłok X-ów, 2 — cały okręt), `themIdR` / `themId` (ich wzrok; dla kontaktu zgadnięty z rozmiaru — `visionGuess`) i `meIdR` / `meId`. `P.watchers` — wrogowie, których strona gracza teraz NIE wykrywa (także duchy), a którzy mają gracza: sama GRANICA (`x`, `y` — środek koła, nie do rysowania wroga; `R` — ich kontakt wobec mnie, `idR` — wzrok, `lvl`, `dist`), bez grupowania. Wygląd (obłok X-ów, czujka, tafle) jest w demie sesji kontaktów (`docs/PLAN-kontakt-czujnikow.md` § 7a); nakładka i CIC prototypu `watchers` nie czytają.
 - Stan czujnikowy bytu: `sensorStateOf(P, byt)` (WeakMap); strzał / impuls — `noteSensorPictureFire` / `noteSensorPicturePing` (ciepło liczone do czasu obrazu); ciąg i napęd pisze adapter `writeState` przy przebudowie.
 
 ## Prototyp w grze (`?radarZasiegi`, `index.html` blok „ZASIĘG RADARÓW — PROTOTYP”)
@@ -62,5 +74,6 @@ paths:
 ## Demo 2D i narzędzia
 
 - `dema/radar-zasiegi.html` (przez Vite — importuje `src/`): 5 propozycji wyglądu map (KONTUR, STREFY, IZOLINIE, HUD BOJOWY, MGŁA RADAROWA); `?wariant=1..5`, `?kadr=taktyczny`, `?t=<s>`, `?prawda=1`; haki `window.RadarZasiegi.set(…)`, `.run(s)`, `.state()` (tylko w demie — w grze `window.RadarZasiegi` to API prototypu). Zrzuty: `node scripts/webgpu/radar-zasiegi-demo.mjs`.
+- Audyt jednostek w grze: `node scripts/webgpu/zasiegi-jednostek-gra.mjs [--out .tmp/zasiegi-jednostek]` — `RadarZasiegi.scenaJednostek()` (każdy klucz wezwań, holownik i kadłuby dev jako uśpieni wrogowie na pierścieniach 4–60 km; lotniskowiec i Colossus — sojusznik przestawiony na wroga, piraci ich nie mają), `RadarZasiegi.jednostki()` (tabela: moc, sygnatura, wzrok, źródła, para z graczem w obie strony, poziomy obrazu); krok „mały statek” (czujniki gracza 8 km, wzrok 5 km — przed dronem zwiadu) sprawdza obserwatorów bez twarzy. Wynik 2026-11-11: 70 bytów, 0 bez zasięgów, 0 awaryjnych, 2 do decyzji (D1), 0 niezgodnych poziomów, 0 pipeline'ów synchronicznych; mały statek — 31 obserwatorów bez twarzy.
 - Gra: `node scripts/webgpu/radar-zasiegi-gra.mjs [--out .tmp/radar-zasiegi/gra] [--query renderWorker=1] [--wyglad wachlarz,struna,blona]` — każdy wygląd w tych samych ujęciach: kadr floty, kadr statku, tuż przed progiem (+ klatka ruchu), chwila po wykryciu, wykryty, cicha praca, bliski kadr (wrogowie poza kadrem), CIC; stan obrazu, koszt rysunku i przebudowy (prawdziwym zegarem — `__harness.realNow`), pipeline'y synchroniczne, błędy. Headless Chrome — nie uruchamiać, gdy użytkownik gra.
-- Testy: `tests/sensorDetection.test.mjs`, `tests/sensorCoverage.test.mjs`, `tests/sensorPicture.test.mjs` (wiedza, ciepło, cisza, duchy, grupy zagrożeń, wachlarz jeden na okręt i przy krawędzi kadru, struna drga z bliskością i pęka, błona, fala, strażnicy wpięcia: flaga, krok, bramka nakładki, Z przed myśliwcami, `]` tylko z prototypem, moduły bez `window` i `Math.random`).
+- Testy: `tests/zasiegiJednostek.test.mjs` (jawność zasięgów każdej jednostki), `tests/sensorDetection.test.mjs`, `tests/sensorCoverage.test.mjs`, `tests/sensorPicture.test.mjs` (obustronnie: obserwator bez twarzy, poziomy obu stron, wiedza, ciepło, cisza, duchy, grupy zagrożeń, wachlarz jeden na okręt i przy krawędzi kadru, struna drga z bliskością i pęka, błona, fala, strażnicy wpięcia: flaga, krok, bramka nakładki, Z przed myśliwcami, `]` tylko z prototypem, moduły bez `window` i `Math.random`).

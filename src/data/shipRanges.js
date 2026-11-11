@@ -18,7 +18,16 @@ const HULL_CLASSES = Object.assign(Object.create(null), {
   frigate: 'frigate', frigate_pd: 'frigate', frigate_laser: 'frigate', corvus: 'frigate',
   destroyer: 'destroyer', battleship: 'battleship',
   carrier: 'capital', capital: 'capital', capital_carrier: 'capital',
-  megafreighter: 'capital'
+  megafreighter: 'capital',
+  // Kadłuby cywilne ruchu v2 (awans do NPC, kadłuby dev; audyt zasięgów 2026-11-11): jawnie klasa fregaty = dzisiejszy
+  // wzrok awaryjny 5 km i mnożnik broni 1. Klasy wg rozmiaru (np. heavy_freighter — capital) czekają na decyzję
+  // użytkownika (docs/AUDYT-zasiegi-jednostek-2026-11-11.md). Dron naprawczy widzi jak myśliwiec (fogOfWar.js).
+  inter_station_shuttle: 'frigate', container_ship: 'frigate', long_haul_freighter: 'frigate', heavy_freighter: 'frigate',
+  heavy_harvester: 'frigate', belter: 'frigate', surveyor: 'frigate', refinery_tender: 'frigate', tanker: 'frigate',
+  salvage_hauler: 'frigate', construction_tug: 'frigate', distress_beacon_ship: 'frigate', rescue_ship: 'frigate',
+  repair_drone: 'frigate',
+  // promy z ludźmi (workforce W7, kopie frachtowców bazowych): jak ich frachtowce bazowe
+  crew_shuttle: 'frigate', crew_liner: 'frigate', colony_liner: 'frigate'
 });
 for (const id in SHIP_FLIGHT_SPECS) {
   const cls = SHIP_FLIGHT_SPECS[id].flightClass;

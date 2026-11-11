@@ -93,11 +93,19 @@ function genSolidSurface({ U, uv: vUv, local, worldPos, dayTex, specTex }) {
   }
   const gDet = dG.sub(p.mul(dot(dG, p))).div(R);                // [km/km] w płaszczyźnie stycznej
   const grad = e.mul(rel.y).add(n.mul(rel.z)).add(gDet).toVar();
-  const nLand = normalize(p.sub(grad.mul(U.uGsShade.x))).toVar();
+  // Przesadzenie rzeźby z NASYCENIEM na planetach z wodą (terran / ocean — pasma gór o prawdziwych stokach
+  // kilkudziesięciu procent): stoki do ~10% w pełni × uGsShade.x (doliny niziny mają być czytelne), strome nasycają się.
+  // Bez nasycenia ściany gór przy × 5 odwracały się od słońca i wychodziły czarnymi plamami.
+  const gExg = grad.mul(U.uGsShade.x).toVar();
+  const nLand = normalize(p.sub(gExg.div(max(length(gExg).sub(0.5), 0.0).mul(step(0.5, U.uGsSea.x)).add(1.0)))).toVar();
 
   // ── morze (planety z wodą) ──
   const hasSea = step(0.5, U.uGsSea.x);
-  const hC = rel.x.add(dH).toVar();
+  // AGENT: detal wysokości przesuwa linię brzegu tylko na STROMYM brzegu. Na płaskiej nizinie (wysokość bliska
+  // zera na dużym obszarze) detal wybijał w lądzie kałuże z pianą — tym większe, im dalej (niższe oktawy detalu),
+  // więc ląd przy morzu wyglądał inaczej na każdym poziomie zbliżenia.
+  const coastK = smoothstep(0.006, 0.04, length(vec2(rel.y, rel.z)));
+  const hC = rel.x.add(dH.mul(coastK)).toVar();
   const wAA = max(hW.mul(0.75), 1e-4);
   const land = mix(float(1.0), smoothstep(wAA.negate(), wAA, hC.sub(U.uGsSea.y)), hasSea).toVar();
   const depth = max(U.uGsSea.y.sub(hC), 0.0).toVar();
@@ -143,12 +151,18 @@ function genSolidSurface({ U, uv: vUv, local, worldPos, dayTex, specTex }) {
   const ruins = ruinsShade({ p, pixL, U, time: U.uGsMisc.x, gain: U.uGsMisc.y, land });
   dayOut.mulAssign(ruins.albedo);
 
+  // ŚWIATŁO NIEBA (planety z wodą = z atmosferą): graf gry nie ma światła otoczenia (kosmos), więc stoki odwrócone
+  // od słońca i cienie terenu po dziennej stronie były czarne — w śniegu pasm gór wyglądały jak dziury albo tafle
+  // wody. Dostają niebieskawe światło rozproszone (do ~0,3 albedo), gasnące ku terminatorowi — tylko miejsca
+  // ciemniejsze niż płaski grunt (płaski grunt bez dopłaty: inaczej cały ląd przy niskim słońcu bladł).
+  const skyFill = dayOut.mul(vec3(0.55, 0.72, 1.0)).mul(hasSea.mul(0.3)).mul(smoothstep(-0.05, 0.3, sinE))
+    .mul(float(1.0).sub(smoothstep(sinE.mul(0.25), sinE.mul(0.75), dot(nObj, sunObj).mul(shadow))));
   return {
     normal: normalize(transformNormalToView(nObj)),
     shadow,
     day: dayOut,
     water: waterMask,
-    emit: ruins.emit
+    emit: ruins.emit.add(skyFill)
   };
 }
 

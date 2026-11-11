@@ -1,6 +1,7 @@
 import { ATLAS_EDITOR_DEFAULTS } from './atlasHardpointDefaults.js';
 import { PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS } from './pirateSupercapitalDefaults.js';
 import { withShipNavLights } from './shipNavLights.js';
+import { workHullRows } from './workHulls.js';
 
 export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 
@@ -19,6 +20,23 @@ const LONG_HAUL_SIDE = [
   civilSide('side_front_right', 300, 165, 'upper_right'),
   civilSide('side_rear_left', -662, -206, 'lower_left'),
   civilSide('side_rear_right', -662, 173, 'lower_right')
+];
+// Promy z ludźmi (workforce W7): do PNG z generatora sprite frachtowca bazowego (D14), więc dysze MAIN i SIDE jak u
+// bazowego. Świeże obiekty (runtime nie dzieli wpisów). AGENT: po PNG z generatora ustawić dysze na nowym sprite'cie.
+const crewCopyOf = (label, main, side) => trafficCivilHull(label, main.map((m) => ({ ...m })), side.map((d) => ({ ...d })));
+const SHUTTLE_MAIN = [trafficMain('main_1', -448, -114), trafficMain('main_2', -448, 104)];
+const SHUTTLE_SIDE = [
+  civilSide('side_front_left', 160, -131, 'upper_left'),
+  civilSide('side_front_right', 160, 120, 'upper_right'),
+  civilSide('side_rear_left', -295, -188, 'lower_left'),
+  civilSide('side_rear_right', -295, 176, 'lower_right')
+];
+const CONTAINER_MAIN = [trafficMain('main_1', -785, -156), trafficMain('main_2', -814, -12), trafficMain('main_3', -785, 132)];
+const CONTAINER_SIDE = [
+  civilSide('side_front_left', 375, -221, 'upper_left'),
+  civilSide('side_front_right', 375, 194, 'upper_right'),
+  civilSide('side_rear_left', -612, -231, 'lower_left'),
+  civilSide('side_rear_right', -612, 205, 'lower_right')
 ];
 
 export const SHIP_EDITOR_DEFAULTS = {
@@ -52,29 +70,13 @@ export const SHIP_EDITOR_DEFAULTS = {
       label: 'Wahadłowiec międzystacyjny',
       frontAxis: '+X',
       sideOnly: true,
-      engines: {
-        main: [trafficMain('main_1', -448, -114), trafficMain('main_2', -448, 104)],
-        side: [
-          civilSide('side_front_left', 160, -131, 'upper_left'),
-          civilSide('side_front_right', 160, 120, 'upper_right'),
-          civilSide('side_rear_left', -295, -188, 'lower_left'),
-          civilSide('side_rear_right', -295, 176, 'lower_right')
-        ]
-      }
+      engines: { main: SHUTTLE_MAIN, side: SHUTTLE_SIDE }
     },
     container_ship: {
       label: 'Kontenerowiec',
       frontAxis: '+X',
       sideOnly: true,
-      engines: {
-        main: [trafficMain('main_1', -785, -156), trafficMain('main_2', -814, -12), trafficMain('main_3', -785, 132)],
-        side: [
-          civilSide('side_front_left', 375, -221, 'upper_left'),
-          civilSide('side_front_right', 375, 194, 'upper_right'),
-          civilSide('side_rear_left', -612, -231, 'lower_left'),
-          civilSide('side_rear_right', -612, 205, 'lower_right')
-        ]
-      }
+      engines: { main: CONTAINER_MAIN, side: CONTAINER_SIDE }
     },
     long_haul_freighter: {
       label: 'Frachtowiec dalekiego zasięgu',
@@ -184,6 +186,9 @@ export const SHIP_EDITOR_DEFAULTS = {
       civilSide('side_rear_left', -628, -217, 'lower_left'),
       civilSide('side_rear_right', -628, 186, 'lower_right')
     ]),
+    // Statki robocze złomowania z kreatora (src/data/workHulls.js): dysze MAIN i SIDE z mocowań projektu.
+    ...workHullRows((v) => trafficCivilHull(v.label, v.main.map(([x, y], i) => trafficMain(`main_${i + 1}`, x, y)),
+      v.side.map(([x, y], i) => civilSide(`side_${x >= 0 ? 'front' : 'rear'}_${y < 0 ? 'left' : 'right'}${i >= 4 ? `_${i}` : ''}`, x, y, `${x >= 0 ? 'upper' : 'lower'}_${y < 0 ? 'left' : 'right'}`)))),
     construction_tug: trafficCivilHull('Holownik budowlany', [trafficMain('main_1', -727, -132), trafficMain('main_2', -728, -18), trafficMain('main_3', -727, 97)], [
       civilSide('side_front_left', 308, -160, 'upper_left'),
       civilSide('side_front_right', 308, 125, 'upper_right'),
@@ -267,6 +272,10 @@ export const SHIP_EDITOR_DEFAULTS = {
       civilSide('side_rear_left', -560, -277, 'lower_left'),
       civilSide('side_rear_right', -560, 273, 'lower_right')
     ]),
+    // Promy z ludźmi (workforce W7) — dysze kadłuba bazowego (ten sam sprite do PNG z generatora).
+    crew_shuttle: crewCopyOf('Prom rotacyjny', SHUTTLE_MAIN, SHUTTLE_SIDE),
+    crew_liner: crewCopyOf('Liniowiec kontraktowy', CONTAINER_MAIN, CONTAINER_SIDE),
+    colony_liner: crewCopyOf('Liniowiec dalekiego zasięgu', LONG_HAUL_MAIN, LONG_HAUL_SIDE),
     "capital_carrier": {
     "label": "Legacy Capital Carrier",
     "frontAxis": "+X",

@@ -196,7 +196,8 @@ function planPng(f, file, { px = 0, width = 1600, mask = null }) {
   }
   const COL = {
     engine: '#ff8c1a', reactor: '#ffd400', bridge: '#3fa9ff', fuel_tank: '#ff4f4f', thruster_side: '#59e05a',
-    cargo: '#c58cff', cargo_tank: '#00d6c4', mount: '#ff3fb0', turret_s: '#ff3fb0', turret_m: '#ff3fb0', turret_l: '#ff3fb0'
+    cargo: '#c58cff', cargo_tank: '#00d6c4', mount: '#ff3fb0', turret_s: '#ff3fb0', turret_m: '#ff3fb0', turret_l: '#ff3fb0',
+    rig: '#ff3fb0', maw: '#ffe14f', mill: '#ffb000', ramp: '#8fd0ff', damper: '#b0ff7a'
   };
   const D = f.expanded.design.detail;
   for (const m of f.expanded.modules) {

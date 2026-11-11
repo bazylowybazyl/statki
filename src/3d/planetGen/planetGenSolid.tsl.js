@@ -12,14 +12,16 @@
 //       (z uQ = 0 — kanał w od uQ nie zależy), pełne pole dostaje już uQ.
 // Barwy w uniformach — liniowe (albedo), cel dnia sRGB koduje sprzęt.
 import {
-  Fn, If, Loop, float, int, vec2, vec3, vec4, ivec3,
-  abs, acos, asin, atan, clamp, cos, cross, dot, exp, floor, fract, length, max, min, mix, normalize, pow, sin, smoothstep, sqrt, step
+  Fn, If, Loop, float, int, vec2, vec3, vec4, ivec2, ivec3,
+  abs, acos, asin, atan, clamp, cos, cross, dot, exp, exp2, floor, fract, fwidth, length, log2, max, min, mix, mod, normalize, pow, sign, sin, smoothstep, sqrt, step
 } from 'three/tsl';
 import {
-  pgNoise, pgFbm, pgErodedFbm, pgRidged, pgWarp, pgCells, pgCellsSmooth, pgCraterOctave, pgOctavesFor, pgHashU, pgU3, pgU1, pgRehash
+  pgNoise, pgNoised, pgFbm, pgErodedFbm, pgRidged, pgWarp, pgCells, pgCellsSmooth, pgCraterOctave, pgOctavesFor, pgHashU, pgU3, pgU1, pgRehash
 } from './planetGenNoise.tsl.js';
-import { bakeUniforms, bakeCoords, fieldAt, bakeMaterial, COMMON_DEFS } from './planetGenBake.tsl.js';
+import { bakeUniforms, bakeCoords, fieldAt, bakeMaterial, drainNode, COMMON_DEFS } from './planetGenBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
+import { DRAIN_JITTER, DRAIN_CODE_STEP, DRAIN_FLOW_K, DRAIN_SEA_K } from './planetGenDrainage.js';
+import { terrainLandscape, TERRAIN_WATER } from './planetGenTerrainMap.js';
 
 const PI = Math.PI;
 export const CRATER_OCTAVES = 7;
@@ -117,9 +119,10 @@ function slopeAt(F, U, C) {
   const h = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
   const gx = h(1, -1).add(h(1, 0).mul(2.0)).add(h(1, 1)).sub(h(-1, -1)).sub(h(-1, 0).mul(2.0)).sub(h(-1, 1)).mul(0.125);
   const gy = h(-1, 1).add(h(0, 1).mul(2.0)).add(h(1, 1)).sub(h(-1, -1)).sub(h(0, -1).mul(2.0)).sub(h(1, -1)).mul(0.125);
-  const cosLat = max(cos(C.lat), U.uRes.w.mul(PI));
-  const dE = gx.div(U.uGeo.x.mul(2 * PI).mul(cosLat).mul(U.uRes.z));
-  const dN = gy.div(U.uGeo.x.mul(PI).mul(U.uRes.w));
+  // odległości tekseli w układzie SIATKI celu (cała mapa: układ planety; wycinek: układ obrócony — bakeCoords)
+  const cosLat = max(cos(C.latGrid), U.uRes.w.mul(PI));
+  const dE = gx.div(U.uGeo.x.mul(cosLat).mul(C.stE));
+  const dN = gy.div(U.uGeo.x.mul(C.stN));
   return { s: sqrt(dE.mul(dE).add(dN.mul(dN))), dE, dN };
 }
 /** Krzywizna (laplasjan 3 × 3 izotropowy, krok 2 teksele) [km] — doliny < 0, grzbiety > 0. */
@@ -133,7 +136,7 @@ function curvatureAt(F, U, C, hC) {
 // Kontynenty: kształt z fbm na PODWÓJNIE odkształconej dziedzinie (wybrzeża fraktalne, zatoki, półwyspy), płyty —
 // gładkie tło (średnia wartości komórek ważona odległością — bez skoku na krawędziach) i granice F2 − F1 (ciągłe)
 // pod pasma gór; „zbieżność” granicy z ciągłego szumu, nie z pary haszy (para skacze na węzłach potrójnych).
-function plates(ps, plateFreq, contFreq, warp, coast, landProb, octX) {
+function plates(ps, plateFreq, contFreq, warp, coast, landProb, octX, full = false) {
   const w1 = pgWarp(ps.mul(contFreq.mul(0.5)), 4, warp).toVar();
   const w2 = pgWarp(ps.add(w1).mul(contFreq.mul(1.6)).add(vec3(2.3, -1.7, 4.1)), 4, warp.mul(0.4)).toVar();
   const wq = w1.add(w2.mul(0.8)).toVar();
@@ -143,7 +146,7 @@ function plates(ps, plateFreq, contFreq, warp, coast, landProb, octX) {
   const plateC = inv(landProb.sub(0.3), landProb.add(0.3), pc.z).mul(2.0).sub(1.0).toVar();
   const big = pgFbm(q.mul(contFreq.mul(0.85)), 4).toVar();
   // detal wybrzeży: fbm od średniej skali w dół z wolniej gasnącymi oktawami (wybrzeże fraktalne, wyspy przybrzeżne)
-  const det = pgFbm(q.mul(contFreq.mul(2.2)).add(vec3(7.3, 1.1, -3.9)), octX, 2.03, 0.62).toVar();
+  const det = pgFbm(q.mul(contFreq.mul(2.2)).add(vec3(7.3, 1.1, -3.9)), octX, 2.03, 0.62, full).toVar();
   // zatoki i półwyspy: grzbiety szumu średniej skali wcinają się w ląd (ryfty, fiordy)
   const rift = pgRidged(q.mul(contFreq.mul(4.2)).add(vec3(-5.1, 2.2, 8.3)), 4, 2.05, 0.5, 1.0, 2.0).toVar();
   const c = plateC.mul(0.22).add(big.mul(0.5)).add(det.mul(coast).mul(0.95)).sub(rift.mul(coast).mul(0.2)).toVar();
@@ -153,36 +156,336 @@ function plates(ps, plateFreq, contFreq, warp, coast, landProb, octX) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// TERRAN / OCEAN — pole: z — pasma gór (skała), w — kontynentalność c (próg oceanu z próby: uQ.x)
+// RZEKI ZE SPŁYWU (planetGenDrainage.js): odległość punktu od odcinków drzewa rzek w sąsiednich komórkach siatki
+// spływu. Węzeł drzewa = środek komórki + przesunięcie z haszu; bieg wody komórki to łuk Béziera przez węzeł jej
+// odbiorcy (gładko przez zbiegi), z meandrem — sinusoidą w poprzek łuku. Szerokość z przepływu komórki.
+//   gp — punkt w komórkach siatki spływu (już po odkształceniu meandrami), cosL — skala osi wschód–zachód,
+//   stC — teksel celu w komórkach, flatK — siła meandrów 0…1 (nizina 1, góry mniej). Sąsiedztwo 5 × 5 komórek
+//   (każda z odczytem swojego odbiorcy): odległości pewne do ~0,75 komórki.
+// Wynik (max po odcinkach): line — pokrycie wodą 0…1 (nie węższa niż ~1,3 teksela), carve — głębokość doliny [km],
+// wet — wilgotność doliny / pas zalewowy 0…1, stripe — łuki dawnych koryt (pasy równoległe do koryta), bar — łachy
+// piasku po wewnętrznej stronie zakoli.
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// Punkt krzywej Béziera 2. stopnia (A, B — kontrolny, C; współrzędne względem badanego punktu = początku układu)
+// najbliższy początkowi układu — dokładnie (I. Quilez, pierwiastki równania 3. stopnia). Wynik: t — parametr 0…1,
+// side — odległość w poprzek krzywej ze znakiem, over — odległość wzdłuż stycznej poza końcem krzywej (0 w środku).
+// Punkty prawie współliniowe z B pośrodku (mianownik → 0) liczone jak odcinek A → C.
+function bezierNear(A, B, C) {
+  const a = B.sub(A).toVar();
+  const b = A.sub(B.mul(2.0)).add(C).toVar();
+  const bb = dot(b, b).toVar();
+  const t = float(0.0).toVar();
+  If(bb.lessThan(1e-5), () => {
+    const ac = C.sub(A).toVar();
+    t.assign(clamp(dot(A.negate(), ac).div(max(dot(ac, ac), 1e-8)), 0.0, 1.0));
+  }).Else(() => {
+    const kk = float(1.0).div(bb).toVar();
+    const kx = kk.mul(dot(a, b)).toVar();
+    const ky = kk.mul(dot(a, a).mul(2.0).add(dot(A, b))).div(3.0).toVar();
+    const kz = kk.mul(dot(A, a)).toVar();
+    const p = ky.sub(kx.mul(kx)).toVar();
+    const q = kx.mul(kx.mul(kx).mul(2.0).sub(ky.mul(3.0))).add(kz).toVar();
+    const h = q.mul(q).add(p.mul(p).mul(p).mul(4.0)).toVar();
+    If(h.greaterThanEqual(0.0), () => {
+      const x = vec2(sqrt(h), sqrt(h).negate()).sub(q).mul(0.5).toVar();
+      const uv = sign(x).mul(pow(abs(x), vec2(1.0 / 3.0))).toVar();
+      t.assign(clamp(uv.x.add(uv.y).sub(kx), 0.0, 1.0));
+    }).Else(() => {
+      const z = sqrt(max(p.negate(), 1e-12)).toVar();
+      const v = acos(clamp(q.div(p.mul(z).mul(2.0)), -1.0, 1.0)).div(3.0).toVar();
+      const m = cos(v).toVar();
+      const n = sin(v).mul(1.732050808).toVar();
+      const t1 = clamp(m.add(m).mul(z).sub(kx), 0.0, 1.0).toVar();
+      const t2 = clamp(n.negate().sub(m).mul(z).sub(kx), 0.0, 1.0).toVar();
+      const v1 = A.add(a.mul(2.0).add(b.mul(t1)).mul(t1)).toVar();
+      const v2 = A.add(a.mul(2.0).add(b.mul(t2)).mul(t2)).toVar();
+      t.assign(mix(t2, t1, step(dot(v1, v1), dot(v2, v2))));
+    });
+  });
+  const vv = A.add(a.mul(2.0).add(b.mul(t)).mul(t)).toVar();          // punkt krzywej względem badanego punktu
+  // AGENT: styczna krzywej znika na końcu, gdy B = C (ujście: odbiorcą jest morze, łuk kończy się w węźle morza).
+  // Zerowa styczna dawała side = over = 0, czyli „odległość 0” w całym obszarze za końcem łuku — prostokąt wody
+  // i doliny zalewowej przy ujściu (granice = sąsiedztwo 5 × 5 komórek). Wtedy styczną zastępuje cięciwa A → C;
+  // side² + over² = |vv|² zawsze.
+  const tan0 = a.mul(2.0).add(b.mul(t).mul(2.0)).toVar();
+  const chord = C.sub(A).toVar();
+  const tan = mix(chord, tan0, step(1e-4, dot(tan0, tan0))).toVar();
+  const tl = max(length(tan), 1e-6).toVar();
+  const side = vv.x.mul(tan.y).sub(vv.y.mul(tan.x)).div(tl).toVar();
+  const over = dot(vv, tan).div(tl).negate().toVar();
+  return { t, side, over };
+}
+
+export const RIVER_FLOW_MIN = 14;      // przepływ [komórki o opadzie 1], od którego rzekę widać jako wodę
+export const RIVER_W0 = 0.016;         // promień rzeki o przepływie RIVER_FLOW_MIN [komórki]
+export const RIVER_W_MAX = 0.12;       // (koryto wąskie względem zakoli: amplituda meandra do ~4 szerokości koryta)
+export const RIVER_W_EXP = 0.4;        // szerokość ∝ przepływ^0,4
+export const RIVER_MEANDER = 0.7;      // amplituda meandra = RIVER_MEANDER · długość łuku / liczba półfal (do 0,42 komórki)
+const RIVER_LF0 = Math.log2(1 + RIVER_FLOW_MIN);
+// log2(1 + przepływ), od którego woda rzeki jest mętna od niesionego mułu (pełna barwa przy LF1 ≈ przepływ 1500 —
+// od tej wielkości mapa terenu rysuje „wielką rzekę”, planetGenPlace.js)
+const RIVER_MUD_LF0 = 9.2;
+const RIVER_MUD_LF1 = 10.8;
+function riverNet(D, U, gp, cosL, stC, flatK) {
+  const W = max(int(U.uDr.x), int(1)).toVar();
+  const H = max(int(U.uDr.y), int(1)).toVar();
+  const cell = floor(gp).toVar();
+  const fr = gp.sub(cell).toVar();
+  const cx = int(cell.x).toVar();
+  const cy = int(cell.y).toVar();
+  const seedI = int(U.uDr.w).toVar();
+  const metric = vec2(cosL, 1.0).toVar();
+  const line = float(0.0).toVar();
+  const carve = float(0.0).toVar();
+  const wet = float(0.0).toVar();
+  const stripe = float(0.0).toVar();
+  const bar = float(0.0).toVar();
+  const mud = float(0.0).toVar();
+  const dBest = float(1e3).toVar();
+  // meandry i starorzecza dopiero, gdy teksel celu je rozdziela (okres meandra ≥ ~½ komórki)
+  const fine = float(1.0).sub(smoothstep(0.12, 0.3, stC)).toVar();
+  const jit = (ix, iy) => pgU3(pgHashU(ivec3(ix, iy, seedI))).xy.sub(0.5).mul(2 * DRAIN_JITTER);
+  Loop({ start: int(-2), end: int(3), type: 'int', condition: '<', name: 'dj' }, ({ dj }) => {
+    Loop({ start: int(-2), end: int(3), type: 'int', condition: '<', name: 'di' }, ({ di }) => {
+      const iy = cy.add(dj).toVar();
+      const ix = mod(cx.add(di).add(W.mul(2)), W).toVar();
+      const t = D.load(ivec2(ix, clamp(iy, int(0), H.sub(1)))).toVar();
+      const code = floor(t.r.mul(255 / DRAIN_CODE_STEP).add(0.5)).toVar();
+      If(code.greaterThan(0.5).and(iy.greaterThanEqual(int(0))).and(iy.lessThan(H)), () => {
+        // ŁUK ZAMIAST ŁAMANEJ: woda komórki płynie krzywą Béziera od połowy odcinka (komórka → odbiorca) przez
+        // odbiorcę (punkt kontrolny) do połowy odcinka (odbiorca → jego odbiorca). Bieg nie ma załamań w węzłach,
+        // a dopływy schodzą się stycznie do rzeki (zbieg w kształcie „Y”, nie gwiazdy).
+        // (bez zmiany zmiennej po jej użyciu — zmienna TSL powstaje w miejscu pierwszego użycia, pułapka 29)
+        const k = code.sub(1.0).toVar();
+        const oy0 = floor(k.div(3.0)).toVar();
+        const ox = k.sub(oy0.mul(3.0)).sub(1.0).toVar();
+        const oy = oy0.sub(1.0).toVar();
+        const rx = mod(ix.add(int(ox)).add(W), W).toVar();
+        const ry = iy.add(int(oy)).toVar();
+        const tR = D.load(ivec2(rx, clamp(ry, int(0), H.sub(1)))).toVar();
+        const codeR = floor(tR.r.mul(255 / DRAIN_CODE_STEP).add(0.5)).toVar();
+        const hasRR = step(0.5, codeR).toVar();            // odbiorca jest lądem (ma własnego odbiorcę)
+        const k2 = max(codeR.sub(1.0), 0.0).toVar();
+        const qy0 = floor(k2.div(3.0)).toVar();
+        const qx = k2.sub(qy0.mul(3.0)).sub(1.0).mul(hasRR).toVar();
+        const qy = qy0.sub(1.0).mul(hasRR).toVar();
+        const rrx = mod(rx.add(int(qx)).add(W), W);
+        const rry = ry.add(int(qy));
+        const pC = vec2(float(di), float(dj)).add(0.5).add(jit(ix, iy)).sub(fr).toVar();
+        const pR = vec2(float(di).add(ox), float(dj).add(oy)).add(0.5).add(jit(rx, ry)).sub(fr).toVar();
+        const pRR = vec2(float(di).add(ox).add(qx), float(dj).add(oy).add(qy)).add(0.5).add(jit(rrx, rry)).sub(fr).toVar();
+        const bA = pC.add(pR).mul(0.5).mul(metric).toVar();
+        const bB = pR.mul(metric).toVar();
+        const bC = mix(pR, pR.add(pRR).mul(0.5), hasRR).mul(metric).toVar();
+        const bz = bezierNear(bA, bB, bC);
+        const len = max(length(bB.sub(bA)).add(length(bC.sub(bB))), 1e-3).toVar();
+        // punkt w układzie krzywej: parametr 0…1, odległość w poprzek (ze znakiem) i poza końcami
+        const tt = bz.t;
+        const side = bz.side;
+        const over = bz.over;
+        // przepływ odcinka = przepływ JEGO komórki (dopływ nie grubieje przed ujściem do większej rzeki)
+        const lf = t.g.mul(255 / DRAIN_FLOW_K).toVar();     // log2(1 + przepływ)
+        // MEANDER: sinusoida w poprzek łuku, zero w węzłach (ciągłość drzewa). Długość fali ≈ 12 szerokości koryta
+        // (jak rzeki nizinne z satelity): liczba półfal na łuku z szerokości — wielka rzeka ma jedno zakole na łuk,
+        // strumyk do czterech (stała liczba półfal dawała wielkiej rzece zęby zamka błyskawicznego). Amplituda do
+        // ~⅓ długości fali, mniejsza przy strumykach i w górach, z haszu odcinka; odległość od krzywej
+        // ≈ |poprzek − m| / √(1 + m′²)
+        const hs = pgU3(pgHashU(ivec3(ix, iy, seedI.add(int(977))))).toVar();
+        const w = min(exp2(lf.sub(RIVER_LF0).mul(RIVER_W_EXP)).mul(RIVER_W0), RIVER_W_MAX).toVar();
+        const nH = clamp(floor(len.div(w.mul(6.3)).add(0.5)), 1.0, 4.0).toVar();
+        const ampS = min(len.mul(RIVER_MEANDER).div(nH), 0.42).mul(flatK).mul(fine).mul(mix(0.25, 1.0, smoothstep(3.5, 7.5, lf))).toVar();
+        const amp = ampS.mul(hs.y.mul(0.5).add(0.5)).mul(mix(float(-1.0), float(1.0), step(0.5, hs.z))).toVar();
+        const ph = tt.mul(nH).mul(PI).toVar();
+        const mOff = sin(ph).mul(amp).toVar();
+        const dm = cos(ph).mul(amp).mul(nH.mul(PI).div(len)).toVar();
+        const dc = side.sub(mOff).toVar();
+        const dn = abs(dc).div(sqrt(dm.mul(dm).add(1.0))).toVar();      // odległość w poprzek koryta
+        const dist = sqrt(dn.mul(dn).add(over.mul(over))).toVar();
+        // dolina i pas zalewowy idą wzdłuż łuku BEZ meandra i mieszczą w sobie pas meandrów (rzeka wije się po
+        // płaskim dnie doliny; dolina powtarzająca każdy zakręt wyglądała w świetle jak zamek błyskawiczny)
+        const dist0 = sqrt(side.mul(side).add(over.mul(over))).toVar();
+        const belt = abs(amp).toVar();
+        const wt = max(w, stC.mul(1.3)).toVar();
+        // próg widoczności rośnie z tekselem celu: z daleka widać tylko większe rzeki, strumienie dochodzą przy
+        // zbliżeniu (stała gęstość linii na ekranie — pełna sieć z daleka wyglądała jak żyłki na całym lądzie)
+        const lfVis = log2(stC.mul(16.0).add(1.0)).add(RIVER_LF0).toVar();
+        const vis = smoothstep(lfVis.sub(1.0), lfVis, lf);
+        // rzeka węższa niż teksel: linia ~1,3 teksela o pokryciu (w / wt)^0,5 — mocniej niż z zachowania energii:
+        // rzeka ma być z daleka tą samą linią co z bliska (nie znikać i nie zmieniać się w jasny pas)
+        // (muł: wielka rzeka niesie osad — barwa wody z przepływu odcinka, który daje największe pokrycie)
+        const ln = inv(wt.mul(0.4), wt, dist).mul(pow(w.div(wt), 0.5)).mul(vis).toVar();
+        const mudR = smoothstep(RIVER_MUD_LF0, RIVER_MUD_LF1, lf).toVar();
+        If(ln.greaterThan(line), () => {
+          line.assign(ln);
+          mud.assign(mudR);
+        });
+        // dolina: potok — wąskie V, wielka rzeka — szerokie dno; głębiej z przepływem
+        const rv = clamp(max(w.mul(5.0).add(0.04).add(belt), wt.mul(3.0)), 0.05, 0.75).toVar();
+        const pv = inv(min(belt.mul(0.6), rv.mul(0.6)), rv, dist0).toVar();
+        const dep = smoothstep(2.4, 4.4, lf).mul(mix(0.03, 0.17, smoothstep(3.0, 11.0, lf)));
+        carve.assign(max(carve, pv.mul(pv).mul(dep)));
+        // wilgotność doliny: przy strumyku wąska smuga, przy wielkiej rzece pas zalewowy
+        const rw = clamp(max(w.mul(7.0).add(0.05).add(belt.mul(1.3)), wt), 0.05, 0.75).toVar();
+        // Pas zalewowy (drugi człon) tylko przy dużych rzekach na płaskim (flatK — w górach dolina jest wąska).
+        // Pas węższy niż teksel celu gaśnie ze stosunkiem szerokości: z daleka wielka rzeka to jaśniejsza wstęga
+        // doliny (średnia tego, co widać z bliska: ciemna woda, łachy, łęgi), mała — sama smuga wilgotności.
+        const rw0 = w.mul(7.0).add(0.05).add(belt.mul(1.3));
+        const res = min(rw0.div(rw), 1.0).toVar();
+        const sw = smoothstep(2.8, 5.5, lf).mul(0.45).mul(res)
+          .add(smoothstep(5.5, 9.0, lf).mul(0.55).mul(res).mul(smoothstep(0.75, 0.95, flatK)));
+        wet.assign(max(wet, inv(rw.mul(0.25), rw, dist0).mul(sw)));
+        // DNO DOLINY wielkiej rzeki (wzór: zdjęcie satelitarne): ŁACHY — jasny piasek po WEWNĘTRZNEJ stronie zakola
+        // tuż przy korycie; ŁUKI DAWNYCH KORYT — pasy w stałej odległości od dzisiejszego koryta (równoległe do
+        // zakoli, od najbliższego odcinka).
+        const big = smoothstep(5.5, 7.5, lf).mul(fine).toVar();
+        const inSpan = float(1.0).sub(smoothstep(0.0, 0.05, abs(over))).toVar();
+        const bend = smoothstep(0.3, 0.8, abs(sin(ph)));
+        const inner = step(dc.mul(mOff), 0.0);
+        // (łachy i pasy tylko gdy teksel celu je rozdziela — węższe od ~2 tekseli dawały „koraliki” wzdłuż rzeki)
+        const seen = smoothstep(stC.mul(1.2), stC.mul(2.4), w).toVar();
+        bar.assign(max(bar, smoothstep(w.mul(0.7), w.mul(0.95), dn).mul(inv(w.mul(1.3), w.mul(2.0), dn)).mul(inner).mul(bend).mul(big).mul(inSpan).mul(seen)));
+        If(dist.lessThan(dBest).and(big.greaterThan(0.01)), () => {
+          dBest.assign(dist);
+          const reach = belt.mul(2.0).add(w.mul(4.0)).toVar();
+          stripe.assign(cos(dn.div(w.mul(1.5)).mul(6.283)).mul(0.5).add(0.5).mul(inv(reach.mul(0.6), reach, dn))
+            .mul(smoothstep(w, w.mul(1.6), dn)).mul(big).mul(inSpan).mul(seen));
+        });
+      });
+    });
+  });
+  return { line, carve, wet, stripe, bar, mud };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// TERRAN / OCEAN — pole: y — woda słodka (> 0: rzeki, jeziora, starorzecza) albo −wilgotność doliny (< 0: pas przy
+// rzece bez wody; na MORZU: −smuga osadu z rzek), z — pasma gór (> 0, skała) albo dno doliny zalewowej (< 0: łuki
+// dawnych koryt, łachy; w pikselu wody słodkiej: −0,49 · muł niesiony przez rzekę), w — kontynentalność c
+// (próg oceanu z próby: uQ.x). uDr — siatka spływu: x, y — rozmiar, z — 1: włączona, w — ziarno haszu węzłów.
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 function earthField(type) {
   const ocean = type === 'ocean';
-  const U = bakeUniforms({ ...COMMON_DEFS, uE1: 'vec4', uE2: 'vec4', uE3: 'vec4', uE4: 'vec4', ...(ocean ? slotDefs('uChain') : {}) });
+  const U = bakeUniforms({ ...COMMON_DEFS, uE1: 'vec4', uE2: 'vec4', uE3: 'vec4', uE4: 'vec4', uDr: 'vec4', ...(ocean ? slotDefs('uChain') : {}) });
+  const D = drainNode();
   const node = Fn(() => {
     const C = bakeCoords(U);
     const ps = C.dir.add(U.uSeed.xyz).toVar();
-    const P = plates(ps, U.uE1.x, U.uE1.y, U.uE1.z, U.uE1.w, U.uE3.w, U.uOct.x);
+    // oktawy z rozdzielczości celu, dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw tego samego pola
+    // i trafia w ten sam brzeg (próg oceanu z próby całej planety)
+    const P = plates(ps, U.uE1.x, U.uE1.y, U.uE1.z, U.uE1.w, U.uE3.w, U.uOct.x, true);
     const d = P.c.sub(U.uQ.x).toVar();
+    const st = C.stN;                                   // kąt teksela celu [rad]
     const beltB = inv(0.0, 0.24, P.border).mul(P.conv).mul(smoothstep(-0.35, 0.1, d));
     const beltN = smoothstep(0.08, 0.5, pgFbm(P.q.mul(2.3).add(vec3(3.1, 7.7, 1.3)), 4));
-    const belt = mix(beltN, beltB, U.uE2.z).toVar();
-    const ridge = pgRidged(P.q.mul(U.uE2.y), U.uOct.z, 2.07, 0.55, 1.0, 2.2).toVar();
+    // ŁAŃCUCHY ŚRÓDLĄDOWE: pasma wzdłuż grzbietów szumu niskiej częstości (długie i wąskie, nie plamy), niezależne
+    // od granic płyt — same granice zbieżne dawały na wielu planetach ląd bez gór (83% lądu poniżej 1 km).
+    const rangeN = smoothstep(0.62, 0.86, pgRidged(P.q.mul(1.7).add(vec3(-2.6, 4.9, 0.8)), 3, 2.1, 0.5, 1.0, 2.0))
+      .mul(smoothstep(0.0, 0.12, d));
+    const belt = max(mix(beltN, beltB, U.uE2.z), rangeN.mul(0.9)).toVar();
+    const ridge = pgRidged(P.q.mul(U.uE2.y), U.uOct.z, 2.07, 0.55, 1.0, 2.2, true).toVar();
     const landW = smoothstep(-0.04, 0.22, d).toVar();
-    const mtn = ridge.mul(belt).mul(U.uE2.x).toVar();
-    const hills = pgErodedFbm(P.q.mul(6.5), U.uOct.y, 0.8).mul(U.uE2.w).toVar();
-    const hLand = d.mul(1.4).add(smoothstep(0.0, 0.45, d).mul(0.7)).add(mtn.mul(landW.mul(0.8).add(0.2))).add(hills.mul(landW)).toVar();
+    // ląd: niskie przedgórze pasma (12% wysokości) + grzbiety wyostrzone potęgą (szczyty wąskie, doliny między
+    // nimi głębokie — pasmo ma być łańcuchem szczytów, nie płaskowyżem: z członem liniowym i 30% podstawy cały
+    // masyw leżał nad linią śniegu i wyglądał jak biała plama); dno morza: same grzbiety (łuki wysp)
+    const mtnSea = ridge.mul(belt).mul(U.uE2.x).toVar();
+    const mtn = belt.mul(ridge.mul(ridge).mul(1.35).add(0.12)).mul(U.uE2.x).toVar();
+    const hills = pgErodedFbm(P.q.mul(6.5), U.uOct.y, 0.8, 2.0, 0.5, true).mul(U.uE2.w).toVar();
+    const hBase = d.mul(1.4).add(smoothstep(0.0, 0.45, d).mul(0.7)).toVar();
+    const hLand = hBase.add(mtn.mul(landW.mul(0.8).add(0.2))).add(hills.mul(landW)).toVar();
+    // RZEKI (kanał y): drzewo rzek z prawdziwego spływu po mapie wysokości planety (planetGenDrainage.js) — rzeki
+    // biegną od źródeł do morza, łączą się w coraz szersze i nie krzyżują się. Bieg to gładkie łuki przez węzły
+    // drzewa z meandrami (`riverNet`), większymi na nizinie i przy dużych rzekach. Dolina wycięta w rzeźbie wzdłuż
+    // rzeki, pas wilgotności przy niej (barwy: dolina zalewowa, lasy łęgowe, zielone wstęgi w pustyni), przy
+    // wielkich rzekach starorzecza (łuki dawnych koryt wokół dzisiejszego).
+    const fresh = float(0.0).toVar();
+    const wetV = float(0.0).toVar();
+    const scar = float(0.0).toVar();
+    const bar = float(0.0).toVar();
+    const mud = float(0.0).toVar();
+    const plume = float(0.0).toVar();
+    If(U.uDr.z.greaterThan(0.5), () => {
+      const cosL = max(cos(C.lat), 0.05).toVar();
+      const cellsPerRad = U.uDr.y.div(PI).toVar();
+      const stC = st.mul(cellsPerRad).toVar();
+      // dziedzina szumu odkształcenia biegu: 1 = komórka siatki spływu (surowy kierunek — bez odkształceń kontynentów)
+      const wp = C.dir.mul(cellsPerRad).add(U.uSeed.xyz.mul(3.0)).toVar();
+      const nz = (f, o) => vec2(
+        pgNoise(wp.mul(f).add(vec3(o, o * 1.7 - 2.0, 3.1 - o))), pgNoise(wp.mul(f).add(vec3(-o * 1.3, 5.2 + o, o * 0.7 + 9.0))));
+      // łagodne odkształcenie biegu (szum; gaśnie, gdy teksel celu jest większy niż ~⅓ okresu) — łamie proste
+      // odcinki siatki; właściwe meandry dokłada `riverNet` (sinusoida wzdłuż odcinka)
+      const flatK = float(1.0).sub(smoothstep(0.8, 2.4, hLand)).mul(0.6).add(0.4).toVar();
+      // Siatka spływu ma osiem kierunków: bez odkształcenia rzeka biegnie prostymi odcinkami po osiach i przekątnych
+      // z załamaniami co kilka komórek (z daleka „ścieżki obwodu drukowanego”). Dwie długie fale (okres ~6 i ~2,5
+      // komórki, na każdym poziomie — układ rzek ma być ten sam z daleka i z bliska) wyginają te odcinki w łuki.
+      // Przy morzu odkształcenie gaśnie (odległość od morza z kanału B siatki, dwuliniowo — gładko), żeby ujście
+      // trafiało w brzeg.
+      const g0 = vec2(C.u.mul(U.uDr.x), C.v.mul(U.uDr.y)).toVar();
+      const gq = g0.sub(0.5).toVar();
+      const c0 = floor(gq).toVar();
+      const fq = gq.sub(c0).toVar();
+      const DW = max(int(U.uDr.x), int(1));
+      const DH = max(int(U.uDr.y), int(1));
+      const seaAt = (dx, dy) => D.load(ivec2(mod(int(c0.x).add(dx).add(DW.mul(2)), DW), clamp(int(c0.y).add(dy), int(0), DH.sub(1)))).b;
+      const dSea = mix(mix(seaAt(0, 0), seaAt(1, 0), fq.x), mix(seaAt(0, 1), seaAt(1, 1), fq.x), fq.y).mul(255 / DRAIN_SEA_K).toVar();
+      const inland = smoothstep(0.5, 3.0, dSea).toVar();
+      const warp = nz(0.17, 21.7).mul(1.0).mul(inland)
+        .add(nz(0.4, 15.1).mul(0.4).mul(inland))
+        .add(nz(0.75, 1.3).mul(0.22).mul(smoothstep(0.3, 1.5, dSea)).mul(float(1.0).sub(smoothstep(0.35, 0.7, stC))))
+        .add(nz(2.3, 4.7).mul(0.04).mul(float(1.0).sub(smoothstep(0.1, 0.2, stC)))).mul(flatK).toVar();
+      const gp = g0.add(warp.div(vec2(cosL, 1.0))).toVar();
+      const R = riverNet(D, U, gp, cosL, stC, flatK);
+      // starorzecza tylko w dolinie zalewowej; bez wody na lodowcach wysokich gór; dolina nie schodzi pod poziom
+      // morza (inaczej w rzece pojawiało się morze)
+      const plain = smoothstep(0.45, 0.8, R.wet).toVar();
+      // (starorzecza jako cienkie łuki wody wychodziły jasnymi kreskami bez kształtu — woda tylko z koryta; dawne
+      // koryta pokazują pasy dna doliny)
+      fresh.assign(R.line.mul(float(1.0).sub(smoothstep(2.6, 4.6, hLand))));
+      hLand.subAssign(min(R.carve.mul(landW), max(hLand.sub(0.16), 0.0)));
+      wetV.assign(R.wet);
+      scar.assign(R.stripe.mul(plain));
+      bar.assign(R.bar.mul(plain));
+      mud.assign(R.mud);
+      // SMUGI OSADU w morzu przy ujściach rzek (kanał A siatki spływu — planetGenDrainage.js): próbka dwuliniowa
+      // w punkcie przesuniętym szumem (wiry i języki zamiast koła wokół ujścia; drobne zawijasy dopiero gdy teksel
+      // celu je rozdziela), siła łamana szumem o średniej 1
+      // (skala w komórkach siatki 2048: przy gęstszej siatce smuga ma tyle samo kilometrów, więc i zawijasy)
+      const kS = U.uDr.x.div(2048.0).toVar();
+      const nzS = (f, o) => vec2(
+        pgNoise(wp.div(kS).mul(f).add(vec3(o, o * 1.7 - 2.0, 3.1 - o))), pgNoise(wp.div(kS).mul(f).add(vec3(-o * 1.3, 5.2 + o, o * 0.7 + 9.0))));
+      const pw = nzS(0.22, 31.3).mul(2.6).add(nzS(0.7, 7.9).mul(1.0)).add(nzS(2.4, 12.2).mul(0.3).mul(float(1.0).sub(smoothstep(0.1, 0.25, stC.div(kS))))).mul(kS).toVar();
+      const gs = gq.add(pw.div(vec2(cosL, 1.0))).toVar();
+      const s0 = floor(gs).toVar();
+      const fs = gs.sub(s0).toVar();
+      const plAt = (dx, dy) => D.load(ivec2(mod(int(s0.x).add(dx).add(DW.mul(2)), DW), clamp(int(s0.y).add(dy), int(0), DH.sub(1)))).a;
+      const plRaw = mix(mix(plAt(0, 0), plAt(1, 0), fs.x), mix(plAt(0, 1), plAt(1, 1), fs.x), fs.y).toVar();
+      const plN = pgFbm(wp.div(kS).mul(0.9).add(vec3(4.4, -7.1, 2.6)), 4).toVar();
+      plume.assign(clamp(plRaw.mul(float(1.0).add(plN.mul(1.1))).mul(1.2).sub(0.05), 0.0, 1.0));
+    });
+    // jeziora na nizinach: płaska tafla w zagłębieniu szumu
+    const lakeN = pgFbm(P.q.mul(12.0).add(vec3(-4.2, 9.3, 1.1)), 4).toVar();
+    const lakeW = max(float(0.02), st.mul(12.0 * 2.4));
+    const lake = smoothstep(float(0.56), lakeW.add(0.56), lakeN).mul(float(1.0).sub(smoothstep(0.5, 1.3, hLand))).mul(smoothstep(0.03, 0.09, d)).toVar();
+    hLand.assign(mix(hLand, hBase.add(0.16), lake));
+    fresh.assign(max(fresh, lake));
     // dno: szelf przy brzegu, stok, równina abisalna; grzbiety śródoceaniczne na granicach płyt oceanicznych
     const mor = inv(0.0, 0.1, P.border).mul(float(1.0).sub(P.cont1)).mul(pgFbm(P.q.mul(9.0), 3).mul(0.4).add(0.6));
     const abyss = pgFbm(P.q.mul(14.0), 4).mul(0.3);
-    const hSea = float(-0.1).sub(U.uE3.x.mul(smoothstep(0.0, 0.3, d.negate()))).add(mor.mul(U.uE3.y)).add(abyss)
-      .add(mtn.mul(0.45)).toVar();
+    const hSea0 = float(-0.1).sub(U.uE3.x.mul(smoothstep(0.0, 0.3, d.negate()))).add(mor.mul(U.uE3.y)).add(abyss)
+      .add(mtnSea.mul(0.45)).toVar();
+    // osad z rzeki spłyca morze przy ujściu (stożek delty): materiał pokazuje dno przez wodę z wagą e^(−28 · głębokość),
+    // więc głębokość liczy się z ŻĄDANEJ widoczności mętnego dna (0,8 · smuga → ~8 m w sercu smugi, ~125 m na jej
+    // skraju — tam zostaje barwa szelfu). Liniowe spłycenie do kilku metrów dawało płaską półkę o ostrym brzegu,
+    // a detal wysokości wynosił ją nad wodę jako blady ląd.
+    const plVis = clamp(plume.mul(0.8), 0.03, 0.8).toVar();
+    const hPlume = log2(plVis).mul(0.6931472 / 28.0).toVar();
+    const hSea = mix(hSea0, max(hSea0, hPlume), smoothstep(0.0, 0.25, plume)).toVar();
     const h = mix(hSea, hLand, step(0.0, d)).toVar();
     // archipelagi na szelfach i łukach (wyspy z drobnych stożków w płytkiej wodzie)
     If(U.uE3.z.greaterThan(0.01), () => {
       const ic = pgCells(P.q.mul(34.0), 0.9).toVar();
       const shelf = smoothstep(-0.25, -0.02, d).mul(inv(-0.01, 0.06, d));
       const has = step(float(1.0).sub(U.uE3.z.mul(0.35).mul(shelf.add(beltB.mul(0.5)))), ic.z);
-      h.addAssign(exp(ic.x.mul(ic.x).mul(-14.0)).mul(has).mul(0.9));
+      // (−34: stożek gaśnie przed krawędzią komórki — przy −14 zostawał uskok ~30 m wzdłuż krawędzi komórek)
+      h.addAssign(exp(ic.x.mul(ic.x).mul(-34.0)).mul(has).mul(1.2));
     });
     if (ocean) {
       // łańcuchy wysp nad plamami gorąca: stożki wzdłuż łuku koła wielkiego, młode (duże) na początku, stare
@@ -218,16 +521,65 @@ function earthField(type) {
         });
       }
     }
-    return vec4(h, 0.0, belt.mul(ridge), P.c);
+    // y: woda (> 0) albo −wilgotność doliny; z: pasma gór (> 0), −0,49 · łuki dawnych koryt (0…−0,49) albo
+    // −(0,5 + 0,5 · łacha) (−0,5…−1) — tylko na lądzie
+    const onLand = step(0.0, d);
+    // (na MORZU y = −smuga osadu; w pikselu WODY słodkiej z = −0,49 · muł — barwy czytają to zamiast łuków)
+    const yOut = mix(plume.negate(), mix(wetV.negate(), clamp(fresh, 0.0, 1.0), step(0.02, fresh)), onLand);
+    const zLand = mix(mix(belt.mul(ridge), scar.mul(-0.49), step(0.02, scar).mul(onLand)), bar.mul(0.5).add(0.5).negate(), step(0.05, bar).mul(onLand));
+    const zOut = mix(zLand, mud.mul(-0.49), step(0.02, fresh).mul(step(0.02, mud)).mul(onLand));
+    return vec4(h, yOut, zOut, P.c);
   })();
-  return { U, material: bakeMaterial(`PlanetGenField_${type}`, node) };
+  return { U, material: bakeMaterial(`PlanetGenField_${type}`, node), drain: D };
 }
 
 const EARTH_COLOR_DEFS = {
-  ...COMMON_DEFS, uK: 'vec4',
+  ...COMMON_DEFS, uK: 'vec4', uK2: 'vec4', uK3: 'vec4',
+  // barwy krajobrazu wspólne z mapą terenu (planetGenTerrainMap.js): A — klimat chłodny, B — ciepły
+  uFenA: 'vec3', uFenB: 'vec3', uFenWetA: 'vec3', uFenWetB: 'vec3', uGrassA: 'vec3', uGrassB: 'vec3', uMeadowA: 'vec3', uMeadowB: 'vec3',
+  uWDark: 'vec3', uWMud: 'vec3', uWIce: 'vec3', uSilt: 'vec3', uSandB: 'vec3',
   uRain: 'vec3', uForest: 'vec3', uTaiga: 'vec3', uSteppe: 'vec3', uTundra: 'vec3', uDesert: 'vec3', uDesertRed: 'vec3',
   uRock: 'vec3', uSnow: 'vec3', uIce: 'vec3', uShallow: 'vec3', uOcean: 'vec3', uDeep: 'vec3'
 };
+// KLIMAT (wspólny dla barw i dla opadu, z którego liczy się spływ): temperatura T i wilgotność M z szerokości,
+// wysokości, odległości od brzegu i szumu. h — wysokość [km], d — kontynentalność względem brzegu (> 0 ląd).
+function earthClimate(U, C, h, d) {
+  const ps = C.dir.add(U.uSeed.xyz).toVar();
+  const wq = pgWarp(ps.mul(1.3), 3, 0.35).toVar();
+  const nT = pgFbm(ps.mul(2.2).add(11.0).add(wq), 4).toVar();
+  const nM = pgFbm(ps.mul(1.9).add(23.0).add(wq), 6).toVar();
+  const nP = pgFbm(ps.mul(6.5).add(wq.mul(2.0)), 5).toVar();   // płaty roślinności (nie pasy)
+  const aL = abs(C.lat).div(PI / 2).add(nT.mul(0.05)).toVar();
+  // temperatura: równik ciepło, bieguny zimno (nachylenie osi rozmywa pasy), spadek z wysokością 0,16 / km
+  // (~6 °C / km przy ~37 °C na jednostkę T — granica lasu i linia śniegu wypadają na wysokościach jak na Ziemi)
+  const T = float(1.06).sub(pow(clamp(aL, 0.0, 1.0), 1.35).mul(1.28)).add(U.uK.x).add(nT.mul(float(0.07).add(U.uK.z.mul(0.07))))
+    .sub(max(h, 0.0).mul(0.16)).toVar();
+  // wilgotność: komórki Hadleya (mokro przy równiku i ~55°, sucho ~25° i przy biegunach), wnętrza kontynentów suche,
+  // granice pasów przesunięte szumem (nie równoleżniki); pasy klimatu słabe (×0,2 — wyraźne równoleżnikowe pasy
+  // wyglądały na malowane), wielkie plamy wilgoci z szumu niskiej częstości
+  const latW = C.lat.add(nM.mul(0.3));
+  const nMl = pgFbm(ps.mul(0.9).add(37.0).add(wq), 4).toVar();
+  const M = U.uK.y.mul(float(0.5).add(cos(latW.mul(6.0)).mul(0.2))).add(nM.mul(0.26)).add(nMl.mul(0.32)).add(nP.mul(0.12))
+    .sub(smoothstep(0.1, 0.7, d).mul(0.36)).add(0.12).toVar();
+  return { ps, wq, nM, nP, T, M };
+}
+// WEJŚCIE SPŁYWU (cel RGBA32F w rozdzielczości siatki spływu, odczyt CPU — planetGenBaker.js): x — wysokość [km],
+// y — opad 0…~1,6 (waga przepływu: w pustyni rzeki nie rodzą się, w górach i wilgotnych strefach gęsto; pod lodem
+// prawie nic), z — temperatura, w — wilgotność (klimat miejsca dla mapy terenu — planetGenPlace.js).
+function earthDrainInput(type) {
+  return (F) => {
+    const U = bakeUniforms(EARTH_COLOR_DEFS);
+    const node = Fn(() => {
+      const C = bakeCoords(U);
+      const f = fieldAt(F, U, C.ix, C.iy).toVar();
+      const K = earthClimate(U, C, f.x, f.w.sub(U.uQ.x));
+      const rain = clamp(K.M.sub(0.12).mul(2.4), 0.03, 1.3).mul(smoothstep(-0.08, 0.1, K.T).mul(0.85).add(0.15))
+        .add(smoothstep(0.6, 2.5, f.x).mul(0.35));
+      return vec4(f.x, rain, K.T, K.M);
+    })();
+    return { U, material: bakeMaterial(`PlanetGenDrain_${type}`, node) };
+  };
+}
 function earthColor(type) {
   return (F) => {
     const U = bakeUniforms(EARTH_COLOR_DEFS);
@@ -238,45 +590,190 @@ function earthColor(type) {
       const d = f.w.sub(U.uQ.x).toVar();   // kontynentalność względem brzegu (> 0 ląd)
       const sl = slopeAt(F, U, C);
       const curv = curvatureAt(F, U, C, h);
-      const ps = C.dir.add(U.uSeed.xyz).toVar();
-      const wq = pgWarp(ps.mul(1.3), 3, 0.35).toVar();
-      const nT = pgFbm(ps.mul(2.2).add(11.0).add(wq), 4).toVar();
-      const nM = pgFbm(ps.mul(1.9).add(23.0).add(wq), 6).toVar();
-      const nP = pgFbm(ps.mul(6.5).add(wq.mul(2.0)), 5).toVar();   // płaty roślinności (nie pasy)
+      const K = earthClimate(U, C, h, d);
+      const { ps, wq, nM, nP, T, M } = K;
+      const st = C.stN;
       const nV = pgFbm(ps.mul(11.0).add(wq), 5).toVar();
       const nF = pgFbm(ps.mul(34.0), 4).toVar();
-      const aL = abs(C.lat).div(PI / 2).add(nT.mul(0.05)).toVar();
-      // temperatura: równik ciepło, bieguny zimno (nachylenie osi rozmywa pasy), spadek z wysokością
-      const T = float(1.06).sub(pow(clamp(aL, 0.0, 1.0), 1.35).mul(1.28)).add(U.uK.x).add(nT.mul(float(0.07).add(U.uK.z.mul(0.07))))
-        .sub(max(h, 0.0).mul(0.1)).toVar();
-      // wilgotność: komórki Hadleya (mokro przy równiku i ~55°, sucho ~25° i przy biegunach), wnętrza kontynentów suche,
-      // granice pasów przesunięte szumem (nie równoleżniki)
-      const latW = C.lat.add(nM.mul(0.3));
-      // pasy klimatu słabsze niż dawniej (×0,2 zamiast ×0,33) — wyraźne równoleżnikowe pasy wyglądały na malowane;
-      // wielkie plamy wilgoci z szumu niskiej częstości i suche wnętrza kontynentów (odległość od brzegu ≈ d)
-      const nMl = pgFbm(ps.mul(0.9).add(37.0).add(wq), 4).toVar();
-      const M = U.uK.y.mul(float(0.5).add(cos(latW.mul(6.0)).mul(0.2))).add(nM.mul(0.26)).add(nMl.mul(0.32)).add(nP.mul(0.12))
-        .sub(smoothstep(0.1, 0.7, d).mul(0.36)).add(0.12).toVar();
-      // ląd
+      // kanały pola: woda słodka / wilgotność doliny (y), pasma gór / starorzecza (z)
+      const mtn = max(f.z, 0.0).toVar();
+      const zNeg = max(f.z.negate(), 0.0).toVar();
+      const bar = clamp(zNeg.mul(2.0).sub(1.0), 0.0, 1.0).toVar();
+      const scar0 = clamp(zNeg.div(0.49), 0.0, 1.0).mul(float(1.0).sub(step(0.5, zNeg))).toVar();
+      const water = max(f.y, 0.0).toVar();
+      const onLand = step(0.0, d).toVar();
+      const wetV = max(f.y.negate(), step(0.02, f.y)).mul(onLand).toVar();
+      // morze: smuga osadu przy ujściach rzek; woda słodka: muł niesiony przez wielką rzekę (kanał z w pikselu wody)
+      const plume = max(f.y.negate(), 0.0).mul(float(1.0).sub(onLand)).mul(float(1.0).sub(step(0.0, h))).toVar();
+      const isW = step(0.02, f.y).toVar();
+      const mudW = clamp(zNeg.div(0.49), 0.0, 1.0).mul(isW).toVar();
+      const scar = scar0.mul(float(1.0).sub(isW)).toVar();
+      // szumy mozaiki — oktawy z rozdzielczości celu (wycinek pod kamerą dostaje drobniejsze w tej samej dziedzinie):
+      // nD — ziarno (korony, żwir; okres od 3 tekseli), nMo — kształty płatów (granice klas pokrycia), nBog — płaty
+      // polan i torfowisk (oba od ~6 tekseli: granice klas mają być gładkimi liniami, nie ziarnem; szum grzbietowy
+      // dawał tu z daleka „robaczki” na całym lądzie). Granica klasy =
+      // próg z szerokością z pochodnej ekranu celu (`edge`): ostra, ale bez schodków tekseli przy powiększeniu.
+      const edge = (v, pad = 0.0015) => { const fw = fwidth(v).mul(0.8).add(pad); return smoothstep(fw.negate(), fw, v); };
+      const nD = pgFbm(ps.mul(110.0).add(wq.mul(3.0)), U.uK.w, 2.03, 0.6, true).toVar();
+      const nMo = pgFbm(ps.mul(46.0).add(vec3(3.7, -8.1, 5.3)).add(wq.mul(2.0)), U.uK2.x, 2.03, 0.6, true).toVar();
+      // nFen — płaty torfowisk i polan: szereg o wolno gasnących oktawach (wielkie płaty z rojem mniejszych wokół —
+      // z daleka widać mozaikę jasnych i ciemnych pól, zbliżenie dokłada coraz mniejsze płaty w tym samym układzie)
+      const nFen = pgFbm(ps.mul(30.0).add(vec3(5.1, -3.3, 7.7)).add(wq.mul(2.5)), U.uK2.z, 2.03, 0.62, true).toVar();
+      const flat = float(1.0).sub(smoothstep(0.03, 0.14, sl.s)).toVar();
+      // wilgotność miejsca: klimat + dolina rzeki (lasy łęgowe w stepie, zielona wstęga w pustyni) − suche stoki
+      // (bez członów zależnych od skali teksela, np. krzywizny — płaty lasu mają być te same na każdym poziomie)
+      const Mv = M.add(wetV.mul(0.3)).sub(smoothstep(0.12, 0.5, sl.s).mul(0.08)).toVar();
+      // ── barwy klas ──
       const desertC = mix(U.uDesert, U.uDesertRed, smoothstep(0.0, 0.6, nV.add(nP.mul(0.5))).mul(0.6));
-      const forestC = mix(mix(U.uTaiga, U.uForest, smoothstep(0.36, 0.55, T)), U.uRain, smoothstep(0.72, 0.9, T));
+      const forestC = vec3(mix(mix(U.uTaiga, U.uForest, smoothstep(0.36, 0.55, T)), U.uRain, smoothstep(0.72, 0.9, T))).toVar();
+      const meadowC = vec3(mix(U.uSteppe, forestC, 0.42).mul(vec3(1.3, 1.75, 1.1))).toVar();
+      // barwy krajobrazu z palet MAPY TERENU (ten sam las, torfowisko i dolina co na mapie miejsca): chłodny
+      // klimat — paleta A (tajga), ciepły — B (las równikowy); przejście jak wybór palety w planetGenPlace.js
+      const warmK = smoothstep(0.5, 0.74, T).toVar();
+      const fenC = vec3(mix(U.uFenA, U.uFenB, warmK)).toVar();
+      const fenWetC = vec3(mix(U.uFenWetA, U.uFenWetB, warmK)).toVar();
+      const grassC = vec3(mix(U.uGrassA, U.uGrassB, warmK)).toVar();
+      const meadowT = vec3(mix(U.uMeadowA, U.uMeadowB, warmK)).toVar();
+      const bogC = mix(fenC, U.uSteppe, 0.25);
+      const sandC = U.uSandB;
+      // ── PUSTYNIA: morza piasku z wydmami (dwie skale grzbietów, widoczne dopiero gdy teksel je rozdziela),
+      //    kamienista hamada w ciemniejszych płatach o wyraźnym brzegu ──
       const land = vec3(desertC).toVar();
-      land.assign(mix(land, U.uSteppe.mul(float(1.0).add(nP.mul(0.15))), smoothstep(0.13, 0.32, M)));
-      land.assign(mix(land, forestC.mul(float(1.0).add(nP.mul(0.2))), smoothstep(0.36, 0.6, M.add(nP.mul(0.08))).mul(smoothstep(0.16, 0.3, T))));
-      land.assign(mix(land, U.uTundra.mul(float(1.0).add(nP.mul(0.15))), inv(0.13, 0.3, T)));
-      // doliny wilgotniejsze (ciemniej), grzbiety suche (jaśniej) — krzywizna z pola
-      // krzywizna w barwie tylko lekko (światło i cień terenu liczy teraz materiał z mapy rzeźby — mocna krzywizna
+      const erg = smoothstep(0.02, 0.2, pgFbm(ps.mul(9.0).add(vec3(8.8, -1.4, 6.6)), 4)).toVar();
+      const duneP = dot(ps, vec3(0.83, 0.21, 0.52)).toVar();
+      const mega = sin(duneP.mul(1257.0).add(nMo.mul(5.0)).add(nP.mul(9.0))).mul(float(1.0).sub(smoothstep(1.0e-3, 2.0e-3, st)));
+      const rip = sin(duneP.mul(8976.0).add(nD.mul(4.0)).add(nMo.mul(11.0))).mul(float(1.0).sub(smoothstep(1.4e-4, 2.8e-4, st)));
+      land.mulAssign(float(1.0).add(erg.mul(mega.mul(0.1).add(rip.mul(0.07)))).add(nD.mul(0.1)));
+      const ham = smoothstep(0.08, 0.14, nMo.add(nV.mul(0.5))).mul(float(1.0).sub(erg));
+      land.assign(mix(land, mix(U.uRock, U.uDesertRed, 0.45).mul(float(1.15).add(nD.mul(0.2))), ham.mul(0.55)));
+      // ── STEP (sucha trawa) i ŁĄKA (zielona): przejścia płatami, nie gradientem ──
+      const dry = smoothstep(0.15, 0.27, Mv.add(nMo.mul(0.07))).toVar();
+      // płaty o innym odcieniu (wyschnięta / świeża trawa) i ziarno — równa barwa na nizinie wygląda jak plama
+      const tone = smoothstep(-0.22, 0.22, nMo.add(nF.mul(0.6))).toVar();
+      land.assign(mix(land, U.uSteppe.mul(mix(vec3(1.12, 1.02, 0.84), vec3(0.86, 0.94, 1.0), tone)).mul(float(1.0).add(nP.mul(0.12)).add(nD.mul(0.2))), dry));
+      const green = smoothstep(0.3, 0.42, Mv.add(nMo.mul(0.06)).add(nD.mul(0.02))).mul(smoothstep(0.12, 0.22, T)).toVar();
+      land.assign(mix(land, meadowC.mul(mix(vec3(1.1, 1.0, 0.8), vec3(0.88, 1.04, 0.98), tone)).mul(float(1.0).add(nD.mul(0.22))), green));
+      // ── LAS: ostra granica z szumu płatów (mozaika las / łąka), górna granica lasu z temperatury, bez lasu na
+      //    urwiskach; POLANY I TORFOWISKA — jasne sieci w lesie (na płaskim, wilgotnym i chłodnym gęściej);
+      //    DOLINA ZALEWOWA — pas przy rzece z łąkami zamiast lasu ──
+      const treeT = smoothstep(0.15, 0.21, T.add(nMo.mul(0.035)));
+      // skraj lasu: skupiska drzew przed ścianą lasu i luki za nią (komórki w dwóch skalach, widoczne dopiero gdy
+      // teksel celu je rozdziela) — granica las / łąka nie jest jedną gładką linią
+      const cA = pgCells(ps.mul(700.0).add(vec3(1.3, 4.1, -2.2)), 0.9).toVar();
+      const onA = float(1.0).sub(smoothstep(2.4e-4, 4.8e-4, st)).toVar();
+      const cB = pgCells(ps.mul(2400.0).add(vec3(-5.3, 0.7, 3.9)), 0.9).toVar();
+      const onB = float(1.0).sub(smoothstep(7.0e-5, 1.4e-4, st)).toVar();
+      // (0,516 = średnia odległość do najbliższego punktu komórek — człon ma średnią ZERO: skupiska przesuwają
+      // granicę lasu w obie strony i udział lasu nie zmienia się ze zbliżeniem; z 0,42 łąki rosły przy zbliżaniu)
+      const clump = float(0.516).sub(cA.x).add(nMo.mul(0.5)).mul(onA).mul(0.11)
+        .add(float(0.516).sub(cB.x).add(nD.mul(0.3)).mul(onB).mul(0.06)).toVar();
+      const forest = edge(Mv.sub(0.44).add(nMo.mul(0.17)).add(clump)).mul(treeT)
+        .mul(float(1.0).sub(smoothstep(0.45, 0.8, sl.s))).toVar();
+      const bogP = flat.mul(smoothstep(0.4, 0.75, M)).mul(inv(0.45, 0.7, T));
+      // polany i torfowiska (wzór ze zdjęcia: jasne, ROZGAŁĘZIONE pasma w ciemnym lesie): pasma wzdłuż drobnych
+      // cieków (wilgotność doliny strumyka — rozgałęziają się jak sieć rzeczna, przerywane szumem) i drobne płaty
+      // na grzbietach szumu; rzadko, na płaskim, wilgotnym i chłodnym gęściej; całe okolice bez polan
+      const region = smoothstep(-0.1, 0.2, nV).toVar();
+      const fen = smoothstep(0.1, 0.24, wetV).mul(inv(0.4, 0.5, wetV)).mul(smoothstep(-0.02, 0.1, nMo.add(nF.mul(0.4)))).mul(region);
+      // TORFOWISKA I POLANY — mozaika płatów w TRZECH SKALACH (komórka szumu ~120, ~33 i ~9 km), jak na mapie
+      // terenu: dużo małych, postrzępionych pól zamiast kilku wielkich plam. Gęstość `fenD` rośnie na płaskim,
+      // wilgotnym i chłodnym, całe krainy mają pól więcej albo mniej (`nFen`, `nV`). Warstwa, której teksel celu
+      // jeszcze nie rozdziela, wchodzi ŚREDNIĄ (udział pola `cov` jako rozjaśnienie lasu), więc kraina torfowisk
+      // ma z daleka tę samą jasność co z bliska, a zbliżenie rozbija ją na coraz drobniejsze pola.
+      const fenAmt = mix(float(0.3), float(1.0), bogP).mul(mix(U.uK3.x, U.uK3.y, warmK)).mul(mix(float(0.35), float(1.0), flat)).toVar();
+      const fenD = clamp(fenAmt.mul(float(0.6).add(nFen.mul(5.0)).add(nV.mul(2.0))), 0.0, 1.0).toVar();
+      // próg warstwy (szum trzech oktaw, odchylenie ~0,18): 0,30 ≈ 2% pola, 0,19 ≈ 14%
+      const fenT = mix(float(0.30), float(0.19), fenD).toVar();
+      const fenMean = float(1.0).sub(smoothstep(-0.36, 0.36, fenT)).toVar();
+      const fenLayer = (freq, off) => {
+        // (dziedzina odkształcona własnym szumem warstwy: pola wydłużone i rozgałęzione — sam próg szumu przy małym
+        // udziale pola daje okrągłe kropki)
+        const pp = ps.mul(freq).add(off).toVar();
+        const n = pgFbm(pp.add(pgWarp(pp.mul(1.6).add(vec3(3.3, 1.1, -2.2)), 2, 0.7)), 3).toVar();
+        const on = float(1.0).sub(smoothstep(1 / (freq * 12), 1 / (freq * 6), st)).toVar();
+        // (obrys strzępiony drobnym szumem celu — największe pola nie mają gładkiego brzegu)
+        return mix(fenMean, edge(n.add(nD.mul(0.22)).add(nMo.mul(0.12)).sub(fenT), 0.003), on);
+      };
+      const fenA = fenLayer(46.0, vec3(5.1, -3.3, 7.7)).toVar();
+      const fenB = fenLayer(170.0, vec3(-9.4, 6.2, 1.8)).toVar();
+      const fenS = fenLayer(620.0, vec3(2.7, 8.8, -4.6)).toVar();
+      // wyspy i pasma drzew w większych polach: ujemna strona drobnego szumu `nD` (gdy cel go rozdziela)
+      const fenHole = smoothstep(0.02, 0.07, nD.negate().sub(nMo.mul(0.3))).mul(float(1.0).sub(smoothstep(4.0e-4, 1.2e-3, st))).mul(0.85);
+      const fenAll = float(1.0).sub(float(1.0).sub(fenA.mul(float(1.0).sub(fenHole))).mul(float(1.0).sub(fenB)).mul(float(1.0).sub(fenS))).toVar();
+      const clr = max(fenAll, fen).toVar();
+      // w polu: suche (jaśniejsze) i mokre (zieleńsze) części — drobna mozaika, nie gradient
+      const fenWetK = smoothstep(0.02, 0.08, nD.add(nMo.mul(0.5))).mul(0.6).toVar();
+      // (brzeg pasa nierówny: szum MNOŻY wilgotność — dodany tworzył kropki pasa zalewowego wzdłuż strumyków)
+      // (część wilgotności ponad smugę strumyka = pas wielkiej rzeki; jej brzeg mocno poszarpany szumem — równa
+      // otoczka wokół rzeki wyglądała jak pigułka)
+      const wetBig = max(wetV.sub(0.46), 0.0).div(0.54).toVar();
+      const flood = smoothstep(0.25, 0.55, wetBig.add(nMo.mul(2.0).add(nV.mul(0.6)).mul(smoothstep(0.02, 0.2, wetBig)))).toVar();
+      land.assign(mix(land, mix(fenC, fenWetC, fenWetK).mul(float(1.0).add(nD.mul(0.25))), clr.mul(smoothstep(0.36, 0.48, Mv)).mul(treeT).mul(0.95)));
+      forest.mulAssign(float(1.0).sub(clr.mul(0.92)));
+      forest.mulAssign(float(1.0).sub(flood.mul(0.5)));
+      // DOLINA ZALEWOWA: soczysta zieleń łęgów (ciemniejsza niż łąka — blady pas wyglądał jak pobocze), łuki dawnych
+      // koryt jaśniejszymi i ciemniejszymi pasami
+      const floodC = vec3(mix(meadowT, grassC, 0.55)).toVar();
+      land.assign(mix(land, floodC.mul(mix(float(0.72), float(1.32), scar)).mul(float(1.0).add(nD.mul(0.2))), flood.mul(smoothstep(0.1, 0.2, T)).mul(0.9)));
+      // korony: ziarno do teksela i płaty drzewostanów o innym odcieniu
+      const stand = smoothstep(-0.2, 0.25, nF.add(nV.mul(0.4)));
+      const canopy = mix(vec3(0.95, 1.0, 1.02), vec3(1.4, 1.3, 0.95), stand).mul(float(1.0).add(nD.mul(0.6)).add(nMo.mul(0.9)))
+        .mul(mix(float(1.0), float(0.8).add(float(0.6).sub(cB.x).mul(0.5)), onB));
+      land.assign(mix(land, forestC.mul(canopy), forest));
+      // tarasy: jasne płaty na zewnętrznym brzegu doliny; łachy: jasny piasek po wewnętrznej stronie zakoli
+      // (tylko gdy teksel celu rozdziela płaty — z daleka wychodziły jasnymi kropkami wzdłuż rzek)
+      const terrace = smoothstep(0.4, 0.54, wetV).mul(inv(0.58, 0.72, wetV)).mul(smoothstep(0.06, 0.2, nF.add(nMo.mul(0.6)))).mul(flat)
+        .mul(float(1.0).sub(smoothstep(1.0e-4, 2.2e-4, st)));
+      land.assign(mix(land, bogC.mul(float(1.05).add(nD.mul(0.2))), terrace.mul(smoothstep(0.1, 0.2, T)).mul(0.7)));
+      land.assign(mix(land, sandC, bar.mul(0.9)));
+      // ── TUNDRA: płaty z szumu, drobne ciemne oczka na płaskim ──
+      const tun = inv(0.15, 0.25, T.add(nMo.mul(0.04))).toVar();
+      land.assign(mix(land, U.uTundra.mul(float(1.0).add(nP.mul(0.15)).add(nD.mul(0.22))), tun));
+      land.assign(mix(land, U.uOcean.mul(1.6), smoothstep(0.36, 0.42, nD).mul(tun).mul(flat).mul(smoothstep(-0.04, 0.03, T)).mul(0.7)));
+      // krzywizna w barwie tylko lekko (światło i cień terenu liczy materiał z mapy rzeźby — mocna krzywizna
       // w albedo dawała „słoje drewna” na całym lądzie)
       land.mulAssign(float(1.0).add(clamp(curv.mul(-2.5), -0.05, 0.05)));
-      const rocky = max(smoothstep(0.18, 0.5, sl.s), smoothstep(0.3, 0.7, f.z).mul(smoothstep(0.8, 2.6, h))).toVar();
-      land.assign(mix(land, U.uRock.mul(float(1.0).add(nF.mul(0.22))), rocky.mul(0.7)));
-      // śnieg gór: szeroki przedział wysokości, wzdłuż grzbietów (f.z) i płatami — nie białe „naklejki” na szczytach
-      const snowLine = float(0.6).add(max(T, 0.0).mul(5.8));
-      const snowM = smoothstep(snowLine.sub(0.6), snowLine.add(1.4), h.add(nF.mul(0.6)).add(nP.mul(0.4)))
-        .mul(mix(0.45, 1.0, smoothstep(0.15, 0.6, f.z))).mul(smoothstep(-0.25, 0.25, nF.add(nV.mul(0.5))).mul(0.5).add(0.5));
-      const snow = max(inv(-0.02, 0.08, T.add(nP.mul(0.08)).add(nF.mul(0.05))), snowM).mul(float(1.0).sub(smoothstep(0.35, 0.7, sl.s).mul(0.5)));
-      land.assign(mix(land, U.uSnow, clamp(snow, 0.0, 1.0)));
-      land.mulAssign(float(1.0).add(nV.mul(0.08)).add(nF.mul(0.07)));
+      // ── GÓRY: piętra z temperatury (spada z wysokością): las → hale (tundra górska — wyżej, `tun`) → skała
+      //    i piarg (jaśniejsze niż skała urwisk) → śnieg. Skała także na urwiskach niezależnie od wysokości. ──
+      const alpine = inv(0.05, 0.15, T.add(nMo.mul(0.03))).mul(smoothstep(0.5, 1.3, h)).toVar();
+      const rocky = max(smoothstep(0.16, 0.36, sl.s.add(nD.mul(0.04))),
+        max(alpine, smoothstep(0.3, 0.7, mtn).mul(smoothstep(0.8, 2.6, h)).mul(0.7))).toVar();
+      const rockC = U.uRock.mul(mix(vec3(1.0), vec3(1.45, 1.4, 1.35), alpine)).mul(float(1.0).add(nF.mul(0.22)).add(nD.mul(0.16)));
+      land.assign(mix(land, rockC, rocky.mul(0.85)));
+      // ŚNIEG: granica z temperatury — w górach ostra linia śniegu (szerokość z pochodnej celu), na nizinach
+      // polarnych miękka; mniej na urwiskach, nieco niżej na stokach odwróconych od równika. Biel pełna: szczyty
+      // mają być śnieżnobiałe, ale poniżej progu bloomu (albedo × 0,88 — przy pełnym słońcu ~0,85; z × 1,06 śnieg świecił).
+      const snowT = T.add(nMo.mul(0.03)).add(nF.mul(0.025)).add(clamp(sl.dN.mul(C.lat.sign()).mul(0.1), -0.025, 0.025)).toVar();
+      const snowW = max(mix(float(0.05), float(0.006), smoothstep(0.3, 1.2, h)), fwidth(snowT).mul(0.8)).toVar();
+      // (ściany o nachyleniu ponad ~30% zostają skalne — śnieg leży na grzbietach i polach, nie na urwiskach)
+      const snow = inv(float(0.075).sub(snowW), float(0.075).add(snowW), snowT)
+        .mul(float(1.0).sub(smoothstep(0.28, 0.62, sl.s.add(nD.mul(0.05))).mul(0.85))).toVar();
+      land.assign(mix(land, U.uSnow.mul(0.88), clamp(snow, 0.0, 1.0)));
+      land.mulAssign(float(1.0).add(nV.mul(0.06)).add(nF.mul(0.05)));
+      // ── PLAŻA: jasny piasek na płaskim brzegu i na płyciźnie tuż pod wodą (przez wodę daje turkusowy pas) ──
+      // (odległość od brzegu ≈ |wysokość| / nachylenie: pas stałej szerokości, nie mniej niż ~2 teksele celu —
+      // sam próg wysokości zamieniał płaskie niziny przy morzu w beżowe równiny)
+      // Tylko przy WODZIE: w promieniu 3 tekseli musi być punkt poniżej poziomu morza (na lądzie) — sam próg
+      // wysokości rysował jasne kreski-poziomice na niskich pagórkach w głębi lądu.
+      // (plaża ma ~1 km; gdy teksel celu jest większy, pas idzie na szerokość teksela, ale z pokryciem
+      // (szerokość / teksel)^0,7 — z daleka nie robi jasnej obwódki wokół każdego lądu)
+      const beachW0 = float(1.0);
+      const beachW = max(beachW0, U.uGeo.y.mul(1.5)).toVar();
+      const beachCov = pow(beachW0.div(beachW), 0.7).toVar();
+      const hNear = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
+      const hLow = min(min(hNear(3, 0), hNear(-3, 0)), min(hNear(0, 3), hNear(0, -3)));
+      const hHigh = max(max(hNear(3, 0), hNear(-3, 0)), max(hNear(0, 3), hNear(0, -3)));
+      const shore = mix(step(0.0, hHigh), float(1.0).sub(smoothstep(-0.002, 0.004, hLow)), step(0.0, h));
+      const beach = inv(beachW.mul(0.4), beachW, abs(h).div(sl.s.add(2e-4))).mul(inv(0.0, 0.03, abs(h))).mul(shore)
+        .mul(smoothstep(0.1, 0.22, T)).mul(smoothstep(-0.1, 0.2, nV.add(nMo.mul(0.5)))).mul(beachCov);
+      land.assign(mix(land, U.uSandB, beach.mul(0.7)));
+      // woda słodka (barwy jak na mapie terenu): ciemna woda leśnych rzek i jezior, mętna wielkich rzek niosących
+      // muł, mleczny błękit rzek z lodowców w górach; połysk i fale dokłada materiał zbliżenia
+      const glac = smoothstep(0.9, 2.0, h).mul(float(1.0).sub(mudW)).toVar();
+      const waterC = mix(mix(U.uWDark, U.uWIce, glac), U.uWMud, mudW);
+      land.assign(mix(land, waterC, water.mul(inv(-0.05, 0.02, T).oneMinus())));
+      // dno morza w smudze osadu: jasny muł (materiał pokazuje go przez płytką wodę)
+      land.assign(mix(land, U.uSilt.mul(float(1.0).add(nMo.mul(0.3))), smoothstep(0.0, 0.1, plume)));
       // MORZE liczy shader (planetGenSurface.tsl.js: brzeg z wysokości i detalu, barwa wody z głębokości), więc mapa
       // dnia ma WSZĘDZIE barwę gruntu — pod wodą to dno, które płycizny przepuszczają, a brzeg w mapie nie istnieje
       // (bez schodków tekseli przy zbliżeniu). Alfa = lód morski (płaty z temperatury, ciągłe przez brzeg); na morzu
@@ -291,13 +788,41 @@ function earthColor(type) {
     return { U, material: bakeMaterial(`PlanetGenDay_${type}`, node) };
   };
 }
+// Grzbiety gór: częstość pierwszej oktawy = `look.mountainFreq` × tyle. Przy samej `mountainFreq` (2–3,4) pierwsza
+// oktawa szumu grzbietowego była kopułą szeroką na ~20° — pasmo wychodziło płaskowyżem w całości nad linią śniegu;
+// przy × 3,5 grzbiet miał wciąż ~570 km (stoki ~5%) i śnieg zlewał się w pole. × 12: grzbiety co ~150 km, ściany
+// o nachyleniu kilkudziesięciu procent — skała na ścianach, śnieg na grzbietach.
+const EARTH_RIDGE_FREQ = 12;
+// Barwy krajobrazu z palet mapy terenu (sRGB 0–255 → liniowe) dla roślinności planety: [klimat chłodny, ciepły].
+const PLANET_TERRAIN_VEG = { rdzawa: ['czerwona', 'czerwona'] };
+const lin255 = (c) => c.map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); });
+function landscapeUniforms(L) {
+  const [a, b] = (PLANET_TERRAIN_VEG[L.vegetation] || ['tajga', 'tropik']).map(terrainLandscape);
+  const W = TERRAIN_WATER;
+  // odcień: barwy palety mapy terenu przesunięte lekko (stosunek^0,25, w granicach 0,8–1,25) ku barwie lasu TEJ planety —
+  // torfowiska i łęgi zostają w rodzinie barw planety (tak samo mapa terenu dostaje odcień planety, planetGenPlace.js)
+  const tint = (pal, forestPlanet) => {
+    const f = lin255(pal.forest);
+    const k = f.map((v, i) => Math.min(1.25, Math.max(0.8, Math.pow((forestPlanet[i] + 0.004) / (v + 0.004), 0.25))));
+    return (c) => lin255(c).map((v, i) => v * k[i]);
+  };
+  const ta = tint(a, L.palette.taiga);
+  const tb = tint(b, L.palette.rain);
+  return {
+    uK3: [a.fenAmount, b.fenAmount, 0, 0],
+    uFenA: ta(a.fen), uFenB: tb(b.fen), uFenWetA: ta(a.fenWet), uFenWetB: tb(b.fenWet),
+    uGrassA: ta(a.grass), uGrassB: tb(b.grass), uMeadowA: ta(a.meadow), uMeadowB: tb(b.meadow),
+    uWDark: lin255(W.dark), uWMud: lin255(W.mud), uWIce: lin255(W.ice), uSilt: lin255(W.silt), uSandB: lin255(W.sand)
+  };
+}
 function earthUniforms(spec, ctx) {
   const L = spec.look;
   const rng = rngFor(spec.seed, `${spec.type}:łańcuchy`);
   const ocean = spec.type === 'ocean';
   const field = {
     uE1: [L.plateFreq, L.contFreq, L.contWarp, L.coast],
-    uE2: [L.mountainKm, L.mountainFreq, L.border, L.hillKm],
+    // (częstość grzbietów × EARTH_RIDGE_FREQ: pierwsza oktawa to grzbiety pasma, nie kopuła wielkości kontynentu)
+    uE2: [L.mountainKm, L.mountainFreq * EARTH_RIDGE_FREQ, L.border, L.hillKm],
     uE3: [L.oceanKm, L.ridgeKm, L.islands, Math.min(0.9, (1 - L.water) * 1.25 + 0.05)],
     uE4: [0, 0, 0, 0]
   };
@@ -315,13 +840,17 @@ function earthUniforms(spec, ctx) {
   }
   const P = L.palette;
   const color = {
-    uK: [L.temp, L.wet, L.axisTilt, 0],
+    uK: [L.temp, L.wet, L.axisTilt, pgOctavesFor(ctx.size, 110, 2.03, 3, 12)],
+    uK2: [pgOctavesFor(ctx.size, 46, 2.03, 6, 12), pgOctavesFor(ctx.size, 140, 2.1, 6, 8), pgOctavesFor(ctx.size, 30, 2.03, 5, 13), 0],
+    ...landscapeUniforms(L),
     uRain: P.rain, uForest: P.forest, uTaiga: P.taiga, uSteppe: P.steppe, uTundra: P.tundra, uDesert: P.desert, uDesertRed: P.desertRed,
     uRock: P.rock, uSnow: P.snow, uIce: P.ice, uShallow: P.shallow, uOcean: P.ocean, uDeep: P.deep
   };
   return {
-    field, color, probeQ: [L.water, 0.1, 0.5, 0.9], water: true, landTop: L.mountainKm * 0.6,
-    octaves: { x: pgOctavesFor(ctx.size, 1.4 * 2.7, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6.5, 2.0, 3, 8), z: pgOctavesFor(ctx.size, L.mountainFreq, 2.07, 3, 9), w: 6 },
+    // drainage: rzeki ze spływu (wypiekacz liczy drzewo rzek z pola i opadu — przejście `drain`, uniformy jak barwy)
+    field, color, drainage: true, probeQ: [L.water, 0.1, 0.5, 0.9], water: true, landTop: L.mountainKm * 0.6,
+    // sufity ponad mapy planety (≤ 4096 px ich nie sięgają) — dla wycinków pod kamerą
+    octaves: { x: pgOctavesFor(ctx.size, 1.4 * 2.7, 2.03, 3, 16), y: pgOctavesFor(ctx.size, 6.5, 2.0, 3, 14), z: pgOctavesFor(ctx.size, L.mountainFreq * EARTH_RIDGE_FREQ, 2.07, 3, 15), w: 6 },
     spec: [0, 0, 0, 0],   // morze — w shaderze (planetGenSurface.tsl.js)
     civ: { landOnly: 1, latDeg: 48, sea: ocean ? 0.6 : 0, habW: 0, freq: 26, gain: 1 }
   };
@@ -699,63 +1228,183 @@ function iceUniforms(spec, ctx) {
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // VOLCANIC — pole: y — lawa (żar, połysk), z — osady / kaldery, w — c (próg mórz lawy uQ.x)
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// Miejsca (wulkany, kaldery) w kracie komórek: pętla po 27 sąsiednich komórkach, każde miejsce dokłada SWÓJ profil —
+// wynik ciągły na granicach komórek. (Dawny wzór „hasz najbliższej komórki × profil odległości” urywał stożek, potok
+// i pierścień opadu na krawędzi komórki — z orbity niewidoczne, z bliska uskoki i wielokąty.) Profil miejsca musi
+// gasnąć do zera w promieniu 1 komórki. `fn({ dv — od miejsca do punktu [komórki], u — los obecności 0…1, a — trzy
+// losy miejsca 0…1 })`. Wklejana; nazwy zmiennych pętli różne dla każdego wywołania.
+let siteLoopId = 0;
+function forSites(pp, salt, fn) {
+  const id = siteLoopId++;
+  const ip = ivec3(floor(pp)).toVar();
+  const fp = fract(pp).toVar();
+  const nx = `sx${id}`;
+  const ny = `sy${id}`;
+  const nz = `sz${id}`;
+  Loop(
+    { start: -1, end: 1, condition: '<=', name: nz },
+    { start: -1, end: 1, condition: '<=', name: ny },
+    { start: -1, end: 1, condition: '<=', name: nx },
+    (it) => {
+      const c = ivec3(it[nx], it[ny], it[nz]).toVar();
+      const h = pgHashU(ip.add(c).add(ivec3(salt * 37, salt * 101 + 7, salt * 13 + 3))).toVar();
+      const h2 = pgRehash(h).toVar();
+      const o = pgU3(h2).mul(0.7).add(0.15);
+      const dv = fp.sub(vec3(c)).sub(o).toVar();
+      fn({ dv, u: pgU1(h), a: pgU3(pgRehash(h2)) });
+    }
+  );
+}
+const hash1 = (x) => fract(sin(x).mul(43758.5453));
+
+// Warstwa wulkanów jednej skali. `o`: freq — komórek na radian, dens (węzeł) — udział komórek z wulkanem, rMin / rMax —
+// promień podstawy [komórki], hKm — wysokość największego [km], gate (węzeł 0…1) — warstwa widoczna w tej
+// rozdzielczości, streams — strugi lawy po stoku, shield — tarcza (łagodna, szeroka) zamiast stożka.
+// Styl siarki (`io` = 1): w miejscu stożka KALDERA (patera) — nieregularna niecka o stromych ścianach z ciemnym dnem,
+// jeziorem lawy i płatami potoków wokół; duże — z pierścieniem opadu pióropusza.
+function volcanoLayer(S, o) {
+  const { q, U, io, t1, t2, h, lava, dep } = S;
+  const pp = q.mul(o.freq).toVar();
+  // nieregularność obrysu i płaty potoków — szum liczony raz na warstwę (wspólny dla miejsc: ciągły)
+  const nIrr = pgNoise(pp.mul(2.3).add(vec3(3.7, -1.1, 5.9))).toVar();
+  const lobes = pgFbm(pp.mul(4.2).add(vec3(-2.3, 8.1, 0.7)), 3).mul(0.5).add(0.5).toVar();
+  forSites(pp, o.salt, ({ dv, u, a }) => {
+    const rad = mix(float(o.rMin), float(o.rMax), a.x).toVar();
+    const dist = length(dv).toVar();
+    If(u.lessThan(o.dens).and(dist.lessThan(0.98)).and(o.gate.greaterThan(0.002)), () => {
+      // wszystko gaśnie przed 1 komórką
+      const fade = inv(0.86, 0.98, dist).mul(o.gate).toVar();
+      const r = dist.div(rad).toVar();
+      const th = atan(dot(dv, t2), dot(dv, t1).add(1e-7)).toVar();
+      const active = step(fract(a.x.mul(57.3)), U.uV1.z.mul(0.7).add(0.3)).toVar();
+      const size = rad.div(o.rMax);
+      If(io.greaterThan(0.5), () => {
+        // ── patera ──
+        const pr = float(o.shield ? 0.2 : 0.42).mul(rad).toVar();        // promień niecki [komórki]
+        const rn = dist.div(pr).mul(nIrr.mul(0.24).add(1.0)).toVar();
+        const pit = inv(0.82, 1.0, rn);
+        h.subAssign(pit.mul(o.hKm * 0.1).mul(size.mul(0.6).add(0.4)).mul(fade));
+        dep.assign(max(dep, pit.mul(0.6).mul(fade)));
+        // jezioro: większa część dna (od strony losowego kierunku zostaje sierp ciemnego dna)
+        const side = cos(th.sub(a.y.mul(6.2832))).mul(0.5).add(0.5);
+        const lake = inv(0.5, 0.84, rn).mul(smoothstep(0.05, 0.4, side.add(a.z.mul(0.8)))).mul(active);
+        lava.assign(max(lava, lake.mul(fade)));
+        // potoki: płaty wokół niecki
+        const fl = inv(1.0, 3.4, rn).mul(smoothstep(0.42, 0.68, lobes)).mul(U.uV1.y).mul(fade).toVar();
+        dep.assign(max(dep, fl.mul(0.8)));
+        lava.assign(max(lava, fl.mul(active).mul(U.uV1.z).mul(inv(1.0, 2.2, rn)).mul(0.7)));
+        // pierścień opadu pióropusza (duże, część)
+        if (o.shield) {
+          const ringR = mix(0.5, 0.74, a.y);
+          const rw = dist.sub(ringR).div(0.07);
+          const ring = exp(rw.mul(rw).negate()).mul(step(0.55, a.z)).mul(U.uV1.w).mul(nIrr.mul(0.25).add(0.85));
+          dep.assign(max(dep, ring.mul(0.9).mul(fade)));
+        }
+      }).Else(() => {
+        // ── stożek / tarcza ──
+        const Hc = size.mul(0.65).add(0.35).mul(o.hKm).toVar();
+        const rc = mix(o.shield ? 0.05 : 0.13, o.shield ? 0.09 : 0.21, a.z).toVar();        // krater [promienie podstawy]
+        const rn = r.mul(nIrr.mul(0.1).add(1.0)).toVar();
+        const flank = o.shield
+          ? max(exp(rn.mul(-3.2)).sub(0.0408), 0.0).mul(inv(0.9, 1.0, rn).mul(0.15).add(0.85))
+          : pow(max(float(1.0).sub(rn), 0.0), 1.55);
+        const top = o.shield ? exp(rc.mul(-3.2)).sub(0.0408) : pow(float(1.0).sub(rc), 1.55);
+        const bowl = top.sub(inv(0.45, 1.0, rn.div(rc)).mul(o.shield ? 0.16 : 0.2));
+        const rimD = rn.sub(rc).div(0.045);
+        const prof = mix(flank, bowl, step(rn, rc)).add(exp(rimD.mul(rimD).negate()).mul(0.035)).toVar();
+        // żleby na stoku: wąskie wcięcia między szerokimi żebrami (łapią niskie słońce), kręte, coraz głębsze w dół
+        const ng = o.shield ? 5.0 : 6.5;
+        const gul = abs(sin(th.mul(ng).add(a.y.mul(40.0)).add(sin(rn.mul(5.0).add(a.x.mul(9.0))).mul(0.45)).add(nIrr.mul(1.6))));
+        const cut = float(1.0).sub(gul).toVar();
+        const gulM = smoothstep(o.shield ? 0.14 : 0.0, o.shield ? 0.3 : 0.0001, rn.sub(rc.mul(1.15))).mul(inv(0.6, 1.0, rn));
+        // (tarcze bez żlebów: długie proste bruzdy na łagodnym stoku wyglądały jak czesanie)
+        if (!o.shield) prof.subAssign(cut.mul(cut).mul(cut).mul(gulM).mul(0.075).mul(rn.mul(0.8).add(0.4)));
+        // jezioro lawy w kraterze
+        const lake = inv(0.5, 0.86, rn.div(rc)).mul(active);
+        lava.assign(max(lava, lake.mul(fade)));
+        if (o.streams) {
+          // strugi po stoku: kilka od wyłomu w kraterze, meandry, różna długość
+          const N = floor(a.y.mul(2.99)).add(2.0);
+          const ph = a.x.mul(6.2832);
+          const mth = th.add(sin(rn.mul(4.2).add(ph.mul(3.0))).mul(0.42)).add(sin(rn.mul(9.7).add(ph.mul(5.0))).mul(0.18)).toVar();
+          const arg0 = N.mul(mth).add(ph).toVar();
+          const k = floor(arg0.div(6.2832).add(0.5));
+          // każda struga odchylona o własny kąt (dwie strugi nie leżą na jednej prostej przez krater)
+          const arg = arg0.add(hash1(k.mul(7.13).add(a.z.mul(31.7))).sub(0.5).mul(1.7)).toVar();
+          const lat = rn.mul(sqrt(max(float(2.0).sub(cos(arg).mul(2.0)), 0.0))).div(N);
+          const rEnd = mix(float(o.shield ? 0.45 : 0.75), min(float(o.shield ? 1.05 : 2.1), float(0.9).div(rad)), hash1(k.mul(12.9898).add(a.x.mul(78.233)))).toVar();
+          const w = float(o.shield ? 0.012 : 0.034).mul(rn.mul(0.6).add(0.7));
+          const along = inv(rEnd.mul(0.72), rEnd, rn);
+          const stream = inv(w.mul(0.4), w, lat).mul(smoothstep(rc.mul(0.75), rc.mul(1.05), rn)).mul(along).mul(active).mul(U.uV1.y.mul(0.5).add(0.5)).toVar();
+          lava.assign(max(lava, stream.mul(along.mul(0.3).add(0.5)).mul(fade)));
+          prof.subAssign(stream.mul(0.012));
+          // świeże potoki: ciemny fartuch wokół strug
+          dep.assign(max(dep, inv(w, w.mul(4.0), lat).mul(along).mul(active).mul(0.75).mul(fade)));
+        }
+        dep.assign(max(dep, inv(0.2, 1.25, rn).mul(smoothstep(0.38, 0.7, lobes)).mul(0.55).mul(fade)));
+        dep.assign(max(dep, inv(0.6, 1.3, rn.div(rc)).mul(0.8).mul(fade)));
+        h.addAssign(prof.mul(Hc).mul(fade));
+      });
+    });
+  });
+}
+
 function volcanicField() {
-  const U = bakeUniforms({ ...COMMON_DEFS, ...craterDefs(), uV1: 'vec4', uV2: 'vec4' });
+  const U = bakeUniforms({ ...COMMON_DEFS, ...craterDefs(), uV1: 'vec4', uV2: 'vec4', uV3: 'vec4' });
   const node = Fn(() => {
     const C = bakeCoords(U);
     const ps = C.dir.add(U.uSeed.xyz).toVar();
     const wq = pgWarp(ps.mul(1.1), 3, 0.45).toVar();
     const q = ps.add(wq).toVar();
-    const c = pgFbm(q.mul(1.8), U.uOct.x).toVar();
-    const h = c.mul(1.2).add(pgErodedFbm(q.mul(6.0), U.uOct.y, 1.4).mul(0.5)).toVar();
+    // oktawy z rozdzielczości celu, dzielnik stały (`full`): wycinek pod kamerą liczy więcej oktaw tego samego pola
+    const c = pgFbm(q.mul(1.8), U.uOct.x, 2.03, 0.5, true).toVar();
+    const h = c.mul(1.2).add(pgErodedFbm(q.mul(6.0), U.uOct.y, 1.4, 2.0, 0.5, true).mul(0.5)).toVar();
     const lava = float(0.0).toVar();
     const dep = float(0.0).toVar();
     const style = U.uV2.z;
+    const io = step(style, 0.5).toVar();
+    const st = C.stN;                                   // kąt teksela celu [rad]
+    // warstwa widoczna, gdy jej najmniejszy obiekt ma kilka tekseli (promień [rad] / teksel)
+    const gate = (rad) => smoothstep(2.5, 5.0, float(rad).div(st));
     // góry: pojedyncze bloki (Io) / pasma
-    h.addAssign(pgRidged(q.mul(3.0), U.uOct.z, 2.07, 0.55, 1.0, 2.0).mul(U.uV2.x).mul(smoothstep(0.25, 0.6, pgFbm(q.mul(1.5).add(6.0), 3))));
-    // kaldery (paterae): nieregularne zagłębienia w komórkach, część z jeziorem lawy, wokół potoki i pierścienie opadu
-    const pc = pgCells(q.mul(7.0), 0.85).toVar();
-    const has = step(float(1.0).sub(U.uV1.x.mul(0.6)), pc.z).toVar();
-    const pr = pc.x.div(mix(0.16, 0.42, pc.w)).toVar();
-    const pit = inv(0.75, 1.0, pr).mul(has);
-    h.subAssign(pit.mul(0.6));
-    const active = step(0.55, fract(pc.z.mul(37.7))).mul(has);
-    lava.assign(max(lava, inv(0.45, 0.8, pr).mul(active).mul(U.uV1.z.add(0.35)).min(1.0)));
-    // potoki: płaty od kaldery (szum przesunięty haszem komórki)
-    const lobes = pgFbm(q.mul(30.0).add(vec3(pc.z.mul(50.0), 0.0, 0.0)), 3).mul(0.5).add(0.5);
-    const flow = has.mul(inv(1.0, 3.2, pr)).mul(smoothstep(0.45, 0.7, lobes)).mul(U.uV1.y);
-    dep.assign(max(dep, flow.mul(0.8)));
-    lava.assign(max(lava, flow.mul(active).mul(U.uV1.z).mul(0.6)));
-    // pierścienie opadu pióropuszy (Io): czerwone / białe kręgi wokół części kalder
-    If(U.uV1.w.greaterThan(0.01), () => {
-      const plume = step(0.7, fract(pc.z.mul(13.1))).mul(has);
-      const ring = exp(pr.sub(6.0).div(1.4).pow2().negate()).mul(plume).mul(U.uV1.w);
-      dep.assign(max(dep, ring.mul(0.9).add(dep.mul(0.0))));
-    });
-    // lawa: skorupa płyt (szwy Voronoia na odkształconej dziedzinie, dwie skale) + morza lawy w nieckach
+    h.addAssign(pgRidged(q.mul(3.0), U.uOct.z, 2.07, 0.55, 1.0, 2.0, true).mul(U.uV2.x).mul(smoothstep(0.25, 0.6, pgFbm(q.mul(1.5).add(6.0), 3))));
+    // prowincje wulkaniczne: średnie i małe wulkany w skupiskach
+    const prov = smoothstep(-0.15, 0.3, pgFbm(q.mul(2.3).add(vec3(11.0, 4.0, -7.0)), 3)).toVar();
+    // pola zastygłych potoków: płaty jeden na drugim (czoło potoku = próg szumu — skarpa łapiąca niskie słońce),
+    // trzy skale; młodsze (wyższy szum) ciemniejsze. Czoło nie węższe niż ~1,5 teksela.
+    for (const [f, km, octDrop, off] of [[9.0, 0.3, 0, 1.7], [27.0, 0.2, 2, 5.3], [80.0, 0.13, 4, 9.1]]) {
+      const n = pgFbm(q.mul(f).add(vec3(off, -off * 0.7, off * 1.3)), max(int(U.uOct.y).sub(octDrop), int(2)), 2.03, 0.5, true).toVar();
+      const wn = max(float(0.035), st.mul(f * 3.0));
+      const on = octDrop > 0 ? smoothstep(1.5, 3.0, float(1 / (f * 4)).div(st)) : float(1.0);
+      const lobe = smoothstep(float(0.06), wn.add(0.06), n).mul(on).mul(float(1.0).sub(io.mul(0.6))).toVar();
+      h.addAssign(lobe.mul(km).mul(n.mul(0.6).add(0.9)));
+      dep.assign(max(dep, lobe.mul(smoothstep(0.18, 0.4, n)).mul(0.5).mul(float(1.0).sub(io))));
+    }
+    // osie kąta wokół miejsca (płaszczyzna styczna)
+    const t1 = normalize(cross(C.dir, vec3(0.31, 0.95, 0.12))).toVar();
+    const t2 = cross(C.dir, t1).toVar();
+    const S = { q, U, io, t1, t2, h, lava, dep };
+    // duże: tarcze z kalderą (siarka: wielkie patery z pierścieniem opadu)
+    volcanoLayer(S, { freq: 5.0, salt: 11, dens: U.uV3.x, rMin: 0.42, rMax: 0.8, hKm: 4.2, gate: float(1.0), streams: true, shield: true });
+    // średnie: stożki z kraterem i strugami lawy (siarka: patery)
+    volcanoLayer(S, { freq: 24.0, salt: 23, dens: U.uV3.y.mul(prov.mul(0.8).add(0.2)), rMin: 0.24, rMax: 0.44, hKm: 7.5, gate: gate(0.24 / 24), streams: true, shield: false });
+    // małe: stożki żużlowe — tylko w wycinkach pod kamerą
+    volcanoLayer(S, { freq: 105.0, salt: 37, dens: U.uV3.z.mul(prov), rMin: 0.2, rMax: 0.4, hKm: 1.5, gate: gate(0.2 / 105), streams: false, shield: false });
+    // lawa: skorupa płyt (szwy Voronoia na odkształconej dziedzinie, kilka skal) + morza lawy w nieckach
     If(style.greaterThan(0.5).and(style.lessThan(1.5)), () => {
-      const cr1 = pgCells(q.mul(14.0).add(wq.mul(2.0)), 0.9).toVar();
-      const cr2 = pgCells(q.mul(38.0).add(wq.mul(4.0)), 0.9).toVar();
-      // szwy cienkie (pikselowe przy 2048 — z daleka gasną do średniej, nocą siatka żaru), jasność plamami
-      const seam = inv(0.0, 0.016, cr1.y.sub(cr1.x)).max(inv(0.0, 0.012, cr2.y.sub(cr2.x)).mul(0.55));
-      const hot = pgFbm(q.mul(3.0).add(2.0), 4).mul(0.5).add(0.5);
+      const hot = pgFbm(q.mul(3.0).add(2.0), 4).mul(0.5).add(0.5).toVar();
+      const seam = float(0.0).toVar();
+      // szew o szerokości `w` komórek: nie węższy niż ~1,3 teksela, z zachowaniem energii (z daleka gaśnie do średniej)
+      for (const [f, w, amp, wk] of [[14.0, 0.016, 1.0, 2.0], [38.0, 0.014, 0.6, 4.0], [105.0, 0.02, 0.5, 6.0], [290.0, 0.026, 0.42, 8.0]]) {
+        const cr = pgCells(q.mul(f).add(wq.mul(wk)), 0.9).toVar();
+        const wt = max(float(w), st.mul(f * 1.3));
+        const on = f > 50 ? smoothstep(0.35, 0.9, float(w / f).div(st)) : float(1.0);
+        seam.assign(max(seam, inv(0.0, wt, cr.y.sub(cr.x)).mul(float(w).div(wt)).mul(amp).mul(on)));
+      }
       lava.assign(max(lava, seam.mul(smoothstep(0.35, 0.75, hot)).mul(U.uV1.z).mul(0.8)));
       const sea = inv(U.uQ.x.sub(0.015), U.uQ.x.add(0.015), c);
       lava.assign(max(lava, sea));
       h.assign(mix(h, U.uQ.x.mul(1.2).sub(0.1), sea));
-    });
-    // popiół: stożki wulkanów z żarem na szczycie i kanałami lawy
-    If(style.greaterThan(1.5), () => {
-      const vc = pgCells(q.mul(4.0), 0.8).toVar();
-      const vh = step(0.55, vc.z);
-      const vr = vc.x.div(0.5).toVar();
-      h.addAssign(exp(vr.mul(-3.5)).mul(vh).mul(3.5));
-      // potoki: ciemne jęzory spływające od szczytu (szum kąta wokół komórki), kanały z żarem
-      const flowN = pgFbm(q.mul(18.0).add(vec3(vc.z.mul(40.0), 0.0, 0.0)), 4).mul(0.5).add(0.5);
-      const flowsA = smoothstep(0.5, 0.65, flowN).mul(inv(0.15, 1.3, vr)).mul(vh);
-      const chan = smoothstep(0.88, 0.97, pgRidged(q.mul(26.0), 2, 2.0, 0.5, 1.0, 2.0)).mul(inv(0.2, 0.7, vr)).mul(vh);
-      lava.assign(max(lava, inv(0.0, 0.08, vr).mul(vh).max(chan.mul(0.7)).mul(U.uV1.z.add(0.3)).min(1.0)));
-      dep.assign(max(dep, max(flowsA, inv(0.05, 0.4, vr).mul(vh).mul(0.8))));
     });
     const cr = craterSum(U, C, ps);
     h.addAssign(cr.h);
@@ -780,11 +1429,16 @@ function volcanicColor(F) {
     const col = mix(U.uBase, U.uSecond, smoothstep(-0.15, 0.35, n1)).toVar();
     col.assign(mix(col, U.uBrightV, smoothstep(0.35, 0.65, n2.mul(0.6).add(n1.negate().mul(0.5))).mul(0.5)));
     col.mulAssign(float(1.0).add(n3.mul(0.1)));
+    // drobna plamistość gruntu: oktawy z rozdzielczości celu (wycinek pod kamerą dostaje drobniejsze — ta sama dziedzina)
+    const n4 = pgFbm(ps.mul(90.0).add(wq.mul(3.0)), U.uVc.y, 2.03, 0.62, true).toVar();
+    col.mulAssign(float(1.0).add(n4.mul(0.5)));
     // osady i potoki: ciemne (bazalt) albo czerwone pierścienie (styl siarki)
     const depC = mix(U.uDarkV.mul(1.6), U.uRed, step(style, 0.5).mul(smoothstep(0.3, 0.9, f.z)));
     col.assign(mix(col, depC, f.z.mul(0.7)));
     // stoki ciemniejsze w stylu lawy i popiołu, jaśniejsze (siarkowy szron) w stylu siarki
     col.mulAssign(float(1.0).add(smoothstep(0.1, 0.4, sl.s).mul(mix(-0.25, 0.15, step(style, 0.5)))));
+    // popiół: stoki stożków w utlenionym żużlu (rdzawy brąz), plamami
+    col.assign(mix(col, U.uRed.mul(n2.mul(0.3).add(0.9)), smoothstep(0.06, 0.22, sl.s).mul(step(1.5, style)).mul(smoothstep(-0.2, 0.3, n2)).mul(0.55)));
     // lawa: świeża ciemnieje do czerni w skorupie, gorąca — pomarańcz (dzień); żar nocy — mapa nocy
     const lv = f.y;
     // lawa za dnia: świeża skorupa czarna, gorąca tylko w szwach i jeziorach — ciemna czerwień (żar widać nocą)
@@ -800,10 +1454,14 @@ function volcanicUniforms(spec, ctx) {
   const style = L.style === 'siarka' ? 0 : (L.style === 'lawa' ? 1 : 2);
   return {
     field: { uV1: [L.paterae, L.flows, L.lava, L.plumes], uV2: [L.mountainKm, L.craters, style, 0],
+      // udział komórek z wulkanem: duże, średnie, małe (małe — tylko w wycinkach pod kamerą)
+      uV3: style === 0 ? [0.22 + 0.3 * L.paterae, 0.2 + 0.4 * L.paterae, 0.15 + 0.25 * L.paterae, 0]
+        : (style === 1 ? [0.3, 0.22, 0.2, 0] : [0.5, 0.45, 0.34, 0]),
       ...craterRecords(ctx, { density: L.craters, f0: 5, fresh: 0.03, raysTo: 0, falloff: 0.9 }) },
-    color: { uVc: [style, 0, 0, 0], uBase: P.base, uSecond: P.second, uBrightV: P.bright, uDarkV: P.dark, uRed: P.red, uLava: P.lava },
+    color: { uVc: [style, pgOctavesFor(ctx.size, 90, 2.03, 3, 12), 0, 0], uBase: P.base, uSecond: P.second, uBrightV: P.bright, uDarkV: P.dark, uRed: P.red, uLava: P.lava },
     probeQ: [style === 1 ? L.lava * 0.025 : 0.02, 0.1, 0.5, 0.9], water: false, landTop: 4,
-    octaves: { x: pgOctavesFor(ctx.size, 1.8, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6, 2.0, 3, 8), z: pgOctavesFor(ctx.size, 3, 2.07, 3, 8), w: 6 },
+    // sufity ponad mapy planety (≤ 4096 px ich nie sięgają) — dla wycinków pod kamerą
+    octaves: { x: pgOctavesFor(ctx.size, 1.8, 2.03, 3, 16), y: pgOctavesFor(ctx.size, 6, 2.0, 3, 14), z: pgOctavesFor(ctx.size, 3, 2.07, 3, 14), w: 6 },
     spec: [0, 0, style === 1 ? 0.8 : 0.3, 0],
     lavaColor: P.lava,
     civ: { landOnly: 0, latDeg: 50, sea: 0, habW: 0, freq: 30, gain: 0.7 }
@@ -958,12 +1616,13 @@ function toxicUniforms(spec, ctx) {
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // Rejestr rodzajów: field() / color(F) — budowa grafu (raz), uniformsFor(spec, ctx) — wartości z opisu.
+// drain(F)? — wejście spływu wody (rodzaje z rzekami: wysokość i opad do odczytu CPU, `drainage: true` w uniformsFor).
 // uniformsFor → { field, color, probeQ [4 ułamki dla kwantyli kanału w], water (poziom morza 0), landTop [km],
 //                 octaves { x, y, z, w }, spec [uSpec — bez morza: morze liczy shader], civ, lavaColor? }
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 export const SOLID_TYPES = {
-  terran: { field: () => earthField('terran'), color: earthColor('terran'), uniformsFor: earthUniforms },
-  ocean: { field: () => earthField('ocean'), color: earthColor('ocean'), uniformsFor: earthUniforms },
+  terran: { field: () => earthField('terran'), color: earthColor('terran'), drain: earthDrainInput('terran'), uniformsFor: earthUniforms },
+  ocean: { field: () => earthField('ocean'), color: earthColor('ocean'), drain: earthDrainInput('ocean'), uniformsFor: earthUniforms },
   desert: { field: desertField, color: desertColor, uniformsFor: desertUniforms },
   rocky: { field: rockyField, color: rockyColor, uniformsFor: rockyUniforms },
   ice: { field: iceField, color: iceColor, uniformsFor: iceUniforms },

@@ -25,6 +25,8 @@
 // Zapisane pola nadpisują ENGINE_FX_DEFAULTS pole po polu — stary zapis bez
 // `engineFx` dostaje wartości dopasowane w kodzie.
 
+import { workHullRows } from './workHulls.js';
+
 /* ============================================================================
    PALETY MAIN — 1:1 z dema wydechu. Wartości liniowe HDR: >1 świeci w bloomie.
    ramp:  cztery progi temperatury strugi (0 = chłodny brzeg, 1 = rdzeń)
@@ -253,6 +255,8 @@ export const ENGINE_FX_DEFAULTS = Object.freeze({
   refinery_tender: Object.freeze({ mainNozzle: 84, ...PLUME, ...TERRAN }),
   tanker: Object.freeze({ mainNozzle: 69, ...PLUME, ...TERRAN }),
   salvage_hauler: Object.freeze({ mainNozzle: 65, ...PLUME, ...TERRAN }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v) => Object.freeze({ mainNozzle: Math.round(v.main[0][2]), ...PLUME, ...TERRAN })),
   construction_tug: Object.freeze({ mainNozzle: 77, ...PLUME, ...TERRAN }),
   smuggler: Object.freeze({ mainNozzle: 73, ...PLUME, ...PIRATE }),
   pirate_raider: Object.freeze({ mainNozzle: 68, ...PLUME, ...PIRATE }),
@@ -260,7 +264,11 @@ export const ENGINE_FX_DEFAULTS = Object.freeze({
   repair_drone: Object.freeze({ mainNozzle: 80, ...PLUME, ...TERRAN }),
   bounty_hunter: Object.freeze({ mainNozzle: 140, ...PLUME, ...TERRAN }),
   police_cutter: Object.freeze({ mainNozzle: 150, ...PLUME, ...TERRAN }),
-  rescue_ship: Object.freeze({ mainNozzle: 135, ...PLUME, ...TERRAN })
+  rescue_ship: Object.freeze({ mainNozzle: 135, ...PLUME, ...TERRAN }),
+  // Promy z ludźmi (workforce W7): dysze kadłuba bazowego.
+  crew_shuttle: Object.freeze({ mainNozzle: 70, ...PLUME, ...TERRAN }),
+  crew_liner: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
+  colony_liner: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN })
 });
 
 // Kadłub bez wpisu (frachtowce, legacy): dysza liczona od długości renderu.

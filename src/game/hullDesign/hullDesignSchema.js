@@ -143,7 +143,7 @@ export const HD_MODULES = Object.freeze({
   // SYSTEMY (sieć systemów: src/game/hullDesign/hullDesignSystems.js): zbiornik paliwa (v 0 — walec poziomy we wnęce
   // maszynowni, wzdłuż osi modułu; 1 — kula), dysza boczna SIDE (gniazdo w poszyciu przy burcie: wydech wzdłuż +x
   // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa, 2 — stelaż
-  // kontenerów, 3 — zasobniki n × n kontenerów; src/game/hullDesign/hullDesignCargo.js)
+  // kontenerów, 3 — zasobniki n × n kontenerów, 4 — KOSZ otwarty od góry ze złomem; src/game/hullDesign/hullDesignCargo.js)
   fuel_tank: Object.freeze({ code: 11, label: 'Zbiornik paliwa', w: 26, h: 11, parts: { hull_plate: 1 } }),
   thruster_side: Object.freeze({ code: 12, label: 'Dysza SIDE', w: 9, h: 7, parts: { thruster: 1 } }),
   cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } }),
@@ -152,7 +152,20 @@ export const HD_MODULES = Object.freeze({
   mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } }),
   // ZBIORNIK ŁADUNKU (statki cywilne — tankowce): v 0 — walce wzdłuż osi modułu, 1 — kule; n — rzędów w poprzek.
   // Ładunek, nie paliwo okrętu: w sieci tylko kabel pompy (bez rur do reaktora — to robi `fuel_tank`)
-  cargo_tank: Object.freeze({ code: 15, label: 'Zbiornik ładunku', w: 44, h: 16, parts: { hull_plate: 1 } })
+  cargo_tank: Object.freeze({ code: 15, label: 'Zbiornik ładunku', w: 44, h: 16, parts: { hull_plate: 1 } }),
+  // GNIAZDA STATKÓW ROBOCZYCH (złomowanie; presety src/game/hullDesign/workships/, kontrakt dla gry hullDesignWorkRig.js):
+  // miejsca pod RUCHOME części, które gra stawia jako modele na mocowaniach — kreator rysuje wygląd „zamknięty”.
+  //   rig    — OBROTNICA (pierścień podstawy): v 0 — wysięgnik z laserem tnącym, v 1 — dźwig. To zwykłe gniazdo broni
+  //            (HD_MOUNT_MODULES: główne, rozmiar `size`) — lasery tnące i dźwigi siedzą w gniazdach broni
+  //   maw    — PASZCZA: dwie zamknięte szczęki z zębatą linią podziału we wnęce; otwiera się ku +x modułu (dziób)
+  //   mill   — GARDZIEL MŁYNA: wlot z n walcami tnącymi (osie w poprzek osi x modułu; n — pole modułu, domyślnie 2)
+  //   ramp   — RAMPA: zamknięta klapa z zawiasem po stronie −x modułu, opada ku +x (rampa rufowa: rot = π)
+  //   damper — GNIAZDO DAMPERA: schowana stopa wysuwanej podpory (wysuw ku +x modułu)
+  rig: Object.freeze({ code: 16, label: 'Obrotnica', r: 16, parts: { weapon_mount: 1 } }),
+  maw: Object.freeze({ code: 17, label: 'Paszcza', w: 40, h: 34, parts: { hull_plate: 2 } }),
+  mill: Object.freeze({ code: 18, label: 'Gardziel młyna', w: 26, h: 30, parts: { hull_plate: 1 } }),
+  ramp: Object.freeze({ code: 19, label: 'Rampa', w: 30, h: 26, parts: { hull_plate: 1 } }),
+  damper: Object.freeze({ code: 20, label: 'Gniazdo dampera', w: 12, h: 12, parts: { hull_plate: 0.5 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
 
@@ -175,7 +188,9 @@ export const HD_MOUNT_SLOTS = Object.freeze(['main', 'aux', 'missile', 'special'
 export const HD_MOUNT_MODULES = Object.freeze({
   turret_s: Object.freeze({ slot: 'main', size: 'S' }), turret_m: Object.freeze({ slot: 'main', size: 'M' }),
   turret_l: Object.freeze({ slot: 'main', size: 'L' }), mount: Object.freeze({ slot: 'main', size: 'M' }),
-  hangar: Object.freeze({ slot: 'hangar', size: 'S' })
+  hangar: Object.freeze({ slot: 'hangar', size: 'S' }),
+  // obrotnica wysięgnika / dźwigu (statki robocze): zwykłe gniazdo główne — laser tnący albo dźwig montuje gra
+  rig: Object.freeze({ slot: 'main', size: 'M' })
 });
 /** Promień podstawy gniazda `mount` [jd] na typ (× detal projektu) — tak stawia je plik slotów i edytor. */
 export const HD_MOUNT_RADIUS_DU = Object.freeze({ main: 22, special: 26, builtin: 30, aux: 13, missile: 15 });
@@ -219,6 +234,12 @@ export const HD_PALETTES = Object.freeze({
     label: 'Atlas — czerń', hull: '#3d4146', upper: '#878d93', trim: '#1c1f22', accent: '#a7adb3', metal: '#222528',
     hazard: '#d8a02a', window: '#c8f2ff', pipe: '#5e554b', engine: '#2e3235', door: '#33373b', grime: '#2a2826', steel: '#7d838a'
   }),
+  // Statki robocze (złomiarze, młyny, dźwigi — src/game/hullDesign/workships/): ciemny grafit, stalowe panele
+  // nadbudówek, żółte pasy ostrzegawcze — w duchu sprite'a złomiarza (assets/salvage_hauler.png), bez emblematu nacji
+  work: Object.freeze({
+    label: 'Roboczy', hull: '#4b4e52', upper: '#8d9297', trim: '#1d1f21', accent: '#e0a31f', metal: '#222426',
+    hazard: '#ecb21e', window: '#ffdca6', pipe: '#6c5842', engine: '#33363a', door: '#3b3f43', grime: '#322f2a', steel: '#9da1a5'
+  }),
   // Frachtowce (domyślna paleta statków cywilnych): grafitowe płyty, jasne panele nadbudówek, bursztynowe oznaczenia
   // i ciepłe okna — w duchu sprite'ów frachtowców ruchu (assets/long_haul_freighter.png), bez emblematu nacji
   freight: Object.freeze({
@@ -256,12 +277,12 @@ export const HD_FACTION_PALETTE = Object.freeze({
  * własny znak bez czaszek (decyzja użytkownika). Paleta bez emblematu (cywilna) zdejmuje emblematy nacji.
  */
 export const HD_PALETTE_EMBLEM = Object.freeze({
-  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null, freight: null, atlasDark: 'wing'
+  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null, freight: null, work: null, atlasDark: 'wing'
 });
 /** Barwa emblematu nacji (kontrast z płytą jej palety: ciemny na jasnej, jasny na ciemnej pirackiej). */
 export const HD_PALETTE_EMBLEM_COLOR = Object.freeze({
   terra: '#34332f', atlas: '#d06a22', pirate: '#cdbb9a', mars: '#4a2b27', inner: '#4b3e2a', belt: '#2f2d28', outer: '#2c2838', civil: '#45525a',
-  freight: '#d8902a', atlasDark: '#a7adb3'
+  freight: '#d8902a', work: '#e0a31f', atlasDark: '#a7adb3'
 });
 /** Kolejność barw palety w kompozytorze (wiersze tablicy uniformów). */
 export const HD_PALETTE_ROWS = Object.freeze(['hull', 'upper', 'trim', 'accent', 'metal', 'hazard', 'window', 'pipe', 'engine', 'door', 'grime', 'steel']);
@@ -334,7 +355,7 @@ function normModule(m) {
   const out = { type: m.type, x: num(m.x), y: num(m.y), rot: num(m.rot) };
   if (def.r) out.r = Math.max(2, num(m.r, def.r));
   if (def.w) { out.w = Math.max(2, num(m.w, def.w)); out.h = Math.max(2, num(m.h, def.h)); }
-  if (m.v !== undefined) out.v = clampInt(m.v, 0, 3);
+  if (m.v !== undefined) out.v = clampInt(m.v, 0, 4);
   if (m.n !== undefined) out.n = clampInt(m.n, 1, 8);
   if (m.doors !== undefined) out.doors = clampInt(m.doors, 1, 6);
   if (m.mirror === false) out.mirror = false;

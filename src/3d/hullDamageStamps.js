@@ -62,6 +62,8 @@ export const STAMP = Object.freeze({
   yamato: Object.freeze({ impact: st(130, 3.6, 1.0, 0.9, 0.4, 1, 0, 1940) }),
   plasmaGatling: Object.freeze({ impact: st(34, 2.2, 0.55, 0.56, 0.8) }),
   hexlance: Object.freeze({ impact: st(70, 3.4, 1.0, 0.85, 0.2), kerf: st(34, 3.2, 0.9, 0.85, 0, 2.2) }),
+  // Laser tnący złomiarza (reguła `zlomowanie`): rzaz wąski i gorący, mało osmalenia — czyste cięcie, nie trafienie.
+  scrapTorch: Object.freeze({ impact: st(12, 3.0, 0.4, 0.8, 0), kerf: st(12, 3.4, 0.45, 0.85, 0, 2.2) }),
   // Promień śmierci (2026-10-19): rzaz (`kerf` — cutSegment, pas ± 55 j.) szeroki i biało-gorący (żar 3,8 stygnie przez
   // czerwień), z poświatą jonową barwy wiązki; zatrzymanie (`impact` — HullBodies.impact z craterRadius) — krater
   // z danych broni (endCrater), wpis bez wzorca krateru (promień leja = dziura z geometrii).

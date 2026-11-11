@@ -28,7 +28,10 @@ export const HD_SYSTEM_TYPES = Object.freeze(['reactor', 'bridge', 'engine', 'fu
  */
 export const HD_POWER_LOAD = Object.freeze({
   turret_s: 1, turret_m: 1, turret_l: 2, bridge: 2, engine: 1, thruster_side: 1, fuel_tank: 1,
-  hangar: 1, cargo: 1, well: 1, hatch: 1, mount: 1, cargo_tank: 1
+  hangar: 1, cargo: 1, well: 1, hatch: 1, mount: 1, cargo_tank: 1,
+  // gniazda statków roboczych: obrotnica wysięgnika / dźwigu, paszcza i młyn (napęd szczęk / walców — gruby kabel),
+  // rampa i damper (siłowniki)
+  rig: 1, maw: 2, mill: 2, ramp: 1, damper: 1
 });
 
 /** Waga trasy paliwa (rur w wiązce do odbiornika): gondola MAIN — zasilanie, powrót, chłodzenie dyszy. */
@@ -38,7 +41,7 @@ export const HD_FUEL_LOAD = Object.freeze({ engine: 3, thruster_side: 1, fuel_ta
 export function powerLoad(m) {
   if (m.type === 'hatch' && (m.v || 0) >= 1) return 0;
   // gniazdo broni L / Capital — gruby kabel jak wieża L
-  if (m.type === 'mount' && (m.size === 'L' || m.size === 'Capital')) return 2;
+  if ((m.type === 'mount' || m.type === 'rig') && (m.size === 'L' || m.size === 'Capital')) return 2;
   return HD_POWER_LOAD[m.type] || 0;
 }
 

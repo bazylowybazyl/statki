@@ -9,6 +9,7 @@ import {
   exportFogWorld, fogHides, fogPointVisible, getMassSignature, isMassSignatureResolved, revealFogArea, revealFogEntity,
   setMassSignature, stepFogEntities, stepMassSignatures, visionRangeOf
 } from './fogOfWar.js';
+import { SENSOR_SIGNATURE_BY_UNIT, unitSignatureKey } from '../data/sensorUnits.js';
 
 const fogState = createFogState();
 const fogWorld = createFogWorld();
@@ -47,11 +48,26 @@ export function getEntitySizeModifier(entity) {
   if (entity.isCapitalShip) return SENSOR_CONFIG.sizeModifiers.capital;
   const type = String(entity.type || '').toLowerCase();
   if (type in SENSOR_CONFIG.sizeModifiers) return SENSOR_CONFIG.sizeModifiers[type];
+  // jawna wykrywalność jednostek spoza tabeli klas (src/data/sensorUnits.js, audyt 2026-11-11)
+  const unit = unitSignatureKey(entity);
+  if (unit) return SENSOR_SIGNATURE_BY_UNIT[unit];
+  // AWARYJNIE: kubełki promienia (żadna jednostka gry tu nie trafia — tests/zasiegiJednostek.test.mjs)
   const r = entity.radius || entity.r || 14;
   if (r >= 100) return SENSOR_CONFIG.sizeModifiers.battleship;
   if (r >= 40) return SENSOR_CONFIG.sizeModifiers.frigate;
   if (r >= 20) return SENSOR_CONFIG.sizeModifiers.destroyer;
   return SENSOR_CONFIG.sizeModifiers.fighter;
+}
+
+/** Skąd `getEntitySizeModifier` bierze wartość (audyt zasięgów): 'kapital' | 'typ:<typ>' | 'promien:<klasa>' (awaryjna). */
+export function signatureSourceOf(entity) {
+  if (entity.isCapitalShip) return 'kapital';
+  const type = String(entity.type || '').toLowerCase();
+  if (type in SENSOR_CONFIG.sizeModifiers) return `typ:${type}`;
+  const unit = unitSignatureKey(entity);
+  if (unit) return `jednostka:${unit}`;
+  const r = entity.radius || entity.r || 14;
+  return `promien:${r >= 100 ? 'battleship' : r >= 40 ? 'frigate' : r >= 20 ? 'destroyer' : 'fighter'}`;
 }
 
 function computeEntityVisibility(entity) {

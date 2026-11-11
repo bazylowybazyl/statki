@@ -21,6 +21,8 @@
 //
 // Klucz = id profilu renderu kadłuba (HULL_RENDER_PROFILES, getNpcHullRenderProfileId).
 
+import { workHullRows } from './workHulls.js';
+
 const marker = (m) => Object.freeze([Object.freeze(m)]);
 
 export const REACTOR_CORE_MARKERS = Object.freeze({
@@ -46,6 +48,8 @@ export const REACTOR_CORE_MARKERS = Object.freeze({
   refinery_tender: marker({ id: 'refinery_tender_A', x: -560, y: -20, r: 83.2, hr: 51.7, tier: 'R3', model: 'terran' }),
   tanker: marker({ id: 'tanker_A', x: -460, y: -20, r: 74.2, hr: 46.2, tier: 'R3', model: 'terran' }),
   salvage_hauler: marker({ id: 'salvage_hauler_A', x: -440, y: -20, r: 95, hr: 59.1, tier: 'R3', model: 'terran' }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v, id) => (v.core ? marker({ id: `${id}_A`, ...v.core, model: 'terran' }) : null)),
   construction_tug: marker({ id: 'construction_tug_A', x: -420, y: -20, r: 160.2, hr: 41.1, tier: 'R1', model: 'terran' }),
   smuggler: marker({ id: 'smuggler_A', x: -420, y: -20, r: 160.2, hr: 41.1, tier: 'R1', model: 'pirate' }),
   pirate_raider: marker({ id: 'pirate_raider_A', x: -640, y: -20, r: 129.4, hr: 49.3, tier: 'R2', model: 'pirate' }),
@@ -53,7 +57,11 @@ export const REACTOR_CORE_MARKERS = Object.freeze({
   repair_drone: marker({ id: 'repair_drone_A', x: -170, y: -60, r: 144, hr: 80, tier: 'R1', model: 'terran' }),
   bounty_hunter: marker({ id: 'bounty_hunter_A', x: -400, y: -5, r: 131, hr: 53.8, tier: 'R2', model: 'terran' }),
   police_cutter: marker({ id: 'police_cutter_A', x: -150, y: -5, r: 192.2, hr: 49.3, tier: 'R1', model: 'terran' }),
-  rescue_ship: marker({ id: 'rescue_ship_A', x: -470, y: -5, r: 144.1, hr: 59.1, tier: 'R2', model: 'terran' })
+  rescue_ship: marker({ id: 'rescue_ship_A', x: -470, y: -5, r: 144.1, hr: 59.1, tier: 'R2', model: 'terran' }),
+  // Promy z ludźmi (workforce W7): rdzeń kadłuba bazowego (ten sam sprite do PNG z generatora — AGENT: potem ustawić na nowo).
+  crew_shuttle: marker({ id: 'crew_shuttle_A', x: -330, y: -10, r: 182.4, hr: 71.5, tier: 'R1', model: 'terran' }),
+  crew_liner: marker({ id: 'crew_liner_A', x: -650, y: -10, r: 110.9, hr: 45.5, tier: 'R2', model: 'terran' }),
+  colony_liner: marker({ id: 'colony_liner_A', x: -580, y: -10, r: 78.8, hr: 46, tier: 'R3', model: 'terran' })
 });
 
 // Barwa plazmy reaktora per frakcja (liniowe RGB „ciała”, jak REACTOR_COLORS dema).

@@ -229,8 +229,13 @@ function step01(r) { return smoothstep(0.98, 1.02, r); }
 // Obrót między oktawami (ortonormalny) — kolejne oktawy nie układają się w kratę.
 export const PG_ROT = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
 
+// `full` (pgFbm, pgErodedFbm, pgRidged): dzielnik = suma WSZYSTKICH amplitud szeregu (1 / (1 − wzmocnienie)), nie
+// tylko policzonych oktaw. Wtedy kolejna oktawa dokłada sam drobny detal i nie przeskalowuje całości — to samo pole
+// liczone z większą liczbą oktaw (wycinek pod kamerą, planetGenPatch.js) zgadza się z mapą planety w dużych kształtach
+// i w progach z próby. Bez `full` wynik jest unormowany do policzonych oktaw (każda liczba oktaw = inna skala).
+
 /** fbm szumu gradientowego: n oktaw (węzeł int), lakunarność, wzmocnienie. Wynik ~[−1, 1]. */
-export function pgFbm(p0, octaves, lac = 2.03, gain = 0.5) {
+export function pgFbm(p0, octaves, lac = 2.03, gain = 0.5, full = false) {
   const f = float(0.0).toVar();
   const amp = float(1.0).toVar();
   const norm = float(0.0).toVar();
@@ -241,14 +246,14 @@ export function pgFbm(p0, octaves, lac = 2.03, gain = 0.5) {
     p.assign(PG_ROT.mul(p).mul(lac).add(vec3(1.7, -3.1, 2.3)));
     amp.mulAssign(gain);
   });
-  return f.div(max(norm, 1e-4));
+  return full ? f.mul(1 - gain) : f.div(max(norm, 1e-4));
 }
 
 /**
  * fbm „erozyjny” (pochodne): oktawy tłumione przez nagromadzone nachylenie — grzbiety i żleby jak po erozji.
  * `k` — siła tłumienia. Wynik ~[−1, 1].
  */
-export function pgErodedFbm(p0, octaves, k = 1.0, lac = 2.0, gain = 0.5) {
+export function pgErodedFbm(p0, octaves, k = 1.0, lac = 2.0, gain = 0.5, full = false) {
   const f = float(0.0).toVar();
   const amp = float(1.0).toVar();
   const norm = float(0.0).toVar();
@@ -264,13 +269,13 @@ export function pgErodedFbm(p0, octaves, k = 1.0, lac = 2.0, gain = 0.5) {
     fr.mulAssign(lac);
     amp.mulAssign(gain);
   });
-  return f.div(max(norm, 1e-4));
+  return full ? f.mul(1 - gain) : f.div(max(norm, 1e-4));
 }
 
 /**
  * Wielofraktal grzbietowy (Musgrave): ostre grzbiety, waga kolejnej oktawy z sygnału poprzedniej. Wynik ~[0, 1].
  */
-export function pgRidged(p0, octaves, lac = 2.1, gain = 0.55, offset = 1.0, sharp = 2.0) {
+export function pgRidged(p0, octaves, lac = 2.1, gain = 0.55, offset = 1.0, sharp = 2.0, full = false) {
   const f = float(0.0).toVar();
   const amp = float(1.0).toVar();
   const norm = float(0.0).toVar();
@@ -287,7 +292,7 @@ export function pgRidged(p0, octaves, lac = 2.1, gain = 0.55, offset = 1.0, shar
     p.assign(PG_ROT.mul(p).mul(lac).add(vec3(0.9, 2.7, -1.9)));
     amp.mulAssign(gain);
   });
-  return f.div(max(norm, 1e-4));
+  return full ? f.mul(1 - gain) : f.div(max(norm, 1e-4));
 }
 
 /** Odkształcenie dziedziny: wektor z trzech fbm (oktawy), amplituda w jednostkach p. */

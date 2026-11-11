@@ -420,7 +420,9 @@ export function tickGarrison(garrison, dt, options = {}) {
       const at = visitPosition(network, course);
       garrison.losses.push({
         factionId: visit.factionId, classId: visit.classId, stationId: visit.stationId,
-        x: at.x, y: at.y, reason: course.closedReason || null
+        x: at.x, y: at.y, reason: course.closedReason || null,
+        // Wrak gry tego okrętu (E24, `wreck-report` ze źródłem) staje się wrakiem tej straty — `settleGarrisonLosses`.
+        source: `course:${visit.courseId}`
       });
     }
   }

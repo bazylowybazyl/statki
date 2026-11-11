@@ -77,9 +77,10 @@ function zapiszWzory(wy, baza) {
 
 // AGENT: wGrze (src/3d/woksele/wGrze.js, pomiar w misji 1): siatki rysuje pass FG gry, więc normalne dostają obrót bazy, a cel HDR i kwad wyjścia nie są potrzebne. Bez tej opcji graf i cele jak dotąd.
 // AGENT: kawalki (demo A/B kawałków i zbrojenia, kawalkiObraz.js): druga siatka brył z prefraktury, kernele dopasowania sztywnego i druty. Bez tej opcji graf i sceny jak dotąd.
+// spalanie: hak spalania w atmosferze (demo ?planeta=ziemia|mars, spalanie.js): kurczenie węzła i żar z wZar < 0. Bez niego WGSL bez zmian.
 // AGENT: skora (demo bazy, prośba użytkownika 2026-11-09 „nałóż na demo skórkę”): wygląd jak w grze (skóra z wypieku starej bryły, wnętrza, okna fasad, koła habitatu) przy świetle dema:
 // słońce z mapą cienia, bez maski słońca gry i bez przekroju na passy. Wypiek robi strona dema (dema/woksele-zawalenia/skoraDema.js). Gałąź gry (wGrze) bez zmian.
-export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = false, kawalki = false, skora = false }) {
+export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = false, kawalki = false, skora = false, spalanie = null }) {
   const WYGLAD = wGrze || skora;
   const MAX = solver.maxNodes;
   const A = solver.atrybuty;
@@ -619,6 +620,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
           eE.assign(vec3(m, m.mul(qz.mul(0.32).add(0.1).add(zolty.mul(0.2))), m.mul(zolty.mul(0.09).add(0.01))));
         });
       });
+      if (spalanie) eE.addAssign(spalanie.emisja(zf)); // AGENT: hak spalania (spalanie.js)
       vN.assign(cameraViewMatrix.mul(vec4(doSceny(Nw), 0)).xyz);
       vK.assign(Kol);
       vP.assign(P0);
@@ -636,6 +638,12 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
         const tS = fv(float(1).sub(smoothstep(300, 6000, lS.sub(uKulaR))));
         vNaSkale.assign(mix(float(1), clamp(dot(eS.div(lS.add(1e-3)), uSkalaSlonce).mul(1.6).add(0.08), 0.03, 0.85), tS));
       }
+    }
+    // AGENT: hak spalania (spalanie.js): węzeł kurczy się wokół środka z ubytkiem czoła. Także w głębi i cieniu, żeby kształt był jeden.
+    if (spalanie) {
+      If(pw.w.greaterThanEqual(0), () => {
+        P.assign(spalanie.pozycja(P, pw.xyz.add(wWezR.element(i3.add(uint(1))).xyz.mul(uTau)), wZarR.element(i)));
+      });
     }
     return P;
   })();
@@ -1012,7 +1020,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   // Kawałki (demo): te same varyingi i węzły barwy co bryły, więc światło, okluzja i żar są wspólne. Tryb obrazu przełącza widoczność siatek, bez nowych pipeline'ów.
   // Kawałki ze skórą (demo): uszkodzenie, przełom i fasada węzła z wierzchołka kawałka, ściany w spoczynku z pochodnych we fragmencie.
   const vKawS = kawalki && skora ? varyingProperty('vec3', 'vWokKawS') : null;
-  const kaw = kawalki ? createKawalkiObraz({ MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM, vKawS }) : null;
+  const kaw = kawalki ? createKawalkiObraz({ MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM, vKawS, spalanie }) : null;
   if (kaw && skora) {
     // Normalna ściany w spoczynku i dziś z tych samych pochodnych (pozycja spoczynkowa vP i dzisiejsza): kawałek jedzie sztywno, więc obrót przenosi jedną w drugą,
     // a znak obu ustawia strona zwrócona do kamery. Pochodne na początku grafu, bez gałęzi (pułapki 15, 29).

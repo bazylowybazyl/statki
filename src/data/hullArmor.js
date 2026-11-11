@@ -1,6 +1,8 @@
 // Pancerz mechaniczny kadłuba: 1 = poszycie fregaty. Niezależny od masy,
 // tarcz i HP; steruje oporem i podziałem zgniotu w zderzeniu metal-metal.
 // Wspólne progi belek opisują materiał, a ten mnożnik — grubość poszycia.
+import { workHullRows } from './workHulls.js';
+
 export const HULL_COLLISION_ARMOR = Object.freeze({
   atlas: 16,
   supercapital: 10,
@@ -26,6 +28,8 @@ export const HULL_COLLISION_ARMOR = Object.freeze({
   refinery_tender: 0.8,
   tanker: 0.6,
   salvage_hauler: 0.8,
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows(() => 0.8),
   construction_tug: 0.8,
   pirate_raider: 1.5,
   smuggler: 0.8,
@@ -35,6 +39,10 @@ export const HULL_COLLISION_ARMOR = Object.freeze({
   bounty_hunter: 1.1,
   police_cutter: 1,
   rescue_ship: 0.6,
+  // Promy z ludźmi (workforce W7): pancerz kadłuba bazowego.
+  crew_shuttle: 0.5,
+  crew_liner: 0.6,
+  colony_liner: 0.75,
   // Holownik serwisowy: ciężka rama pokładu-kołyski (nosi supercapital) — jak megafrachtowiec.
   service_tug: 2,
   fighter: 0.35,

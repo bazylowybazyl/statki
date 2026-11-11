@@ -4,7 +4,8 @@
 //
 //   ładownia `cargo`        v 0 — wrota, v 1 — klapa (ładunek w środku, niewidoczny), v 2 — STELAŻ KONTENERÓW (otwarty
 //                           pokład: kontenery w siatce), v 3 — ZASOBNIKI (pudła n × n kontenerów, n — pole modułu,
-//                           domyślnie 2);
+//                           domyślnie 2), v 4 — KOSZ (ładownia otwarta od góry — statki robocze: dźwig wkłada z góry;
+//                           widać złom, ładowność liczona jak stelaż);
 //   zbiornik ładunku        `cargo_tank` v 0 — walce wzdłuż osi modułu, v 1 — kule; n — rzędów w poprzek (paliwo
 //                           własne okrętu to `fuel_tank`; zbiornik ładunku nie ma rur do reaktora, tylko kabel pompy).
 //
@@ -29,7 +30,9 @@ export const HD_CARGO = Object.freeze({
 });
 
 /** Wariant ładowni z kontenerami na wierzchu (stelaż, zasobniki). */
-export const isOpenCargo = (m) => m?.type === 'cargo' && (m.v || 0) >= 2;
+export const isOpenCargo = (m) => m?.type === 'cargo' && ((m.v || 0) === 2 || m.v === 3);
+/** Ładownia otwarta od góry (kosz — ładowana dźwigiem z góry, statki robocze). */
+export const isTopCargo = (m) => m?.type === 'cargo' && m.v === 4;
 
 /**
  * Siatka komórek ładowni (`cargo`) albo obrysu zbiornika przy detalu projektu `detail`: { n (kontenerów na bok komórki),

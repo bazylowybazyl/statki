@@ -395,6 +395,7 @@ Decyzje D1–D14 przyjęte 2026-10-23. Kroki W0–W4 są w kodzie, każdy przesz
 | W4: porwania z okupem | `2d41f58a` | przechwyty 13,7–14,1%, obsada 1,0, ok. 420 porwań na bieg |
 | W5: karta „Kadry”, CIC, oferta kontraktów | gałąź `claude/workforce-w5-w7-d90cdd` | bez zmiany zachowania: symulacja ziarna 7 identyczna liczba w liczbę |
 | W6: gracz (kabiny, kontrakty, załoga), habitat, Ceres | gałąź `claude/workforce-w5-w7-d90cdd` | obsada ≥ 0,998; przechwyty 14,1–14,5%; kolejka Wenus 1,4–1,85 (próg 2) |
+| W7: kadłuby `crew_shuttle`, `crew_liner`, `colony_liner` | gałąź `claude/workforce-w5-w7-d90cdd` | bez zmiany zachowania: symulacja ziarna 7 identyczna liczba w liczbę |
 
 ### 10.1 Odstępstwa od projektu
 
@@ -433,11 +434,17 @@ Decyzje D1–D14 przyjęte 2026-10-23. Kroki W0–W4 są w kodzie, każdy przesz
 - **Kontrakty rotacyjne gracza:** karta KADRY → „Twój okręt”: „Weź kontrakty” w źródle (cena `ask`), „Oddaj kontrakty” w porcie, który przyjmuje (cena `bid`); kontrakt wygasa po 45 min gry od zaokrętowania, zapłata przepada. Wszystko przez `adjustStationStock` (jedna ekonomia).
 - **Załoga (D11):** przydział frakcji (pełny skład, bez werbunku) do zdrady; po zdradzie (`PlayerCrew.betray()` — misja jeszcze nie istnieje) zostaje 25% składu, werbunek w neutralnych ośrodkach ludności (Mars, Jowisz, Ceres — nie Ziemia/Terra Nova, nie piraci). Skutek tylko: tempo pracy roju R (0,4 → 1) i przeładowania wież (0,7 → 1, źródło `crew` modyfikatorów). Skład: Atlas 260, pancernik 220, lotniskowiec 320 (roboczo).
 - **Habitat (§ 2.3):** budynek `habitat` (`addMarketBuilding`, lista budynków stacji gracza) — źródło 2,0 na cykl, serwis jak magazyn, koszt w danych; bez interfejsu budowy (decyzja użytkownika). **Ceres** ma habitat 5,5 na cykl (D4) — pierwsza baza w asteroidzie.
-- **Prom zestrzelony przez gracza:** ludzie z kontraktu wracają od razu do źródła (`returnFerryPassengers`, jedna funkcja); E22 (kapsuły ratunkowe) przeniesie to na dolot kapsuły.
+- **Prom zestrzelony przez gracza:** ludzie z kontraktu wracają kapsułami ratunkowymi do portu nadania, do magazynu w chwili dolotu (E22 K4 — `holdFerryPassengers` / `landFerryPassengers`; dawniej W6 — od razu, `returnFerryPassengers`).
 - **Bramka:** z habitatem Ceres kolejka na redzie Wenus wzrosła z 0,8–0,9 do 1,4–1,85 na 3 ziarnach (próg 2). Próba z Ceres 4,6 dała 1,91 / 0,94 / 1,53 — to rozrzut przebiegu (Wenus stoi blisko progu od W0), nie nadwyżka Ceres.
+
+### 10.2c W7 (2026-11-08)
+
+- **Kadłuby pasażerskie:** `crew_shuttle` (prom rotacyjny, klasa `crew-small`), `crew_liner` (liniowiec kontraktowy, `crew-medium`), `colony_liner` (liniowiec dalekiego zasięgu, `crew-large`) — `TRAFFIC_UNIT_HULLS` wskazuje je zamiast frachtowców.
+- **Sprite'y:** prompty Z11 (`assets/ships/<id>.prompt.md` — edycja frachtowca tej samej ładowni: kabiny z rzędami błękitnych okien, rękawy, pas cywilny, alfa jak w oryginale; okna w barwie, którą maska świecenia skóry `hullGlowMask` zapala w grze). Do czasu PNG z generatora kadłuby rysują się obecnymi sprite'ami frachtowców bazowych (D14) — bez zmiany wyglądu (decyzja orkiestratora 2026-11-08: bez grafiki malowanej w kodzie).
+- **Tabele E13:** profil, dysze MAIN / SIDE (`sideOnly`), mostek cywilny, rdzeń, zbiornik, pancerz, lampy nawigacyjne i obrys 3D (`outlineOf`) — liczby kadłuba bazowego (ten sam sprite). Gabaryty też, więc stanowiska, doki i symulacja zostają bez zmian. Po PNG z generatora — markery na nowo i przeliczenie tabel proxy (notatki `AGENT:`).
 
 ### 10.3 Otwarte
 
 - Kapsuły ratunkowe (E22, osobna sesja): powrót ludzi z promu zestrzelonego przez gracza przejdzie z natychmiastowego (W6) na dolot kapsuły.
-- W7 (sprite'y promów).
+- Docelowe PNG promów z generatora (prompty #28–30 w `assets/ships/README.md`); po podmianie sprawdzić alfę strażnikiem.
 - Misja zdrady (fabuła) ma wołać `PlayerCrew.betray()`; interfejs budowy stacji gracza (habitat) — z fabułą.

@@ -256,6 +256,29 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   nic, bez błędu (gwiazdy i mgławice `dema/mapa-gwiezdna-obraz.js` nie rysowały się wcale). Addytywny emiter zwraca
   alfę 1 (albo alfę = siłę), czynniki (One, One) — `premultipliedAlpha: true` / `blendAddytywnePremul` (pułapka 13).
 
+- **Pułapka r183 z generatora planet (2026-11-10):** (45) `compileAsync` liczy węzły pod tymczasowym numerem renderu
+  „poprzedni + 1” (`nodeFrame.renderId ++`; poza renderem zawsze 1), a zwykły render bierze numer z licznika
+  `renderer.info.calls` — PIERWSZY render w życiu renderera też ma 1. Kompilacja przed pierwszym renderem zostawia
+  węzły odświeżane „raz na render” i grupę uniformów „render” oznaczone jako aktualne: pierwszy rysunek idzie ze
+  stanem z kompilacji, BEZ błędu (wypiek próby generatora planet rysował pusty cel → kwantyle 1 → planeta z wodą samym
+  oceanem; tylko na stronie bez klatek rAF przed wypiekiem — karta w tle, harness z wstrzymanym rAF; zwykle pierwsza
+  klatka rAF renderuje wcześniej i zbieżności nie ma). Kod, który kompiluje przed jakimkolwiek renderem i zaraz rysuje:
+  `if (renderer.info.calls === 0) renderer.info.calls = 1` przed kompilacją (wzór `PlanetGenBaker.compile`; strażnik
+  źródeł three w `tests/planetGenNear.test.mjs`). `compileAsyncNaCelu` tego nie robi — do decyzji przy okazji zmian
+  w rozgrzewce gry.
+
+- **Pułapka r183 z pogody planet (2026-11-10):** (46) uniform NIEZEROWY w chwili `compileAsync`, który przed pierwszym
+  prawdziwym rysunkiem materiału w innym kontekście renderu (inny cel niż w kompilacji) wraca do SAMYCH ZER, zostaje
+  na GPU przy wartości z kompilacji, BEZ błędu — do chwili, gdy zmieni się na coś innego niż zero. `Binding.clone()`
+  three to `Object.assign` (płytka kopia): klon wiązania obiektu renderu dziedziczy bufor danych z kompilacji, a zmianę
+  wykrywa porównaniem ze świeżą tablicą zer — wartość zero „nie zmieniła się”, więc do bufora nie trafia. Najczęstsze
+  źródło: `new THREE.Vector4()` ma w = 1; klucz, którego rysunek nie podaje (zerowany), startuje wtedy z w = 1 i ta
+  jedynka przeżywa pierwszy rysunek (mapa chmur generatora planet: flaga pogody `uWx.w` włączona w pierwszym wypieku,
+  w kolejnych już nie — planeta miała inne chmury niż jej własne wycinki). Wektory uniformów zerowanych w biegu twórz
+  od zer (`new THREE.Vector4(0, 0, 0, 0)` — wzór `bakeUniforms`, `planetGenBake.tsl.js`), flagi włączające gałąź nie
+  w składowej, która domyślnie jest 1. Sprawdzanie: ten sam rysunek dwa razy po kompilacji, odczyt celu
+  (`readRenderTargetPixelsAsync`) — pierwszy ma być równy drugiemu.
+
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 
 - **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):

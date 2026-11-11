@@ -578,3 +578,9 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - E24 górnicy i złomiarze: `claude/elastic-chaplygin-bede66` @ 6876eca4; decyzje: obraz wraków wojen w tle, wolniejszy hol w bańce.
   - E23a komputer handlowy i status „Stabilizacja gospodarki”: `claude/blissful-lehmann-95c2ef` @ 6edfa5b8.
   - W7 i kapsuły — wg ich ostatnich commitów.
+- 2026-11-10 scalenie do `main` na prośbę użytkownika („scal teraz”), commit `846232fa`:
+  - gałęzie: W7 `claude/workforce-w5-w7-d90cdd` @ 92024f2b, E23a `claude/blissful-lehmann-95c2ef` @ 6edfa5b8, kapsuły K1–K5 `claude/kapsuly-ratunkowe-250fdb` @ 6a4fc607, E24 `claude/elastic-chaplygin-bede66` @ 44e67b39 (ze sceną `?scena=holowanie` i `?hol=1200|wolny`).
+  - Konflikty: `trafficDirector.js` — K4 usunęło `returnFerryPassengers` (ludzie z promu wracają kapsułami), wzięta wersja kapsuł; dopiski kapsuł i E24 w `index.html`, `render.worker.js`, `trafficBridge.js`, `trafficCore.js` i `AGENTS.md` zostają oba (bloki migawki `pods` i `trafficWork`, wiadomości `pods-target` i `salvage-taken`). Sufit szwu renderu `index:aktualizacja` 121 (kapsuły mieściły się w zapasie, E24 podniósł do 120).
+  - Po scaleniu: `npm test` 1973 zielone; `node --test` bez nowych porażek; bramka 4 h zaliczona (ziarna 7, 11, 23): przechwyty 14,6–14,8%, głód ≤ 6,5 min, kolejka ≤ 0,87, tick ≤ 13,6 ms, obsada ≥ 0,999; start gry w workerze 0 pipeline'ów synchronicznych (start i po 120 krokach), 0 błędów strony i workera.
+  - Niesprawdzone po scaleniu: przegląd w grze (`rynek-gra`, `ruch-banka-gra`, scena holowania, kapsuły w bańce) i wygląd większych doków Wenus i Westy.
+  - Decyzje użytkownika otwarte: reda Ziemi (a / b wyżej), E24 — obraz wraków wojen w tle i wolniejszy hol w bańce.

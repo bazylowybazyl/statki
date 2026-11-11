@@ -100,7 +100,8 @@ export function campaignMissionNumber(phase, resume) {
 /**
  * Zapis gracza do localStorage. `input`:
  *  - `worldSeed`, `systemId`, `savedAt` (ms), `playTimeSec`;
- *  - `player`: { x, y, angle, credits, cargo, miningCharges, reputation, progress, hullId, crew };
+ *  - `player`: { x, y, angle, credits, cargo, cargoCost, miningCharges, reputation, progress, hullId, crew };
+ *    `cargoCost` — średnia cena zakupu partii w ładowni [CR/szt.] (komputer handlowy E23a: zysk wobec ceny zakupu);
  *  - `campaign`: { active, phase, done, m1, bossEscaped } albo null (gra swobodna).
  */
 export function buildPlayerSave(input = {}) {
@@ -126,6 +127,7 @@ export function buildPlayerSave(input = {}) {
       angle: Math.round(finite(p.angle) * 1e4) / 1e4,
       credits: Math.max(0, Math.round(finite(p.credits))),
       cargo: serializeAmounts(p.cargo),
+      cargoCost: serializeAmounts(p.cargoCost),
       miningCharges: serializeAmounts(p.miningCharges),
       reputation,
       progress: {
@@ -183,6 +185,7 @@ export function parsePlayerSave(raw, opts = {}) {
         angle: finite(p.angle),
         credits: Math.max(0, Math.round(finite(p.credits))),
         cargo: readAmounts(p.cargo, opts.isKnownCargo),
+        cargoCost: readAmounts(p.cargoCost, opts.isKnownCargo),
         miningCharges: readAmounts(p.miningCharges),
         reputation: p.reputation && typeof p.reputation === 'object' ? { ...p.reputation } : {},
         progress: {

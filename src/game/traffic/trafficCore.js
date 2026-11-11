@@ -40,7 +40,9 @@ import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
-import { BELT_MSG } from './trafficProtocol.js';
+import { BELT_MSG, SALVAGE_MSG } from './trafficProtocol.js';
+import { ferryPodPassengers, landFerryPassengers } from './escapePodTransit.js';
+import { reportGameWrecks, forgetGameWrecks, holdGameWrecks, collectSalvageTaken } from './scrapperFleets.js';
 import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
@@ -50,7 +52,8 @@ import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
-  collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity
+  collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity,
+  refreshWorkSites, collectWorkChanges, describeWorkSites
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -115,6 +118,8 @@ export function createTrafficCore(post, options = {}) {
     berthIndex: new WeakMap(),
     /** Numer kursu → id, dla wiadomości z gry (`attach`, `destroyed`…). */
     courseIds: new Map(),
+    /** Numer kursu zniszczonego w grze → id (E24): zgłoszenie wraku gry przychodzi po `destroyed`, gdy `courseIds` już go nie zna. */
+    destroyedIds: new Map(),
     wreckCursor: 0,
     warWreckSeq: 0,
     stationFactionsDirty: false,
@@ -132,6 +137,8 @@ export function createTrafficCore(post, options = {}) {
     actorHullsSent: 0,
     actorsSent: 0,
     stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 },
+    // Kapsuły ratunkowe (E22 K4): numer kursu gry → id kursu promu, którego ludzie lecą w kapsułach.
+    podCourses: new Map(),
     /** Zapis ekonomii czekający na rynki dokładane po starcie (E7, `economySave.js`). */
     pendingRestore: null,
     /**
@@ -182,7 +189,11 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.ECONOMY_SAVE: return economySave(message);
         case TRAFFIC_MSG.ECONOMY_RESTORE: return economyRestore(message);
         case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
+        case TRAFFIC_MSG.PODS_LANDED: return podsLanded(message);
         case BELT_MSG.MINED: return beltMined(message);
+        case SALVAGE_MSG.WRECK_REPORT: return wreckReport(message);
+        case SALVAGE_MSG.WRECK_GONE: return wreckGone(message);
+        case SALVAGE_MSG.WRECK_HOLD: return wreckHold(message);
         default: return undefined;
       }
     } catch (error) {
@@ -288,8 +299,58 @@ export function createTrafficCore(post, options = {}) {
       // Zapas floty na padach K-7 i postój statków bez kursu (E15) — po kroku świata (stocznie, wojna, firmy
       // zmieniają liczby); statek z redy, który dostał w tym kroku kurs, oddaje mu pozę przed krokiem bańki.
       if (!core.warmup.active) refreshStanding();
+      // Miejsca pracy górników i złomiarzy (E24) — bańka żyje przy nich także z dala od portów.
+      if (core.bubble) refreshWorkSites(core.bubble);
     }
     stepBubble(dt);
+    publishSalvageTaken();
+  }
+
+  // ============================================================
+  // Złomiarze i wraki gry (E24) — `scrapperFleets.js`
+  // ============================================================
+
+  /** Źródło zgłoszenia z gry ('course:N' — numer kursu, 'entity:N') → klucz straty garnizonu ('course:<id>'). */
+  function lossSourceKey(source) {
+    const text = String(source || '');
+    if (!text.startsWith('course:')) return text || null;
+    const num = finite(Number(text.slice(7)), NaN);
+    const id = core.destroyedIds.get(num) || resolveCourse(num)?.id || null;
+    return id ? `course:${id}` : null;
+  }
+
+  /** Wraki gry w bańce gracza → rejestr złomiarzy (`war.wrecks`); okręt garnizonu — wrak jego straty. */
+  function wreckReport(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.wrecks)) return;
+    const visits = world.war.garrison?.visits || null;
+    const list = message.wrecks.map(w => ({ ...w, source: w?.source ? lossSourceKey(w.source) : null }));
+    reportGameWrecks(world.scrappers, world.war, list, {
+      now: world.registry.clock,
+      // Kurs garnizonu zniszczony w grze: stratę rozliczy `tickGarrison` w następnym kroku świata.
+      isLossSource: (key) => key.startsWith('course:') && !!visits?.some(v => `course:${v.courseId}` === key)
+    });
+  }
+
+  /** Gracz pracuje przy wraku gry (`wreck-hold`) — złomiarze go pomijają, holownik w drodze wraca pusty. */
+  function wreckHold(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.gids)) return;
+    holdGameWrecks(world.scrappers, world.war, message.gids, message.on !== false);
+  }
+
+  function wreckGone(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.gids)) return;
+    forgetGameWrecks(world.scrappers, world.war, message.gids);
+  }
+
+  /** Złomiarze, którzy skończyli pracę przy wraku gry — gra usuwa wrak (`salvage-taken`). */
+  function publishSalvageTaken() {
+    const world = core.world;
+    if (!world?.scrappers) return;
+    const taken = collectSalvageTaken(world.scrappers, world.registry);
+    if (taken) send({ type: SALVAGE_MSG.TAKEN, taken });
   }
 
   // ============================================================
@@ -423,6 +484,12 @@ export function createTrafficCore(post, options = {}) {
       if (manifests.manifests) message.manifests = manifests.manifests;
       if (manifests.unmanifested) message.unmanifested = manifests.unmanifested;
     }
+    // Praca górników i złomiarzy (E24) — tylko zmiany.
+    const works = collectWorkChanges(state, time);
+    if (works) {
+      if (works.works) message.works = works.works;
+      if (works.unworked) message.unworked = works.unworked;
+    }
     if (core.hulls.length !== core.actorHullsSent) {
       message.hulls = [...core.hulls];
       core.actorHullsSent = core.hulls.length;
@@ -555,12 +622,38 @@ export function createTrafficCore(post, options = {}) {
     const world = core.world;
     const course = resolveCourse(message.course);
     if (!world || !course) return;
+    core.destroyedIds.set(finite(message.course, NaN), course.id);
+    if (core.destroyedIds.size > 64) core.destroyedIds.delete(core.destroyedIds.keys().next().value);
     destroyCourse(world.director, course, {
       reason: message.reason || 'destroyed',
       byPirates: message.byPirates,
       x: Number(message.x),
       y: Number(message.y)
     });
+    replyFerryPods(world, course, message.course);
+  }
+
+  /**
+   * Kapsuły ratunkowe (E22 K4): prom z ludźmi zniszczony w grze — ludzie czekają na dolot kapsuł (`holdFerryPassengers`
+   * w `destroyCourse`). Gra dostaje cel (port nadania) i liczbę ludzi; numer kursu gry → id kursu na czas lotu (kurs
+   * jest już zamknięty — `resolveCourse` może go nie znaleźć).
+   */
+  function replyFerryPods(world, course, number) {
+    const rec = ferryPodPassengers(world.director, course.id);
+    if (!rec) return;
+    core.podCourses.set(finite(number, NaN), String(course.id));
+    send({ type: TRAFFIC_MSG.PODS_TARGET, course: number, stationId: rec.originId, people: rec.units });
+  }
+
+  /** Kapsuła z ludźmi promu doleciała w grze (w obrazie albo bez) — magazyn stacji dolotu (`landFerryPassengers`). */
+  function podsLanded(message) {
+    const world = core.world;
+    if (!world) return;
+    const num = finite(message.course, NaN);
+    const id = core.podCourses.get(num) ?? core.courseIds.get(num) ?? null;
+    if (!id) return;
+    landFerryPassengers(world.director, id, String(message.stationId || ''), message.people);
+    if (!ferryPodPassengers(world.director, id)) core.podCourses.delete(num);
   }
 
   /** Encja bez kursu przejęta przez grę jako NPC (`on`) albo oddana — `holdBubbleEntity` (E6, taran i ogień). */
@@ -742,6 +835,22 @@ export function createTrafficCore(post, options = {}) {
     if (Number.isFinite(message.piracyPressure)) director.config.piracyPressure = message.piracyPressure;
     if (typeof message.piracyEnabled === 'boolean') director.config.piracyEnabled = message.piracyEnabled;
     if (typeof message.protectObserved === 'boolean') director.config.protectObserved = message.protectObserved;
+    // Narzędzia i scena holowania (E24): krótszy postój złomiarzy, bez pierwszeństwa gracza, każdy wrak gry wart lotu
+    // (`minProfit` może być ujemny) — tylko narzędzia i `?scena=holowanie`.
+    const sc = message.scrappers;
+    const cfg = core.world?.scrappers?.config;
+    if (sc && cfg) {
+      for (const key of ['cutSeconds', 'hookSeconds', 'gameReserve', 'gameWreckDelay']) if (Number.isFinite(sc[key]) && sc[key] >= 0) cfg[key] = sc[key];
+      if (Number.isFinite(sc.minProfit)) cfg.minProfit = sc.minProfit;
+    }
+    // Prędkość holu w bańce (`?hol=` gry): 0 — bez limitu (prędkość trybu), liczba — sufit [j./s], `'model'` — prędkość,
+    // z której rekord kursu liczy przelot z wrakiem (`cruiseSpeed / towSpeedPenalty` złomiarzy świata).
+    const bc = message.bubble;
+    const flight = core.bubble?.bubble?.config;
+    if (bc && flight) {
+      if (bc.towHaulSpeed === 'model' && cfg) flight.towHaulSpeed = cfg.cruiseSpeed / Math.max(1, cfg.towSpeedPenalty);
+      else if (Number.isFinite(bc.towHaulSpeed) && bc.towHaulSpeed >= 0) flight.towHaulSpeed = bc.towHaulSpeed;
+    }
   }
 
   function snapshot(message) {
@@ -759,7 +868,11 @@ export function createTrafficCore(post, options = {}) {
         scrappers: summarizeScrappers(world.scrappers),
         agents: summarizeAgents(world.agents),
         log: world.director.log.slice(-30),
+        // Górnicy i złomiarze przy pracy (E24) — narzędzia (`zlomiarze-gra.mjs`).
+        work: core.bubble ? describeWorkSites(core.bubble) : null,
         core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size },
+        // Kapsuły ratunkowe bez obrazu (E22): statki z kapsułami, w drodze, doloty.
+        escapePods: world.podTransit ? { ...world.podTransit.stats, pending: world.podTransit.pending.length } : null,
         warmup: { ...warmupInfo(), steps: core.warmup.steps }
       } : null
     });

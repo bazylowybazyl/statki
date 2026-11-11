@@ -8,7 +8,7 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 
 - Opis obszaru (jak działa, decyzje użytkownika, pułapki, jak sprawdzić) → jego reguła w `.claude/rules/`. Nowy obszar = nowa reguła z `paths:` (każdy glob w cudzysłowie — zepsuty YAML ładuje regułę ZAWSZE) + wiersz w indeksie niżej. Do tego pliku dopisuj tylko zasadę przekrojową (dotyczy kodu poza obszarem: „nowa ścieżka X musi wołać Y”) albo zmianę indeksu.
 - Reguła opisuje STAN i ZASADY w czasie teraźniejszym. Historia („dawniej…”), wyniki pomiarów i A/B → `docs/` (audyty, plany); w regule zostaje wniosek i odnośnik.
-- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–44) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
+- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–46) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
 - Notatka dla kolejnych agentów w kodzie: komentarz z prefiksem `AGENT:`.
 
 ## Zasady żelazne
@@ -78,8 +78,8 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 **Rozgrywka**
 - Ścieżka, która pokazuje albo celuje we wroga → `SensorSystem.hides(byt)` (mgła wojny); celowanie w gracza i wybór celów AI → `isCloakHidden` (maskowanie).
 - Obrażenia i zapytania kadłubów tylko przez `HullBodies` (`sweep`, `impact`, `probe`, `cutSegment`), budowli przez `worldBodies`; gra rusza encję, nie węzły ani `body.pos`. Kod piszący węzły wprost w magazynie → `body._hashTick = -1`.
-- Nowy wrak → `convertToWreck` / `shatter` / hak `onWreck`; usuwanie → `recycleWreckEntity` i `coldWrecks` (`coldWreckSystem.forget`); nowe odwołanie do wraku (cel, lina, rozkaz) → `markColdWreckReferences`; nowe pole stanu węzła albo belki → do migawki zimnych wraków (`src/game/hullColdSnapshot.js`).
-- Śmierć okrętu → wybuch z miejsca zbiornika paliwa (`fuelTankBlast`), nie ze środka; hulki mostka (`isBridgeHulk`) — nowe ścieżki śmierci, AI i celowania je respektują.
+- Nowy wrak → `convertToWreck` / `shatter` / hak `onWreck`; usuwanie → `recycleWreckEntity` i `coldWrecks` (`coldWreckSystem.forget`); nowe odwołanie do wraku (cel, lina, rozkaz) → `markColdWreckReferences`; nowe pole stanu węzła albo belki → do migawki zimnych wraków (`src/game/hullColdSnapshot.js`). Wrak w bańce idzie do złomiarzy NPC (E24): wrak, którego nie mają zabrać (misja, łup gracza) → filtr `trafficWreckSpec`; usuwanie bez `w.dead` → `removeWreckFromWorld` (reguła `ruch-banka`, „Praca w bańce”).
+- Śmierć okrętu → wybuch z miejsca zbiornika paliwa (`fuelTankBlast`), nie ze środka; hulki mostka (`isBridgeHulk`) — nowe ścieżki śmierci, AI i celowania je respektują. Nowa ścieżka ŚMIERCI okrętu (nie despawn, warp, powrót do bańki) → też `launchShipEscapePods(encja)` przed zamianą we wrak (kapsuły ratunkowe; piratów, myśliwce i gracza odfiltrowuje sama — reguła `kapsuly-ratunkowe`).
 - Nowe źródło pocisków w `bullets` → `serial: nextProjectileSerial()`, `mech` (`hasHullMechanics`), `pen: null`, znaczniki nośnika (`ivx / ivy`, `clock` z `projectileClockOf(strzelec)`, `bornSim`) — wzór `fireWeaponCore`. Efekt z nośnikiem → `ActiveCarrier.set(writeCarrier(…))` … `clear()`. Test pocisku przeciw celowi w pętli kandydatów → odcinek w ruchu względnym (`segX0`).
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
@@ -133,12 +133,12 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 | Reguła | Obszar |
 |---|---|
-| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–44), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
+| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–46), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
 | `core3d` | Core3D: klatka i passy, post i bloom, efekty GPU (`Core3D.fx`), maska słońca i cień kadłubów, wydajność renderu |
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
 | `uklady-gwiezdne` | Układy gwiezdne: rejestr `starSystems.js`, jeden układ na stronę (inny = przeładowanie), dom gracza, treść ręczna tylko w Sol, założenia Sol do zdjęcia |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
-| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), demo (niewpięty) |
+| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), planeta z bliska (wycinek mapy pod kamerą, lawa, erupcja, chmury z cieniem), widok orbitalny (chmury jako bryła, atmosfera po promieniu, zorza), pogoda (ruchome chmury: wiatr w pasach, cyklony, mapa pogody), rzeki ze spływu wody i mozaika biomów (terran / ocean), spójność między poziomami zbliżenia, pasma gór ze śniegiem, mapa terenu — trzeci poziom dla ostrzału z orbity i desantu (prototyp), dema (niewpięty) |
 | `niebo` | Wypiekacz nieba, tło kosmosu |
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |
 | `doki-portow` | Doki portów bez ringu (krzyż, okrąg, koło z wlotem): geometria, ścieżki bańki, kolizje, model |
@@ -181,9 +181,11 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
+| `zlomowanie` | Złomowanie jako proces: komputer złomiarski (plan cięć z komórek kadłuba), podawanie wraku do dziobu, wysięgniki z laserami tnącymi, sekcje jako ciała belek, paszcza; decyzje użytkownika i etapy do zrobienia |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
+| `kapsuly-ratunkowe` | Kapsuły ratunkowe: wyrzut po śmierci statku (bez pirackich), lot do stacji (objazd ringu i doków), obraz, radar, rozliczenie bez obrazu w workerze ruchu |
 | `mgla-wojny` | Mgła wojny |
-| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany OBŁOK, ECHO = skały) i NAMIARU „kto kogo widzi” (wachlarz, struna, błona): demo propozycji w TSL na Core3D, zasady pod wpięcie |
+| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany obłok szarych X-ów, ECHO = skały), CZUJKI na PPM (struna w stronę myszki — statki i budowle, błona 360° — ciała niebieskie) i GRANICY WYKRYCIA (tafla / przybój, podświetlenie kadłuba): demo w TSL na Core3D, zasady pod wpięcie |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `zasieg-czujnikow` | Zasięg czujników (radarów) jak w Starsectorze: czujniki × sygnatura × osłona, KONTAKT / IDENTYFIKACJA, suma stref radarów, obraz czujników z gry, prototyp `?radarZasiegi` (ocena obustronna: wachlarz / struna / błona, warstwa ZASIĘGI w CIC, scena), demo 2D propozycji |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
@@ -195,4 +197,5 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |
 | `swiatla-nawigacyjne` | Światła nawigacyjne: sześć lamp na każdym kadłubie, „blink blink” czerwono-zielone, oświetlanie tylko w błysku, style (żółte ostrzegawcze), migracja zapisu edytora |
 | `wejscie` | Warstwa wejścia, pad, skróty klawiszowe |
+| `dzwiek` | Dźwięk: scena `?scena=dzwieki` (Atlas, piraci, panel wyboru wariantów), warstwa dźwięku gry `src/audio/` (tylko w scenie; wyrównanie poziomów, limit głosów, pętle bez szwu), synteza silnika MAIN i CIWS, dźwięki robocze z generatora AI |
 | `electron-wydanie` | Electron, paczka i wydanie |
