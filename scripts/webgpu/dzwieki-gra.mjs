@@ -9,9 +9,12 @@
 // wybuchy), odnowienie celów. Na końcu: dźwięki, które nie zagrały ani razu (z listą zdarzeń) i błędy konsoli.
 //
 //   node scripts/webgpu/dzwieki-gra.mjs [--baza http://localhost:5199] [--out .tmp/dzwieki/gra] [--query renderWorker=1]
-//        [--rozmiar 1600x900] [--tryb scena|zwykla]
-// `--tryb zwykla` — zwykła gra BEZ sceny: warstwa dźwięku nie powstaje, zapis gry otwarty, stary AudioSys ma swoje
-// dźwięki i głośność, 10 s gry bez błędów konsoli.
+//        [--rozmiar 1600x900] [--tryb scena|zwykla|stary|wojna] [--czas 25]
+// `--tryb zwykla` — zwykła gra BEZ sceny (warstwa dźwięku gra od 2026-11-11): warstwa powstaje, liczniki rosną przy locie
+//   (silnik MAIN), strzale i trafieniu (pancernik bez mózgu przed Atlasem), stary AudioSys nie ma efektów, zapis gry otwarty,
+//   głośność główna po migracji; `--tryb stary` — `?dzwiek=stary`: warstwa nie powstaje, stary AudioSys ma swoje dźwięki;
+// `--tryb wojna` — `?wojna` (dwie floty, `--czas` s gry): kontrola, że w dużej bitwie nic się nie sypie — błędy konsoli,
+//   szczyt po limiterze, głosy, odrzucenia limitu (nie pomiar wydajności).
 // `--baza` — serwer z .claude/launch.json (domyślnie „Vite Dev Server” na 5199); bez serwera: `--baza vite` (własny Vite).
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -65,12 +68,15 @@ async function etap(nazwa, fn) {
   return wpis;
 }
 
-const ZWYKLA = (args.tryb || 'scena') === 'zwykla';
+const TRYB = args.tryb || 'scena';
+const ZWYKLA = TRYB !== 'scena';
+const CZAS = Number(args.czas || 25);
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { try {
     localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0');
   } catch {} })();\nwindow.__HARNESS_SEED__ = ${0x5eed4243};\n${INJECT}` });
-  const url = `${base}/index.html?dev=1${ZWYKLA ? '' : '&scena=dzwieki'}${args.query ? `&${args.query}` : ''}`;
+  const dopisek = { scena: '&scena=dzwieki', zwykla: '', stary: '&dzwiek=stary', wojna: '&wojna' }[TRYB] ?? '';
+  const url = `${base}/index.html?dev=1${dopisek}${args.query ? `&${args.query}` : ''}`;
   report.url = url;
   await cdp.send('Page.navigate', { url });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.DevScene)', 240000, 400)) throw new Error('gra nie wstała');
@@ -79,13 +85,47 @@ try {
   await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && (window.__frameId || 0) > 30", 300000, 400)) throw new Error('gra nie ruszyła');
   if (ZWYKLA) {
+    const STAN = `(() => { const a = window.AudioSys; const w = window.__dzwieki; const s = w ? w.statystyki() : null;
+      let opcje = null; try { opcje = { sc_audio: JSON.parse(localStorage.getItem('sc_audio') || 'null'), migracja: localStorage.getItem('sc_audio_glowna_v2') }; } catch {}
+      return { warstwa: !!w, wczytane: !!w?.wczytane, scena: !!window.SoundScene?.active, panel: !!document.getElementById('dzwieki-panel'),
+        zapisZamkniety: window.__SAVE_LOCKED === true, staryAudioSys: Object.keys(a?.sounds || {}), staryPetlaSilnika: !!window.ship?.engineSound,
+        kontekst: a?.ctx?.state, opcje,
+        zagraly: s ? Object.fromEntries(Object.entries(s.dzwieki).filter(([, v]) => v.zagral > 0).map(([k, v]) => [k, v.zagral])) : null,
+        odrzucone: s ? Object.fromEntries(Object.entries(s.dzwieki).filter(([, v]) => v.odrzuconeLimit || v.odrzuconeOdstep).map(([k, v]) => [k, (v.odrzuconeLimit || 0) + (v.odrzuconeOdstep || 0)])) : null,
+        zdarzenia: s?.zdarzenia || null, szczytPrzedDb: s?.szczytPrzedDb, szczytPoDb: s?.szczytPoDb, przester: s?.przester, glosyMax: s?.glosyMax, ostrzezenia: s?.ostrzezenia }; })()`;
+    if (TRYB !== 'stary') await waitFor(cdp, '!!(window.__dzwieki && window.__dzwieki.wczytane)', 60000, 250);
     await ev('window.__harness.hold(true)');
-    for (let i = 0; i < 10; i++) await step(60);
-    report.zwykla = await ev(`({ warstwa: window.__dzwieki === undefined, scena: !!window.SoundScene?.active, panel: !!document.getElementById('dzwieki-panel'),
-      zapisZamkniety: window.__SAVE_LOCKED === true, audioSys: Object.keys(window.AudioSys?.sounds || {}), glosnoscAudioSys: window.AudioSys?.masterGain?.gain?.value,
-      kontekst: window.AudioSys?.ctx?.state })`);
-    console.log('zwykła gra:', JSON.stringify(report.zwykla));
-    throw Object.assign(new Error('koniec trybu zwykla'), { koniec: true });
+    await step(30);
+    report.tryb = await ev('window.RenderWorkerHost ? "worker" : "off"');
+    report.start = await ev(STAN);
+    console.log(`[${TRYB}] start:`, JSON.stringify({ warstwa: report.start.warstwa, staryAudioSys: report.start.staryAudioSys, staryPetlaSilnika: report.start.staryPetlaSilnika, zapisZamkniety: report.start.zapisZamkniety, opcje: report.start.opcje }));
+    if (TRYB === 'wojna') {
+      for (let i = 0; i < CZAS; i++) await step(60);
+    } else {
+      // lot (silnik MAIN), cel przed Atlasem (pancernik bez mózgu, `spawnCallInShip` w trybie dummy), namiar T, grupa 1 w ręku, LPM na cel
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...KEY('w') });
+      await step(60);
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...KEY('w') });
+      await ev('(() => { const s = window.ship; s.vel.x = 0; s.vel.y = 0; return true; })()');
+      report.cel = await ev(`(() => { const s = window.ship; const a = s.angle || 0; const x = s.pos.x + Math.cos(a) * 2600, y = s.pos.y + Math.sin(a) * 2600;
+        const r = window.spawnCallInShip('battleship', { mode: 'dummy', spawnPos: { x, y }, pos: { x, y }, spawnAngle: a + Math.PI / 2, exitK: 0 });
+        const n = Array.isArray(r) ? r[0] : r; return n ? { x: Math.round(n.x), y: Math.round(n.y) } : null; })()`);
+      await step(30);
+      if (report.cel) {
+        const p = await ev(`window.DevScene.pointerAt(${report.cel.x}, ${report.cel.y})`);
+        await mouse('mouseMoved', p.x, p.y);
+        await step(4);
+        await tap('t');
+        await tap('1');
+        await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
+        for (let i = 0; i < 6; i++) await step(60);
+        await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
+      }
+      for (let i = 0; i < 2; i++) await step(60);
+    }
+    report.koniec = await ev(STAN);
+    console.log(`[${TRYB}] koniec:`, JSON.stringify(report.koniec));
+    throw Object.assign(new Error(`koniec trybu ${TRYB}`), { koniec: true });
   }
   if (!await waitFor(cdp, '!!(window.SoundScene && window.SoundScene.active && window.__dzwieki && window.__dzwieki.wczytane)', 60000, 250)) throw new Error('scena dźwięków nie ruszyła');
   await ev('window.__harness.hold(true)');
@@ -273,7 +313,7 @@ try {
 } finally {
   report.bledy = logs.errors();
   report.dziennikDzwiekow = logs.all().filter((l) => /Dźwięki/.test(l));
-  writeJson(join(out, ZWYKLA ? 'wyniki-zwykla.json' : 'wyniki.json'), report);
+  writeJson(join(out, ZWYKLA ? `wyniki-${TRYB}.json` : 'wyniki.json'), report);
   console.log(`błędy konsoli: ${report.bledy.length}${report.bledy.length ? '\n  ' + report.bledy.slice(0, 12).join('\n  ') : ''}`);
   console.log(`wyniki: ${join(out, 'wyniki.json')}`);
   await chrome.close?.();

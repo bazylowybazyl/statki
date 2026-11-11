@@ -1467,7 +1467,10 @@
     import { utworzDzwiekiGry } from "./src/audio/dzwiekiGry.js";
     import { utworzPanelDzwiekow } from "./src/ui/dzwiekiPanel.js";
     // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): reżyser z pozami obsługi stanowisk i zaworami, osobna warstwa dźwięku.
-    import { DZWIEKI_HALI } from "./src/audio/dzwiekiLogika.js";
+    import {
+      DZWIEKI_HALI, DZWIEKI, DZWIEKI_SYNTEZY, KLUCZ_WYBORU, parsujWybor, tekstZapisuWyboru, slyszalne,
+      migrujGlosnoscGlowna, GLOSNOSC_GLOWNA_DOMYSLNA
+    } from "./src/audio/dzwiekiLogika.js";
     import { createK7HallSound, stepK7HallSound, K7_HALL_SOUND_TUNE } from "./src/game/k7HallSound.js";
     import { LAUNCH_SPLIT } from "./src/game/rockets/rocketSim.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
@@ -2177,7 +2180,8 @@
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
       // Demo (decyzja użytkownika 2026-10-05): dźwięk domyślnie wyłączony — master 0, suwak w Opcjach go włącza.
-      audio: { master: 0, sfx: 1.0, music: 0.7 },
+      // Głośność główna: domyślnie GLOSNOSC_GLOWNA_DOMYSLNA (dawniej 0 — gra startowała niema; migracja zapisu niżej).
+      audio: { master: GLOSNOSC_GLOWNA_DOMYSLNA, sfx: 1.0, music: 0.7 },
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
       // Kamera za kursorem: 'auto' (tylko w walce) | 'always' | 'never' — src/game/cameraRig.js.
       cameraLook: 'auto',
@@ -2690,8 +2694,9 @@
     function applyAudioOptions() {
       // Hala K-7: własna warstwa (blok „DŹWIĘKI HALI K-7”) — główna × efekty z opcji.
       if (HALL_SND) HALL_SND.ustawGlosnosc(hallSoundVolume());
-      // Scena dźwięków: stary AudioSys zostaje wyciszony, głośność opcji idzie do warstwy sceny.
-      if (SND && SoundScene.active) { SND.ustawGlosnosc(soundSceneVolume()); return; }
+      // Warstwa dźwięku (zwykła gra i scena); w scenie stary AudioSys zostaje wyciszony.
+      if (SND) SND.ustawGlosnosc(SoundScene.active ? soundSceneVolume() : soundGameVolume());
+      if (SoundScene.active) return;
       if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
     }
     try {
@@ -2699,6 +2704,15 @@
       for (const key of ['master', 'music', 'sfx']) {
         const v = Number(savedAudio?.[key]);
         if (Number.isFinite(v)) OPTIONS.audio[key] = Math.max(0, Math.min(1, v));
+      }
+      // Jednorazowa migracja (2026-11-11, warstwa dźwięku w zwykłej grze): zapisane 0 było DOMYŚLNĄ głośnością główną,
+      // nie wyborem gracza — bez znacznika `sc_audio_glowna_v2` takie 0 staje się wartością domyślną; po migracji 0
+      // ustawione suwakiem zostaje zerem (reguła `dzwiek`, „Głośność”).
+      const mig = migrujGlosnoscGlowna(savedAudio ? savedAudio.master : undefined, localStorage.getItem('sc_audio_glowna_v2'));
+      OPTIONS.audio.master = mig.master;
+      if (mig.oznacz) {
+        localStorage.setItem('sc_audio_glowna_v2', '1');
+        if (savedAudio) localStorage.setItem('sc_audio', JSON.stringify(OPTIONS.audio));
       }
     } catch { }
     for (const input of menuAudioSliders) {
@@ -18800,9 +18814,9 @@
     // `DevScene.dzwieki()` (z `?dev`). Próba dźwięków W GRZE (reguła `dzwiek`): Atlas z bronią sceny (Tempest Ion, Yamato,
     // Cruise Missile Rack, Supernova, CIWS Mk II — tylko w pamięci), piraci tuż obok (taran, tarcie, zgniot) i w zasięgu
     // broni, panel (`src/ui/dzwiekiPanel.js`): tarcza Atlasa, cele niezniszczalne, piraci strzelają, odnowienie celów,
-    // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) działa TYLKO w scenie:
-    // poza nią `SND` = null, a każdy hak w grze to jedno `if (SND)`. Stary AudioSys poza sceną bez zmian; w scenie jego
-    // szyna jest wyciszona (słychać tylko nowe dźwięki). ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
+    // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) gra w ZWYKŁEJ grze i w
+    // scenie (2026-11-11, decyzja użytkownika): `SND` = warstwa włączona albo null (`?dzwiek=stary` poza sceną — stary
+    // AudioSys jak dawniej), a każdy hak w grze to jedno `if (SND)`; z warstwą stary AudioSys nie wczytuje efektów. ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
     // (`__SAVE_LOCKED` w bloku resetu zapisu), scena z konsoli — od swojego startu; do przeładowania strony (wyposażenie
     // sceny zostaje w pamięci, więc odblokowanie po końcu sceny zapisałoby je jako wyposażenie gracza). Atlas w scenie
     // nie ginie (kadłub nie spada poniżej 1 — alarm kadłuba krytycznego da się usłyszeć bez końca gry).
@@ -18843,6 +18857,44 @@
       masterFallback: 0.7
     };
     let SND = null;
+    // Warstwa dźwięku gry: jedna na stronę (zwykła gra i scena), `SND` wskazuje ją, gdy jest włączona.
+    const SOUND_LAYER_OLD = new URLSearchParams(location.search).get('dzwiek') === 'stary';
+    let SND_LAYER = null;
+    let SND_LOADING = null;
+    // Znane id do zapisu wyboru (pliki i synteza) i klucz serii CIWS / pętli wiązki strzelca bez obiektu.
+    const SOUND_KNOWN_IDS = Object.freeze({ ...DZWIEKI, ...DZWIEKI_SYNTEZY });
+    const SOUND_NO_SHOOTER = {};
+    /** Głośność zwykłej gry: główna × efekty z opcji (zero = cisza; zastępcze 70% tylko w scenie). */
+    function soundGameVolume() {
+      const master = Number(OPTIONS?.audio?.master) || 0;
+      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
+      return master * (Number.isFinite(sfx) ? sfx : 1);
+    }
+    /** Wybór wariantów i wyciszeń z panelu → zapis przeglądarki (osobny klucz, nie zapis gracza — działa też w scenie). */
+    function soundSaveChoice() {
+      if (!SND_LAYER) return;
+      const st = SND_LAYER.stanWyboru();
+      try { localStorage.setItem(KLUCZ_WYBORU, tekstZapisuWyboru(st.wybor, st.wycisz)); } catch { /* bez zapisu */ }
+    }
+    /** Warstwa (raz na stronę): wybór z zapisu, haki strzałów, wczytanie plików w tle (`SND_LOADING`). */
+    function soundLayerCreate(volume) {
+      if (SND_LAYER || !AudioSys.ctx) return SND_LAYER;
+      SND_LAYER = utworzDzwiekiGry({
+        ctx: AudioSys.ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: volume, baza: './sounds/ai/',
+        przyZmianieWyboru: soundSaveChoice
+      });
+      try { SND_LAYER.wczytajWybor(parsujWybor(localStorage.getItem(KLUCZ_WYBORU), SOUND_KNOWN_IDS)); } catch { /* bez zapisu */ }
+      window.__dzwieki = SND_LAYER;
+      WeaponShotBus.on(soundSceneShot);
+      SND_LOADING = SND_LAYER.wczytaj().catch((err) => console.warn('[Dźwięki]', err));
+      return SND_LAYER;
+    }
+    /** Start gry (po AudioSys.init): warstwa w zwykłej grze — pliki w tle, pierwsze klatki bez dźwięków z plików. */
+    function startSoundLayer() {
+      if (SOUND_LAYER_OLD || !AudioSys.ctx) return;
+      soundLayerCreate(soundGameVolume());
+      SND = SND_LAYER;
+    }
     const SoundScene = {
       active: false, starting: false, t: 0, spot: null, opts: null, pirates: [], panel: null,
       shieldOn: true, undying: true, pirFire: false,
@@ -18860,9 +18912,6 @@
       const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
       SoundScene.masterFallback = !(master > 0);
       return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
-    }
-    function soundSceneActiveFor(e) {
-      return !!(e && (e === ship || e.__soundScene));
     }
     function soundSceneCamera() {
       const z = Number(camera.zoom) || 0.3;
@@ -18884,11 +18933,9 @@
     const HallSound = createK7HallSound({ rand: () => fxRandomGame.next() });
     window.K7HallSoundTune = K7_HALL_SOUND_TUNE;
     window.__halaDzwieki = { stan: HallSound, warstwa: () => HALL_SND };
-    /** Głośność warstwy hali: główna × efekty z opcji; główna 0 (domyślna wartość opcji) — zastępcza jak scena dźwięków. */
+    /** Głośność warstwy hali: jak warstwa zwykłej gry — główna × efekty z opcji (domyślna główna 0,7; zero = cisza). */
     function hallSoundVolume() {
-      const master = Number(OPTIONS?.audio?.master) || 0;
-      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
-      return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
+      return soundGameVolume();
     }
     /** Start gry (po AudioSys.init): warstwa hali i wczytanie plików w tle — pierwsze klatki bez dźwięków hali. */
     function startHallSound() {
@@ -18926,15 +18973,12 @@
       if (TowScene.active) stopTowScene();
       if (RadarRangeScene.active) stopRadarScene();
       AudioSys.init();
-      const ctx = AudioSys.ctx;
-      if (!SND) {
-        SND = utworzDzwiekiGry({ ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: soundSceneVolume(), baza: './sounds/ai/' });
-        window.__dzwieki = SND;
-        WeaponShotBus.on(soundSceneShot);
-        await SND.wczytaj();
-      } else {
-        SND.wlacz();
-      }
+      // Ta sama warstwa co w zwykłej grze (z `?dzwiek=stary` powstaje dopiero tu); scena czeka na pliki.
+      soundLayerCreate(soundSceneVolume());
+      await SND_LOADING;
+      SND = SND_LAYER;
+      SND.wlacz();
+      SND.ustawGlosnosc(soundSceneVolume());
       // Stary AudioSys wyciszony na czas sceny (silnik z pliku, shieldHit, railgun) — słychać tylko nowe dźwięki.
       if (AudioSys.masterGain) {
         SoundScene.oldMasterGain = AudioSys.masterGain.gain.value;
@@ -18961,7 +19005,9 @@
       const S = SoundScene;
       if (!S.active) return false;
       S.active = false;
-      if (SND) SND.wylacz();
+      // Zwykła gra gra dalej na tej samej warstwie (głośność z opcji); `?dzwiek=stary` — warstwa gaśnie.
+      if (SND && SOUND_LAYER_OLD) { SND.wylacz(); SND = null; }
+      else if (SND) SND.ustawGlosnosc(soundGameVolume());
       if (S.panel) { S.panel.usun(); S.panel = null; }
       if (AudioSys.masterGain && S.oldMasterGain != null) AudioSys.masterGain.gain.value = S.oldMasterGain;
       SensorSystem.clearArea('scena-dzwieki');
@@ -19115,24 +19161,28 @@
       soundSceneSpawnPirates();
     }
 
-    // --- haki zdarzeń (wołane tylko przy SND ≠ null)
+    // --- haki zdarzeń (wołane tylko przy SND ≠ null: zwykła gra albo scena). Zdarzenie poza słyszalnością odpada na
+    // wejściu (`slyszalne` — ten sam zasięg, w którym `polozenie` daje zero), zanim warstwa zrobi cokolwiek innego.
+    function soundHere(x, y) {
+      return slyszalne(x, y, soundSceneCamera());
+    }
     function soundSceneShot(d) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND) return;
       const def = MASTER_WEAPONS[d.weaponId] || null;
       // Rakiety: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny.
       if (def && (def.category === 'rocket' || def.category === 'torpedo')) return;
       const shooter = d.shooter;
-      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter === ship ? 'p' : (shooter?.id ?? 'npc'), d.isBeam && d.beamMode === 'continuous');
+      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous');
     }
     /** Obrona punktowa gracza (poza szyną strzałów): CIWS — seria z syntezy, laser PD, flak. */
     function soundScenePdShot(kind, x, y) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND) return;
       if (kind === 'ciws') SND.ciwsStrzal('p:ciws', x, y);
       else SND.graj(kind === 'flak' ? 'flak' : 'laserPD', x, y, 0.8);
     }
     /** Trafienie pocisku w kadłub (po efekcie trafienia w pętli pocisków). */
     function soundSceneBulletHit(b, hitNPC, x, y, ricochet) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(x, y)) return;
       if (ricochet) { SND.zdarzenie('rykoszet', x, y); return; }
       if (hitNPC?._isPlayerShip) { SND.zdarzenie('trafienieGracza', x, y); return; }
       if (b.type === 'ciws') { SND.zdarzenie('trafienie', x, y, 0.5); return; }
@@ -19140,10 +19190,10 @@
       SND.zdarzenie(id === 'special_yamato_cannon' || id === 'special_yamato_l' ? 'trafieniePlazma' : 'trafienie', x, y);
     }
     function soundSceneShieldHit(x, y) {
-      if (SND && SoundScene.active) SND.zdarzenie('tarczaTrafiona', x, y);
+      if (SND && soundHere(x, y)) SND.zdarzenie('tarczaTrafiona', x, y);
     }
     function soundSceneDeath(npc) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(npc.x, npc.y)) return;
       SoundScene.lastDeath.t = SimClock.sim;
       SoundScene.lastDeath.x = npc.x;
       SoundScene.lastDeath.y = npc.y;
@@ -19151,7 +19201,7 @@
     }
     /** Wybuch z gry (GameBlasts.blast): śmierć okrętu ma już swój dźwięk — wybuchy w jej pobliżu przez 0,6 s pomija. */
     function soundSceneBlast(o) {
-      if (!SND || !SoundScene.active || !o) return;
+      if (!SND || !o || !soundHere(o.x, o.y)) return;
       const L = SoundScene.lastDeath;
       const dx = (o.x || 0) - L.x, dy = (o.y || 0) - L.y;
       if (SimClock.sim - L.t < 0.6 && dx * dx + dy * dy < 4000 * 4000) return;
@@ -19159,21 +19209,24 @@
       SND.zdarzenie('wybuchWtorny', o.x, o.y, o.profile === 'fighter' ? 0.6 : 1);
     }
     function soundSceneRocketLaunch(r) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(r.position.x, r.position.z)) return;
       const id = r?.weaponDef?.id;
       SND.graj(id === 'supernova_missile' ? 'supernovaStart' : 'rakieta', r.position.x, r.position.z, r.mode === LAUNCH_SPLIT ? 0.4 : 1);
     }
     function soundSceneRocketDetonate(r, x, y) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(x, y)) return;
       SND.zdarzenie(r?.weaponDef?.id === 'supernova_missile' ? 'supernovaDetonacja' : 'rakietaTrafila', x, y);
     }
     function soundSceneRocketKilled(x, y) {
-      if (SND && SoundScene.active) SND.zdarzenie('rakietaZestrzelona', x, y);
+      if (SND && soundHere(x, y)) SND.zdarzenie('rakietaZestrzelona', x, y);
+    }
+    /** Kontakt kadłubów słychać zawsze z udziałem gracza, inny — tylko w zasięgu słyszalności. */
+    function soundContactAudible(ev) {
+      return ev.A === ship || ev.B === ship || soundHere(ev.x, ev.y);
     }
     /** Pierwszy kontakt kadłubów (CollisionFX 'impact'): uderzenie z prędkości, ciężki taran z Atlasem — `taran`. */
     function soundSceneImpact(ev) {
-      if (!SND || !SoundScene.active || !ev) return;
-      if (!soundSceneActiveFor(ev.A) && !soundSceneActiveFor(ev.B)) return;
+      if (!SND || !ev || !soundContactAudible(ev)) return;
       const v = Math.abs(Number(ev.impactSpeed ?? ev.approachSpeed) || 0);
       const g = Math.min(1, 0.25 + v / SOUND_SCENE.impactFull);
       SND.zdarzenie('kontaktKadlubow', ev.x, ev.y, g);
@@ -19181,8 +19234,7 @@
     }
     /** Tarcie (CollisionFX 'grind', co krok kontaktu): najsilniejsze w klatce → pętla `zgrzytPetla` w soundSceneFrame. */
     function soundSceneGrind(ev) {
-      if (!SND || !SoundScene.active || !ev) return;
-      if (!soundSceneActiveFor(ev.A) && !soundSceneActiveFor(ev.B)) return;
+      if (!SND || !ev || !soundContactAudible(ev)) return;
       const k = Math.abs(Number(ev.slideSpeed) || 0) * Math.max(1, Math.sqrt(Math.abs(Number(ev.bounceForce) || 0)));
       if (k > SoundScene.grind) {
         SoundScene.grind = k;
@@ -19190,17 +19242,18 @@
         SoundScene.grindY = ev.y;
       }
     }
-    /** Węzeł kadłuba stracony poza bronią (zgniot przy zderzeniu). */
+    /** Węzeł kadłuba stracony poza bronią (zgniot przy zderzeniu): kadłub gracza zawsze, inny — w zasięgu słyszalności. */
     function soundSceneNodeLost(entity, x, y) {
-      if (!SND || !SoundScene.active || !soundSceneActiveFor(entity?.owner || entity)) return;
+      if (!SND) return;
+      if ((entity?.owner || entity) !== ship && !soundHere(x, y)) return;
       SND.zdarzenie('zgniotKadluba', x, y);
     }
     function soundSceneUi(name) {
-      if (SND && SoundScene.active) SND.zdarzenie(name, NaN, NaN);
+      if (SND) SND.zdarzenie(name, NaN, NaN);
     }
     /** Silniki SIDE gracza: ciąg burt co krok fizyki → ciągły dźwięk silnika (warstwa sama gasi po zaniku ciągu). */
     function soundSceneRcs(left, right) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND) return;
       // Silniki SIDE to silniki rakietowe o pracy ciągłej (decyzja użytkownika 2026-11-11: „sam syk nic nie robi”) —
       // ciągły dźwięk z syntezy sterowany ciągiem mocniejszej burty, nie pojedynczy syk przy zapłonie.
       SND.silnikSide(ship.destroyed ? 0 : Math.max(left, right));
@@ -19236,10 +19289,10 @@
       }
     }
 
-    /** Klatka sceny (loop, raz na klatkę): silnik, tarcie, alarm, stany tarcz, namiar, pomiar szyny. */
+    /** Klatka warstwy (loop, raz na klatkę; zwykła gra i scena): silnik, tarcie, alarm, stany tarcz, namiar, pomiar szyny. */
     function soundSceneFrame() {
       const S = SoundScene;
-      if (!S.active || !SND) return;
+      if (!SND) return;
       // silnik MAIN z ciągu (jak dawny dźwięk silnika: input.main + dopalacz)
       const boosting = (typeof boost !== 'undefined' && boost.state === 'active') || driveState.shiftBoostTimer > 0;
       SND.silnikMain(ship.destroyed ? 0 : input.main, boosting);
@@ -19257,14 +19310,14 @@
         if (st === 'breaking') SND.zdarzenie('tarczaZapadnieta', ship.pos.x, ship.pos.y);
         S.lastShield = st;
       }
-      // tarcze piratów: zapadnięcie
-      for (const p of S.pirates) {
-        const n = p.npc;
-        if (!n || n.dead) continue;
-        const s = n.shield?.state || null;
-        if (s !== p.lastShield) {
-          if (s === 'breaking') SND.zdarzenie('tarczaZapadnieta', n.x, n.y);
-          p.lastShield = s;
+      // tarcze okrętów NPC (piraci sceny też): zapadnięcie w zasięgu słyszalności — stan z poprzedniej klatki na encji
+      for (let i = 0; i < npcs.length; i++) {
+        const n = npcs[i];
+        if (!n || n.dead || !n.shield) continue;
+        const s = n.shield.state || null;
+        if (s !== n.__sndShield) {
+          if (s === 'breaking' && n.__sndShield !== undefined && soundHere(n.x, n.y)) SND.zdarzenie('tarczaZapadnieta', n.x, n.y);
+          n.__sndShield = s;
         }
       }
       // namiar / malowanie: nowy cel priorytetowy
@@ -37285,19 +37338,24 @@
       // --- AUDIO START ---
       AudioSys.init();
       startHallSound();
+      // Warstwa dźwięku gry (blok „SCENA DŹWIĘKI”, reguła `dzwiek`): z nią stary AudioSys nie wczytuje efektów — jego
+      // strzały, tarcza, wybuch i pętla silnika z WAV nie grają podwójnie (bez bufora wychodzą od razu). `?dzwiek=stary` —
+      // warstwa nie powstaje, gra brzmi jak dawniej.
+      startSoundLayer();
+      const oldSfx = !SND;
       await Promise.all([
-        AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav'),
-        AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav'),
-        AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav'),
+        oldSfx ? AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav') : null,
+        oldSfx ? AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav') : null,
+        oldSfx ? AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav') : null,
+        oldSfx ? AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav') : null,
+        oldSfx ? AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav') : null,
         // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
         // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
         RW_WORKER ? null : prepareShipModels3D()
       ]);
 
       if (typeof ship !== 'undefined') {
-        ship.engineSound = AudioSys.createEngineLoop('engine');
+        ship.engineSound = oldSfx ? AudioSys.createEngineLoop('engine') : null;
       }
       // --- AUDIO END ---
 
