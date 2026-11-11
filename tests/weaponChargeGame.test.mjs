@@ -63,6 +63,7 @@ function p1Game(f) {
     writeCarrier, _chargeCarrier: createCarrier(),
     warp: { busy: false, isBusy() { return this.busy; } },
     pushZoneMessage: (text) => messages.push(text),
+    SND: null, // warstwa dźwięku (haki ładowania i odmowy) — w piaskownicy wyłączona
     isTargetAlive: (t) => !!t && !t.dead,
     clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     window: { fireWeaponCore: (ship, target, id) => { shots.push({ id, t: scope.t }); return MASTER_WEAPONS[id].cooldown; } },

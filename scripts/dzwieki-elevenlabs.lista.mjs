@@ -9,6 +9,7 @@
 // Z syntezy (dema/dzwieki) zostają dwa dźwięki ocenione dobrze: silnik MAIN i seria Vulcan / CIWS —
 // dlatego nie ma ich na liście. Scena „Bitwa” to składanka innych dźwięków, też jej tu nie ma.
 
+import { DZWIEKI_BRONI } from './dzwieki-elevenlabs.lista-bronie.mjs';
 import { DZWIEKI_SWIATA } from './dzwieki-elevenlabs.lista-swiat.mjs';
 
 export const STYL = 'Modern cinematic game sound design, high fidelity, no music, no voices.';
@@ -379,5 +380,6 @@ export const DZWIEKI = [
     opis: 'Stanowisko gracza: obsługa podpięta, przepływ otwarty.',
     teksty: ['Vessel secured. Clamps engaged. Fuel flow open.'],
   },
+  ...DZWIEKI_BRONI, // uzbrojenie: scripts/dzwieki-elevenlabs.lista-bronie.mjs
   ...DZWIEKI_SWIATA, // obszary gry: warp, przyloty, rdzeń reaktora… (scripts/dzwieki-elevenlabs.lista-swiat.mjs)
 ];

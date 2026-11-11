@@ -9,7 +9,11 @@
 // wybuchy), odnowienie celów. Na końcu: dźwięki, które nie zagrały ani razu (z listą zdarzeń) i błędy konsoli.
 //
 //   node scripts/webgpu/dzwieki-gra.mjs [--baza http://localhost:5199] [--out .tmp/dzwieki/gra] [--query renderWorker=1]
-//        [--rozmiar 1600x900] [--tryb scena|zwykla|stary|wojna] [--czas 25]
+//        [--rozmiar 1600x900] [--tryb scena|bronie|zwykla|stary|wojna] [--czas 25] [--zestawy id,id]
+// `--tryb bronie` — scena z kolejnymi zestawami broni Atlasa (`DevScene.dzwiekiZestaw`, panel „Broń Atlasa”): na zestaw
+// namiar na pancernik piratów, LPM grupami 1 / 2 / 3, flak — piraci strzelają (rakiety → flak), torpedy (8), superbronie
+// (Mjolnir z postoju, Hexlance 4 dwa razy, odmowa: Mjolnir w ruchu); na końcu dźwięki uzbrojenia,
+// które nie zagrały (`--zestawy` — tylko wybrane).
 // `--tryb zwykla` — zwykła gra BEZ sceny (warstwa dźwięku gra od 2026-11-11): warstwa powstaje, liczniki rosną przy locie
 //   (silnik MAIN), strzale i trafieniu (pancernik bez mózgu przed Atlasem), stary AudioSys nie ma efektów, zapis gry otwarty,
 //   głośność główna po migracji; `--tryb stary` — `?dzwiek=stary`: warstwa nie powstaje, stary AudioSys ma swoje dźwięki;
@@ -18,6 +22,7 @@
 // `--baza` — serwer z .claude/launch.json (domyślnie „Vite Dev Server” na 5199); bez serwera: `--baza vite` (własny Vite).
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { tabelaDzwiekowBroni } from '../../src/audio/dzwiekiBroni.js';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 
 const args = parseArgs();
@@ -69,13 +74,96 @@ async function etap(nazwa, fn) {
 }
 
 const TRYB = args.tryb || 'scena';
-const ZWYKLA = TRYB !== 'scena';
+const ZWYKLA = TRYB !== 'scena' && TRYB !== 'bronie';
+
+/** Tryb `bronie`: etap na zestaw broni Atlasa; na końcu dźwięki uzbrojenia bez odtworzenia. */
+async function etapyBroni() {
+  const zestawy = args.zestawy ? String(args.zestawy).split(',') : ['scena', 'dzialka', 'plazma', 'szynowe', 'wiazki', 'flak', 'rakiety', 'superbronie'];
+  const celPanc = `(() => { const b = window.SoundScene.pirates.find((q) => q.key === 'pirate_battleship' && !q.npc.dead) || window.SoundScene.pirates.find((q) => !q.npc.dead && !q.near); return b ? window.DevScene.pointerAt(b.npc.x, b.npc.y) : null; })()`;
+  const stop = '(() => { const s = window.ship; s.vel.x = 0; s.vel.y = 0; s.angVel = 0; return true; })()';
+  const lpm = async (p, kroki) => {
+    await mouse('mouseMoved', p.x, p.y);
+    await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
+    for (let k = kroki; k > 0; k -= 60) { await ev(stop); await step(Math.min(60, k)); }
+    await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
+  };
+  report.zestawy = {};
+  for (const id of zestawy) {
+    const wpis = await etap(`zestaw ${id}`, async () => {
+      await ev('window.DevScene.dzwiekiOdnow()');
+      const ok = await ev(`window.DevScene.dzwiekiZestaw(${JSON.stringify(id)})`);
+      report.zestawy[id] = { ok, bron: (await ev('window.DevScene.dzwiekiState()')).bronId };
+      await step(30);
+      let p = await ev(celPanc);
+      if (!p) return;
+      await mouse('mouseMoved', p.x, p.y);
+      await step(4);
+      await tap('t');
+      if (id === 'superbronie') {
+        // odmowa: Mjolnir w ruchu (LPM grupy 2 przy prędkości) — przed strzałem z postoju (broń gotowa)
+        await tap('2');
+        p = await ev(celPanc);
+        await mouse('mouseMoved', p.x, p.y);
+        await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
+        for (let i = 0; i < 6; i++) { await ev('(() => { const s = window.ship; s.vel.x = 240; s.vel.y = 0; return true; })()'); await step(10); }
+        await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
+        await ev(stop);
+        await step(30);
+      }
+      for (const g of ['1', '2']) {
+        await tap(g);
+        p = await ev(celPanc);
+        await lpm(p, id === 'superbronie' ? 300 : 240);
+      }
+      await tap('3');
+      p = await ev(celPanc);
+      await lpm(p, 30);
+      for (let i = 0; i < 3; i++) await step(60);
+      if (id === 'flak') {
+        // torpedy — tryb 8 + LPM (po flaku)
+        // flak piratów (niszczyciele) strzela do rakiet Atlasa (grupa 3), flak Atlasa — do rakiet piratów
+        await ev('window.DevScene.dzwiekiPiraciStrzelaja(true)');
+        for (let r = 0; r < 2; r++) {
+          await tap('3');
+          p = await ev(celPanc);
+          await lpm(p, 30);
+          for (let i = 0; i < 9; i++) await step(60);
+        }
+        await ev('window.DevScene.dzwiekiPiraciStrzelaja(false)');
+        await tap('8');
+        p = await ev(celPanc);
+        await lpm(p, 60);
+        for (let i = 0; i < 2; i++) await step(60);
+        await tap('8');
+      }
+      if (id === 'superbronie') {
+        // Hexlance: 4 — ładowanie 1,2 s, okno, 4 — strzał
+        await ev(stop);
+        await tap('4');
+        for (let i = 0; i < 2; i++) await step(60);
+        await tap('4');
+        for (let i = 0; i < 2; i++) await step(60);
+      }
+      await step(60);
+    });
+    report.zestawy[id].zagraly = wpis.zagraly;
+    report.zestawy[id].zdarzenia = wpis.zdarzenia;
+  }
+  const st = (await ev('window.DevScene.dzwiekiState()')).dzwieki;
+  const nowe = Object.keys(tabelaDzwiekowBroni({ wystrzal: 0, specjalna: 3 }));
+  report.bronieBrak = nowe.filter((k) => !(st.dzwieki[k]?.zagral > 0));
+  report.odrzucone = Object.fromEntries(Object.entries(st.dzwieki).filter(([, v]) => v.odrzuconeLimit || v.odrzuconeOdstep).map(([k, v]) => [k, { limit: v.odrzuconeLimit || 0, odstep: v.odrzuconeOdstep || 0 }]));
+  report.szczyt = { przedDb: st.szczytPrzedDb, poDb: st.szczytPoDb, przester: st.przester, glosyMax: st.glosyMax };
+  report.ostrzezeniaDzwiekow = st.ostrzezenia;
+  console.log(`dźwięki uzbrojenia: zagrało ${nowe.length - report.bronieBrak.length} / ${nowe.length}; nie zagrały: ${report.bronieBrak.join(', ') || '—'}`);
+  console.log(`odmowy: ${st.zdarzenia.odmowa || 0}; szczyt po limiterze ${st.szczytPoDb} dB, przester ${st.przester}, głosy max ${st.glosyMax}`);
+}
 const CZAS = Number(args.czas || 25);
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { try {
     localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0');
   } catch {} })();\nwindow.__HARNESS_SEED__ = ${0x5eed4243};\n${INJECT}` });
-  const dopisek = { scena: '&scena=dzwieki', zwykla: '', stary: '&dzwiek=stary', wojna: '&wojna' }[TRYB] ?? '';
+  const dopisek = { scena: '&scena=dzwieki', bronie: '&scena=dzwieki', zwykla: '', stary: '&dzwiek=stary', wojna: '&wojna' }[TRYB] ?? '';
   const url = `${base}/index.html?dev=1${dopisek}${args.query ? `&${args.query}` : ''}`;
   report.url = url;
   await cdp.send('Page.navigate', { url });
@@ -143,6 +231,11 @@ try {
       stos: String(new Error().stack).split(String.fromCharCode(10)).slice(2, 9).map((l) => l.trim().split(' ')[1] || l.trim()).join(' < ') }); v = x; } }); } return true; })()`;
   await ev(PULAPKA);
   await screenshotPng(cdp, join(out, '01-start.png'));
+
+  if (TRYB === 'bronie') {
+    await etapyBroni();
+    throw Object.assign(new Error('koniec trybu bronie'), { koniec: true });
+  }
 
   // Odsłuch z panelu (▶): kliknięcia w przycisk wiersza — każde gra osobno, poza limitem głosów sceny
   // (tarczaWl ma limit 1 głosu i odstęp 200 ms, a trzy szybkie kliknięcia mają dać trzy odtworzenia).
