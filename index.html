@@ -2179,8 +2179,8 @@
 
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
-      // Demo (decyzja użytkownika 2026-10-05): dźwięk domyślnie wyłączony — master 0, suwak w Opcjach go włącza.
-      // Głośność główna: domyślnie GLOSNOSC_GLOWNA_DOMYSLNA (dawniej 0 — gra startowała niema; migracja zapisu niżej).
+      // Głośność główna: domyślnie GLOSNOSC_GLOWNA_DOMYSLNA = 0,7 — decyzja użytkownika 2026-11-11 („domyślna głośność
+      // 70%”), zastępuje decyzję z 2026-10-05 o dźwięku domyślnie wyłączonym; migracja zapisanego zera niżej.
       audio: { master: GLOSNOSC_GLOWNA_DOMYSLNA, sfx: 1.0, music: 0.7 },
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
       // Kamera za kursorem: 'auto' (tylko w walce) | 'always' | 'never' — src/game/cameraRig.js.
