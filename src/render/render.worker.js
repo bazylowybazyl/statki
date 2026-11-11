@@ -672,10 +672,11 @@ if (isWorker) {
       const e = s >= 0 ? rm.entities[s] : null;
       if (!e || e.gen !== i32[bi + TI.ENT_GEN]) continue;
       let r = pool[i];
-      if (!r) { r = pool[i] = { entity: null, key: undefined, uid: undefined, weaponId: undefined, fxKey: undefined, wx: 0, wy: 0, ang: 0, scale: 1, recoil: 0, shake: 0, spec: { r: 0 }, state: { housing: 0, barrel: 0, flash: 0 } }; }
+      if (!r) { r = pool[i] = { entity: null, key: undefined, uid: undefined, weaponId: undefined, fxKey: undefined, wx: 0, wy: 0, ang: 0, scale: 1, recoil: 0, shake: 0, spec: { r: 0 }, state: { housing: 0, barrel: 0, flash: 0 }, ready: 0 }; }
       r.entity = e;
       r.key = dict.value(i32[bi + TI.KEY]); r.uid = dict.value(i32[bi + TI.UID]);
       r.weaponId = dict.value(i32[bi + TI.WEAPON]); r.fxKey = dict.value(i32[bi + TI.FX_KEY]);
+      r.ready = i32[bi + TI.READY]; // lampka gotowości (src/data/turretReadyLamp.js)
       r.wx = f64[b + TF.WX]; r.wy = f64[b + TF.WY]; r.ang = f64[b + TF.ANG]; r.scale = f64[b + TF.SCALE];
       r.recoil = f64[b + TF.RECOIL]; r.shake = f64[b + TF.SHAKE]; r.spec.r = f64[b + TF.R];
       r.state.housing = f64[b + TF.HOUSING]; r.state.barrel = f64[b + TF.BARREL]; r.state.flash = f64[b + TF.FLASH];
@@ -980,7 +981,8 @@ if (isWorker) {
         const poseOf = st.playerPoseOf;
         st.bridgeOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, cull: c, camera: cam,
           visibility: (e) => (models.shipModel3DIdFor(e) ? 0 : cloakLook.cloakLightGain(e)) };
-        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, visibility: cloakLook.cloakLightGain };
+        // `cull` — pudło kadru dla łuków przy ranach zasilanych okrętów (powerArcsFx3D.js, wołane z BridgeFx3D.update)
+        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, visibility: cloakLook.cloakLightGain, cull: c };
       }
       const bo = st.bridgeOpts, fo = st.bridgeFxOpts;
       bo.nowSec = fo.nowSec = nowSec; bo.dt = fo.dt = dt; bo.zoom = fo.zoom = cam.zoom;

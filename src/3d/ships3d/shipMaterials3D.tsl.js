@@ -67,7 +67,8 @@ const hash12 = Fn(([p]) => {
  * materialClass — podklasa MeshStandardNodeMaterial (partie wież: turretBatch3D.js).
  * Partie z farbą per instancja (dysze SIDE: thrusterBatch3D.js): palettes — lista nadpisań palety (jak `palette`),
  * paletteIndex — węzeł TSL z numerem palety (płaski varying z rekordu instancji); engineNode — węzeł mnożnika
- * wnętrz dysz (zamiast uniformu `engine`), emissiveAdd — węzeł vec3 dodany do emisji. Bez nich graf jak dawniej.
+ * wnętrz dysz (zamiast uniformu `engine`), emissiveAdd — węzeł vec3 dodany do emisji, emissiveScaleNode — węzeł float
+ * mnożący światła palety (partie wież: akcenty wyłączonego okrętu). Bez nich graf jak dawniej.
  * @returns {THREE.MeshStandardNodeMaterial} z `userData.uniforms` (engine, seams, bump, emissive)
  */
 export function createShipMaterial(o = {}) {
@@ -126,7 +127,9 @@ export function createShipMaterial(o = {}) {
 
   // --- emisja ---
   const isEngine = step(float(M.E_ENGINE - 0.5), aMat).mul(step(aMat, float(M.E_ENGINE + 0.5)));
-  const power = P.z.mul(mix(float(1), o.engineNode ?? u.engine, isEngine)).mul(u.emissive);
+  // o.emissiveScaleNode — mnożnik świateł palety per instancja (partie wież: wyłączony okręt gasi akcenty); krawędź bez zmian.
+  const power0 = P.z.mul(mix(float(1), o.engineNode ?? u.engine, isEngine)).mul(u.emissive);
+  const power = o.emissiveScaleNode ? power0.mul(o.emissiveScaleNode) : power0;
   // Krawędź sylwetki: (1 − |n·v|)⁴ w chłodnym odcieniu — okręt nie znika w cieniu na czarnym tle.
   const rim = pow(float(1).sub(abs(dot(normalView, positionViewDirection))).max(0.0), 4.0);
   const emission = emis.element(pid).mul(power).add(vec3(0.030, 0.042, 0.062).mul(rim).mul(u.rim));
