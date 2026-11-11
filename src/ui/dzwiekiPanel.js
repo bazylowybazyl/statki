@@ -43,7 +43,8 @@ const KATEGORIE_NAZWY = {
 
 /**
  * @param {{ dzwieki: object, akcje: { tarcza(b), niezniszczalne(b), piraciStrzelaja(b), odnow() },
- *           stan: () => ({ tarcza: boolean, niezniszczalne: boolean, piraciStrzelaja: boolean, zapisZablokowany: boolean }) }} opts
+ *           stan: () => ({ tarcza: boolean, niezniszczalne: boolean, piraciStrzelaja: boolean, zapisZablokowany: boolean,
+ *                          glosnoscZastepcza: boolean }) }} opts
  */
 export function utworzPanelDzwiekow({ dzwieki, akcje, stan }) {
   const doc = document;
@@ -89,6 +90,7 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan }) {
     el('span', { text: 'Po zniszczeniu' }), bOdnow
   ]);
   const uwaga = el('div', { class: 'dp-uwaga', text: 'Zapis gry wyłączony do przeładowania strony (scena nie zmienia Twojego zapisu).' });
+  const uwagaGlosnosc = el('div', { class: 'dp-uwaga', text: 'Głośność główna w opcjach = 0 — scena gra z głośnością 70%.' });
 
   const lista = el('div', { class: 'dp-lista' });
   const wiersze = [];
@@ -136,7 +138,7 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan }) {
   const stopka = el('div', { class: 'dp-stopka' }, [bKopiuj, stanKopii]);
 
   root.appendChild(glowa);
-  root.appendChild(el('div', { class: 'dp-cialo' }, [sekcja, uwaga, lista, stopka]));
+  root.appendChild(el('div', { class: 'dp-cialo' }, [sekcja, uwaga, uwagaGlosnosc, lista, stopka]));
   doc.body.appendChild(root);
 
   function przelacznik(b, wl, tWl, tWyl) {
@@ -151,6 +153,7 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan }) {
     przelacznik(bCele, s.niezniszczalne, 'niezniszczalne', 'zniszczalne');
     przelacznik(bOgien, s.piraciStrzelaja, 'strzelają', 'nie strzelają');
     uwaga.style.display = s.zapisZablokowany ? '' : 'none';
+    uwagaGlosnosc.style.display = s.glosnoscZastepcza ? '' : 'none';
     const st = dzwieki.statystyki().dzwieki;
     const rows = dzwieki.lista();
     for (const w of wiersze) {

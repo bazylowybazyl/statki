@@ -2675,6 +2675,8 @@
       }
     }
     function applyAudioOptions() {
+      // Scena dźwięków: stary AudioSys zostaje wyciszony, głośność opcji idzie do warstwy sceny.
+      if (SND && SoundScene.active) { SND.ustawGlosnosc(soundSceneVolume()); return; }
       if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
     }
     try {
@@ -18571,7 +18573,9 @@
       /** Tarcie: głośność pętli z prędkości poślizgu × docisku (pełna od `grindFull`). */
       grindFull: 9000,
       /** Promień sprzątania wraków przy odnowieniu celów [j.] i odsłonięcia mgły. */
-      area: 14000
+      area: 14000,
+      /** Głośność główna sceny, gdy w opcjach gry jest 0 (domyślnie). */
+      masterFallback: 0.7
     };
     let SND = null;
     const SoundScene = {
@@ -18582,6 +18586,16 @@
     };
     window.SoundScene = SoundScene;
 
+    /**
+     * Głośność sceny: główna × efekty z opcji; główna 0 (domyślna wartość opcji gry — gra startuje wyciszona) daje
+     * `SOUND_SCENE.masterFallback`, żeby scena nie była niema (panel to pokazuje).
+     */
+    function soundSceneVolume() {
+      const master = Number(OPTIONS?.audio?.master) || 0;
+      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
+      SoundScene.masterFallback = !(master > 0);
+      return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
+    }
     function soundSceneActiveFor(e) {
       return !!(e && (e === ship || e.__soundScene));
     }
@@ -18609,11 +18623,7 @@
       AudioSys.init();
       const ctx = AudioSys.ctx;
       if (!SND) {
-        SND = utworzDzwiekiGry({
-          ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera,
-          glosnosc: (Number(OPTIONS?.audio?.master) || 0.5) * (Number(OPTIONS?.audio?.sfx ?? 1) || 0),
-          baza: './sounds/ai/'
-        });
+        SND = utworzDzwiekiGry({ ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: soundSceneVolume(), baza: './sounds/ai/' });
         window.__dzwieki = SND;
         WeaponShotBus.on(soundSceneShot);
         await SND.wczytaj();
@@ -18636,7 +18646,7 @@
             piraciStrzelaja: (on) => { SoundScene.pirFire = !!on; },
             odnow: () => soundSceneRenew()
           },
-          stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED })
+          stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED, glosnoscZastepcza: !!SoundScene.masterFallback })
         });
       }
       return { start: true, pirates: SoundScene.pirates.length, spot: SoundScene.spot };

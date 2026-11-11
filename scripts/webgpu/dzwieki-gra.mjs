@@ -9,7 +9,9 @@
 // wybuchy), odnowienie celów. Na końcu: dźwięki, które nie zagrały ani razu (z listą zdarzeń) i błędy konsoli.
 //
 //   node scripts/webgpu/dzwieki-gra.mjs [--baza http://localhost:5199] [--out .tmp/dzwieki/gra] [--query renderWorker=1]
-//        [--rozmiar 1600x900]
+//        [--rozmiar 1600x900] [--tryb scena|zwykla]
+// `--tryb zwykla` — zwykła gra BEZ sceny: warstwa dźwięku nie powstaje, zapis gry otwarty, stary AudioSys ma swoje
+// dźwięki i głośność, 10 s gry bez błędów konsoli.
 // `--baza` — serwer z .claude/launch.json (domyślnie „Vite Dev Server” na 5199); bez serwera: `--baza vite` (własny Vite).
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -63,11 +65,12 @@ async function etap(nazwa, fn) {
   return wpis;
 }
 
+const ZWYKLA = (args.tryb || 'scena') === 'zwykla';
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { try {
     localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0');
   } catch {} })();\nwindow.__HARNESS_SEED__ = ${0x5eed4243};\n${INJECT}` });
-  const url = `${base}/index.html?dev=1&scena=dzwieki${args.query ? `&${args.query}` : ''}`;
+  const url = `${base}/index.html?dev=1${ZWYKLA ? '' : '&scena=dzwieki'}${args.query ? `&${args.query}` : ''}`;
   report.url = url;
   await cdp.send('Page.navigate', { url });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.DevScene)', 240000, 400)) throw new Error('gra nie wstała');
@@ -75,6 +78,15 @@ try {
   await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready) || !!window.RenderWorkerHost', 240000, 500);
   await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && (window.__frameId || 0) > 30", 300000, 400)) throw new Error('gra nie ruszyła');
+  if (ZWYKLA) {
+    await ev('window.__harness.hold(true)');
+    for (let i = 0; i < 10; i++) await step(60);
+    report.zwykla = await ev(`({ warstwa: window.__dzwieki === undefined, scena: !!window.SoundScene?.active, panel: !!document.getElementById('dzwieki-panel'),
+      zapisZamkniety: window.__SAVE_LOCKED === true, audioSys: Object.keys(window.AudioSys?.sounds || {}), glosnoscAudioSys: window.AudioSys?.masterGain?.gain?.value,
+      kontekst: window.AudioSys?.ctx?.state })`);
+    console.log('zwykła gra:', JSON.stringify(report.zwykla));
+    throw Object.assign(new Error('koniec trybu zwykla'), { koniec: true });
+  }
   if (!await waitFor(cdp, '!!(window.SoundScene && window.SoundScene.active && window.__dzwieki && window.__dzwieki.wczytane)', 60000, 250)) throw new Error('scena dźwięków nie ruszyła');
   await ev('window.__harness.hold(true)');
   await step(30);
@@ -233,12 +245,14 @@ try {
   console.log(`zagrały: ${Object.entries(st.dzwieki).filter(([, v]) => v.zagral > 0).length} / ${Object.keys(st.dzwieki).length}; nie zagrały: ${report.brak.join(', ') || '—'}`);
   console.log(`szczyt przed limiterem ${st.szczytPrzedDb} dB, po ${st.szczytPoDb} dB, przester ${st.przester}, głosy max ${st.glosyMax}`);
 } catch (err) {
-  report.wyjatek = String(err?.stack || err);
-  console.error(err);
+  if (!err?.koniec) {
+    report.wyjatek = String(err?.stack || err);
+    console.error(err);
+  }
 } finally {
   report.bledy = logs.errors();
   report.dziennikDzwiekow = logs.all().filter((l) => /Dźwięki/.test(l));
-  writeJson(join(out, 'wyniki.json'), report);
+  writeJson(join(out, ZWYKLA ? 'wyniki-zwykla.json' : 'wyniki.json'), report);
   console.log(`błędy konsoli: ${report.bledy.length}${report.bledy.length ? '\n  ' + report.bledy.slice(0, 12).join('\n  ') : ''}`);
   console.log(`wyniki: ${join(out, 'wyniki.json')}`);
   await chrome.close?.();
