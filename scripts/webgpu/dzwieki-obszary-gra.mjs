@@ -128,6 +128,53 @@ try {
     await ev('window.ShipAlarmDev.set(4, 2)'); await step(150);
     return { ShipAlarmDev: true };
   });
+  // --- etapy 3–5 w zwykłej grze
+  await etap('myśliwce (Z — start eskadr, 8 s lotu)', async () => {
+    await tap('z');
+    for (let i = 0; i < 8; i++) await step(60);
+    const ile = await ev('(window.npcs || []).filter((n) => n && !n.dead && n.playerOwned && (n.fighter || n.type === "fighter" || n.type === "interceptor")).length');
+    return { mysliwce: ile };
+  });
+  await etap('myśliwce (Z, Z — atak, powrót do hangarów, 25 s)', async () => {
+    // Z kolejno: start (eskorta) → atak → powrót (lądowanie: window.landFighter)
+    await tap('z'); await step(10);
+    await tap('z');
+    for (let i = 0; i < 25; i++) await step(60);
+    return { wPowietrzu: await ev('(window.npcs || []).filter((n) => n && !n.dead && n.playerOwned && (n.fighter || n.type === "fighter" || n.type === "interceptor")).length') };
+  });
+  await etap('skan X i mapa CIC (M, M)', async () => {
+    await tap('x'); await step(150);
+    await tap('m'); await step(30);
+    await tap('m'); await step(30);
+  });
+  await etap('menu pauzy (Esc, strzałki, Esc)', async () => {
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await sleep(300);
+    const widoczne = await ev(`!!document.querySelector('#main-menu') && getComputedStyle(document.querySelector('#main-menu')).display !== 'none'`);
+    for (const k of ['ArrowDown', 'ArrowDown']) {
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: k, windowsVirtualKeyCode: 40 });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: k, windowsVirtualKeyCode: 40 });
+      await sleep(100);
+    }
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await sleep(300);
+    await step(10);
+    return { menuWidoczne: widoczne };
+  });
+  await etap('panel stacji (otwarcie, zamknięcie)', async () => {
+    const ok = await ev(`(() => { const st = (window.stations || [])[0]; if (!st) return false; window.openStationUI(st); return !!window.stationUI?.open; })()`);
+    await step(10);
+    await ev('window.closeStationUI()');
+    await step(10);
+    return { otwarty: ok };
+  });
+  await etap('holownik serwisowy (wezwanie, 40 s)', async () => {
+    const r = await ev('JSON.stringify(window.callServiceTug({ target: window.ship }) || null)');
+    for (let i = 0; i < 40; i++) await step(60);
+    return { wezwanie: r };
+  });
   // --- scena dźwięków (piraci, panel)
   await ev('window.DevScene.dzwieki()');
   if (!await waitFor(cdp, '!!(window.SoundScene && window.SoundScene.active && document.getElementById("dzwieki-panel"))', 60000, 250)) throw new Error('scena dźwięków nie ruszyła');
@@ -142,6 +189,29 @@ try {
   await etap('stopienie rdzenia pirata (panel)', async () => {
     const ok = await ev(KLIK_PANELU('stopienie'));
     for (let i = 0; i < 6; i++) await step(60);
+    return { przycisk: ok };
+  });
+  await etap('drony naprawcze (tarcza wył., ogień piratów 6 s, panel R, 12 s, R)', async () => {
+    // drony ruszają tylko do ran — kadłub Atlasa najpierw obrywa (scena trzyma go przy życiu)
+    await ev('window.DevScene.dzwiekiTarcza(false)');
+    await ev('window.DevScene.dzwiekiPiraciStrzelaja(true)');
+    for (let i = 0; i < 6; i++) await step(60);
+    await ev('window.DevScene.dzwiekiPiraciStrzelaja(false)');
+    await ev('window.DevScene.dzwiekiTarcza(true)');
+    const ok = await ev(KLIK_PANELU('R'));
+    for (let i = 0; i < 12; i++) await step(60);
+    await ev(KLIK_PANELU('R'));
+    for (let i = 0; i < 6; i++) await step(60);
+    return { przycisk: ok };
+  });
+  await etap('kapsuły ratunkowe (panel, 5 s)', async () => {
+    const ok = await ev(KLIK_PANELU('wyrzut'));
+    for (let i = 0; i < 5; i++) await step(60);
+    return { przycisk: ok };
+  });
+  await etap('skan X (panel)', async () => {
+    const ok = await ev(KLIK_PANELU('fala'));
+    for (let i = 0; i < 3; i++) await step(60);
     return { przycisk: ok };
   });
   await etap('odsłuch ▶ dźwięków obszarów (panel)', async () => {

@@ -320,3 +320,26 @@ Konsola: dwa błędy 404 favicon (serwer Vite harnessu), ostrzeżeń warstwy bra
 manekina `spawnCallInShip(…, 'dummy')` — bez osi warpa (okręt pojawia się od razu); teraz `callInSupport` z punktem
 (zwiastun → rozdarcie → wyrzut). Ostrzeżenie rakietowe z bufora zagrożeń w 12 s ognia piratów nie zagrało — piraci
 sceny w tym czasie nie odpalili rakiet; sprawdzone alarmem MISSILE z `ShipAlarmDev`.
+
+## Haki etapów 3–5 — harness w grze
+
+Ten sam harness, przebieg 2026-11-11 po wpięciu etapów 3–5 (dźwięki obszarów; w scenie grają też strzały i trafienia):
+
+| Etap | Dźwięki obszarów, które zagrały |
+|---|---|
+| myśliwce: Z (start, 8 s) | `mysliwiecWyrzut` ×6, `mysliwiecPrzelot` ×9 (54 maszyny; reżyser przepuścił 13 przelotów, limit głosów 9) |
+| myśliwce: Z, Z (atak, powrót, 25 s) | `mysliwiecLadowanie` ×6 (limit głosów; w powietrzu 54 → 0), `mysliwiecPrzelot` ×3 |
+| skan X, mapa CIC (M, M) | `skanPing`, `panelOtwarcie`, `panelZamkniecie` ×1 (bez kontaktów w zasięgu — `kontaktBlip` w scenie) |
+| menu pauzy (Esc, ↓, ↓, Esc) | `menuFokus` ×2 |
+| panel stacji | `panelOtwarcie`, `panelZamkniecie` ×1; po zamknięciu wraca pętla `mostek` |
+| wezwanie holownika (40 s) | `warpZwiastun`, `przylotWyrzut` (przylot tunelem); zaczepy — obsługa trwa dłużej niż etap |
+| drony naprawcze (scena: ostrzał bez tarczy, R, R) | `dronWylot`, `dronSpaw`, `dronDok`; łata gotowa (`dronLata`) nie przyszła w 12 s |
+| kapsuły ratunkowe (scena, z okrętu z „przylotu”) | `kapsulaWyrzut`, `kapsulaSilnik` ×1 |
+| skan X (scena) | `skanPing` ×1, `kontaktBlip` ×3 |
+
+Bez wywołania w harnessie (sprawdza test reżysera i odsłuch ▶): bomby (bombowce), kopalnia (pas asteroid), łup
+(paczki statków ruchu i gniazdo ZBIÓRKA), zaczepy holownika, terminal i handel, zmiana widoku menu, działko myśliwca
+(ścieżka strzałów — sesja broni). Konsola: dwa błędy 404 favicon. Pierwszy przebieg z 54 myśliwcami dał 94 zgłoszenia
+przelotu w 8 s (zagrało 6 — limit głosów) — dołożony globalny odstęp przelotów 0,6 s (`przelotGlobalny`) i odstęp na
+myśliwca 3 s. Przy wezwaniu holownika w etapie grały `uderzenieKadluba`, `zgniot` i `taran` — holownik dobija do
+Atlasa z prędkością powyżej progu taranu sceny (haki kontaktów kadłubów, nie dźwięki obszarów; do oceny w grze).

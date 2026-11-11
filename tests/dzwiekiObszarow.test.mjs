@@ -24,7 +24,7 @@ test('tabela obszarów: w tabeli warstwy, pliki i warianty w manifeście, katego
   }
   for (const [zd, id] of Object.entries(ZDARZENIA_SWIATA)) {
     assert.equal(ZDARZENIA[zd], id, `zdarzenie ${zd} poza ZDARZENIA`);
-    assert.ok(DZWIEKI_SWIATA[id], `zdarzenie ${zd} → ${id} spoza tabeli obszarów`);
+    assert.ok(DZWIEKI[id], `zdarzenie ${zd} → ${id} spoza tabeli warstwy`);
   }
 });
 
