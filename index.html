@@ -941,7 +941,7 @@
       npcCollidesWithWorld,
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
-    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange } from "./src/ai/fleetAwareness.js";
+    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange, unitSensorProfile } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
     import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
@@ -1450,6 +1450,7 @@
     import { SensorSystem, getEntitySizeModifier } from "./src/game/sensorSystem.js";
     // Zasięg radarów — prototyp ?radarZasiegi (docs/PLAN-zasieg-czujnikow.md): obraz czujników, fale w świecie, scena.
     import { createSensorPicture, updateSensorPicture, noteSensorPictureFire, noteSensorPicturePing, sensorStateOf } from "./src/game/sensorPicture.js";
+    import { auditSensorUnit, sensorPair } from "./src/game/sensorUnitAudit.js";
     import { DETECTION_TUNE, SENSOR_DRIVE } from "./src/game/sensorDetection.js";
     import { createRadarRangeOverlay, nextRadarLook, RADAR_LOOK_LABELS, setRadarLook } from "./src/ui/radarRangeOverlay.js";
     import { loadFogOption, saveFogOption, formatMassEstimate } from "./src/game/fogOfWar.js";
@@ -12760,7 +12761,11 @@
         return out;
       },
       passiveOf(e) { return resolveAwarenessSensorRange(e); },
-      activeOf(e, passive) { return (e.sensors || e.sensorProfile) ? resolveShipSensors(e).activeRange : passive * 1.2; },
+      activeOf(e, passive) {
+        if (e.sensors || e.sensorProfile) return resolveShipSensors(e).activeRange;
+        const prof = unitSensorProfile(e); // jawny profil jednostki bez `sensors` (src/data/sensorUnits.js)
+        return prof ? Math.max(passive, Number(prof.activeRange) || 0) : passive * 1.2;
+      },
       baseSigOf(e) { return getEntitySizeModifier(e); },
       visionOf(e) { return SensorSystem.visionRangeOf(e); },
       // Osłona przy celu: gęste pole pasa asteroid (pole gry — sampleMacro), obrzeże pola.
@@ -12921,6 +12926,108 @@
       if (sensorPicture) updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true);
       return { x: Math.round(spot.x), y: Math.round(spot.y), escort: escort.length, czata: czata.length, corvus: corvus.length, fleet: fleet.length };
     }
+    // AUDYT ZASIĘGÓW JEDNOSTEK (2026-11-11, docs/AUDYT-zasiegi-jednostek-2026-11-11.md; harness
+    // scripts/webgpu/zasiegi-jednostek-gra.mjs): scena z każdym rodzajem jednostki wezwań (okręty, myśliwce, holownik,
+    // kadłuby ruchu v2) jako piraci uśpieni na pierścieniach odległości wokół Atlasa, i tabela czujników w obie strony.
+    const RADAR_UNIT_RINGS = [4000, 9000, 16000, 30000, 60000];
+    function radarUnitSceneKeys() {
+      const keys = Object.keys(SUPPORT_SHIP_TEMPLATES).concat(['carrier', 'supercapital', 'pirate_supercapital', 'atlas', 'megafreighter', 'service_tug']);
+      for (const k of Object.keys(DEV_HULL_SPAWNS)) keys.push(k);
+      return [...new Set(keys)];
+    }
+    function startRadarUnitScene(opts = {}) {
+      startRadarScene({ ...opts, kadr: 'statek', viewWidth: opts.viewWidth || 46000 });
+      // scena radaru stawia swoje okręty — tu tylko Atlas i nowe jednostki
+      for (const n of RadarRangeScene.ids) if (n && !n.dead) dematerializeSupportUnit(n);
+      RadarRangeScene.ids = [];
+      SensorSystem.clearArea('radarZasiegi-czata');
+      const spot = RadarRangeScene.spot;
+      const keys = radarUnitSceneKeys();
+      const out = [];
+      const before = new Set(npcs);
+      keys.forEach((key, i) => {
+        const d = RADAR_UNIT_RINGS[i % RADAR_UNIT_RINGS.length];
+        const a = (i / keys.length) * Math.PI * 2;
+        let r = null;
+        try {
+          const at = { x: spot.x + Math.cos(a) * d, y: spot.y + Math.sin(a) * d };
+          r = spawnCallInShip(key, { mode: 'pirate', spawnPos: at, spawnAngle: a + Math.PI, exitK: 0 });
+          // lotniskowca i Colossusa piraci nie mają (createCapitalShipEntry → null) — sojusznik, przestawiony na wroga
+          for (const mode of ['dummy', 'friendly']) {
+            if (r && !(Array.isArray(r) && !r.length)) break;
+            r = spawnCallInShip(key, { mode, spawnPos: at, spawnAngle: a + Math.PI, exitK: 0 });
+            for (const n of (Array.isArray(r) ? r : [r])) if (n) { n.friendly = false; n.isPirate = true; n.supportData = null; }
+          }
+        } catch (err) { out.push({ key, blad: String(err?.message || err) }); return; }
+        const list = (Array.isArray(r) ? r : [r]).filter(Boolean);
+        for (const n of list) {
+          // wszystkie jako wróg (megafrachtowiec i holownik powstają przyjaźni — inaczej widzieliby wrogów za gracza)
+          n.friendly = false; n.isPirate = true; n.supportData = null;
+          if (!n.__radarUnitKey) n.__radarUnitKey = key;
+          storySleepNpc(n);
+          RadarRangeScene.ids.push(n);
+        }
+        out.push({ key, n: list.length, d });
+      });
+      // moduły megafrachtowca i myśliwce wypuszczone przy spawnie to osobne byty — też wrogowie i uśpieni
+      for (const n of npcs) {
+        if (!n || n === ship || before.has(n) || RadarRangeScene.ids.includes(n)) continue;
+        n.friendly = false; n.isPirate = true; n.supportData = null;
+        storySleepNpc(n);
+        RadarRangeScene.ids.push(n);
+      }
+      if (sensorPicture) updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true);
+      return { x: Math.round(spot.x), y: Math.round(spot.y), jednostki: out };
+    }
+    // Tabela czujników każdego bytu (gracz, NPC, stacje, źródła bez bytu): moc, sygnatura, wzrok, źródła wartości (gałąź
+    // awaryjna?), para z graczem w obie strony (promienie, poziomy z odległości) i poziomy obrazu czujników.
+    function radarUnitTable() {
+      const P = sensorPicture;
+      if (!P) return null;
+      updateSensorPicture(P, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true);
+      const pl = P.player;
+      const me = { x: pl.x, y: pl.y, strength: pl.strength, sigEff: pl.sigEff, vision: pl.vision };
+      const rows = [];
+      const recOf = (e) => { const k = P.know.get(e); return k && k.rec >= 0 ? P.recs[k.rec] : null; };
+      const watcherOf = (e) => { const Wt = P.watchers; for (let i = 0; i < Wt.n; i++) if (Wt.k[i].e === e) return i; return -1; };
+      const push = (e, kind) => {
+        const a = auditSensorUnit(e, radarRangeAdapters, P.tune, kind === 'stacja');
+        const pos = radarRangeAdapters.posOf(e, { x: 0, y: 0 });
+        const rec = e === ship ? P.playerRec : recOf(e);
+        const them = rec ? { x: rec.x, y: rec.y, strength: rec.strength, sigEff: rec.signature * rec.cover, vision: rec.ident }
+          : { x: pos.x, y: pos.y, strength: a.passive, sigEff: a.sig * radarRangeAdapters.coverAt(pos.x, pos.y), vision: a.vision };
+        const pair = e === ship ? null : sensorPair(me, them);
+        const k = P.know.get(e);
+        rows.push({
+          nazwa: e === ship ? 'GRACZ' : (e.__radarUnitKey || e.displayName || e.name || e.type || e.id || '?'),
+          rodzaj: kind, typ: e.type || null, rama: e.shipFrame || e.activeHullId || null, strona: e === ship ? 'gracz' : radarRangeAdapters.sideOf(e),
+          moc: Math.round(a.passive), aktywna: Math.round(a.active), sygnatura: +a.sig.toFixed(3), wzrok: Math.round(a.vision),
+          zrodla: a.src, awaryjne: a.awaryjne, decyzja: a.decyzja, zle: a.zle,
+          para: pair && {
+            d: Math.round(pair.d), ichR: Math.round(pair.ichR), ichId: Math.round(pair.ichId), ichPoziom: pair.ichPoziom,
+            mojR: Math.round(pair.mojR), mojId: Math.round(pair.mojId), mojPoziom: pair.mojPoziom
+          },
+          obraz: k && k.rec >= 0 ? { mojPoziom: k.level, ichPoziom: k.themLvl, bezTwarzy: watcherOf(e) >= 0 } : null
+        });
+      };
+      if (ship && radarRangeAdapters.alive(ship)) push(ship, 'gracz');
+      for (const n of npcs) if (n && n !== ship && radarRangeAdapters.alive(n)) push(n, n.isStation ? 'stacja' : 'npc');
+      for (const st of stations) if (st && radarRangeAdapters.alive(st)) push(st, 'stacja');
+      const extras = SensorSystem.getSensorSources();
+      for (const s of extras) {
+        if (!s || s.type === 'ship') continue;
+        rows.push({ nazwa: `źródło:${s.type}`, rodzaj: 'zrodlo', moc: Math.round(s.range), wzrok: Math.round(s.range), zle: (s.range > 0 ? [] : ['moc']), awaryjne: [] });
+      }
+      const F = P.threats, Wt = P.watchers;
+      const grupy = [];
+      for (let g = 0; g < F.n; g++) {
+        grupy.push({ n: F.count[g], them: +F.them[g].toFixed(3), themR: Math.round(F.themR[g]), themIdR: Math.round(F.themIdR[g]),
+          themLvl: F.themLvl[g], me: +F.me[g].toFixed(3), meR: Math.round(F.meR[g]), meIdR: Math.round(F.meIdR[g]), meLvl: F.meLvl[g], est: F.est[g] });
+      }
+      const obserwatorzy = [];
+      for (let i = 0; i < Wt.n; i++) obserwatorzy.push({ R: Math.round(Wt.R[i]), idR: Math.round(Wt.idR[i]), d: Math.round(Wt.dist[i]), lvl: Wt.lvl[i] });
+      return { gracz: { moc: Math.round(pl.strength), slad: +pl.sigEff.toFixed(3), wzrok: Math.round(pl.vision) }, wiersze: rows, grupy, obserwatorzy };
+    }
     function stopRadarScene() {
       SensorSystem.clearArea('radarZasiegi-czata');
       for (const n of RadarRangeScene.ids) if (n && !n.dead) dematerializeSupportUnit(n);
@@ -12935,6 +13042,9 @@
         view: radarRangeView,
         scena(opts) { return startRadarScene(opts); },
         stop() { stopRadarScene(); },
+        /** Audyt zasięgów: scena ze wszystkimi rodzajami jednostek wezwań i tabela czujników w obie strony. */
+        scenaJednostek(opts) { return startRadarUnitScene(opts); },
+        jednostki() { return radarUnitTable(); },
         /** Przebudowa obrazu teraz (narzędzia, pomiar kosztu). */
         przebuduj() { updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true); },
         /** Cicha praca gracza (prototyp): sygnatura × 0,5, czujniki × 0,6. Bez argumentu — przełącza. */

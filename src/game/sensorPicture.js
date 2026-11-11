@@ -37,6 +37,9 @@ export const SENSOR_PICTURE_TUNE = Object.freeze({
   // Stacje bez profilu czujników.
   stationStrength: 60000,
   stationSignature: 1.5,
+  // Wzrok stacji — ten sam co źródło wzroku przyjaznej stacji w mgle wojny (FOG_TUNE.vision.station; fogOfWar.js nie
+  // pyta o stacje `visionRangeOf`, który dla bytu bez klasy dawał 5 km).
+  stationVision: 30000,
   // Grupa zagrożeń: znani wrogowie bliżej niż tyle [j.] od lidera (najgroźniejszego) to jedna grupa — flota daje jeden
   // znak w UI, nie milion znaczników.
   threatGroupRadius: 15000,
@@ -143,7 +146,7 @@ function fillEntityRec(P, r, e, side, isPlayer, kind) {
     r.signature = A.cloaked(e) ? 0 : entitySignature(A.baseSigOf(e), s);
   }
   r.cover = A.coverAt(r.x, r.y);
-  r.ident = A.visionOf(e);
+  r.ident = kind === 'station' ? T.stationVision : A.visionOf(e);
   return r;
 }
 

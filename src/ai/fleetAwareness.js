@@ -19,6 +19,7 @@
 import { resolveShipSensors } from '../game/scannerTargeting.js';
 import { getEntitySizeModifier } from '../game/sensorSystem.js';
 import { SHIP_SENSOR_PROFILES } from '../data/ships.js';
+import { SENSOR_PROFILE_BY_UNIT, unitSensorProfileKey } from '../data/sensorUnits.js';
 import { isCloakHidden } from '../game/cloak.js';
 
 export const AWARENESS_CONFIG = Object.freeze({
@@ -112,7 +113,18 @@ export function enemySideOf(side) {
 
 const FIGHTER_TYPE_RE = /fighter|interceptor|bomber|drone/;
 
+/** Jawny profil czujników bytu: własny `sensors` / `sensorProfile`, potem tabela jednostek (src/data/sensorUnits.js); null — brak. */
+export function unitSensorProfile(e) {
+  const own = e?.sensors || e?.sensorProfile;
+  if (own) return own;
+  const key = unitSensorProfileKey(e);
+  return key ? SHIP_SENSOR_PROFILES[SENSOR_PROFILE_BY_UNIT[key]] : null;
+}
+
 function fallbackSensorProfile(e) {
+  const key = unitSensorProfileKey(e);
+  if (key) return SHIP_SENSOR_PROFILES[SENSOR_PROFILE_BY_UNIT[key]];
+  // AWARYJNIE: profil zgadnięty z typu (żadna jednostka gry tu nie trafia — tests/zasiegiJednostek.test.mjs)
   const type = String(e?.type || '').toLowerCase();
   if (e?.fighter || FIGHTER_TYPE_RE.test(type)) return SHIP_SENSOR_PROFILES.fighter_combat;
   if (type.includes('frigate')) return SHIP_SENSOR_PROFILES.frigate_combat;
