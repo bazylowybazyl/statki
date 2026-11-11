@@ -981,7 +981,8 @@ if (isWorker) {
         const poseOf = st.playerPoseOf;
         st.bridgeOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, cull: c, camera: cam,
           visibility: (e) => (models.shipModel3DIdFor(e) ? 0 : cloakLook.cloakLightGain(e)) };
-        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, visibility: cloakLook.cloakLightGain };
+        // `cull` — pudło kadru dla łuków przy ranach zasilanych okrętów (powerArcsFx3D.js, wołane z BridgeFx3D.update)
+        st.bridgeFxOpts = { nowSec: 0, dt: 0, zoom: 1, poseOf, visibility: cloakLook.cloakLightGain, cull: c };
       }
       const bo = st.bridgeOpts, fo = st.bridgeFxOpts;
       bo.nowSec = fo.nowSec = nowSec; bo.dt = fo.dt = dt; bo.zoom = fo.zoom = cam.zoom;
