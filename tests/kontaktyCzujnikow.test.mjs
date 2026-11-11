@@ -9,6 +9,7 @@ import {
 import {
   createNamiarBlock, createNamiarMeshes, NAMIAR_STYLES, NAMIAR_MARKS, NAMIAR_MARK_BASE, NAMIAR_MARK_VEC
 } from '../dema/kontakty-czujnikow/namiarTSL.js';
+import { createGranicaMeshes, GRANICA_STYLES } from '../dema/kontakty-czujnikow/granicaTSL.js';
 
 function build(renderer, mesh) {
   const b = renderer.backend.createNodeBuilder(mesh, renderer);
@@ -46,7 +47,7 @@ test('propozycje kontaktu: WGSL w Node, bez pow, wspólny blok kontaktów', () =
   assert.ok(bg.mesh.layers.isEnabled(1));
 });
 
-test('namiar: WGSL trzech propozycji (i warstwy DIST fali pęknięcia) w Node, bez pow, blok o stałej nazwie', () => {
+test('namiar: WGSL trzech propozycji (i warstwy DIST impulsu błony) w Node, bez pow, blok o stałej nazwie', () => {
   const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
   const renderer = new THREE.WebGPURenderer({ canvas });
   renderer.hasFeature = () => false;
@@ -62,7 +63,28 @@ test('namiar: WGSL trzech propozycji (i warstwy DIST fali pęknięcia) w Node, b
       assert.match(b.fragmentShader, /namiarCzujnikow/, `${m.name}: blok o stałej nazwie`);
       assert.ok(ms < 2000, `${m.name}: budowa ${ms.toFixed(0)} ms`);
     }
-    assert.equal(!!dist, style !== 'wachlarz', `${style}: warstwa DIST tylko przy pękaniu`);
+    assert.equal(!!dist, style === 'blona', `${style}: warstwa DIST tylko dla impulsu błony`);
+    if (dist) assert.ok(dist.layers.isEnabled(10));
+  }
+});
+
+test('granica wykrycia: WGSL tafli (i jej warstwy DIST), przyboju i podświetlenia kadłuba w Node, bez pow', () => {
+  const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
+  const renderer = new THREE.WebGPURenderer({ canvas });
+  renderer.hasFeature = () => false;
+  const block = createNamiarBlock();
+  for (const style of GRANICA_STYLES) {
+    const { mesh, dist } = createGranicaMeshes(style, block, 10);
+    for (const m of [mesh, dist].filter(Boolean)) {
+      const t0 = performance.now();
+      const b = build(renderer, m);
+      const ms = performance.now() - t0;
+      assert.doesNotMatch(b.fragmentShader, /\bpow\(/, `${m.name}: bez pow`);
+      assert.match(b.fragmentShader, /namiarCzujnikow/, `${m.name}: blok o stałej nazwie`);
+      assert.ok(ms < 2000, `${m.name}: budowa ${ms.toFixed(0)} ms`);
+      if (style === 'swiatlo') assert.match(b.fragmentShader, /textureSampleLevel/, 'kadłub: próbki z jawnym poziomem (gałąź)');
+    }
+    assert.equal(!!dist, style === 'tafla', `${style}: warstwa DIST tylko dla tafli`);
     if (dist) assert.ok(dist.layers.isEnabled(10));
   }
 });

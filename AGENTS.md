@@ -185,7 +185,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `kapsuly-ratunkowe` | Kapsuły ratunkowe: wyrzut po śmierci statku (bez pirackich), lot do stacji (objazd ringu i doków), obraz, radar, rozliczenie bez obrazu w workerze ruchu |
 | `mgla-wojny` | Mgła wojny |
-| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany OBŁOK, ECHO = skały) i NAMIARU „kto kogo widzi” (wachlarz, struna, błona): demo propozycji w TSL na Core3D, zasady pod wpięcie |
+| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany obłok szarych X-ów, ECHO = skały), CZUJKI na PPM (struna w stronę myszki — statki i budowle, błona 360° — ciała niebieskie) i GRANICY WYKRYCIA (tafla / przybój, podświetlenie kadłuba): demo w TSL na Core3D, zasady pod wpięcie |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `zasieg-czujnikow` | Zasięg czujników (radarów) jak w Starsectorze: czujniki × sygnatura × osłona, KONTAKT / IDENTYFIKACJA, suma stref radarów, obraz czujników z gry, prototyp `?radarZasiegi` (ocena obustronna: wachlarz / struna / błona, warstwa ZASIĘGI w CIC, scena), demo 2D propozycji |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
