@@ -128,5 +128,6 @@ export const ZDARZENIA_SWIATA = Object.freeze({
   skanFala: 'skanPing',
   skanKontakt: 'kontaktBlip',
   komunikatHud: 'komunikat',
+  rozkazRts: 'potwierdzenie',
   klik: 'klik'
 });

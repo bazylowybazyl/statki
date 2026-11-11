@@ -2505,7 +2505,10 @@
 
     function setMenuView(nextView = 'home') {
       const validViews = ['home', 'options', 'credits', 'keybinds', 'gamemode'];
+      const prevView = menuView;
       menuView = validViews.includes(nextView) ? nextView : 'home';
+      // Dźwięk zmiany widoku (warstwa dźwięku — `__dzwiekiUi` ustawia blok „SCENA DŹWIĘKI”; menu stoi przed nim w kodzie).
+      if (prevView !== menuView) window.__dzwiekiUi?.('menuWidok');
       if (menuHomeView) menuHomeView.classList.toggle('active', menuView === 'home');
       if (menuOptionsView) menuOptionsView.classList.toggle('active', menuView === 'options');
       if (menuCreditsView) menuCreditsView.classList.toggle('active', menuView === 'credits');
@@ -2546,6 +2549,7 @@
         if (btns.length === 0) return;
         this.selectedIndex = (this.selectedIndex + dir + btns.length) % btns.length;
         this.updateHighlight();
+        window.__dzwiekiUi?.('menuFokus');
       },
 
       confirm() {
@@ -2608,6 +2612,7 @@
       if (idx < 0 || (idx === menuGamepad.selectedIndex && btn.classList.contains('gamepad-focus'))) return;
       menuGamepad.selectedIndex = idx;
       menuGamepad.updateHighlight();
+      window.__dzwiekiUi?.('menuFokus');
     });
     menuGamepad.updateHighlight();
 
@@ -7879,6 +7884,7 @@
 
     function pushZoneMessage(text, duration = 3.5, options = {}) {
       if (typeof text !== 'string' || !text.trim()) return;
+      if (options && options.label) window.__dzwiekiUi?.('komunikatHud');
       const label = typeof options?.label === 'string' && options.label.trim()
         ? options.label.trim()
         : 'SHIP ALERT';
@@ -10643,6 +10649,14 @@
       }
     });
     window.ServiceTugGame = ServiceTugGame;
+    // Dźwięk zaczepów holownika (warstwa dźwięku): opakowanie `_lockCargo` (`clamp` raz przy zaczepieniu, `off` przy zwolnieniu).
+    {
+      const lock = ServiceTugGame._lockCargo;
+      ServiceTugGame._lockCargo = function (m, mode) {
+        lock.call(this, m, mode);
+        if (SND && m && m.npc && (mode === 'clamp' || mode === 'off')) soundSceneAreaEvent(mode === 'clamp' ? 'holownikZacisk' : 'holownikZwolnienie', m.npc.x, m.npc.y);
+      };
+    }
 
     // Rigi holowników: zwolnione (koniec naprawy, odlot) wypadają z rejestru, gdy drony wróciły albo holownika już nie ma.
     const _tugRigs = [];
@@ -14213,6 +14227,7 @@
       }
       setStationEditorMode(false);
       stationUI.open = true;
+      if (SND) soundSceneUi('panelOtwarty');
       stationUI.visible = true;
       stationUI.awaitingCamera = false;
       stationUI.station = station;
@@ -14230,6 +14245,7 @@
 
     function closeStationUI() {
       if (!stationUI.open) return;
+      if (SND) soundSceneUi('panelZamkniety');
       setStationEditorMode(false);
       stationUI.open = false;
       stationUI.visible = false;
@@ -14252,6 +14268,7 @@
     function openStationTerminal(stationOverride = null) {
       const targetStation = stationOverride || resolveStationTerminalTarget();
       stationTerminal.open = true;
+      if (SND) soundSceneUi('terminalPolaczenie');
       stationTerminal.station = targetStation || null;
       stationTerminal.loadingService = null;
       stationTerminal.loadingStartMs = 0;
@@ -17107,6 +17124,7 @@
         const heldBefore = Number(PLAYER.cargo[key]) || 0;
         PLAYER.cargo[key] = heldBefore + amount;
         noteCargoPurchase(key, heldBefore, amount, offer.ask);
+        if (SND) soundSceneUi('transakcja');
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
         if (held < amount) return;
@@ -17120,6 +17138,7 @@
         PLAYER.credits += offer.bid * stored;
         // Regularny handel powoli ociepla stosunki z właścicielem doku.
         if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
+        if (SND) soundSceneUi('transakcja');
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
     }
@@ -19033,6 +19052,7 @@
       window.__dzwieki = SND_LAYER;
       WeaponShotBus.on(soundSceneShot);
       // Dźwięki obszarów: maskowanie fregaty zwiadu (szyna ScoutBay), klik przycisków interfejsu (delegacja kliknięć).
+      window.__dzwiekiUi = soundSceneUi;
       ScoutBay.on('cloak', soundSceneScoutCloak);
       ScoutBay.on('cloakBroken', soundSceneScoutCloakBroken);
       document.addEventListener('click', soundSceneClick, true);
@@ -19148,7 +19168,10 @@
           zdarzenia: [
             { nazwa: 'Rdzeń celu', przycisk: 'stopienie', tytul: 'Stopienie rdzenia najbliższego pirata (3,5 s) i detonacja', fn: soundSceneMeltTarget },
             { nazwa: 'Okręt z warpa', przycisk: 'przylot', tytul: 'Okręt przylatuje z warpa przed Atlasem (zwiastun i wyrzut)', fn: soundSceneArrival },
-            { nazwa: 'Maskowanie Atlasa', przycisk: 'wł. / wył.', tytul: 'Maskowanie Atlasa (klawisz I)', fn: soundSceneCloak }
+            { nazwa: 'Maskowanie Atlasa', przycisk: 'wł. / wył.', tytul: 'Maskowanie Atlasa (klawisz I)', fn: soundSceneCloak },
+            { nazwa: 'Drony naprawcze', przycisk: 'R', tytul: 'Wypuść / odwołaj drony naprawcze Atlasa (wylot, spaw, łata, powrót)', fn: soundSceneRepairDrones },
+            { nazwa: 'Kapsuły ratunkowe', przycisk: 'wyrzut', tytul: 'Kapsuły z najbliższego okrętu sceny (wyrzut, zapłon po dryfie)', fn: soundScenePods },
+            { nazwa: 'Skan X', przycisk: 'fala', tytul: 'Fala skanera (ping, odsłonięte kontakty)', fn: () => triggerScanWave() }
           ],
           stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED, glosnoscZastepcza: !!SoundScene.masterFallback })
         });
@@ -19329,8 +19352,17 @@
     const soundNpcBoost = (n) => !!n.__flightIntent?.boost;
     // Silniki obcych: żywy okręt (nie gracz, nie myśliwiec — przepis silnika kapitałowego), w kadrze, nie ukryty mgłą ani
     // maską.
-    const soundNpcAudible = (n) => !n.dead && !n.destroyed && n !== ship && n.type !== 'fighter' && n.type !== 'interceptor'
+    const soundIsFighter = (n) => n.fighter === true || n.type === 'fighter' || n.type === 'interceptor'
+      || n.type === 'ally_fighter' || n.type === 'carrier_fighter';
+    const soundNpcAudible = (n) => !n.dead && !n.destroyed && n !== ship && !soundIsFighter(n)
       && n.__inDrawBox !== false && !SensorSystem.hides(n) && !isCloakHidden(n);
+    // Przelot myśliwca blisko środka kadru (żywy, widoczny).
+    const soundFighterAudible = (n) => !n.dead && soundIsFighter(n) && n.__inDrawBox !== false && !SensorSystem.hides(n) && !isCloakHidden(n);
+    /** Zdarzenie obszaru w miejscu (x, y) świata — odpada poza zasięgiem słyszalności. */
+    function soundSceneAreaEvent(name, x, y) {
+      if (!SND || !soundHere(x, y)) return;
+      SND.zdarzenie(name, x, y);
+    }
     const soundNpcEngine = (n, c, b, x, y) => { SND.silnikObcy(n, c, b, x, y); };
     /** Klatka dźwięków obszarów (z `soundSceneFrame`, przed `SND.klatka()`): różnice stanu gry z poprzedniej klatki. */
     function soundAreasFrame() {
@@ -19349,8 +19381,14 @@
       SOUND_AREAS.ostrzezenieRakiet(ship.destroyed ? 0 : liczRakietyNaGracza(_pdEnemyRocketBuffer, ship),
         al.active && al.id === SHIP_ALARM.MISSILE ? al.volume : 0.6);
       const kadr = soundSceneCamera();
-      SOUND_AREAS.silnikiObcych(npcs, kadr.x, kadr.y, Math.sqrt(kadr.polW * kadr.polW + kadr.polH * kadr.polH),
-        soundNpcThrust, soundNpcBoost, soundNpcAudible, soundNpcEngine);
+      const polD = Math.sqrt(kadr.polW * kadr.polW + kadr.polH * kadr.polH);
+      SOUND_AREAS.silnikiObcych(npcs, kadr.x, kadr.y, polD, soundNpcThrust, soundNpcBoost, soundNpcAudible, soundNpcEngine);
+      // Myśliwce (przelot), kopalnia gracza, wiązka łupu, drony naprawcze (wszystkie rigi), kapsuły ratunkowe.
+      SOUND_AREAS.przelotyMysliwcow(npcs, kadr.x, kadr.y, polD, SimClock.sim, soundFighterAudible);
+      SOUND_AREAS.kopalnia(getMiningRig(), px, py);
+      SOUND_AREAS.zbiorka(lootContainers.count > 0 ? lootContainers.targetCount : 0, px, py);
+      SOUND_AREAS.dronyNaprawcze(RepairSwarm.rigs);
+      SOUND_AREAS.kapsuly(escapePods);
       // Tło mostka (gra nie ma widoku mostka): ciche tło lotu — poza pauzą, dokiem (panel stacji) i halą K-7 (ma swoje).
       SOUND_AREAS.tloMostka(PAUSED || ship.destroyed || stationUI.open ? 0 : 1 - (HallSound.presence || 0));
       SOUND_AREAS.klatka(SimClock.sim);
@@ -19410,6 +19448,27 @@
       const at = { x: ship.pos.x + Math.cos(a) * 5200, y: ship.pos.y + Math.sin(a) * 5200 };
       // callInSupport z punktem — przylot tunelem z wyprzedzeniem (zwiastun → rozdarcie → wyrzut), jak wezwanie wsparcia.
       return !!callInSupport(def.key, { mode: 'dummy', spawnPos: at });
+    }
+    /** Drony naprawcze Atlasa: wypuść / odwołaj (jak R). */
+    function soundSceneRepairDrones() {
+      if (ship.destroyed || !HullBodies.hasHull(ship)) return false;
+      playerRepairRig.cargo = PLAYER.cargo;
+      playerRepairRig.toggle();
+      return true;
+    }
+    /** Kapsuły ratunkowe z najbliższego okrętu niepirackiego, który ich jeszcze nie wyrzucił (wyrzut, zapłon po dryfie). */
+    function soundScenePods() {
+      let best = null;
+      let bd = Infinity;
+      // Piraci kapsuł nie mają (reguła `kapsuly-ratunkowe`) — źródłem jest okręt niepiracki (np. z przycisku „przylot”).
+      for (let i = 0; i < npcs.length; i++) {
+        const n = npcs[i];
+        if (!n || n.dead || n.__escapePods || n.isPirate || soundIsFighter(n)) continue;
+        const d = (n.x - ship.pos.x) ** 2 + (n.y - ship.pos.y) ** 2;
+        if (d < bd) { bd = d; best = n; }
+      }
+      if (!best) { pushZoneMessage('KAPSUŁY: BRAK OKRĘTU NIEPIRACKIEGO — NAJPIERW „PRZYLOT”', 2); return 0; }
+      return launchShipEscapePods(best);
     }
     /** Maskowanie Atlasa wł. / wył. (jak klawisz I). */
     function soundSceneCloak() {
@@ -19866,7 +19925,10 @@
       visible: (x, y) => SensorSystem.pointVisible(x, y, 0),
       free: () => getPlayerCargoFree(),
       take: (key, units) => Number(addToPlayerCargo({ [key]: units })[key]) || 0,
-      onCollect: (key, units) => noteLootCollected(key, units)
+      onCollect: (key, units, x, y) => {
+        noteLootCollected(key, units);
+        if (SND) soundSceneAreaEvent('kontenerZbior', x, y);
+      }
     };
     const _lootGearParams = {};
     let _lootGearHull = null;
@@ -22668,6 +22730,7 @@
         run() {
           closeWorldCommandMenu();
           const state = CICDisplay.toggle();
+          if (SND) soundSceneUi(state ? 'panelOtwarty' : 'panelZamkniety');
           pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
         }
       },
@@ -22741,6 +22804,7 @@
         run(ev) {
           ev.preventDefault();
           const state = CICDisplay.toggle();
+          if (SND) soundSceneUi(state ? 'panelOtwarty' : 'panelZamkniety');
           pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
         }
       },
@@ -23549,6 +23613,7 @@
       if (!isTargetAlive(target)) return false;
       if (!scannerContacts.some(c => c.target === target)) {
         scannerContacts.push(contact);
+        if (SND) soundSceneUi('skanKontakt');
         const sorted = sortScannerSweepContacts(scannerContacts);
         scannerContacts.length = 0;
         scannerContacts.push(...sorted);
@@ -23573,6 +23638,7 @@
       const waveSpeed = getScannerWaveSpeed();
       const contacts = collectScannerContacts({ range: activeRange, asteroidRange, includeAsteroids: true, sweepSort: true });
       scannerState.sweepTargets = new Set(contacts.map(c => c.target).filter(Boolean));
+      if (SND) soundSceneUi('skanFala');
       if (reset) {
         scannerContacts.length = 0;
         scannerSelectedTarget = null;
@@ -23873,6 +23939,7 @@
 
     function issueUnitCommand(unit, command) {
       if (!unit || unit.dead || !command) return;
+      if (SND) soundSceneUi('rozkazRts');
       unit.command = command;
       if ('forceTarget' in unit) {
         unit.forceTarget = command.targetEntity || null;
@@ -26006,6 +26073,7 @@
         const vy = Number(ship?.vel?.y) || 0;
         window.spawnParticle({ x: npc.x, y: npc.y }, { x: vx, y: vy }, 0.3, '#cfe8ff', 4, true);
       }
+      if (SND) soundSceneAreaEvent('mysliwiecLadowanie', npc.x, npc.y);
       dematerializeSupportUnit(npc);
       npc.__landed = true;
       const left = pruneSquadList();
@@ -26034,6 +26102,7 @@
       },
       hitHull(t, x, y, dmg, def, bomb, relVx, relVy) {
         const e = t._realEntity || t;
+        if (SND) soundSceneAreaEvent('bombaWybuch', x, y);
         // Krater przed HP: śmierć celu robi wrak z całego kadłuba.
         if (e.beamHull) {
           _bombRelVel.x = relVx;
@@ -26058,6 +26127,15 @@
       random: () => Math.random()
     });
     window.FighterBombs = FighterBombs;
+    // Dźwięk zrzutu bomby (warstwa dźwięku): opakowanie metody — moduł bomb bez zależności od dźwięku.
+    {
+      const drop = FighterBombs.drop;
+      FighterBombs.drop = function (bomber, target, def, damage) {
+        const ok = drop.call(this, bomber, target, def, damage);
+        if (ok && SND) soundSceneAreaEvent('bombaZrzut', bomber.x, bomber.y);
+        return ok;
+      };
+    }
 
     function pickSquadTargets() {
       // Zwraca wszystkich żywych wrogów (nie-friendly)
@@ -26125,6 +26203,7 @@
       fighter.vy = launch.vy;
       fighter.angle = launch.angle;
       fighter.desiredAngle = launch.angle;
+      if (SND) soundSceneAreaEvent('mysliwiecWyrzut', launch.x, launch.y);
 
       if (window.spawnParticle) {
         for (let i = 0; i < 6; i++) {

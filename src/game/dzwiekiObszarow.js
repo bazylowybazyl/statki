@@ -32,7 +32,7 @@
 // (`landFighter`) i działko (strzelec `fighter` / `interceptor` na szynie strzałów) — klej woła `zdarzenie` warstwy
 // wprost; tu tylko PRZELOT: `przelotyMysliwcow(lista, …)` — najbliższe podejście myśliwca do środka kadru (odległość
 // przestaje maleć) bliżej niż `przelotPromien` × półprzekątna, z prędkością ≥ `przelotMinV`, raz na `przelotOdstep`
-// na myśliwca. Stan per myśliwiec w WeakMap (wpis raz na życie myśliwca, nie na klatkę).
+// na myśliwca i raz na `przelotGlobalny` w ogóle. Stan per myśliwiec w WeakMap (wpis raz na życie myśliwca, nie na klatkę).
 //
 // Obszary (etap 4, praca w przestrzeni): pierścienie zdarzeń czytane własnym kursorem (WeakMap pierścień → indeks;
 // pierwsze spotkanie pomija stare zdarzenia, przepełnienie — najnowsze), jak `repairFxEvents.js`:
@@ -54,7 +54,8 @@ export const DZWIEKI_OBSZAROW_DOMYSLNE = Object.freeze({
   silnikMaks: 3,             // tyle najbliższych okrętów naraz (głosy syntezy)
   przelotPromien: 0.4,       // przelot myśliwca: najbliższe podejście bliżej niż tyle półprzekątnych kadru
   przelotMinV: 150,          // … z prędkością co najmniej [j/s]
-  przelotOdstep: 2.5,        // … i najwyżej raz na tyle sekund na myśliwca
+  przelotOdstep: 3,          // … i najwyżej raz na tyle sekund na myśliwca
+  przelotGlobalny: 0.6,      // … i najwyżej jeden przelot na tyle sekund w ogóle (rój 50 myśliwców to nie 50 świstów)
   spoznienieS: 0.6,          // zdarzenie osi warpa NPC zastane później — bez dźwięku
   stopienieMin: 0.45,        // głośność pętli stopienia na starcie (rośnie do 1 przy detonacji)
   stopienieZapas: 0.35,      // pętla gra jeszcze tyle po planowanym końcu stopienia (detonacja w następnym kroku)
@@ -274,6 +275,7 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
 
   // --- etap 3: przelot myśliwca blisko środka kadru
   const przeloty = new WeakMap(); // myśliwiec → { d, t } (poprzednia odległość, czas ostatniego przelotu)
+  let przelotOstatni = -1e9;
   /**
    * @param {object[]} lista myśliwce (encje z x, y, vx, vy); `slyszalny(e)` — filtr kleju (żywy, nie ukryty, myśliwiec)
    * @param {number} czas zegar gry [s]
@@ -293,8 +295,10 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
       const vx = Number(e.vx) || 0;
       const vy = Number(e.vy) || 0;
       // najbliższe podejście: poprzednio bliżej niż R, teraz dalej (oddala się), z prędkością
-      if (st.d < R && d > st.d && vx * vx + vy * vy >= v2min && czas - st.t >= U.przelotOdstep) {
+      if (st.d < R && d > st.d && vx * vx + vy * vy >= v2min && czas - st.t >= U.przelotOdstep
+        && czas - przelotOstatni >= U.przelotGlobalny) {
         st.t = czas;
+        przelotOstatni = czas;
         stats.mysliwiecPrzelot++;
         ujscie.graj('mysliwiecPrzelot', e.x, e.y, 1);
       }
