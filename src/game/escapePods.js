@@ -12,6 +12,14 @@
 // Pula SoA (x / y w Float64Array — świat 5–10 mln j.), usuwanie zamianą z ostatnią (z punktami trasy). Krok bez
 // alokacji. Losowość wyrzutu z ziarna statku (`podHash01`) — bez Math.random. Stałe na sekundę: krok 60 / 120 Hz
 // daje ten sam przebieg (dt w całkach, bez stałych „na krok”).
+//
+// ZATOKI (decyzja użytkownika 2026-11-11: „lampy zatok kapsuł migają przed wyrzutem”): kapsuła w kadłubie (PENDING)
+// może być związana z KOMÓRKĄ kadłuba (`bindEscapePodBays` — wiązanie daje wołający, w grze HullBodies.bindCell:
+// najbliższy żywy węzeł miejsca wyrzutu). Związana jedzie z węzłem przez śmierć, wrak i rozpad (`env.bayPose(b, out)`:
+// out = Float64Array(5) — poza i ruch sztywny ciała w tym punkcie, obrót kadłuba od wiązania), a impuls wyrzutu obraca się z kadłubem;
+// komórka zniszczona albo odcięta bez odłamu rodu — wiązanie przepada, kapsuła jedzie dalej ostatnim ruchem.
+// Ramka obrazu niesie związane kapsuły jako ZATOKI (flaga `POD_RENDER_FLAG.BAY`, wiek = −czas do wyrzutu): obraz
+// rysuje samą lampę zatoki, miganie przyspiesza do wyrzutu.
 
 import { cloakVisAtWorld } from './cloakLook.js';
 
@@ -125,6 +133,10 @@ export function createEscapePods(cap = POD_TUNE.cap, tune = POD_TUNE) {
     wp: new Float64Array(n * wpN * 3),
     wpCount: new Int16Array(n),
     wpAt: new Int16Array(n),
+    // Zatoka kapsuły w kadłubie (PENDING): wiązanie z komórką kadłuba (nieprzezroczyste — czyta je `env.bayPose`
+    // wołającego; null — bez zatoki) i obrót kadłuba od wiązania [rad] (obraca impuls wyrzutu).
+    bay: new Array(n).fill(null),
+    bayTurn: new Float32Array(n),
     nextUid: 1,
     // Rozliczenia bez obrazu: cel, czas dolotu [s gry], ludzie, rodzaj, kurs.
     transit: {
@@ -147,6 +159,7 @@ export function createEscapePods(cap = POD_TUNE.cap, tune = POD_TUNE) {
 export function clearEscapePods(st) {
   st.count = 0;
   st.transit.count = 0;
+  st.bay.fill(null);
 }
 
 function copySlot(st, from, to) {
@@ -156,6 +169,8 @@ function copySlot(st, from, to) {
   st.state[to] = st.state[from]; st.timer[to] = st.timer[from]; st.age[to] = st.age[from];
   st.target[to] = st.target[from]; st.people[to] = st.people[from]; st.kind[to] = st.kind[from];
   st.course[to] = st.course[from]; st.seed[to] = st.seed[from]; st.uid[to] = st.uid[from];
+  st.bay[to] = st.bay[from]; st.bayTurn[to] = st.bayTurn[from];
+  st.bay[from] = null;
   const n = st.wpCount[from];
   st.wpCount[to] = n; st.wpAt[to] = st.wpAt[from];
   const a = from * st.wpCap * 3;
@@ -168,6 +183,7 @@ export function removeEscapePod(st, i) {
   const last = st.count - 1;
   if (i < 0 || i > last) return;
   if (i !== last) copySlot(st, last, i);
+  st.bay[last] = null;
   st.count = last;
 }
 
@@ -307,10 +323,42 @@ export function launchEscapePods(st, spec, env = null, tune = POD_TUNE) {
     st.uid[i] = st.nextUid++;
     st.wpCount[i] = 0;
     st.wpAt[i] = 0;
+    st.bay[i] = null;
+    st.bayTurn[i] = 0;
     st.stats.launched++;
   }
   st.stats.ships++;
   return count;
+}
+
+// Poza zatoki (env.bayPose): [x, y, vx, vy, obrót kadłuba od wiązania] — tablica typowana: zapis liczb bez pudełek
+// (obiekt { x, y, … } dzieli mapę z innymi literałami gry i po uogólnieniu pól pakuje każdą liczbę na stercie).
+const BAY_X = 0, BAY_Y = 1, BAY_VX = 2, BAY_VY = 3, BAY_TURN = 4;
+const _bay = new Float64Array(5);
+
+/**
+ * ZATOKI kapsuł wystrzelonych przez `launchEscapePods` od numeru `uid0` (`st.nextUid` przed wyrzutem): `bindAt(x, y)`
+ * wiąże miejsce wyrzutu z kadłubem (wołający — w grze `HullBodies.bindCell`) i zwraca wiązanie albo null;
+ * `env.bayPose(wiązanie, out)` — bieżąca poza zatoki do `out` (Float64Array(5): x, y, vx, vy, obrót kadłuba od
+ * wiązania [rad]; false — wiązanie przepadło). Kapsuła staje w zatoce od razu. Zwraca liczbę związanych.
+ */
+export function bindEscapePodBays(st, uid0, bindAt, env = null) {
+  if (typeof bindAt !== 'function') return 0;
+  const pose = env && typeof env.bayPose === 'function' ? env.bayPose : null;
+  let n = 0;
+  for (let i = 0; i < st.count; i++) {
+    if (st.uid[i] < uid0 || st.state[i] !== POD_STATE.PENDING || st.bay[i] !== null) continue;
+    const b = bindAt(st.x[i], st.y[i]);
+    if (!b) continue;
+    st.bay[i] = b;
+    st.bayTurn[i] = 0;
+    if (pose && pose(b, _bay)) {
+      st.x[i] = _bay[BAY_X]; st.y[i] = _bay[BAY_Y];
+      st.vx[i] = _bay[BAY_VX]; st.vy[i] = _bay[BAY_VY];
+    }
+    n++;
+  }
+  return n;
 }
 
 /** Wpisuje trasę kapsuły `i` z bufora ścieżki (`{ data, count }`, krok `stride`; punkt 0 = start — pomijany). */
@@ -412,15 +460,38 @@ export function stepEscapePods(st, dt, env, tune = POD_TUNE) {
   const turn = tune.turnRate * dt;
   const reach2 = tune.wpReach * tune.wpReach;
   const arrive2 = tune.arriveR * tune.arriveR;
+  const bayPose = env && typeof env.bayPose === 'function' ? env.bayPose : null;
   for (let i = st.count - 1; i >= 0; i--) {
     st.age[i] += dt;
     const state = st.state[i];
     if (state === POD_STATE.PENDING) {
-      // W kadłubie: jedzie z wrakiem (pęd kadłuba), czeka na wyrzut.
-      st.x[i] += st.vx[i] * dt;
-      st.y[i] += st.vy[i] * dt;
+      // W kadłubie: zatoka jedzie z komórką kadłuba (poza węzła i ruch sztywny ciała w tym punkcie); bez zatoki albo
+      // po jej utracie — z ostatnim ruchem (pęd kadłuba). Czeka na wyrzut.
+      const bay = st.bay[i];
+      if (bay !== null && bayPose !== null && bayPose(bay, _bay)) {
+        st.x[i] = _bay[BAY_X]; st.y[i] = _bay[BAY_Y];
+        st.vx[i] = _bay[BAY_VX]; st.vy[i] = _bay[BAY_VY];
+        st.bayTurn[i] = _bay[BAY_TURN];
+      } else {
+        if (bay !== null) st.bay[i] = null;
+        st.x[i] += st.vx[i] * dt;
+        st.y[i] += st.vy[i] * dt;
+      }
       st.timer[i] -= dt;
       if (st.timer[i] > 0) continue;
+      // Wyrzut: impuls z burty obrócony o obrót kadłuba od wiązania zatoki (wrak się kręci — burta też).
+      const tr = st.bayTurn[i];
+      if (tr !== 0) {
+        const c = Math.cos(tr);
+        const s = Math.sin(tr);
+        const ix = st.ix[i];
+        const iy = st.iy[i];
+        st.ix[i] = ix * c - iy * s;
+        st.iy[i] = ix * s + iy * c;
+        st.ang[i] += tr;
+      }
+      st.bay[i] = null;
+      st.bayTurn[i] = 0;
       st.vx[i] += st.ix[i];
       st.vy[i] += st.iy[i];
       st.ix[i] = 0; st.iy[i] = 0;
@@ -536,32 +607,45 @@ export function escapePodCloakHidden(entities, x, y, visAt = cloakVisAtWorld) {
   return false;
 }
 
-/** Flagi kapsuły w ramce obrazu — te same liczby co `POD_BLOCK.ENGINE` (src/render/blocks/escapePodBlock.js). */
-export const POD_RENDER_FLAG = Object.freeze({ ENGINE: 1 });
+/**
+ * Flagi kapsuły w ramce obrazu — te same liczby co `POD_BLOCK.ENGINE` / `POD_BLOCK.BAY`
+ * (src/render/blocks/escapePodBlock.js): silnik pracuje (płomień); ZATOKA — kapsuła jeszcze w kadłubie (sama lampa
+ * zatoki, wiek = −czas do wyrzutu).
+ */
+export const POD_RENDER_FLAG = Object.freeze({ ENGINE: 1, BAY: 2 });
+
+const _bayR = new Float64Array(2);
 
 /**
  * Ramka obrazu kapsuł (blok `pods`, ramka z `createEscapePodFrame`): pozy w chwili klatki renderu (`lag` s przed
- * stanem fizyki: x − vx · lag), tylko kapsuły poza kadłubem, widoczne (`visible(x, y)` — mgła wojny i maskowanie)
- * i poza kropkami soczewki skoku (`hidden(x, y)`); silnik i ciąg (płomień), wiek po wyrzucie (lampa). Bez alokacji.
+ * stanem fizyki: x − vx · lag), widoczne (`visible(x, y)` — mgła wojny i maskowanie) i poza kropkami soczewki skoku
+ * (`hidden(x, y)`); silnik i ciąg (płomień), wiek po wyrzucie (lampa). Kapsuły w kadłubie — tylko związane z zatoką
+ * (`bindEscapePodBays`): rekord ZATOKI (flaga BAY, wiek = −czas do wyrzutu) w miejscu z `bayAt(wiązanie, out)`
+ * (out — Float64Array(2): x, y zatoki w pozie RENDERU kadłuba — ta sama co skóra; brak / false — x − vx · lag).
+ * Bez alokacji.
  */
-export function fillEscapePodRenderFrame(st, out, lag = 0, visible = null, hidden = null) {
+export function fillEscapePodRenderFrame(st, out, lag = 0, visible = null, hidden = null, bayAt = null) {
   const cap = out.cap | 0;
   let n = 0;
   for (let i = 0; i < st.count && n < cap; i++) {
-    if (st.state[i] === POD_STATE.PENDING) continue;
-    const x = st.x[i] - st.vx[i] * lag;
-    const y = st.y[i] - st.vy[i] * lag;
+    const pending = st.state[i] === POD_STATE.PENDING;
+    if (pending && st.bay[i] === null) continue;
+    let x = st.x[i] - st.vx[i] * lag;
+    let y = st.y[i] - st.vy[i] * lag;
+    if (pending && bayAt !== null && bayAt(st.bay[i], _bayR)) { x = _bayR[0]; y = _bayR[1]; }
     if (visible && !visible(x, y)) continue;
     if (hidden && hidden(x, y)) continue;
     out.x[n] = x;
     out.y[n] = y;
     out.ang[n] = st.ang[i];
-    out.thrust[n] = st.thrust[i];
-    out.age[n] = st.age[i];
+    out.thrust[n] = pending ? 0 : st.thrust[i];
+    // Zatoka: wiek ujemny = czas do wyrzutu w chwili klatki renderu (stan fizyki + lag — miganie lampy płynne między
+    // krokami i przyspiesza do zera); po wyrzucie — wiek lotu.
+    out.age[n] = pending ? -Math.max(0, st.timer[i] + lag) : st.age[i];
     out.seed[n] = st.seed[i];
     out.uid[n] = st.uid[i];
     // Silnik pracuje przez cały lot (płomień: 0,35 + 0,65 · ciąg tego kroku), dryf po wyrzucie — bez płomienia.
-    out.flags[n] = st.state[i] === POD_STATE.FLY ? POD_RENDER_FLAG.ENGINE : 0;
+    out.flags[n] = pending ? POD_RENDER_FLAG.BAY : st.state[i] === POD_STATE.FLY ? POD_RENDER_FLAG.ENGINE : 0;
     n++;
   }
   out.count = n;
