@@ -896,6 +896,9 @@ export const StoryGame = {
     // zapłonem z dymem (storyNpcControl.launch, zegar wodowania — site.ignite przed startem).
     setEngineState(e, ENGINE_OFF);
     this.deps.sleepNpc(e);
+    // Okręt w doku stoi WYŁĄCZONY (decyzja użytkownika 2026-11-11 — czujniki tylko bierne: po warpie nie mają Atlasa
+    // w kontakcie); załogi uruchamiają reaktory na alarm (_alarm), start i budzenie włączają go od razu (zależności gry).
+    this.deps.powerNpc?.(e, false);
   },
 
   _alarm(site) {
@@ -903,6 +906,8 @@ export const StoryGame = {
     site.alarmed = true;
     site.alarmAt = this.time;
     const d = this.deps;
+    // załogi przy reaktorach: okręty z załogą ruszają z rozruchem (okręty w remoncie zostają wyłączone)
+    for (const e of site.crewList || []) if (e && !e.dead) d.powerNpc?.(e, true);
     // herszt startuje pierwszy (rufą z zatoki, potem wzdłuż zatoki — trasa z planu bazy)
     const boss = site.flagship;
     if (boss && !boss.dead) {

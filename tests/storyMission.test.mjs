@@ -68,7 +68,9 @@ function makeWorld() {
     spawnPirateStation: (spec) => { const st = { ...spec, maxHp: spec.hp, _destroyed3D: false }; w.stations.push(st); return st; },
     spawnTurret: (spec) => mkNpc('turret', { spawnPos: spec }, 'pirate'),
     sleepNpc: (n) => { n.asleep = true; },
-    wakeNpc: (n) => { n.asleep = false; },
+    wakeNpc: (n) => { n.asleep = false; n.power = 'on'; },
+    // zasilanie okrętu fabuły (2026-11-11: okręty w doku wyłączone do alarmu)
+    powerNpc: (n, on) => { n.power = on ? 'rozruch' : 'off'; },
     launchNpc: (n, path, delay, opts) => { n.asleep = false; n.launch = { path, delay, opts }; },
     armNpc: (n) => { n.armed = true; },
     fleeNpc: (n, p) => { n.flee = p; },
@@ -213,6 +215,8 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(S.site.repairList.every((n) => n.hp < n.maxHp), 'okręty w remoncie bez części punktów');
   assert.ok(S.site.parkedList.every((n) => n.asleep), 'w stanowiskach bez załogi przy sterach');
   assert.ok(S.site.parkedList.every((n) => engineStateOf(n) === ENGINE_OFF), 'silniki wyłączone');
+  assert.ok(S.site.parkedList.every((n) => n.power === 'off') && S.site.flagship.power === 'off',
+    'okręty w doku wyłączone (czujniki bierne — po warpie nie mają Atlasa w kontakcie)');
   assert.equal(S.site.flagship?.type, 'pirate_supercapital', 'herszt w zatoce przy zbiornikach');
   assert.equal(engineStateOf(S.site.flagship), ENGINE_OFF);
   assert.equal(S.site.turretList.length, 0, 'bez wieżyczek (2026-10-05)');
@@ -265,6 +269,8 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   kill(ramRow[ramRow.length - 1]);
   await frames(S, w, 2, view);
   assert.ok(S.site.alarmed, 'alarm po taranie');
+  assert.ok(crew.every((n) => n.dead || n.power === 'rozruch'), 'alarm: załogi uruchamiają reaktory');
+  assert.ok(S.site.repairList.every((n) => n.power === 'off'), 'okręty w remoncie zostają wyłączone');
   // herszt startuje z zatoki pierwszy (trasa z planu bazy), drony z lądowisk na obrzeżu habitatu
   const boss = S.site.flagship;
   assert.ok(boss.launch && boss.launch.path.length >= 3 && boss.launch.delay < 1, 'herszt wylatuje trasą z zatoki');

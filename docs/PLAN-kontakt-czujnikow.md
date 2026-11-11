@@ -420,9 +420,12 @@ Gracz klika PPM i pokaże mu się, gdzie są wrogowie, i będzie musiał tam pol
 - Sprawdzenie (`node scripts/webgpu/czujniki-gra.mjs [--query renderWorker=1] [--blisko 21 --zoom 0.035]`, 1600 × 900):
   off i worker — czujka, granica i kontakty rysują się, 0 pipeline'ów synchronicznych workera, 0 błędów; kamera po
   przylocie stoi przy Atlasie.
-- DO DECYZJI (wynik pomiaru w misji 1): w punkcie wyjścia z warpa (~61 km od bazy) herszt (supercapital, profil
-  `capital_combat` 60 km × ślad Atlasa 1,3 = 78 km) ma Atlasa w KONTAKCIE — czujka od razu pokazuje czerwień i „!”, szara
-  granica stoi ~3 km od Atlasa, choć fabuła mówi, że obrona wykryje Atlasa z ~9 km (logika misji jest osobna, obraz
-  czujników rozgrywki nie zmienia). Możliwości: okręty w doku (przed alarmem) z wyłączonym zasilaniem / cichą pracą,
-  dalszy punkt wyjścia, decyzja D4 (ślad gracza 1,3). Znacznik „NIEZNANA MASA” przy krawędzi kadru (mgła wojny) wciąż
-  wskazuje kierunek bez PPM — do decyzji, czy zostaje.
+- Pomiar w misji 1 (2026-11-11): w punkcie wyjścia z warpa (~61 km od bazy) Atlasa w KONTAKCIE miały trzy superkapitały w
+  doku (moc 80 km × ślad Atlasa 1,3 — herszt i dwa w remoncie) i sześć budowli bazy (habitat, oba reaktory, zbiorniki,
+  magazyn, pomosty — po 60 km × 1,3 = 78 km). Decyzja użytkownika: „okręty w doku wyłączone” — okręty parkowane stoją
+  WYŁĄCZONE (czujniki bierne × 0,6, ślad × 0,3; reguła `fabula`), załogi uruchamiają reaktory na alarm, remontowane
+  zostają wyłączone. Po zmianie: okręty Atlasa nie mają (i Atlas ich z warpa nie widzi — kontakty to same budowle), ale
+  BUDOWLE BAZY nadal mają Atlasa w kontakcie — czujka po warpie dalej czerwona z „!”: do decyzji (np. czujniki bazy
+  bierne do alarmu, radar tylko w habitacie). Skutek z mgły wojny (`fogPointVisibleMul`): wyłączony okręt widać z połowy
+  zasięgu wzroku (Atlas 9 km, fregata zwiadu 5 km) — dalej jest szarymi X-ami. Znacznik „NIEZNANA MASA” przy krawędzi
+  kadru wciąż wskazuje kierunek bez PPM — do decyzji, czy zostaje.

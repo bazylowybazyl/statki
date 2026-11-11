@@ -10,7 +10,7 @@
 //
 // Adaptery (`createSensorPicture(adapters)`): alive(e), sideOf(e) → 'friendly' | 'pirate' | null, posOf(e, out),
 // passiveOf(e), activeOf(e, passive), baseSigOf(e), visionOf(e), coverAt(x, y), identified(e) (mgła: !hides),
-// cloaked(e), writeState(e, stan, isPlayer) (ciąg, napęd), isStation(e).
+// cloaked(e), writeState(e, stan, isPlayer) (ciąg, napęd), isStation(e), isBuilding(e) (opcjonalny — zęby czujki).
 // ============================================================
 
 import {
@@ -389,6 +389,8 @@ function buildThreatGroups(P) {
   }
   const F = P.threats;
   const prevN = F.n;
+  // budowla w grupie (czujka: duży ząb) — adapter `isBuilding` (stacje i budowle baz), inaczej `isStation`
+  const isBuilding = P.A.isBuilding || P.A.isStation || null;
   F.n = 0;
   let m = 0;
   if (P.playerRec) {
@@ -447,7 +449,7 @@ function buildThreatGroups(P) {
       }
       F._g[i] = g;
       F.count[g]++;
-      if (P.A.isStation && P.A.isStation(k.e)) F.nSt[g]++;
+      if (isBuilding && isBuilding(k.e)) F.nSt[g]++;
       if (F._t[i] > F.them[g]) { F.them[g] = F._t[i]; F.themR[g] = F._tr[i]; F.themD[g] = F._d[i]; F.est[g] = F._e[i]; }
       if (F._m[i] > F.me[g]) { F.me[g] = F._m[i]; F.meR[g] = F._mr[i]; }
       if (k.themLvl > F.themLvl[g]) F.themLvl[g] = k.themLvl;

@@ -10174,7 +10174,7 @@
       const enginesBefore = powerAllowsEngines(e);
       const now = stepShipPower(e, dt);
       if (now === POWER_ON) entityPowerUpDone(e);
-      if (e !== ship && !enginesBefore && powerAllowsEngines(e) && before === POWER_STARTUP) igniteEngine(e);
+      if (e !== ship && !e.__powerManualIgnite && !enginesBefore && powerAllowsEngines(e) && before === POWER_STARTUP) igniteEngine(e);
     }
     /** Włącz / wyłącz byt (gracz, NPC). Zwraca true, gdy sekwencja ruszyła. */
     function setEntityPower(e, on) {
@@ -12967,18 +12967,23 @@
         return null;
       },
       isStation(e) { return !!e.isStation; },
+      // budowla (czujka: duży ząb struny) — stacje i budowle bazy piratów (misja 1)
+      isBuilding(e) { return !!(e.isStation || e.baseStructure); },
       posOf(e, out) {
         out.x = Number(e.pos?.x ?? e.x) || 0;
         out.y = Number(e.pos?.y ?? e.y) || 0;
         return out;
       },
-      passiveOf(e) { return resolveAwarenessSensorRange(e); },
+      // zasilanie (src/game/shipPower.js): wyłączony okręt ma tylko czujniki bierne (× powerSensorMul) i ślad × 0,3
+      // (powerSignatureMul); reflektor dziobowy podnosi ślad — jak hak wykrywania AI (`__sigMul`, bez gazu: osłona — coverAt)
+      passiveOf(e) { return resolveAwarenessSensorRange(e) * powerSensorMul(e); },
       activeOf(e, passive) {
-        if (e.sensors || e.sensorProfile) return resolveShipSensors(e).activeRange;
+        const pm = powerSensorMul(e);
+        if (e.sensors || e.sensorProfile) return resolveShipSensors(e).activeRange * pm;
         const prof = unitSensorProfile(e); // jawny profil jednostki bez `sensors` (src/data/sensorUnits.js)
-        return prof ? Math.max(passive, Number(prof.activeRange) || 0) : passive * 1.2;
+        return prof ? Math.max(passive, (Number(prof.activeRange) || 0) * pm) : passive * 1.2;
       },
-      baseSigOf(e) { return getEntitySizeModifier(e); },
+      baseSigOf(e) { return getEntitySizeModifier(e) * powerSignatureMul(e) * (e.__spotSigMul > 1 ? e.__spotSigMul : 1); },
       visionOf(e) { return SensorSystem.visionRangeOf(e); },
       // Osłona przy celu: gęste pole pasa asteroid (pole gry — sampleMacro), obrzeże pola.
       coverAt(x, y) {
@@ -13139,7 +13144,8 @@
       }
       const m = ship ? getCicEntityHullMetrics(ship, 1) : null;
       I.shipLen = m ? Math.max(m.worldW, m.worldH) : 3000;
-      const base = ship ? Math.max(0.1, Number(radarRangeAdapters.baseSigOf(ship)) || 1) : 1;
+      // ślad względem klasy kadłuba (sigEff obrazu niesie już ciąg, napęd, ciszę, zasilanie i osłonę)
+      const base = ship ? Math.max(0.1, Number(getEntitySizeModifier(ship)) || 1) : 1;
       I.sig = sensorPicture.ready ? sensorPicture.player.sigEff / base : 1;
       I.alpha = _hudLensAlpha;
       czujkaBodies();
@@ -37448,8 +37454,25 @@
       npc.forceTarget = null;
       if (usesShipFlightModel(npc)) setFlightStop(npc, npc.angle);
     }
+    // Zasilanie okrętów fabuły (misja 1, decyzja użytkownika 2026-11-11: „okręty w doku wyłączone”): okręt w stanowisku
+    // stoi WYŁĄCZONY (stan wprost — bez efektów gaszenia: tarcza i silniki jak przy parkowaniu; czujniki bierne × 0,6,
+    // sygnatura × 0,3), na alarm załoga uruchamia reaktor (rozruch — fala świateł; silniki odpala fabuła zapłonem z dymem
+    // przed wylotem, nie rozruch). Budzenie, start, załoga przy działach i ucieczka — od razu w PRACY.
+    function storyPowerNpc(npc, on) {
+      if (!npc || npc.dead) return;
+      if (!on) { setShipPowerState(npc, POWER_OFF); npc.__powerManualIgnite = true; return; }
+      if (powerStateOf(npc) === POWER_OFF || powerStateOf(npc) === POWER_SHUTDOWN) setEntityPower(npc, true);
+    }
+    function storyPowerOnNow(npc) {
+      if (!npc || npc.dead || !npc.shipPower) return;
+      npc.__powerManualIgnite = false;
+      if (powerStateOf(npc) === POWER_ON) return;
+      setShipPowerState(npc, POWER_ON);
+      entityPowerUpDone(npc);
+    }
     function storyWakeNpc(npc) {
       if (!npc || npc.dead) return;
+      storyPowerOnNow(npc);
       // Okręt zaparkowany z wyłączonymi silnikami (engineIgnition.js): obudzony bez trasy wylotu — zapłon od razu.
       if (npc.engineIgn && engineStateOf(npc) === ENGINE_OFF) igniteEngine(npc);
       npc.combatDisabled = false;
@@ -37634,11 +37657,13 @@
       habitatFall: () => startPirateBaseFall(),
       habitatFallLook: () => pirateBaseFallLook(),
       habitatFallDone: (maxSec) => pirateBaseFallDone(maxSec),
-      launchNpc: storyNpcs.launch,
+      launchNpc: (e, path, delay, opts) => { storyPowerOnNow(e); return storyNpcs.launch(e, path, delay, opts); },
       // Zegar wodowania i herszt (misja 1, 2026-10-07): załoga przy działach w stanowisku, brama stanowiska
       // przy starcie, ucieczka herszta, mostek jako słaby punkt, okręt bez dowodzenia (hulk).
-      armNpc: storyNpcs.arm,
-      fleeNpc: storyNpcs.flee,
+      armNpc: (e) => { storyPowerOnNow(e); return storyNpcs.arm(e); },
+      fleeNpc: (e, point) => { storyPowerOnNow(e); return storyNpcs.flee(e, point); },
+      // zasilanie okrętu fabuły: false — wyłączony od razu (parking), true — rozruch (alarm: załoga przy reaktorze)
+      powerNpc: (e, on) => storyPowerNpc(e, on),
       isHulk: (e) => isBridgeHulk(e),
       bridgeAimPoint: (e, out) => getBridgeAimPoint(e, out, { mode: 'center' }),
       // Naprawa Atlasa przed odwetem (misja 2): rój dronów naprawczych Atlasa (R — playerRepairRig) wypuszczony

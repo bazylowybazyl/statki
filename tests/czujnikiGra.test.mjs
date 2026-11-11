@@ -183,6 +183,24 @@ test('widok: bez pokazu (CIC, panel, kamera 3D) i w skoku (alfa soczewki) — ni
   assert.equal(out[I.active], 0);
 });
 
+test('grupy zagrożeń: budowle (adapter isBuilding) to duże zęby struny', () => {
+  const player = { x: 0, y: 0, side: 'friendly', passive: 80000, sig: 1.3, vision: 18000 };
+  const habitat = { x: 50000, y: 0, side: 'pirate', passive: 60000, sig: 1, vision: 9000, baseStructure: true };
+  const okret = { x: 50500, y: 0, side: 'pirate', passive: 18000, sig: 0.7, vision: 5000 };
+  const adapters = {
+    alive: (e) => !!e && !e.dead, sideOf: (e) => e.side,
+    posOf: (e, out) => { out.x = e.x; out.y = e.y; return out; },
+    passiveOf: (e) => e.passive, activeOf: (e, p) => p, baseSigOf: (e) => e.sig, visionOf: (e) => e.vision,
+    coverAt: () => 1, identified: () => false, cloaked: () => false, writeState: () => {},
+    isStation: () => false, isBuilding: (e) => !!e.baseStructure
+  };
+  const P = SP.createSensorPicture(adapters);
+  SP.updateSensorPicture(P, 0, { player, npcs: [habitat, okret], stations: null, extraSources: null }, true);
+  assert.equal(P.threats.n, 1);
+  assert.equal(P.threats.count[0], 2);
+  assert.equal(P.threats.nSt[0], 1, 'habitat bazy — budowla');
+});
+
 test('blok migawki `czujniki`: kopia nagłówka i zajętych sekcji; brak wejścia — pusty', () => {
   const src = V.createCzujnikiInput();
   src[I.active] = 1; src[I.nStr] = 2; src[I.nKon] = 3; src[I.nGrn] = 1; src[I.nBln] = 1;
@@ -230,6 +248,17 @@ test('wpięcie: nakładka po mgle wojny w „uber”, worker z bloku, strona w r
   assert.doesNotMatch(scout, /cinema\.lookAt/);
   assert.doesNotMatch(scout, /ui\.marker\('mass'/);
   assert.match(scout, /hint\('czujka'/);
+  // zasilanie: obraz czujników liczy wyłączone okręty (czujniki bierne, ślad × 0,3); okręty w doku misji 1 wyłączone,
+  // rozruch NPC fabuły nie odpala silników (zapłon z dymem przed wylotem), budzenie / start / działa — od razu w PRACY
+  assert.match(html, /passiveOf\(e\) \{ return resolveAwarenessSensorRange\(e\) \* powerSensorMul\(e\); \}/);
+  assert.match(html, /baseSigOf\(e\) \{ return getEntitySizeModifier\(e\) \* powerSignatureMul\(e\)/);
+  assert.match(html, /isBuilding\(e\) \{ return !!\(e\.isStation \|\| e\.baseStructure\); \}/);
+  assert.match(html, /!e\.__powerManualIgnite && !enginesBefore/);
+  assert.match(html, /function storyWakeNpc\(npc\) \{\n\s+if \(!npc \|\| npc\.dead\) return;\n\s+storyPowerOnNow\(npc\);/);
+  assert.match(html, /launchNpc: \(e, path, delay, opts\) => \{ storyPowerOnNow\(e\);/);
+  assert.match(html, /armNpc: \(e\) => \{ storyPowerOnNow\(e\);/);
+  const sg = read('src/game/story/storyGame.js');
+  assert.match(sg, /this\.deps\.sleepNpc\(e\);[\s\S]{0,400}this\.deps\.powerNpc\?\.\(e, false\);/);
   // moduły bez window / DOM / Math.random
   for (const f of ['src/ui/czujkaView.js', 'src/3d/czujniki/czujniki3D.js', 'src/3d/czujniki/czujnikiLayout.js', 'src/render/blocks/czujnikiBlock.js']) {
     const src = read(f);

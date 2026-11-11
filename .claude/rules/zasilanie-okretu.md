@@ -21,7 +21,8 @@ paths:
 - Okręt da się włączyć i wyłączyć; wyłączony wygląda inaczej i ma mniejszą sygnaturę radarową.
 - Wyłączenie gasi WSZYSTKO NARAZ: silniki MAIN i SIDE, tarczę, broń z obroną punktową, systemy F, skan X, hangary, drony, maskowanie, wydobycie, zbiórkę i reflektor.
 - Sygnatura spada TAK SZYBKO JAK GASZENIE (nie 15 s). Scenariusz: „ktoś cię goni, wchodzisz w chmurę gazową, wyłączasz i jest cisza”.
-- NPC dostaje tę samą OPCJĘ (`ShipPower.off / on`), żaden mózg jej dziś nie używa.
+- NPC dostaje tę samą OPCJĘ (`ShipPower.off / on`), żaden mózg jej dziś nie używa. Używa jej fabuła: okręty w doku bazy piratów (misja 1) stoją wyłączone do alarmu (reguła `fabula`; `storyPowerNpc` / `storyPowerOnNow` w `index.html`). Flaga `__powerManualIgnite` — rozruch NPC NIE odpala silników sam (zapłon robi właściciel, np. zegar wodowania).
+- Obraz czujników (`sensorPicture`, czujka i granice w grze) liczy zasilanie jak AI: moc × `powerSensorMul`, ślad × `powerSignatureMul` × reflektor (adaptery w bloku „ZASIĘG RADARÓW” `index.html`).
 - Wieże bez zasilania przestają strzelać (część kadłuba odcięta od komory reaktora).
 - Przyjęte: lampy pokładowe (mini lampy oświetlające kadłub — mostek, reaktor, broń, hangary), alarmy (jeden naraz, po kilku sekundach ciszej), migotanie świateł przy trafieniu dużego kalibru, reflektor dziobowy za myszą (podnosi sygnaturę), lampki gotowości przy wieżach, czerwone światło bojowe floty, reflektory podejścia w K-7, miganie lamp zatok przed wyrzutem kapsuł, iskry przy ranach zasilanej części.
 

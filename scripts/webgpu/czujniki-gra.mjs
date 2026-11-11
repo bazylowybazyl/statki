@@ -131,6 +131,14 @@ try {
   await shot('05-alt-ppm-menu', 'Alt + PPM: menu rozkazów świata, czujka zgaszona');
   await mouse('mouseReleased', { x: p.x + 400, y: p.y + 300 }, 'right', 1);
   await sleep(300);
+  // kto ma mnie (themLvl > 0) i kogo ja mam: rodzaj, stacja, znacznik fabuły, zasilanie, moc, odległość
+  report.kto = await ev(`(() => { const P = window.Czujka.picture, s = window.ship;
+    return P.knowList.filter((k) => k.themLvl > 0 || k.level > 0).slice(0, 80).map((k) => ({
+      typ: k.e.type || k.e.shipFrame || '?', stacja: !!k.e.isStation, nazwa: k.e.name || k.e.label || k.e.id || null,
+      klucze: (k.e.type || k.e.shipFrame) ? undefined : Object.keys(k.e).slice(0, 24).join(','), tag: k.e.__storyTag || null, zasilanie: k.e.shipPower ? k.e.shipPower.state : 'brak',
+      oni: k.themLvl, ja: k.level, moc: Math.round(k.strength), d: Math.round(Math.hypot((k.e.pos?.x ?? k.e.x) - s.pos.x, (k.e.pos?.y ?? k.e.y) - s.pos.y)) })); })()`);
+  const maja = report.kto.filter((k) => k.oni > 0);
+  console.log('mają mnie:', JSON.stringify(maja.slice(0, 12)), 'razem', maja.length, '/ znanych', report.kto.length);
   report.picture = await ev(`(() => { const s = window.Czujka.view; return { grupy: [...s.groups.values()].map((g) => ({ id: g.id, d: Math.round(g.d), R: Math.round(g.R), Rv: Math.round(g.Rv), lvl: g.lvl, myLvl: g.myLvl, nBig: g.nBig, nSmall: g.nSmall, est: g.est })) }; })()`);
   console.log('grupy:', JSON.stringify(report.picture));
   report.klatki = await ev(`window.__harness?.frameStats ? window.__harness.frameStats(${begLog}) : null`);
