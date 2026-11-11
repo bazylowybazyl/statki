@@ -8,6 +8,8 @@
 // Dźwięki z plików to ROBOCZE nagrania z generatora AI (public/sounds/ai/, manifest.json — pochodzenie);
 // dwa dźwięki są z syntezy (src/audio/przepisySyntezy.js): silnik MAIN i seria CIWS.
 
+import { tabelaDzwiekowBroni } from './dzwiekiBroni.js';
+
 export const dbToGain = (db) => Math.pow(10, db / 20);
 export const gainToDb = (g) => (g > 0 ? 20 * Math.log10(g) : -Infinity);
 const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
@@ -90,7 +92,9 @@ export const DZWIEKI = Object.freeze({
   blad: { kat: 'interfejs', limit: 2, odstep: 120, zwloka: 0, ton: 0, glos: 0, ui: true },
   namiar: { kat: 'interfejs', limit: 1, odstep: 300, zwloka: 0, ton: 0, glos: 0, ui: true },
   malowanie: { kat: 'interfejs', limit: 3, odstep: 60, zwloka: 1, ton: 0, glos: 0, ui: true },
-  alarm: { kat: 'interfejs', petla: true, limit: 1, ui: true }
+  alarm: { kat: 'interfejs', petla: true, limit: 1, ui: true },
+  // Uzbrojenie: rodziny broni × wielkość, wiązki, superbronie (src/audio/dzwiekiBroni.js)
+  ...tabelaDzwiekowBroni({ wystrzal: POZIOM_WYSTRZALU, specjalna: POZIOM_SPECJALNEJ })
 });
 
 /**

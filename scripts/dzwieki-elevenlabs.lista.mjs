@@ -9,6 +9,8 @@
 // Z syntezy (dema/dzwieki) zostają dwa dźwięki ocenione dobrze: silnik MAIN i seria Vulcan / CIWS —
 // dlatego nie ma ich na liście. Scena „Bitwa” to składanka innych dźwięków, też jej tu nie ma.
 
+import { DZWIEKI_BRONI } from './dzwieki-elevenlabs.lista-bronie.mjs';
+
 export const STYL = 'Modern cinematic game sound design, high fidelity, no music, no voices.';
 
 // Głos spikera hali K-7: gotowy głos ElevenLabs. Decyzja użytkownika 2026-11-11 (po odsłuchu w grze): „głos męski,
@@ -377,4 +379,5 @@ export const DZWIEKI = [
     opis: 'Stanowisko gracza: obsługa podpięta, przepływ otwarty.',
     teksty: ['Vessel secured. Clamps engaged. Fuel flow open.'],
   },
+  ...DZWIEKI_BRONI, // uzbrojenie: scripts/dzwieki-elevenlabs.lista-bronie.mjs
 ];
