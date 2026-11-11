@@ -12,13 +12,15 @@
 // Web Audio jest jednorazowe z natury — ogranicza je limit głosów, węzły głośności i panoramy są w puli.
 
 import {
-  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, STRZAL_GRACZA, jestCiws, kategoriaBroniNpc, idPlikowSceny,
+  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, jestCiws, idPlikowSceny,
   zmierzPoziom, wzmocnienieWyrownania, buforPetliBezSzwu, wybierzWariant, utworzLimitGlosow, sciszenieTloku,
-  polozenie, liniaWyboru, dbToGain, gainToDb
+  polozenie, liniaWyboru, dbToGain, gainToDb, ODSZCZYTU, dzwiekStrzalu, slyszalne, chwilaSzczytu
 } from './dzwiekiLogika.js';
 import { SoundEngine, paramDefaults } from './synteza.js';
 import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
 
+// Dźwięki „ładowanie + strzał” — przy wczytaniu mierzymy chwilę ich najgłośniejszego okna (`grajDoSzczytu`).
+const ID_DO_SZCZYTU = new Set(Object.values(ODSZCZYTU).map((o) => o.id));
 const CZAS_PETLI_BEZ_ODSWIEZENIA = 0.25; // s — pętla nieodświeżona tyle czasu gaśnie (zdarzenie się skończyło)
 const CZAS_WYGASZENIA_BEZ_KLATKI = 0.4; // s — pętla gaśnie w wątku audio, gdy klatki gry przestaną ją odświeżać
 const CZAS_CIWS_BEZ_STRZALU = 0.16; // s — seria CIWS wygasa, gdy tyle nie było strzału
@@ -89,6 +91,8 @@ export function utworzDzwiekiGry(opts) {
   const wybor = Object.create(null); // id → 0 (losowo) | 1…n
   const wycisz = Object.create(null); // id → bool
   const zagral = Object.create(null);
+  // Zmiana wyboru wariantu / wyciszenia z panelu → wołający zapisuje go (klucz `KLUCZ_WYBORU`, nie zapis gracza).
+  const zmianaWyboru = () => { if (typeof opts.przyZmianieWyboru === 'function') opts.przyZmianieWyboru(); };
   const ostrzezone = new Set();
   const limit = utworzLimitGlosow(TAB);
   const wynikLimitu = { aktywne: 0 };
@@ -228,6 +232,10 @@ export function utworzDzwiekiGry(opts) {
             }
             const pomiar = zmierzPoziom(kanaly, buf.sampleRate);
             wpis.pomiary[i] = { rmsDb: round1(pomiar.rmsDb), szczytDb: round1(pomiar.szczytDb) };
+            if (ID_DO_SZCZYTU.has(id)) {
+              if (!wpis.szczyt) wpis.szczyt = [];
+              wpis.szczyt[i] = chwilaSzczytu(kanaly, buf.sampleRate);
+            }
             wpis.wzm[i] = wzmocnienieWyrownania(pomiar, d.kat, d.poziom || 0);
             wpis.bufory[i] = buf;
           } catch (err) {
@@ -437,14 +445,66 @@ export function utworzDzwiekiGry(opts) {
     zagral.gatling = (zagral.gatling || 0) + 1;
   }
 
-  /** Strzał z szyny broni → dźwięk (gracz: tabela `STRZAL_GRACZA`; NPC: kategoria broni). */
+  /**
+   * Strzał z szyny broni → dźwięk (gracz: tabela `STRZAL_GRACZA`, reszta broni — kategoria jak u NPC; superbronie
+   * z `ODSZCZYTU` u gracza mają własny odtwarzacz). Poza słyszalnością — nic (przed klasyfikacją broni); id dźwięku
+   * z pamięci na broń (bez napisów na strzał). `kluczStrzelca` — obiekt strzelca (klucz serii CIWS i pętli wiązki).
+   */
+  const dzwiekBroniGracza = new Map();
+  const dzwiekBroniNpc = new Map();
   function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false) {
     stat.zdarzenia.strzal = (stat.zdarzenia.strzal || 0) + 1;
-    if (jestCiws(weaponId)) { ciwsStrzal(`${kluczStrzelca}:${weaponId}`, x, y); return; }
-    let id = gracza ? STRZAL_GRACZA[weaponId] : null;
-    if (!id) id = kategoriaBroniNpc(weaponId, def);
-    if (id === 'wiazka' || isBeam) { petla(`wiazka:${kluczStrzelca}`, 'wiazka', 1, x, y); return; }
+    if (wylaczony || !slyszalne(x, y, kadrFn ? kadrFn() : null)) return;
+    const pamiec = gracza ? dzwiekBroniGracza : dzwiekBroniNpc;
+    let id = pamiec.get(weaponId);
+    if (id === undefined) {
+      id = jestCiws(weaponId) ? 'ciws' : dzwiekStrzalu(weaponId, def, gracza);
+      pamiec.set(weaponId, id);
+    }
+    if (id === null) return;
+    if (id === 'ciws') { ciwsStrzal(kluczStrzelca, x, y); return; }
+    if (id === 'wiazka' || isBeam) { petla(kluczStrzelca, 'wiazka', 1, x, y); return; }
     graj(id, x, y, 1);
+  }
+
+  /**
+   * Plik „ładowanie + strzał” ustawiony na strzał w grze: najgłośniejsze okno pliku (chwila zmierzona przy wczytaniu)
+   * gra `przed` sekund od teraz. Zwraca uchwyt `{ stop() }` (przerwane ładowanie — krótkie wygaszenie) albo null.
+   */
+  function grajDoSzczytu(id, x, y, przed) {
+    if (wylaczony || wycisz[id]) return null;
+    const wpis = dzwieki.get(id);
+    if (!wpis) return null;
+    const wi = wybierzWariant(wpis.pliki.length, wybor[id], rand(), wpis.poprzedni);
+    const buf = wi >= 0 ? wpis.bufory[wi] : null;
+    if (!buf) return null;
+    polozenie(x, y, kadrFn ? kadrFn() : null, poz);
+    if (!(poz.glos > 0.003)) return null;
+    const teraz = ctx.currentTime;
+    const offset = Math.max(0, Math.min(buf.duration - 0.05, (wpis.szczyt?.[wi] || 0) - Math.max(0, przed)));
+    if (limit.przyjmij(id, teraz, buf.duration - offset, wynikLimitu) < 0) return null;
+    wpis.poprzedni = wi;
+    const g = ctx.createGain();
+    const p = ctx.createStereoPanner();
+    g.gain.value = poz.glos * wpis.wzm[wi];
+    p.pan.value = poz.pan;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(g);
+    g.connect(p);
+    p.connect(wejscie);
+    src.start(teraz + 0.005, offset);
+    glosyAktywne++;
+    src.onended = () => { glosyAktywne--; try { src.disconnect(); g.disconnect(); p.disconnect(); } catch { /* ok */ } };
+    zagral[id] = (zagral[id] || 0) + 1;
+    return {
+      stop() {
+        const t = ctx.currentTime;
+        g.gain.cancelScheduledValues(t);
+        g.gain.setTargetAtTime(0, t, 0.06);
+        try { src.stop(t + 0.3); } catch { /* już zatrzymany */ }
+      }
+    };
   }
 
   // --- klatka
@@ -589,8 +649,16 @@ export function utworzDzwiekiGry(opts) {
   return {
     ctx, wczytaj, graj, zdarzenie, petla, silnikMain, silnikSide, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
     statystyki, wyzerujStatystyki, lista, tekstWyboru, odsluch,
-    ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); },
-    ustawWyciszenie(id, b) { wycisz[id] = !!b; },
+    grajDoSzczytu,
+    ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); zmianaWyboru(); },
+    ustawWyciszenie(id, b) { wycisz[id] = !!b; zmianaWyboru(); },
+    /** Wybór wariantów i wyciszeń (z zapisu przeglądarki — `parsujWybor`), bez wywołania `przyZmianieWyboru`. */
+    wczytajWybor(z) {
+      for (const [id, w] of Object.entries(z?.wybor || {})) wybor[id] = Math.max(0, Number(w) | 0);
+      for (const [id, b] of Object.entries(z?.wycisz || {})) wycisz[id] = b === true;
+    },
+    /** Bieżący wybór do zapisu (`tekstZapisuWyboru`). */
+    stanWyboru() { return { wybor: { ...wybor }, wycisz: { ...wycisz } }; },
     ustawGlosnosc(v) { glosnosc.gain.setTargetAtTime(Math.max(0, Number(v) || 0), ctx.currentTime, 0.05); },
     wylacz() { zatrzymajWszystko(); wylaczony = true; },
     wlacz() { wylaczony = false; },

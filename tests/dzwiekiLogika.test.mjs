@@ -191,3 +191,66 @@ test('linia wyboru w formacie strony odsłuchu', () => {
   assert.equal(liniaWyboru('kadlub', 0, ['kadlub_1.mp3', 'kadlub_2.mp3']), 'kadlub: kadlub_1.mp3, kadlub_2.mp3 — losowo');
   assert.equal(liniaWyboru('kadlub', 1, ['kadlub_1.mp3'], true), 'kadlub: żaden — wyciszony w scenie');
 });
+
+// --- warstwa w zwykłej grze (2026-11-11): broń gracza spoza tabeli, słyszalność, zapis wyboru, migracja głośności
+test('broń gracza spoza STRZAL_GRACZA gra dźwiękiem kategorii; superbronie z ODSZCZYTU mają własny odtwarzacz', async () => {
+  const L = await import('../src/audio/dzwiekiLogika.js');
+  const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
+  assert.equal(L.dzwiekStrzalu('railgun_mk2', MASTER_WEAPONS.railgun_mk2, true), 'tempestIon');
+  assert.equal(L.dzwiekStrzalu('special_yamato_l', MASTER_WEAPONS.special_yamato_l, true), 'yamato');
+  assert.equal(L.dzwiekStrzalu('heavy_autocannon', MASTER_WEAPONS.heavy_autocannon, true), 'autocannon');
+  assert.equal(L.dzwiekStrzalu('armata_mk1', MASTER_WEAPONS.armata_mk1, true), 'dzialo');
+  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, true), null, 'Mjolnir gracza — plik z ładowaniem');
+  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, false), 'railgun', 'NPC — kategoria');
+  for (const [bron, o] of Object.entries(L.ODSZCZYTU)) {
+    assert.ok(L.DZWIEKI[o.id], `${bron} → ${o.id} w tabeli`);
+    assert.ok(o.przed >= 0);
+  }
+  // Mjolnir: dźwięk od startu ładowania — `przed` = czas ładowania broni
+  assert.equal(L.ODSZCZYTU.siege_railgun.przed, MASTER_WEAPONS.siege_railgun.chargeTime);
+  for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
+    const d = L.dzwiekStrzalu(id, def, true);
+    assert.ok(d === null || L.DZWIEKI[d], `${id} → ${d}`);
+  }
+});
+
+test('słyszalność: w kadrze i do 3,2 półprzekątnych tak, dalej nie; bez pozycji — tak', async () => {
+  const { slyszalne, polozenie } = await import('../src/audio/dzwiekiLogika.js');
+  const kadr = { x: 0, y: 0, polW: 1000, polH: 500, zoom: 0.5 };
+  assert.equal(slyszalne(0, 0, kadr), true);
+  assert.equal(slyszalne(2500, 0, kadr), true);
+  assert.equal(slyszalne(100000, 0, kadr), false);
+  assert.equal(slyszalne(NaN, NaN, kadr), true);
+  // odpada tylko to, co i tak byłoby ciche
+  for (const x of [5000, 8000, 20000]) if (!slyszalne(x, 0, kadr)) assert.equal(polozenie(x, 0, kadr).glos, 0);
+});
+
+test('chwila szczytu: najgłośniejsze okno pliku', async () => {
+  const { chwilaSzczytu } = await import('../src/audio/dzwiekiLogika.js');
+  const sr = 8000;
+  const a = new Float32Array(sr * 4);
+  for (let i = 0; i < a.length; i++) a[i] = 0.05 * Math.sin(i * 0.3);
+  for (let i = sr * 3; i < sr * 3 + 200; i++) a[i] = 0.9;
+  const t = chwilaSzczytu([a], sr);
+  assert.ok(Math.abs(t - 3.0) < 0.06, `szczyt ${t}`);
+});
+
+test('zapis wyboru wariantów: znane id, warianty 1–9, wyciszenia; śmieci odpadają; obieg zapis → odczyt', async () => {
+  const { parsujWybor, tekstZapisuWyboru, DZWIEKI } = await import('../src/audio/dzwiekiLogika.js');
+  const t = tekstZapisuWyboru({ tempestIon: 2, yamato: 0, kadlub: 3 }, { alarm: true, tarcza: false });
+  const z = parsujWybor(t, DZWIEKI);
+  assert.deepEqual(z, { wybor: { tempestIon: 2, kadlub: 3 }, wycisz: { alarm: true } });
+  assert.deepEqual(parsujWybor('{"wybor":{"nieznany":2,"tempestIon":"x","yamato":12,"kadlub":1.5}}', DZWIEKI), { wybor: {}, wycisz: {} });
+  assert.deepEqual(parsujWybor('nie json', DZWIEKI), { wybor: {}, wycisz: {} });
+  assert.deepEqual(parsujWybor(null, DZWIEKI), { wybor: {}, wycisz: {} });
+});
+
+test('migracja głośności głównej: zapisane 0 bez znacznika → domyślna, potem 0 gracza zostaje', async () => {
+  const { migrujGlosnoscGlowna, GLOSNOSC_GLOWNA_DOMYSLNA } = await import('../src/audio/dzwiekiLogika.js');
+  assert.ok(GLOSNOSC_GLOWNA_DOMYSLNA > 0);
+  assert.deepEqual(migrujGlosnoscGlowna(0, null), { master: GLOSNOSC_GLOWNA_DOMYSLNA, oznacz: true });
+  assert.deepEqual(migrujGlosnoscGlowna(undefined, null), { master: GLOSNOSC_GLOWNA_DOMYSLNA, oznacz: true });
+  assert.deepEqual(migrujGlosnoscGlowna(0.4, null), { master: 0.4, oznacz: true });
+  assert.deepEqual(migrujGlosnoscGlowna(0, '1'), { master: 0, oznacz: false }, 'po migracji zero gracza zostaje');
+  assert.deepEqual(migrujGlosnoscGlowna(0.5, '1'), { master: 0.5, oznacz: false });
+});
