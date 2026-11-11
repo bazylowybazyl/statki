@@ -44,7 +44,11 @@ export const SENSOR_PROFILE_BY_UNIT = Object.freeze({
   distress_beacon_ship: 'frigate_combat',
   bounty_hunter: 'frigate_combat',
   police_cutter: 'frigate_combat',
-  rescue_ship: 'frigate_combat'
+  rescue_ship: 'frigate_combat',
+  // promy z ludźmi (workforce W7) — kopie frachtowców bazowych (ten sam sprite i rozmiar), te same wartości
+  crew_shuttle: 'frigate_combat',
+  crew_liner: 'frigate_combat',
+  colony_liner: 'frigate_combat'
 });
 
 /**
@@ -74,7 +78,10 @@ export const SENSOR_SIGNATURE_BY_UNIT = Object.freeze({
   distress_beacon_ship: 0.7,
   bounty_hunter: 1.0,
   police_cutter: 1.0,
-  rescue_ship: 1.0
+  rescue_ship: 1.0,
+  crew_shuttle: 0.85,         // = inter_station_shuttle (200 / 80 j.)
+  crew_liner: 1.0,            // = container_ship (520 / 180 j.)
+  colony_liner: 1.0           // = long_haul_freighter (900 / 260 j.)
 });
 
 /**

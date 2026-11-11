@@ -25,7 +25,9 @@ const HULL_CLASSES = Object.assign(Object.create(null), {
   inter_station_shuttle: 'frigate', container_ship: 'frigate', long_haul_freighter: 'frigate', heavy_freighter: 'frigate',
   heavy_harvester: 'frigate', belter: 'frigate', surveyor: 'frigate', refinery_tender: 'frigate', tanker: 'frigate',
   salvage_hauler: 'frigate', construction_tug: 'frigate', distress_beacon_ship: 'frigate', rescue_ship: 'frigate',
-  repair_drone: 'frigate'
+  repair_drone: 'frigate',
+  // promy z ludźmi (workforce W7, kopie frachtowców bazowych): jak ich frachtowce bazowe
+  crew_shuttle: 'frigate', crew_liner: 'frigate', colony_liner: 'frigate'
 });
 for (const id in SHIP_FLIGHT_SPECS) {
   const cls = SHIP_FLIGHT_SPECS[id].flightClass;
