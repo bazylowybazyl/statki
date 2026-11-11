@@ -21,6 +21,13 @@ import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
 
 const CZAS_PETLI_BEZ_ODSWIEZENIA = 0.25; // s — pętla nieodświeżona tyle czasu gaśnie (zdarzenie się skończyło)
 const CZAS_CIWS_BEZ_STRZALU = 0.16; // s — seria CIWS wygasa, gdy tyle nie było strzału
+// Podbicie cichego sygnału przez kompresor + limiter szyny [dB] — z pomiaru 2026-11-11 (szum −50 dBFS przez te same
+// nastawy w OfflineAudioContext: −50,0 → −42,8 dB; sam kompresor +6,1, sam limiter +1,1). Zmiana nastaw kompresora
+// albo limitera = nowy pomiar tej stałej.
+const PODBICIE_SZYNY_DB = 7.2;
+// Poziom szyny [dB] po zdjęciu podbicia: suwak efektów na 100% brzmi jak dawne 30% (−10,5 dB), które użytkownik
+// uznał za „w miarę” — razem −11,2 dB względem szyny bez korekty.
+const POZIOM_SZYNY_DB = -4;
 const PROG_CIAGU_SIDE = 0.05; // ciąg burty, od którego silniki SIDE grają
 const CZAS_SIDE_BEZ_CIAGU = 0.18; // s — silniki SIDE gasną, gdy tyle nie było ciągu (impulsy automatu dysz to jedna praca)
 
@@ -51,6 +58,13 @@ export function utworzDzwiekiGry(opts) {
   limiter.ratio.value = 20;
   limiter.attack.value = 0.001;
   limiter.release.value = 0.08;
+  // Kompresor przeglądarki (DynamicsCompressorNode) sam dokłada wzmocnienie wyrównujące zależne od progu i stopnia:
+  // ta para (kompresor + limiter) podbija wszystko poniżej progu o `PODBICIE_SZYNY_DB`. Bez korekty silnik
+  // i pojedyncze strzały grały o tyle głośniej, niż mówi tabela poziomów, a duże wybuchy (ściskane) prawie wcale —
+  // miks był głośny i płaski (użytkownik: „wszystko jest za głośno, dopiero 30% głośności efektów było w miarę”).
+  // `korekta` zdejmuje podbicie i ustawia poziom szyny (`POZIOM_SZYNY_DB`).
+  const korekta = ctx.createGain();
+  korekta.gain.value = dbToGain(POZIOM_SZYNY_DB - PODBICIE_SZYNY_DB);
   const glosnosc = ctx.createGain();
   glosnosc.gain.value = Number.isFinite(opts.glosnosc) ? opts.glosnosc : 1;
   const pomiarPo = ctx.createAnalyser();
@@ -58,7 +72,8 @@ export function utworzDzwiekiGry(opts) {
   wejscie.connect(pomiarPrzed);
   wejscie.connect(komp);
   komp.connect(limiter);
-  limiter.connect(glosnosc);
+  limiter.connect(korekta);
+  korekta.connect(glosnosc);
   glosnosc.connect(pomiarPo);
   pomiarPo.connect(ctx.destination);
   const probkiPrzed = new Float32Array(pomiarPrzed.fftSize);

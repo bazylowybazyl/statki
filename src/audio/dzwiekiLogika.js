@@ -90,9 +90,10 @@ export const DZWIEKI = Object.freeze({
 /** Dźwięki z syntezy (nie z plików) — w panelu bez wariantów, tylko wyciszenie. */
 export const DZWIEKI_SYNTEZY = Object.freeze({
   // Synteza nie przechodzi przez wyrównanie plików — `poziom` to cała jej głośność [dB].
-  silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -18 },
+  // Silnik po zdjęciu podbicia szyny i przy 30% efektów „nadal był trochę za głośno” (użytkownik) — jeszcze −4 dB.
+  silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -22 },
   // Silniki SIDE: praca ciągła jak MAIN, nie pojedynczy syk (decyzja użytkownika 2026-11-11).
-  silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -20 },
+  silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -24 },
   gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -14 }
 });
 
