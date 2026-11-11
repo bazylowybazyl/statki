@@ -1,12 +1,11 @@
 // Rzeczy niefizyczne w kroku fizyki 120 Hz (audyt 2026-10-07 § 5.4, docs/AUDYT-wydajnosc-bitwa-2026-10-07.md):
 // sondy integralności gniazd tylko po zmianie struktury kadłuba, typ myśliwca bez nowych napisów,
-// dźwięk trafienia w tarczę tylko w kadrze / blisko kamery i z limitem głosów. Funkcje wycięte
+// dźwięk trafienia w tarczę przez warstwę dźwięku gry (słyszalność przed pracą). Funkcje wycięte
 // z index.html (PD gracza — tests/pointDefenseTargeting.test.mjs, bramka ringu —
 // tests/npcWorldCollisions.test.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createVoiceLimiter } from '../src/game/audioVoiceLimiter.js';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 const html = readIndexHtml();
@@ -203,62 +202,11 @@ test('isFighterNPC: ten sam wynik co dawne porównanie po toLowerCase, także pr
 // ---------------------------------------------------------------------------
 // Dźwięk trafienia w tarczę: tylko w kadrze albo blisko kamery, przez limit głosów strzałów
 
-function makeShieldAudio({ inFrame = () => false } = {}) {
-  const sources = [];
-  const now = { ms: 1000 };
-  const shotVoiceLimiter = createVoiceLimiter();
-  const scope = {
-    camera: { x: 0, y: 0 },
-    impactFxScreenPx: (x, y, size) => (inFrame(x, y) ? size : 0),
-    shotVoiceLimiter,
-    performance: { now: () => now.ms },
-    fxRandomGame: { next: () => { throw new Error('dźwięk tarczy nie losuje z fxRandomGame'); } },
-    OPTIONS: { audio: { sfx: 1 } },
-    window: {
-      AudioSys: {
-        masterGain: {},
-        sounds: { shieldHit: { duration: 0.6 } },
-        ctx: {
-          createBufferSource: () => { const s = { playbackRate: { value: 1 }, connect() {}, start() { sources.push(s); } }; return s; },
-          createGain: () => ({ gain: { value: 0 }, connect() {} })
-        }
-      }
-    }
-  };
-  scope.playDynamicSound = loadIndexFunction(html, "function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {", 'playDynamicSound', scope);
-  const play = loadIndexFunction(html, 'function playShieldHitSound(x, y) {', 'playShieldHitSound', scope);
-  return { play, sources, now, scope };
-}
-
-test('dźwięk tarczy: trafienie poza kadrem i daleko od kamery — cisza; w kadrze albo blisko — gra', () => {
-  const env = makeShieldAudio({ inFrame: (x) => Math.abs(x) < 9000 });
-  env.play(50000, 0);
-  assert.equal(env.sources.length, 0, 'poza kadrem, 50 km od kamery');
-  env.now.ms += 100;
-  env.play(1500, 900);
-  assert.equal(env.sources.length, 1, 'w kadrze');
-  env.now.ms += 100;
-  const near = makeShieldAudio({ inFrame: () => false });
-  near.play(1200, 1200);
-  assert.equal(near.sources.length, 1, 'tuż za brzegiem kadru, blisko kamery');
-  near.now.ms += 100;
-  near.play(5000, 0);
-  assert.equal(near.sources.length, 1, 'poza kadrem i dalej niż pełna głośność — cisza');
-});
-
-test('dźwięk tarczy: setki trafień w kadrze w jednej chwili — najwyżej limit głosów', () => {
-  const env = makeShieldAudio({ inFrame: () => true });
-  for (let i = 0; i < 500; i++) env.play(i, 0);
-  assert.equal(env.sources.length, 1, 'jeden start na okno minIntervalMs');
-  // seria przez 2 s co 1 ms: starty co ≥ minIntervalMs, równocześnie ≤ maxVoicesPerKey
-  for (let i = 0; i < 2000; i++) { env.now.ms += 1; env.play(0, 0); }
-  const { minIntervalMs, maxVoicesPerKey } = env.scope.shotVoiceLimiter.limits;
-  assert.ok(env.sources.length <= 1 + 2000 / minIntervalMs, `${env.sources.length}`);
-  assert.ok(env.scope.shotVoiceLimiter.activeVoices('shieldHit', env.now.ms) <= maxVoicesPerKey);
-});
-
-test('pętla pocisków: trafienie w tarczę gra przez playShieldHitSound, bez AudioSys.playSound', () => {
+test('pętla pocisków: trafienie w tarczę gra przez warstwę dźwięku gry (bez dawnego AudioSys)', () => {
   const step = sliceFunction(html, 'function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {');
-  assert.match(step, /if \(window\.AudioSys\) playShieldHitSound\(hitX, hitY\);/);
-  assert.doesNotMatch(step, /playSound\('shieldHit'\)/);
+  assert.match(step, /if \(SND\) soundSceneShieldHit\(hitX, hitY\);/);
+  assert.doesNotMatch(step, /playShieldHitSound|AudioSys/);
+  // Słyszalność i limit głosów trzyma warstwa (tests/dzwiekiLogika.test.mjs): hak odpada poza zasięgiem przed pracą.
+  const hook = sliceFunction(html, 'function soundSceneShieldHit(x, y) {');
+  assert.match(hook, /SND && soundHere\(x, y\)/);
 });

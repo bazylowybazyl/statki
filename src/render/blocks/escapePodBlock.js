@@ -1,8 +1,10 @@
 // src/render/blocks/escapePodBlock.js — blok migawki: kapsuły ratunkowe (E22, reguła `kapsuly-ratunkowe`).
 //
 // Gra (src/game/escapePods.js: `fillEscapePodRenderFrame`) składa ramkę obrazu kapsuł: pozy w chwili klatki renderu,
-// tylko kapsuły poza kadłubem, widoczne (mgła wojny, maskowanie) i poza kropkami soczewki skoku; silnik (płomień) i ciąg.
-// Worker renderu (i tryb `off` na stronie) rysuje z niej kadłubki, lampy i płomienie (src/3d/escapePods/escapePods3D.js).
+// kapsuły poza kadłubem i ZATOKI kapsuł jeszcze w kadłubie (flaga BAY; AGE = −czas do wyrzutu, miejsce zatoki w pozie
+// renderu kadłuba), widoczne (mgła wojny, maskowanie) i poza kropkami soczewki skoku; silnik (płomień) i ciąg.
+// Worker renderu (i tryb `off` na stronie) rysuje z niej kadłubki, lampy, płomienie i lampy zatok
+// (src/3d/escapePods/escapePods3D.js).
 //
 // Rejestracja (strona gry): `packer.addBlock(createEscapePodBlock())`, w klatce `frame.pods = ramka`. Strona renderu:
 // `applyEscapePodBlock(view.blocks.pods, ramka)` (ramka z `createEscapePodFrame`). Czysty moduł (bez three, DOM, `window`).
@@ -12,7 +14,9 @@ export const POD_BLOCK = Object.freeze({
   ITEM: Object.freeze({ X: 0, Y: 1, ANG: 2, THRUST: 3, AGE: 4, SEED: 5, UID: 6, FLAGS: 7, STRIDE: 8 }),
   CAP: 192,
   /** Flagi kapsuły: silnik pracuje (płomień). */
-  ENGINE: 1
+  ENGINE: 1,
+  /** Flagi kapsuły: ZATOKA — kapsuła w kadłubie przed wyrzutem (sama lampa zatoki; AGE = −czas do wyrzutu [s]). */
+  BAY: 2
 });
 
 const B = POD_BLOCK;

@@ -193,17 +193,19 @@ test('linia wyboru w formacie strony odsłuchu', () => {
 });
 
 // --- warstwa w zwykłej grze (2026-11-11): broń gracza spoza tabeli, słyszalność, zapis wyboru, migracja głośności
-test('broń gracza spoza STRZAL_GRACZA gra dźwiękiem kategorii (także superbronie — własny dźwięk robi inna sesja)', async () => {
+test('strzał broni: mapa uzbrojenia (gracz i NPC), broń spoza mapy — STRZAL_GRACZA, potem kategoria', async () => {
   const L = await import('../src/audio/dzwiekiLogika.js');
   const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
   assert.equal(L.dzwiekStrzalu('railgun_mk2', MASTER_WEAPONS.railgun_mk2, true), 'tempestIon');
-  assert.equal(L.dzwiekStrzalu('special_yamato_l', MASTER_WEAPONS.special_yamato_l, true), 'yamato');
-  assert.equal(L.dzwiekStrzalu('heavy_autocannon', MASTER_WEAPONS.heavy_autocannon, true), 'autocannon');
-  assert.equal(L.dzwiekStrzalu('armata_mk1', MASTER_WEAPONS.armata_mk1, true), 'dzialo');
-  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, true), 'railgun', 'Mjolnir — kategoria');
+  assert.equal(L.dzwiekStrzalu('railgun_mk2', MASTER_WEAPONS.railgun_mk2, false), 'tempestIon', 'NPC — ta sama mapa');
+  assert.equal(L.dzwiekStrzalu('special_yamato_l', MASTER_WEAPONS.special_yamato_l, true), 'yamatoL');
+  assert.equal(L.dzwiekStrzalu('heavy_autocannon', MASTER_WEAPONS.heavy_autocannon, true), 'dzialkoM');
+  assert.equal(L.dzwiekStrzalu('armata_mk1', MASTER_WEAPONS.armata_mk1, true), 'armataL');
+  assert.equal(L.dzwiekStrzalu('siege_railgun', MASTER_WEAPONS.siege_railgun, true), 'mjolnirStrzal', 'Mjolnir — strzał (ładowanie osobno)');
+  assert.equal(L.dzwiekStrzalu('nowa_bron', { category: 'flak' }, false), 'flak', 'broń spoza mapy — kategoria');
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     const d = L.dzwiekStrzalu(id, def, true);
-    assert.ok(L.DZWIEKI[d], `${id} → ${d}`);
+    assert.ok(d === null || d === 'seria' || L.DZWIEKI[d], `${id} → ${d}`);
   }
 });
 

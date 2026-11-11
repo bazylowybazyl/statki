@@ -3,13 +3,14 @@
 //
 // Obraz ringów (src/3d/haloRing/haloRingGame.js: update → _portVisuals) czyta z gry: zegar migania świateł hal
 // (`world.clock`), dynamiczną część rejestru kolidera każdego ringu — na halę wersję i zajętość stanowisk
-// (`berthVersion`, `layout.berths[].occupied / reserved` → lampki), poziom lamp (`lampLevel`), pozy obsługi
-// stanowisk (`poses`: zamki pola, ramiona, przewody paliwowe, upust; `settle`, właściciel) — obrys kadłuba gracza
-// w hubie (`collider.hubOutline(ship)`) i nadpisanie dachu hali przez fabułę (intro nad K-7). Geometria kolidera
+// (`berthVersion`, `layout.berths[].occupied / reserved` → lampki), poziom reflektora podejścia stanowiska
+// (`layout.berths[].approachLight` — automat obsługi stanowisk, co klatkę; NaN — brak), poziom lamp (`lampLevel`),
+// pozy obsługi stanowisk (`poses`: zamki pola, ramiona, przewody paliwowe, upust; `settle`, właściciel) — obrys kadłuba
+// gracza w hubie (`collider.hubOutline(ship)`) i nadpisanie dachu hali przez fabułę (intro nad K-7). Geometria kolidera
 // (płyta, hale, zatoki, przekształcenia) jest statyczna — worker buduje ją sam z układu ringu; ten blok niesie tylko
 // to, co się zmienia. Lustro po stronie renderu: `createRingMirror()` + `applyRingBlock(blk, dict, mirror)` →
-// `mirror.entries[key] = { hub, halls: [{ berthVersion, lampLevel, berths: [{ id, occupied, reserved }], poses: Map }] }`,
-// `mirror.clock`, `mirror.roof`.
+// `mirror.entries[key] = { hub, halls: [{ berthVersion, lampLevel, berths: [{ id, occupied, reserved, approachLight }],
+// poses: Map }] }`, `mirror.clock`, `mirror.roof`.
 //
 // Rejestracja (strona gry): `packer.addBlock(createRingBlock())`, w fazie begin `frame.ringWorld = haloWorld`,
 // `frame.ringShip = ship`, `frame.ringRoof = nadpisanie dachu albo null`. Czysty moduł (bez three, DOM i `window`).
@@ -19,6 +20,8 @@ const POSE_KEYS = ['clamp', 'extension', 'seat', 'lock', 'flow', 'vent'];
 export const RING_BLOCK = Object.freeze({
   HEAD: Object.freeze({ N: 0, CLOCK: 1, ROOF: 2, ROOF_KEY: 3, ROOF_HALL: 4, ROOF_CUT: 5, ROOF_FADE: 6, USED: 7, STRIDE: 8 }),
   POSE_KEYS: Object.freeze(POSE_KEYS),
+  // słowa na stanowisko: id, zajęte, zarezerwowane, poziom reflektora podejścia
+  BERTH: 4,
   WORDS: 4096
 });
 
@@ -34,7 +37,7 @@ function entryWords(e, ship) {
   for (const h of halls) {
     w += 4;
     const berths = h && h.layout && Array.isArray(h.layout.berths) ? h.layout.berths : [];
-    w += berths.length * 3;
+    w += berths.length * RING_BLOCK.BERTH;
     w += (h && h.poses ? h.poses.size : 0) * (3 + POSE_KEYS.length);
   }
   return { w, hub };
@@ -80,7 +83,9 @@ export function createRingBlock() {
           F[o++] = num(h && h.lampLevel);
           F[o++] = berths.length;
           F[o++] = poses ? poses.size : -1;
-          for (const b of berths) { F[o++] = dict.code(b.id); F[o++] = dict.code(b.occupied); F[o++] = dict.code(b.reserved); }
+          for (const b of berths) {
+            F[o++] = dict.code(b.id); F[o++] = dict.code(b.occupied); F[o++] = dict.code(b.reserved); F[o++] = num(b.approachLight);
+          }
           if (poses) {
             for (const [id, p] of poses) {
               F[o++] = dict.code(id);
@@ -135,12 +140,13 @@ export function applyRingBlock(blk, dict, mirror) {
       h.lampLevel = F[o++];
       const nb = F[o++] | 0;
       const np = F[o++];
-      if (h.berths.length !== nb) h.berths = Array.from({ length: nb }, () => ({ id: null, occupied: null, reserved: null }));
+      if (h.berths.length !== nb) h.berths = Array.from({ length: nb }, () => ({ id: null, occupied: null, reserved: null, approachLight: NaN }));
       for (let j = 0; j < nb; j++) {
         const b = h.berths[j];
         b.id = dict.value(F[o++]) ?? null;
         b.occupied = dict.value(F[o++]) ?? null;
         b.reserved = dict.value(F[o++]) ?? null;
+        b.approachLight = F[o++];
       }
       if (np < 0) { h.poses = null; continue; }
       if (!h.poses) h.poses = new Map();

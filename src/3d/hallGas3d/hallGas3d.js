@@ -18,7 +18,7 @@ import { engineSmokeFlow } from '../../game/engineIgnition.js';
 import { fxNoise } from '../fx/noise.js';
 import { zbierzZakres } from '../zakresyWysylki.js';
 import { createK7Layout, k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
-import { K7_BEACON, K7_BEACON_GRID, K7_BEACON_LOOK, k7BeaconLevel, k7LightRig } from '../haloRing/haloPortK7Lights.js';
+import { K7_BEACON, K7_BEACON_GRID, K7_BEACON_LOOK, k7ApproachSpotGain, k7BeaconLevel, k7LightRig } from '../haloRing/haloPortK7Lights.js';
 import { HALL_DUST_MASK, HALL_DUST_SERVICE, HALL_DUST_SHIP, hallBodyUniforms, hallDomainDistance } from '../gasField/hallDustLayout.js';
 import { HALL_GAS_MAX, HALL_GAS_TUNE, createHallGasSources, resetHallGasSources, writeHallGasSources } from '../gasField/hallGasSources.js';
 import {
@@ -97,6 +97,7 @@ class HallGas3DSystem {
     this.gasSrc = createHallGasSources(layout, this.rig);
     const capIds = layout.berths.filter((b) => b.size === 'CAPITAL').map((b) => b.id);
     this._beaconBerth = this.rig.beacons.map((b) => (b.berthId ? capIds.indexOf(b.berthId) : -1));
+    this._spotBerth = this.rig.spots.map((s) => (s.berthId ? capIds.indexOf(s.berthId) : -1));
     this.grid = new HallGas3dGrid({ domain: dom, stat: raster.data, deckStart: deck, noise3D: fxNoise.noise3D(), tune: this.tune });
     this.volume = new HallGas3dVolume({ grid: this.grid });
     this._maskWords = new Float64Array(this.grid.maxBodies * HALL_DUST_MASK.words).fill(NaN);
@@ -430,8 +431,12 @@ class HallGas3DSystem {
         L.color[0] * k, L.color[1] * k, L.color[2] * k, F.lampScatter);
     }
     const spotK = F.spotGain * (0.6 + (Number(IN[I.lamps]) || 0));
-    for (const s of this.rig.spots) {
-      const k = s.intensity * spotK;
+    const spots = this.rig.spots;
+    for (let si = 0; si < spots.length; si++) {
+      const s = spots[si];
+      // reflektor podejścia stanowiska (jak pył hal — hallDust.js): moc × poziom podejścia z bloku obsługi
+      const sb = this._spotBerth[si];
+      const k = s.intensity * spotK * (sb >= 0 ? k7ApproachSpotGain(IN[I.service + sb * HALL_DUST_SERVICE.stride + HALL_DUST_SERVICE.light]) : 1);
       const dx = s.dir[0], dz = s.dir[2];
       const gx = dx * ax + dz * bx;
       const gy = dx * ay + dz * by;

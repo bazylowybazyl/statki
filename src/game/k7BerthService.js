@@ -19,6 +19,16 @@
 // właściciela niezwinięta (przerwana kampania) zwija się sekwencją odpięcia. Automat pisze `owner = 'auto'`, gdy
 // obsługuje stanowisko, i null w spoczynku.
 //
+// REFLEKTORY PODEJŚCIA (decyzja użytkownika 2026-11-11): reflektor stanowiska (ściana tylna, snop wzdłuż stanowiska ku
+// bramie) świeci przygaszony, póki stanowisko jest wolne, i rozjaśnia się sam, gdy statek gracza PODCHODZI: w pasie
+// podejścia stanowiska (`layout.lanes` — od tyłu pola do fartucha za bramą G-01), dziobem albo rufą wzdłuż osi
+// stanowiska, wolno i nie oddalając się ku bramie (`approachOn` — ścisły warunek włączenia, `approachOff` — luźny
+// warunek trzymania: histereza, bez migotania na brzegu pasa). Pełną moc trzyma też postój, obsługa i stanowisko
+// zajęte / zarezerwowane przez kogokolwiek (fabuła — `foreign`, ruch v2 — 'traffic'). Poziom 0…1 rośnie w `lightRise` s
+// i gaśnie w `lightFall` s czasu KLATKI (`lightDt` — jak zegar migania soczewek: w pauzie i scenach fabuły światło
+// dochodzi do celu, sam warunek stoi z grą); pole `approachLight` stanowiska w rejestrze hali (rec.berth) — obraz
+// hali i światła pyłu hal mnożą moc reflektora przez k7ApproachSpotGain (haloPortK7Lights.js).
+//
 // Czas: dt gry (pauza i sceny fabuły = 0 — obsługa stoi jak symulacja). Zero alokacji na krok.
 import {
   K7_SERVICE_DOCK, K7_SERVICE_KEYS, K7_SERVICE_RELEASE, k7AngleDelta, k7ServiceConnectPose, k7ServiceDisconnectPose
@@ -40,7 +50,15 @@ export const K7_SERVICE_TUNE = {
   releaseSpeed: 45,         // obsługiwany statek: odpięcie powyżej
   leaveMargin: 80,          // obsługiwany statek: zapas pola [j.] (bez drgania na brzegu)
   leaveAngle: 8 * DEG,      // obsługiwany statek: zapas kursu
-  minLength: 1000           // kadłub krótszy nie sięga wlewów stanowiska (wlewy Atlasa: 0,395 długości od środka)
+  minLength: 1000,          // kadłub krótszy nie sięga wlewów stanowiska (wlewy Atlasa: 0,395 długości od środka)
+  // Reflektory podejścia: włączenie (ścisłe) i trzymanie (luźne). across — zapas pasa w poprzek [j.], back / front —
+  // zapas wzdłuż pasa za polem / za końcem pasa przed bramą [j.], angle — kurs względem osi stanowiska (zgodny albo
+  // odwrotny), speed — prędkość [j/s], away — prędkość ku bramie (oddalanie) [j/s].
+  approachLights: true,
+  approachOn: { across: 0, back: 0, front: 0, angle: 25 * DEG, speed: 500, away: 60 },
+  approachOff: { across: 250, back: 300, front: 600, angle: 40 * DEG, speed: 700, away: 180 },
+  lightRise: 0.7,           // poziom reflektora 0 → 1 [s] (czas klatki)
+  lightFall: 2.5            // 1 → 0 [s]
 };
 
 // Sekwencje obsługi: wspólne z K7Docking, PortDocking i fabułą (haloPortK7Layout.js).
@@ -67,25 +85,50 @@ const COND_SETTLE = 2;
 export function createK7BerthService(registry) {
   const halls = (registry?.halls || []).map((owner) => ({
     owner,
-    berths: owner.layout.berths.filter((b) => b.size === 'CAPITAL').map((b) => ({
-      id: b.id,
-      berth: b,
-      // pole w osiach stanowiska (jak PortDocking.eligibility: halfWidth wzdłuż x układu stanowiska)
-      ca: Math.cos(b.angle),
-      sa: Math.sin(b.angle),
-      tolAlong: Math.abs(Math.cos(b.angle)) > 0.5 ? b.capture.halfWidth : b.capture.halfLength,
-      tolAcross: Math.abs(Math.cos(b.angle)) > 0.5 ? b.capture.halfLength : b.capture.halfWidth,
-      state: ST.idle,
-      t: 0,
-      armed: true,
-      from: { clamp: 0, extension: 0, seat: 0, lock: 0, flow: 0, vent: 0 },
-      lamp: K7_SERVICE_LAMP.free
-    }))
+    berths: owner.layout.berths.filter((b) => b.size === 'CAPITAL').map((b) => {
+      const ca = Math.cos(b.angle);
+      const sa = Math.sin(b.angle);
+      // Pas podejścia (layout.lanes): oś g = −oś stanowiska (od pola ku bramie), u — położenie wzdłuż g od środka pola.
+      const lane = (owner.layout.lanes || []).find((v) => v.berthId === b.id) || null;
+      let uMin = -b.length * 0.5;
+      let uMax = b.length * 0.5;
+      let laneHalf = b.width * 0.5;
+      if (lane) {
+        const u0 = -((lane.x - b.x) * ca + (lane.z0 - b.z) * sa);
+        const u1 = -((lane.x - b.x) * ca + (lane.z1 - b.z) * sa);
+        uMin = Math.min(u0, u1);
+        uMax = Math.max(u0, u1);
+        laneHalf = lane.width * 0.5;
+      }
+      return {
+        id: b.id,
+        berth: b,
+        // pole w osiach stanowiska (jak PortDocking.eligibility: halfWidth wzdłuż x układu stanowiska)
+        ca,
+        sa,
+        tolAlong: Math.abs(ca) > 0.5 ? b.capture.halfWidth : b.capture.halfLength,
+        tolAcross: Math.abs(ca) > 0.5 ? b.capture.halfLength : b.capture.halfWidth,
+        // pas podejścia w osiach stanowiska: oś pasa (wzdłuż osi stanowiska) przez (laneX0, b.z), zakres u, pół szerokości
+        laneX0: lane ? lane.x : b.x,
+        uMin,
+        uMax,
+        laneHalf,
+        state: ST.idle,
+        t: 0,
+        armed: true,
+        from: { clamp: 0, extension: 0, seat: 0, lock: 0, flow: 0, vent: 0 },
+        lamp: K7_SERVICE_LAMP.free,
+        approach: false,
+        // poziom reflektora podejścia: NaN — przed pierwszym krokiem (pierwszy krok bierze cel od razu: tło menu i
+        // ekran ładowania widzą pełną moc jak dawniej — `approachLight` niezapisane — a gra startuje w stanie stanowisk)
+        light: NaN
+      };
+    })
   }));
   return {
     halls,
     aff: { p0x: 0, p0y: 0, ax: 1, ay: 0, bx: 0, by: 1 },
-    stats: { settle: 0, dock: 0, docked: 0, release: 0, foreign: 0 }
+    stats: { settle: 0, dock: 0, docked: 0, release: 0, foreign: 0, approach: 0 }
   };
 }
 
@@ -98,6 +141,8 @@ const _sv = new Float64Array(MAX_SHIPS);
 const _sw = new Float64Array(MAX_SHIPS);
 const _sl = new Float64Array(MAX_SHIPS);
 const _sb = new Float64Array(MAX_SHIPS);
+const _svx = new Float64Array(MAX_SHIPS);
+const _svz = new Float64Array(MAX_SHIPS);
 const _h = { x: 0, z: 0 };
 const _d = { x: 0, z: 0 };
 
@@ -128,6 +173,29 @@ function shipCond(rec, i, T, serviced) {
   if (along <= rec.tolAlong + m && across <= rec.tolAcross + m && err <= T.angleTol + T.leaveAngle
     && _sv[i] <= T.releaseSpeed) return COND_STAY;
   return COND_NONE;
+}
+
+/**
+ * Statek `i` podchodzi do stanowiska `rec` (reflektor podejścia): mieści się na stanowisku, leży w pasie podejścia
+ * (w poprzek ≤ pół pasa + across, wzdłuż od tyłu pola − back do końca pasa za bramą + front), kurs wzdłuż osi
+ * stanowiska (zgodny albo odwrotny ± angle), prędkość ≤ speed i nie oddala się ku bramie szybciej niż away.
+ * `L` — próg włączenia albo trzymania (K7_SERVICE_TUNE.approachOn / approachOff).
+ */
+function shipApproach(rec, i, T, L) {
+  const b = rec.berth;
+  const len = _sl[i];
+  if (!(len <= b.maxLength && _sb[i] <= b.maxBeam && len >= T.minLength)) return false;
+  const dx = _sx[i] - rec.laneX0;
+  const dz = _sz[i] - b.z;
+  const across = Math.abs(-dx * rec.sa + dz * rec.ca);
+  if (across > rec.laneHalf + L.across) return false;
+  const u = -(dx * rec.ca + dz * rec.sa);
+  if (u < rec.uMin - L.back || u > rec.uMax + L.front) return false;
+  if (k7BerthHeadingError(_sa[i], b.angle) > L.angle) return false;
+  if (_sv[i] > L.speed) return false;
+  // prędkość wzdłuż osi pasa ku bramie (g = −oś stanowiska): oddalanie się od stanowiska
+  const away = -(_svx[i] * rec.ca + _svz[i] * rec.sa);
+  return away <= L.away;
 }
 
 function isStowed(pose) {
@@ -162,15 +230,30 @@ function setConnected(pose) {
   }
 }
 
+// Poziom reflektora podejścia ku celowi (narasta w lightRise, gaśnie w lightFall [s]) → pole stanowiska w rejestrze.
+function stepApproachLight(rec, lightDt, T) {
+  const b = rec.berth;
+  const target = T.approachLights === false ? 1
+    : (rec.approach || (rec.state !== ST.idle) || b.occupied || b.reserved) ? 1 : 0;
+  let v = rec.light;
+  if (!(v === v)) v = target;
+  else if (v < target) v = Math.min(target, v + lightDt / Math.max(1e-3, T.lightRise));
+  else if (v > target) v = Math.max(target, v - lightDt / Math.max(1e-3, T.lightFall));
+  rec.light = v;
+  if (b.approachLight !== v) b.approachLight = v;
+}
+
 /**
  * Krok automatu jednego ringu. dt — czas gry [s] (0 = stoi), place — umieszczenie ringu w grze (kolider:
  * `collider.place`), ships — statki graczy (pos, vel, angle, angVel, w, h; null / martwe pomijane), count — ile
- * z listy. Pisze pozy rejestru i `rec.lamp`; zwraca svc.stats.
+ * z listy, lightDt — czas klatki [s] dla poziomu reflektorów podejścia (domyślnie dt; pauza nie zatrzymuje światła).
+ * Pisze pozy rejestru, `rec.lamp` i poziom reflektora podejścia stanowiska (`berth.approachLight`); zwraca svc.stats.
  */
-export function stepK7BerthService(svc, dt, place, ships, count = ships ? ships.length : 0, T = K7_SERVICE_TUNE) {
+export function stepK7BerthService(svc, dt, place, ships, count = ships ? ships.length : 0, T = K7_SERVICE_TUNE, lightDt = dt) {
   const step = dt > 0 ? dt : 0;
+  const ldt = lightDt > 0 ? Math.min(0.25, lightDt) : 0;
   const st = svc.stats;
-  st.settle = 0; st.dock = 0; st.docked = 0; st.release = 0; st.foreign = 0;
+  st.settle = 0; st.dock = 0; st.docked = 0; st.release = 0; st.foreign = 0; st.approach = 0;
   const aff = svc.aff;
   const n0 = Math.min(MAX_SHIPS, count | 0);
   for (let hi = 0; hi < svc.halls.length; hi++) {
@@ -197,6 +280,9 @@ export function stepK7BerthService(svc, dt, place, ships, count = ships ? ships.
         const vx = num(s.vel ? s.vel.x : s.vx);
         const vy = num(s.vel ? s.vel.y : s.vy);
         _sv[n] = Math.sqrt(vx * vx + vy * vy);
+        gameVecToHall(aff, vx, vy, _d);
+        _svx[n] = _d.x;
+        _svz[n] = _d.z;
         _sw[n] = Math.abs(num(s.angVel));
         _sl[n] = num(s.w);
         _sb[n] = num(s.h);
@@ -207,12 +293,19 @@ export function stepK7BerthService(svc, dt, place, ships, count = ships ? ships.
       const rec = H.berths[bi];
       const pose = poses.get(rec.id);
       if (!pose) continue;
+      // podejście (reflektor stanowiska) — niezależnie od właściciela pozy; histereza: włączenie ścisłe, trzymanie luźne
+      let appr = false;
+      const AL = rec.approach ? T.approachOff : T.approachOn;
+      for (let i = 0; i < n && !appr; i++) appr = shipApproach(rec, i, T, AL);
+      rec.approach = appr;
+      if (appr) st.approach++;
       // cudza poza (fabuła): bez zapisu; po oddaniu statek musi najpierw zjechać z pola
       if (pose.owner && pose.owner !== K7_POSE_OWNER.auto) {
         rec.state = ST.foreign;
         rec.t = 0;
         rec.armed = false;
         st.foreign++;
+        stepApproachLight(rec, ldt, T);
         continue;
       }
       if (rec.state === ST.foreign) {
@@ -261,6 +354,7 @@ export function stepK7BerthService(svc, dt, place, ships, count = ships ? ships.
       else if (rec.state === ST.dock) st.dock++;
       else if (rec.state === ST.docked) st.docked++;
       else if (rec.state === ST.release) st.release++;
+      stepApproachLight(rec, ldt, T);
     }
   }
   return st;
@@ -292,8 +386,10 @@ export function syncK7BerthLamps(svc, hallIndex, berths) {
   return changed;
 }
 
-/** Stan stanowiska (diagnostyka, skrypty gry): { state, t, armed, lamp } albo null. */
+/** Stan stanowiska (diagnostyka, skrypty gry): { state, t, armed, lamp, approach, light } albo null. */
 export function k7BerthServiceState(svc, hallIndex, berthId) {
   const rec = svc?.halls?.[hallIndex]?.berths?.find((r) => r.id === berthId);
-  return rec ? { state: K7_SERVICE_STATE_NAMES[rec.state], t: rec.t, armed: rec.armed, lamp: rec.lamp } : null;
+  return rec ? {
+    state: K7_SERVICE_STATE_NAMES[rec.state], t: rec.t, armed: rec.armed, lamp: rec.lamp, approach: rec.approach, light: rec.light
+  } : null;
 }

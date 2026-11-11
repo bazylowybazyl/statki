@@ -125,6 +125,26 @@ paths:
     v2, skrypt) ustawia własny `owner` — inaczej automat zeruje pozę wolnego stanowiska. Strojenie `window.K7ServiceTune`
     (`dwell`, `settleSpeed`, `releaseSpeed` …), testy `tests/k7BerthService.test.mjs`, w grze
     `hala-swiatla-gra.mjs --automat`.
+  - REFLEKTORY PODEJŚCIA (decyzja użytkownika 2026-11-11): reflektor stanowiska capital (ściana tylna, snop wzdłuż
+    stanowiska ku bramie; `berthId` w `k7LightRig().spots`) świeci PRZYGASZONY (`K7_APPROACH_SPOT.idle` 0,3 mocy), póki
+    stanowisko jest wolne, i rozjaśnia się sam, gdy gracz PODCHODZI: automat obsługi (`k7BerthService.js`) widzi statek,
+    który mieści się na stanowisku, w pasie podejścia (`layout.lanes` — od tyłu pola do fartucha za bramą G-01), kursem
+    wzdłuż osi stanowiska (dziobem albo rufą), ≤ 500 j/s i bez oddalania ku bramie (> 60 j/s) — `approachOn`; trzyma
+    luźniej (`approachOff`: +250 j. w poprzek, 40°, 700 j/s, oddalanie 180 j/s) — histereza bez migotania na brzegu pasa.
+    Pełny także przy postoju, obsłudze, cudzej pozie (fabuła) i stanowisku zajętym / zarezerwowanym przez kogokolwiek
+    (ruch v2 — 'traffic'). Poziom 0…1 (pierwszy krok automatu bierze cel od razu — start gry bez rampy; przed nim
+    pole nie istnieje, więc tło menu ma pełną moc) narasta w `lightRise` 0,7 s i gaśnie w `lightFall` 2,5 s CZASU KLATKI
+    (`HaloRingWorld.frame({ frameDt })` — jak miganie soczewek: w pauzie i scenach fabuły dochodzi do celu, sam warunek
+    stoi z grą) → pole `approachLight` stanowiska w rejestrze hali → blok `ring` migawki (4. słowo stanowiska, worker)
+    i blok obsługi wejścia pyłu (`HALL_DUST_SERVICE.light`; NaN = brak poziomu). Mnożnik mocy z JEDNEGO źródła
+    `k7ApproachSpotGain` (`haloPortK7Lights.js`; brak poziomu — 1, czyli dema i tło menu jak dawniej): pokład hali
+    (`HaloPortK7.setApproachLights` w `update({ berths })` — zmiana wartości `uK7Spots`, bez zmiany grafu i `MAX_SPOTS`),
+    siatka świateł pyłu hal (`HallDust._lights` — pył, para, kadłuby) i gaz hali 3D (demo). Oba tryby renderu ten sam
+    obraz (poziom liczy gra). A/B: `K7ServiceTune.approachLights = false` (wszystkie pełne). Testy
+    `tests/k7ApproachLights.test.mjs`, w grze `node scripts/webgpu/zatoki-reflektory-gra.mjs --etapy reflektory
+    [--query renderWorker=1]` (przed podejściem, narastanie, pełny, Atlas na polu, po odlocie; poziomy z rejestru,
+    jasność kadru wokół plamy reflektora). Oprawa reflektora (soczewka w modelu z Blendera) świeci stale — zmienia się
+    tylko światło.
   - OPRZYRZĄDOWANIE (`src/3d/haloRing/haloPortK7Lights.js`, czyste, JEDNO źródło): lampy, reflektory (oprawy na
     ścianach), SOCZEWKI migające (`K7_BEACON`: czerwone przeszkodowe na ościeżnicach, obrotnicach ramion paliwowych i ścianach — wspólny
     takt; zielone / czerwone narożniki stanowisk — przełącza `setBerthLamps`; niebieskie stroboskopy podejścia biegnące

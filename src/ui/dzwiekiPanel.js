@@ -35,6 +35,8 @@ const STYL = `
 #dzwieki-panel .dp-warianty button.wybrany { background: rgba(70, 140, 200, 0.7); border-color: rgba(150, 200, 240, 0.8); }
 #dzwieki-panel .dp-stopka { padding: 6px 8px; display: flex; gap: 8px; align-items: center; border-top: 1px solid rgba(120,170,210,0.2); }
 #dzwieki-panel .dp-stan { color: #9fc4a8; font-size: 11px; }
+#dzwieki-panel select { font: inherit; color: inherit; background: rgba(20, 34, 48, 0.95); border: 1px solid rgba(120,170,210,0.35);
+  border-radius: 4px; padding: 1px 4px; max-width: 190px; }
 #dzwieki-panel .dp-grupa { grid-column: 1 / -1; color: #7f9fb5; font-size: 11px; margin-top: 4px; }
 `;
 
@@ -44,11 +46,13 @@ const KATEGORIE_NAZWY = {
 };
 
 /**
- * @param {{ dzwieki: object, akcje: { tarcza(b), niezniszczalne(b), piraciStrzelaja(b), odnow() },
+ * `zestawy` (opcjonalnie) — lista { id, nazwa } zestawów broni Atlasa; wybór woła `akcje.zestaw(id)`, stan — `stan().zestaw`.
+ * @param {{ dzwieki: object, akcje: { tarcza(b), niezniszczalne(b), piraciStrzelaja(b), odnow(), zestaw?(id) },
+ *           zestawy?: { id: string, nazwa: string }[],
  *           stan: () => ({ tarcza: boolean, niezniszczalne: boolean, piraciStrzelaja: boolean, zapisZablokowany: boolean,
  *                          glosnoscZastepcza: boolean }) }} opts
  */
-export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zdarzenia = null }) {
+export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zestawy = null, zdarzenia = null }) {
   const doc = document;
   if (!doc.getElementById('dzwieki-panel-styl')) {
     const st = doc.createElement('style');
@@ -91,6 +95,15 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zdarzenia = null }) 
     el('span', { text: 'Piraci' }), bOgien,
     el('span', { text: 'Po zniszczeniu' }), bOdnow
   ]);
+  // Zestaw broni Atlasa (ocena dźwięków uzbrojenia): montaż w scenie, bez zapisu gracza.
+  let wyborZestawu = null;
+  if (Array.isArray(zestawy) && zestawy.length && typeof akcje.zestaw === 'function') {
+    wyborZestawu = el('select', { tabindex: '-1', title: 'Broń Atlasa w scenie — każdy zestaw daje inne rodziny dźwięków' });
+    for (const z of zestawy) wyborZestawu.appendChild(el('option', { value: z.id, text: z.nazwa }));
+    wyborZestawu.addEventListener('change', () => { akcje.zestaw(wyborZestawu.value); wyborZestawu.blur(); odswiez(); });
+    sekcja.appendChild(el('span', { text: 'Broń Atlasa' }));
+    sekcja.appendChild(wyborZestawu);
+  }
   // Zdarzenia trudne do wywołania w scenie (dźwięki obszarów): `zdarzenia` — [{ nazwa, przycisk, tytul, fn }].
   for (const z of zdarzenia || []) {
     sekcja.appendChild(el('span', { text: z.nazwa }));
@@ -169,6 +182,7 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan, zdarzenia = null }) 
     przelacznik(bOgien, s.piraciStrzelaja, 'strzelają', 'nie strzelają');
     uwaga.style.display = s.zapisZablokowany ? '' : 'none';
     uwagaGlosnosc.style.display = s.glosnoscZastepcza ? '' : 'none';
+    if (wyborZestawu && s.zestaw && wyborZestawu.value !== s.zestaw) wyborZestawu.value = s.zestaw;
     const st = dzwieki.statystyki().dzwieki;
     const rows = dzwieki.lista();
     for (const w of wiersze) {

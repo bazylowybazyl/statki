@@ -76,15 +76,17 @@ test('hullBodies: wygląd odłamka ginącego węzła z fxRandom (fizyka rozpadu 
 });
 
 // RW-20: wątek główny losuje wizualia ze strumienia GRY (fxRandomGame), nie ze strumienia renderu.
-test('index.html: cząstki kanwy (ślad pocisku, iskry wyrzutni rakiet, start myśliwca) i ton dźwięku z fxRandomGame', () => {
+test('index.html: cząstki kanwy (ślad pocisku, iskry wyrzutni rakiet, start myśliwca) i losowość warstwy dźwięku z fxRandomGame', () => {
   const html = readIndexHtml();
   assert.match(html, /import \{ fxRandomGame \} from "\.\/src\/game\/fxRandomGame\.js";/);
   assert.doesNotMatch(html, /\bfxRandom\.next\(/, 'index.html bez strumienia renderu');
-  for (const header of ['function spawnBulletTrail(b, count, frameDt) {', 'function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {']) {
+  for (const header of ['function spawnBulletTrail(b, count, frameDt) {']) {
     const fn = sliceFunction(html, header);
     assert.doesNotMatch(fn, /Math\.random/, header);
     assert.match(fn, /fxRandomGame\.next\(\)/, header);
   }
+  // warstwy dźwięku (gra i hala K-7) losują wariant, ton i głośność ze strumienia gry
+  assert.ok((html.match(/rand: \(\) => fxRandomGame\.next\(\)/g) || []).length >= 2, 'rand warstw dźwięku');
   assert.match(html, /const aa = Math\.atan2\(baseDir\.y, baseDir\.x\) \+ \(fxRandomGame\.next\(\) - 0\.5\) \* 0\.9;/, 'iskry wyrzutni rakiet');
   assert.match(html, /const spread = \(fxRandomGame\.next\(\) - 0\.5\) \* 0\.5;/, 'cząstki startu myśliwca');
 });

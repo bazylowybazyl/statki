@@ -1155,7 +1155,6 @@
       projectileClockOf,
       setRenderPosedEntity
     } from "./src/game/carrierVelocity.js";
-    import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
     // Gospodarka stacji, przewozy i ceny liczą się w ruchu v2 (blok „RUCH v2”, most src/game/trafficBridge.js);
     // gra trzyma tylko kopię rynku z mostu. Stara ekonomia (vany cargoFleet, tranzyt przez bramy, produkcja
@@ -1230,7 +1229,7 @@
     } from "./src/data/lootGear.js";
     import {
       createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND,
-      fillEscapePodRenderFrame, escapePodCloakHidden, retargetEscapePods
+      fillEscapePodRenderFrame, escapePodCloakHidden, retargetEscapePods, bindEscapePodBays
     } from "./src/game/escapePods.js";
     import {
       createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -1476,6 +1475,8 @@
       DZWIEKI_HALI, DZWIEKI, DZWIEKI_SYNTEZY, KLUCZ_WYBORU, parsujWybor, tekstZapisuWyboru, slyszalne,
       migrujGlosnoscGlowna, GLOSNOSC_GLOWNA_DOMYSLNA
     } from "./src/audio/dzwiekiLogika.js";
+    // Dźwięki uzbrojenia (mapa broń → dźwięk, ładowanie superbroni, trafienia wiązką) — reguła `dzwiek`, § „Uzbrojenie”.
+    import { wystrzalBroni, jestMysliwcem, zdarzenieTrafienia, LADOWANIE_BRONI, HEXLANCE_GOTOWY, WIAZKA_TRAFIENIE, FLAK_ROZPRYSK } from "./src/audio/dzwiekiBroni.js";
     import { createK7HallSound, stepK7HallSound, K7_HALL_SOUND_TUNE } from "./src/game/k7HallSound.js";
     import { LAUNCH_SPLIT } from "./src/game/rockets/rocketSim.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
@@ -2243,11 +2244,12 @@
     };
     let OPTIONS_OPEN = false;
 
-    // --- SYSTEM AUDIO (AudioSys) ---
+    // --- KONTEKST DŹWIĘKU (AudioSys) ---
+    // Właściciel jedynego `AudioContext` strony. Dźwięk gry gra warstwa `src/audio/` (blok „SCENA DŹWIĘKI”) i warstwa
+    // hali K-7 — obie na tym kontekście, z własnymi szynami. Dawnych efektów z plików WAV (pętla silnika, trafienie
+    // w tarczę, strzały „centrali dźwiękowej uzbrojenia”) nie ma — usunięte 2026-11-11 na polecenie użytkownika.
     const AudioSys = {
       ctx: null,
-      masterGain: null,
-      sounds: {},
       isInit: false,
 
       // Inicjalizacja kontekstu (musi być po kliknięciu użytkownika)
@@ -2255,13 +2257,6 @@
         if (this.isInit) return;
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AudioContext();
-
-        // Główna szyna głośności (Master)
-        this.masterGain = this.ctx.createGain();
-        // Pobieramy głośność z Twoich OPTIONS (jeśli są dostępne)
-        const vol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.master : 0.5;
-        this.masterGain.gain.value = vol;
-        this.masterGain.connect(this.ctx.destination);
 
         // Kontekst utworzony bez gestu gracza (nowa gra z menu pauzy startuje sama po przeładowaniu strony) przeglądarka
         // zostawia w stanie „suspended” — wznowienie przy pierwszym kliknięciu albo klawiszu.
@@ -2278,169 +2273,9 @@
 
         this.isInit = true;
         console.log("[AudioSys] Zainicjowano.");
-      },
-
-      // Ładowanie pojedynczego dźwięku do pamięci
-      loadSound: async function (name, url) {
-        if (!this.ctx) this.init();
-        try {
-          const response = await fetch(url);
-          const arrayBuffer = await response.arrayBuffer();
-          const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-          this.sounds[name] = audioBuffer;
-          console.log(`[AudioSys] Załadowano '${name}'`);
-        } catch (e) {
-          console.error(`[AudioSys] Błąd ładowania '${name}' z ${url}:`, e);
-        }
-      },
-
-      // Tworzenie zapętlonego silnika (z kontrolą Pitch i Volume)
-      createEngineLoop: function (soundName) {
-        if (!this.sounds[soundName]) return null;
-
-        const source = this.ctx.createBufferSource();
-        source.buffer = this.sounds[soundName];
-        source.loop = true;
-
-        const gainNode = this.ctx.createGain();
-        gainNode.gain.value = 0; // Na start cisza
-
-        // Lancuch: Zrodlo -> Gain -> Master -> Wyjscie
-        source.connect(gainNode);
-        gainNode.connect(this.masterGain);
-
-        source.start(0);
-
-        return {
-          source: source,
-          gain: gainNode,
-
-          // Funkcja aktualizująca brzmienie w czasie rzeczywistym
-          update: (throttle) => {
-            const now = AudioSys.ctx.currentTime;
-            const targetPitch = 0.5 + (throttle * 0.6);
-            source.playbackRate.setTargetAtTime(targetPitch, now, 0.2);
-            let baseVol = 0.05 + (throttle * 0.25);
-
-            // Pobranie ustawień SFX gracza
-            const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-
-            // Aplikowanie głośności
-            gainNode.gain.setTargetAtTime(baseVol * sfxVol, now, 0.1);
-          },
-
-          stop: () => {
-            try { source.stop(); } catch (e) { }
-          }
-        };
-      },
-      // Prosta funkcja do strzałów (na przyszłość)
-      playSound: function (name) {
-        if (!this.sounds[name]) return;
-        const source = this.ctx.createBufferSource();
-        source.buffer = this.sounds[name];
-        const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-
-        const gain = this.ctx.createGain();
-        gain.gain.value = sfxVol;
-
-        source.connect(gain);
-        gain.connect(this.masterGain);
-        source.start(0);
       }
     };
     window.AudioSys = AudioSys;
-    // --- CENTRALA DZWIEKOWA UZBROJENIA ---
-    // Strzały z rdzenia broni przychodzą szyną (src/game/weaponShotBus.js — bez
-    // zdarzenia DOM i obiektu per strzał); superbroń nadal wysyła rzadkie
-    // CustomEvent('game_weapon_fired'). Obie drogi prowadzą do tej funkcji.
-    function onWeaponShotAudio(detail) {
-      if (!detail || !window.AudioSys || !window.AudioSys.isInit) return;
-      const x = detail.x;
-      const y = detail.y;
-
-      // Tutaj decydujemy jaki dźwięk grać w zależności od ID broni
-      switch (detail.weaponId) {
-        case 'hexlance':
-          // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
-          playDynamicSound('sfx_hexlance', x, y, 0.1, 0.6);
-          break;
-
-        case 'death_ray':
-          // Promień śmierci — dźwięk superbroni, głośniej i bez wariacji
-          playDynamicSound('sfx_hexlance', x, y, 0, 0.9);
-          break;
-
-        case 'railgun_mk1':
-        case 'railgun_mk2':
-          playDynamicSound('sfx_railgun', x, y, 0.2, 0.05);
-          break;
-
-        case 'vulcan_minigun':
-          playDynamicSound('sfx_railgun', x, y, 0.35, 0.035);
-          break;
-
-        case 'helios_laser':
-          playDynamicSound('sfx_railgun', x, y, 0.12, 0.045);
-          break;
-
-        case 'main_cannon':
-          // (Przyszłość) Tu dodasz dźwięk dla Main Cannon
-          // playDynamicSound('sfx_maincannon', x, y, 0.2, 0.6);
-          break;
-
-        case 'nuclear_missile':
-          // (Przyszłość) Inna superbroń
-          // playDynamicSound('sfx_nuke_launch', x, y, 0, 1.0);
-          break;
-      }
-    }
-    WeaponShotBus.on(onWeaponShotAudio);
-    window.addEventListener('game_weapon_fired', (e) => onWeaponShotAudio(e.detail));
-
-    // Limit głosów per dźwięk + tłumienie odległością od kamery
-    // (src/game/audioVoiceLimiter.js). Bez tego każdy railgun w bitwie tworzył
-    // BufferSource + Gain — setki źródeł na sekundę, także 12 km od kamery.
-    const shotVoiceLimiter = createVoiceLimiter();
-
-    // Helper do ładniejszego odtwarzania dźwięków (z wariacją)
-    function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {
-      const ctx = window.AudioSys.ctx;
-      const buffer = window.AudioSys.sounds[soundKey];
-      if (!ctx || !buffer) return;
-
-      // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
-      const rate = pitchVar ? 1.0 + (fxRandomGame.next() - 0.5) * 2 * pitchVar : 1.0;
-      const dist = (Number.isFinite(x) && Number.isFinite(y)) ? Math.hypot(x - camera.x, y - camera.y) : 0;
-      const durationMs = (Number(buffer.duration) || 0) / rate * 1000;
-      const voiceVolume = shotVoiceLimiter.admit(soundKey, performance.now(), volume, dist, durationMs);
-      if (voiceVolume <= 0) return;
-
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      if (rate !== 1.0) source.playbackRate.value = rate;
-
-      const gainNode = ctx.createGain();
-      // Ustaw głośność (bazując na opcjach gry + opcjach wywołania)
-      const gameSfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-      gainNode.gain.value = voiceVolume * gameSfxVol;
-
-      source.connect(gainNode);
-      gainNode.connect(window.AudioSys.masterGain);
-      source.start(0);
-    }
-
-    // Trafienie pocisku w tarczę: tylko w kadrze (ta sama bramka co efekt trafienia) albo blisko
-    // kamery, przez limit głosów strzałów. Dawniej każde trafienie na mapie tworzyło BufferSource
-    // + Gain bez limitu — w bitwie flot setki na sekundę (audyt 2026-10-07 § 5.4).
-    function playShieldHitSound(x, y) {
-      if (!(impactFxScreenPx(x, y, 1) > 0)) {
-        const dx = x - camera.x, dy = y - camera.y;
-        const near = shotVoiceLimiter.limits.fullVolumeDist;
-        if (!(dx * dx + dy * dy <= near * near)) return;
-      }
-      playDynamicSound('shieldHit', x, y, 0, 1.0);
-    }
 
     const mainMenuEl = document.getElementById('main-menu');
     const newGameButton = document.getElementById('btn-new-game');
@@ -2704,10 +2539,8 @@
     function applyAudioOptions() {
       // Hala K-7: własna warstwa (blok „DŹWIĘKI HALI K-7”) — główna × efekty z opcji.
       if (HALL_SND) HALL_SND.ustawGlosnosc(hallSoundVolume());
-      // Warstwa dźwięku (zwykła gra i scena); w scenie stary AudioSys zostaje wyciszony.
+      // Warstwa dźwięku (zwykła gra i scena).
       if (SND) SND.ustawGlosnosc(SoundScene.active ? soundSceneVolume() : soundGameVolume());
-      if (SoundScene.active) return;
-      if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
     }
     try {
       const savedAudio = JSON.parse(localStorage.getItem('sc_audio') || 'null');
@@ -10786,7 +10619,6 @@
       });
 
       pushZoneMessage("WARNING: HOSTILE CAPITAL SIGNATURES DETECTED", 4.0);
-      if (window.AudioSys) AudioSys.playSound('shieldHit');
     }
 
     // POPRAWKA 2: Przypisanie do window (teraz będzie widoczne globalnie)
@@ -11998,6 +11830,7 @@
             // Tarcza ma własne VFX (ripple + cząsteczki + bańka) — efekt trafienia wiązki
             // (WeaponFx: iskry, żar, dym przy trafieniu) jest efektem trafienia w PANCERZ.
             if (beamBlockedByShield) eventBeam.hitEntity = null;
+            if (SND && allowDamage && !pdBeam) soundSceneBeamHit(shooter, finalEndX, finalEndY, beamBlockedByShield);
           }
         } else {
           // --- LOGIKA POCISKÓW I RAKIET ---
@@ -12189,6 +12022,7 @@
         angVel: Number(ship.angVel) || 0,
         ready: !(Number(hp.specialCd) > 0)
       }, weapon);
+      if (SND && res === CHARGE_CHARGING) soundSceneCharge(weapon.id, st, ship.pos.x, ship.pos.y);
       if (res === CHARGE_FIRE) {
         fireSpecialLoadout(loadout, hp, slot);
       } else if (res === CHARGE_CHARGING && RenderCommands.ready && dt > 0) {
@@ -12217,8 +12051,10 @@
         }
       } else if (event === 'moving') {
         pushZoneMessage(`${name}: WYMAGA POSTOJU OKRĘTU`, 1.6);
+        if (SND) soundSceneRefuse();
       } else if (event === 'aim') {
         pushZoneMessage(`${name}: BRAK WYCELOWANIA`, 1.4);
+        if (SND) soundSceneRefuse();
       }
     }
 
@@ -12471,6 +12307,7 @@
     // kąt wieżyczki AI, receptura broni (WeaponFx.charge), stan efektu na dziale.
     const _npcChargeCarrier = createCarrier();
     window.spawnWeaponChargeFx = function (owner, weapon, u, dt) {
+      if (SND && owner && weapon?.def) soundSceneCharge(weapon.def.id, weapon, owner.x, owner.y);
       if (!RenderCommands.ready || !owner || !weapon?.def) return;
       let x = owner.x;
       let y = owner.y;
@@ -13450,6 +13287,7 @@
         dzwiekiNiezniszczalne(on) { soundSceneUndying(on); return SoundScene.undying; },
         dzwiekiPiraciStrzelaja(on) { SoundScene.pirFire = !!on; return SoundScene.pirFire; },
         dzwiekiOdnow() { soundSceneRenew(); return SoundScene.pirates.length; },
+        dzwiekiZestaw(id) { return soundSceneSetWeapons(id); },
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
         // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
@@ -18980,8 +18818,8 @@
     // Cruise Missile Rack, Supernova, CIWS Mk II — tylko w pamięci), piraci tuż obok (taran, tarcie, zgniot) i w zasięgu
     // broni, panel (`src/ui/dzwiekiPanel.js`): tarcza Atlasa, cele niezniszczalne, piraci strzelają, odnowienie celów,
     // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) gra w ZWYKŁEJ grze i w
-    // scenie (2026-11-11, decyzja użytkownika): `SND` = warstwa włączona albo null (`?dzwiek=stary` poza sceną — stary
-    // AudioSys jak dawniej), a każdy hak w grze to jedno `if (SND)`; z warstwą stary AudioSys nie wczytuje efektów. ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
+    // scenie (2026-11-11, decyzja użytkownika): `SND` = warstwa włączona (zwykła gra i scena), a każdy hak w grze to
+    // jedno `if (SND)`; dawnego dźwięku z plików WAV nie ma. ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
     // (`__SAVE_LOCKED` w bloku resetu zapisu), scena z konsoli — od swojego startu; do przeładowania strony (wyposażenie
     // sceny zostaje w pamięci, więc odblokowanie po końcu sceny zapisałoby je jako wyposażenie gracza). Atlas w scenie
     // nie ginie (kadłub nie spada poniżej 1 — alarm kadłuba krytycznego da się usłyszeć bez końca gry).
@@ -19009,6 +18847,32 @@
         main: 'railgun_mk2', special: 'special_yamato_cannon', missile: 'missile_rack',
         special_missile: 'supernova_missile', aux: 'ciws_mk2', hangar: null, builtin: null
       },
+      /**
+       * Zestawy broni Atlasa do oceny dźwięków uzbrojenia (panel: „Broń Atlasa”; `DevScene.dzwiekiZestaw(id)`). Na typ
+       * gniazda lista broni — kolejne gniazda tego typu dostają kolejne bronie z listy (po kółku), broń, która się nie
+       * mieści, oddaje miejsce następnej; typ spoza zestawu — jak `loadout`. Montaż tą samą ścieżką co `loadout`.
+       */
+      zestawy: [
+        { id: 'scena', nazwa: 'Zestaw sceny (Tempest, Yamato, rakiety)', bron: {} },
+        { id: 'dzialka', nazwa: 'Działka i armaty', bron: {
+          main: ['heavy_autocannon', 'heavy_autocannon_l', 'vulcan_minigun', 'armata_mk1', 'gatling_s'],
+          special: ['special_goliath_autocannon'] } },
+        { id: 'plazma', nazwa: 'Plazma (Helios, Plasma Gatling, Yamato L)', bron: {
+          main: ['helios_laser_s', 'helios_laser', 'helios_lance_l'],
+          special: ['special_plasma_gatling', 'special_yamato_l'] } },
+        { id: 'szynowe', nazwa: 'Railguny snajperskie (Lanca, Valkyrie)', bron: {
+          main: ['lance_rail_m', 'lance_rail_l'],
+          special: ['special_valkyrie_s', 'special_valkyrie_m', 'special_valkyrie_railgun'] } },
+        { id: 'wiazki', nazwa: 'Wiązki (ciągła, puls, laser PD)', bron: {
+          main: ['beam_continuous', 'beam_pulse'], aux: ['laser_pd_mk1'] } },
+        { id: 'flak', nazwa: 'Flak i torpedy', bron: {
+          aux: ['flak_s', 'flak_m', 'flak_l', 'flak_capital'],
+          missile: ['missile_rack', 'siege_torpedo', 'torpedo_salvo', 'siege_torpedo_mk2'] } },
+        { id: 'rakiety', nazwa: 'Rakiety (Grad, Osa — Atlas ma dwie wyrzutnie)', bron: {
+          missile: ['grad_launcher', 'osa_micro_missile', 'roj_pod', 'fast_missile_rack', 'hydra_mirv'] } },
+        { id: 'superbronie', nazwa: 'Superbronie (Mjolnir — 2 na postoju, Hexlance — 4 dwa razy)', bron: {
+          special: ['siege_railgun'], builtin: ['hexlance_siege'] } }
+      ],
       /** Kadłub krytyczny (alarm) poniżej tej części kadłuba. */
       hullCritical: 0.25,
       /** Pierwszy kontakt kadłubów: głośność z prędkości zbliżenia [j/s] (pełna od `impactFull`); taran od `ramSpeed`. */
@@ -19019,11 +18883,12 @@
       /** Promień sprzątania wraków przy odnowieniu celów [j.] i odsłonięcia mgły. */
       area: 14000,
       /** Głośność główna sceny, gdy w opcjach gry jest 0 (domyślnie). */
-      masterFallback: 0.7
+      masterFallback: 0.7,
+      /** Odmowa kierowania ogniem (`blad`) najwyżej raz na tyle sekund. */
+      refuseGap: 0.4
     };
     let SND = null;
     // Warstwa dźwięku gry: jedna na stronę (zwykła gra i scena), `SND` wskazuje ją, gdy jest włączona.
-    const SOUND_LAYER_OLD = new URLSearchParams(location.search).get('dzwiek') === 'stary';
     let SND_LAYER = null;
     let SND_LOADING = null;
     // Znane id do zapisu wyboru (pliki i synteza) i klucz serii CIWS / pętli wiązki strzelca bez obiektu.
@@ -19051,6 +18916,7 @@
       try { SND_LAYER.wczytajWybor(parsujWybor(localStorage.getItem(KLUCZ_WYBORU), SOUND_KNOWN_IDS)); } catch { /* bez zapisu */ }
       window.__dzwieki = SND_LAYER;
       WeaponShotBus.on(soundSceneShot);
+      window.addEventListener('game_weapon_fired', soundSceneSuperShot); // Hexlance — poza szyną strzałów
       // Dźwięki obszarów: maskowanie fregaty zwiadu (szyna ScoutBay), klik przycisków interfejsu (delegacja kliknięć).
       window.__dzwiekiUi = soundSceneUi;
       ScoutBay.on('cloak', soundSceneScoutCloak);
@@ -19061,7 +18927,7 @@
     }
     /** Start gry (po AudioSys.init): warstwa w zwykłej grze — pliki w tle, pierwsze klatki bez dźwięków z plików. */
     function startSoundLayer() {
-      if (SOUND_LAYER_OLD || !AudioSys.ctx) return;
+      if (!AudioSys.ctx) return;
       soundLayerCreate(soundGameVolume());
       SND = SND_LAYER;
     }
@@ -19069,7 +18935,7 @@
       active: false, starting: false, t: 0, spot: null, opts: null, pirates: [], panel: null,
       shieldOn: true, undying: true, pirFire: false,
       lastShield: null, lastLocks: 0, critical: false, grind: 0, grindX: NaN, grindY: NaN, grindRam: false,
-      lastDeath: { t: -1, x: 0, y: 0 }, ammoT: 0, oldMasterGain: null
+      lastDeath: { t: -1, x: 0, y: 0 }, ammoT: 0, lastRefuse: -1, zestaw: 'scena'
     };
     window.SoundScene = SoundScene;
 
@@ -19098,7 +18964,7 @@
     // Osobna warstwa dźwięku (tabela DZWIEKI_HALI: tło, pompy, przepływ, serwa ramion, syk zaworów, złączki, zaciski,
     // gong i spiker) i czysty reżyser (src/game/k7HallSound.js), który co klatkę czyta stan gry hali przy kamerze —
     // pozy obsługi stanowisk z rejestru kolidera i harmonogram zaworów. Gra w kampanii i w grze swobodnej, gdy kamera
-    // jest przy hali K-7; poza halą, w pauzie i w scenie dźwięków — cisza. Stary AudioSys bez zmian.
+    // jest przy hali K-7; poza halą, w pauzie i w scenie dźwięków — cisza.
     let HALL_SND = null;
     const HallSound = createK7HallSound({ rand: () => fxRandomGame.next() });
     window.K7HallSoundTune = K7_HALL_SOUND_TUNE;
@@ -19143,17 +19009,12 @@
       if (TowScene.active) stopTowScene();
       if (RadarRangeScene.active) stopRadarScene();
       AudioSys.init();
-      // Ta sama warstwa co w zwykłej grze (z `?dzwiek=stary` powstaje dopiero tu); scena czeka na pliki.
+      // Ta sama warstwa co w zwykłej grze; scena czeka na pliki.
       soundLayerCreate(soundSceneVolume());
       await SND_LOADING;
       SND = SND_LAYER;
       SND.wlacz();
       SND.ustawGlosnosc(soundSceneVolume());
-      // Stary AudioSys wyciszony na czas sceny (silnik z pliku, shieldHit, railgun) — słychać tylko nowe dźwięki.
-      if (AudioSys.masterGain) {
-        SoundScene.oldMasterGain = AudioSys.masterGain.gain.value;
-        AudioSys.masterGain.gain.value = 0;
-      }
       Object.assign(SoundScene, { active: true, starting: false, t: 0, opts, lastShield: ship.shield?.state || null, lastLocks: lockedTargets.length, critical: false, grind: 0 });
       soundScenePlace();
       if (!SoundScene.panel) {
@@ -19163,8 +19024,10 @@
             tarcza: (on) => soundSceneShield(on),
             niezniszczalne: (on) => soundSceneUndying(on),
             piraciStrzelaja: (on) => { SoundScene.pirFire = !!on; },
-            odnow: () => soundSceneRenew()
+            odnow: () => soundSceneRenew(),
+            zestaw: (id) => soundSceneSetWeapons(id)
           },
+          zestawy: SOUND_SCENE.zestawy.map((z) => ({ id: z.id, nazwa: z.nazwa })),
           zdarzenia: [
             { nazwa: 'Rdzeń celu', przycisk: 'stopienie', tytul: 'Stopienie rdzenia najbliższego pirata (3,5 s) i detonacja', fn: soundSceneMeltTarget },
             { nazwa: 'Okręt z warpa', przycisk: 'przylot', tytul: 'Okręt przylatuje z warpa przed Atlasem (zwiastun i wyrzut)', fn: soundSceneArrival },
@@ -19173,7 +19036,7 @@
             { nazwa: 'Kapsuły ratunkowe', przycisk: 'wyrzut', tytul: 'Kapsuły z najbliższego okrętu sceny (wyrzut, zapłon po dryfie)', fn: soundScenePods },
             { nazwa: 'Skan X', przycisk: 'fala', tytul: 'Fala skanera (ping, odsłonięte kontakty)', fn: () => triggerScanWave() }
           ],
-          stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED, glosnoscZastepcza: !!SoundScene.masterFallback })
+          stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED, glosnoscZastepcza: !!SoundScene.masterFallback, zestaw: SoundScene.zestaw })
         });
       }
       return { start: true, pirates: SoundScene.pirates.length, spot: SoundScene.spot };
@@ -19183,11 +19046,9 @@
       const S = SoundScene;
       if (!S.active) return false;
       S.active = false;
-      // Zwykła gra gra dalej na tej samej warstwie (głośność z opcji); `?dzwiek=stary` — warstwa gaśnie.
-      if (SND && SOUND_LAYER_OLD) { SND.wylacz(); SND = null; }
-      else if (SND) SND.ustawGlosnosc(soundGameVolume());
+      // Zwykła gra gra dalej na tej samej warstwie (głośność z opcji).
+      if (SND) SND.ustawGlosnosc(soundGameVolume());
       if (S.panel) { S.panel.usun(); S.panel = null; }
-      if (AudioSys.masterGain && S.oldMasterGain != null) AudioSys.masterGain.gain.value = S.oldMasterGain;
       SensorSystem.clearArea('scena-dzwieki');
       for (const p of S.pirates) if (p.npc && !p.npc.dead) p.npc.__dzwiekiNiezniszczalny = false;
       return true;
@@ -19217,15 +19078,35 @@
         applyPlayerHullProfile(DEFAULT_PLAYER_HULL_ID, { preserveDamageRatio: false, syncVisuals: true, persist: false });
       }
       const L = SOUND_SCENE.loadout;
+      const Z = (SOUND_SCENE.zestawy.find((z) => z.id === SoundScene.zestaw) || SOUND_SCENE.zestawy[0]).bron;
+      const kolejne = {};
       for (const hp of Game.player.hardpoints || []) {
         if (!hp || hp.destroyed) continue;
         let id = Object.prototype.hasOwnProperty.call(L, hp.type) ? L[hp.type] : hp.mount;
+        const lista = Z[hp.type];
+        if (lista && lista.length) {
+          // kolejne gniazdo tego typu — kolejna broń z listy zestawu (po kółku); niemieszcząca się oddaje miejsce
+          const k = kolejne[hp.type] = (kolejne[hp.type] ?? -1) + 1;
+          id = null;
+          for (let j = 0; j < lista.length && !id; j++) {
+            const kand = lista[(k + j) % lista.length];
+            if (canMountWeaponOnHardpoint(WEAPONS[kand], hp)) id = kand;
+          }
+        }
         if (id && !canMountWeaponOnHardpoint(WEAPONS[id], hp)) id = null;
         setHardpointMount(hp, id, { skipInventory: true });
       }
       refillHardpointAmmo(Game.player.hardpoints, playerWeaponAmmo);
       syncWeaponSystems();
       if (ship.hull) ship.hull.val = ship.hull.max;
+    }
+
+    /** Zmiana zestawu broni Atlasa w scenie (panel, `DevScene.dzwiekiZestaw`). */
+    function soundSceneSetWeapons(id) {
+      if (!SoundScene.active || !SOUND_SCENE.zestawy.some((z) => z.id === id)) return false;
+      SoundScene.zestaw = id;
+      soundSceneEquip();
+      return true;
     }
 
     function soundSceneSpawnPirates() {
@@ -19487,16 +19368,21 @@
     function soundSceneShot(d) {
       if (!SND) return;
       const def = MASTER_WEAPONS[d.weaponId] || null;
-      // Rakiety: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny.
-      if (def && (def.category === 'rocket' || def.category === 'torpedo')) return;
+      // Rakiety 3D: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny. Rakieta kanwy
+      // (`forceCanvas` — Osa) i torpedy (pociski w `bullets`: wachlarz gracza — jeden strzał szyny na wyrzutnię, NPC)
+      // nie mają adaptera — grają ze strzału szyny (mapa uzbrojenia).
+      if (def && def.category === 'rocket' && !def.forceCanvas && window.rocketSystem3D) return;
       const shooter = d.shooter;
-      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous');
+      // myśliwiec (`type` fighter / interceptor): działko gra `mysliwiecDzialko` (gdy jest w tabeli warstwy)
+      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous', jestMysliwcem(shooter));
     }
     /** Obrona punktowa gracza (poza szyną strzałów): CIWS — seria z syntezy, laser PD, flak. */
-    function soundScenePdShot(kind, x, y) {
+    function soundScenePdShot(kind, x, y, weaponId) {
       if (!SND) return;
-      if (kind === 'ciws') SND.ciwsStrzal('p:ciws', x, y);
-      else SND.graj(kind === 'flak' ? 'flak' : 'laserPD', x, y, 0.8);
+      if (kind === 'ciws') { SND.ciwsStrzal('p:ciws', x, y); return; }
+      // flak i laser PD z mapy uzbrojenia (Flak S / M / L / Capital), broń spoza mapy — dźwięk rodzaju
+      const id = wystrzalBroni(weaponId);
+      SND.graj(typeof id === 'string' ? id : (kind === 'flak' ? 'flak' : 'laserPD'), x, y, 0.8);
     }
     /** Trafienie pocisku w kadłub (po efekcie trafienia w pętli pocisków). */
     function soundSceneBulletHit(b, hitNPC, x, y, ricochet) {
@@ -19504,8 +19390,7 @@
       if (ricochet) { SND.zdarzenie('rykoszet', x, y); return; }
       if (hitNPC?._isPlayerShip) { SND.zdarzenie('trafienieGracza', x, y); return; }
       if (b.type === 'ciws') { SND.zdarzenie('trafienie', x, y, 0.5); return; }
-      const id = b.vfxKey || '';
-      SND.zdarzenie(id === 'special_yamato_cannon' || id === 'special_yamato_l' ? 'trafieniePlazma' : 'trafienie', x, y);
+      SND.zdarzenie(zdarzenieTrafienia(b.vfxKey), x, y); // plazma (Helios, Plasma Gatling, Yamato) — trafienie plazmy
     }
     function soundSceneShieldHit(x, y) {
       if (SND && soundHere(x, y)) SND.zdarzenie('tarczaTrafiona', x, y);
@@ -19528,8 +19413,9 @@
     }
     function soundSceneRocketLaunch(r) {
       if (!SND || !soundHere(r.position.x, r.position.z)) return;
-      const id = r?.weaponDef?.id;
-      SND.graj(id === 'supernova_missile' ? 'supernovaStart' : 'rakieta', r.position.x, r.position.z, r.mode === LAUNCH_SPLIT ? 0.4 : 1);
+      // start rakiety z mapy uzbrojenia (rakieta S / M / L, torpeda L / Capital, Supernova); spoza mapy — `rakieta`
+      const id = wystrzalBroni(r?.weaponDef?.id);
+      SND.graj(typeof id === 'string' ? id : 'rakieta', r.position.x, r.position.z, r.mode === LAUNCH_SPLIT ? 0.4 : 1);
     }
     function soundSceneRocketDetonate(r, x, y) {
       if (!SND || !soundHere(x, y)) return;
@@ -19537,6 +19423,71 @@
     }
     function soundSceneRocketKilled(x, y) {
       if (SND && soundHere(x, y)) SND.zdarzenie('rakietaZestrzelona', x, y);
+    }
+    /**
+     * Wiązka trafia (fireWeaponCore, poza laserem PD): pętla w miejscu trafienia — kadłub skwierczy, tarcza trzeszczy —
+     * pod kluczem strzelca, dopóki wiązka trafia (ciągła odświeża co strzał; impuls daje krótkie skwierczenie).
+     */
+    function soundSceneBeamHit(shooter, x, y, shield) {
+      if (!SND || !soundHere(x, y)) return;
+      SND.petla(shooter || SOUND_NO_SHOOTER, shield ? WIAZKA_TRAFIENIE.tarcza : WIAZKA_TRAFIENIE.kadlub, 1, x, y);
+    }
+    /** Rozerwanie pocisku flak (zapalnik w pętli pocisków). */
+    function soundSceneFlakBurst(x, y) {
+      if (SND && soundHere(x, y)) SND.graj(FLAK_ROZPRYSK, x, y, 0.7);
+    }
+    /**
+     * Ładowanie broni z `chargeTime` (gracz: stepSpecialCharge, NPC: spawnWeaponChargeFx) — narastanie z pliku od
+     * początku ładowania pod kluczem stanu ładowania (obiekt), odświeżane co krok; przerwane ładowanie i strzał
+     * przestają odświeżać — gaśnie. Strzał gra mapa uzbrojenia z szyny strzałów (Mjolnir, promień śmierci).
+     */
+    function soundSceneCharge(weaponId, key, x, y) {
+      const id = LADOWANIE_BRONI[weaponId];
+      if (!SND || !id || !soundHere(x, y)) return;
+      SND.petla(key, id, 1, x, y);
+    }
+    /** Hexlance (poza szyną strzałów): strzał z `CustomEvent('game_weapon_fired')` superbroni. */
+    function soundSceneSuperShot(e) {
+      const d = e?.detail;
+      if (!SND || !d || d.weaponId !== 'hexlance' || !soundHere(d.x, d.y)) return;
+      SND.graj(wystrzalBroni('hexlance_siege'), d.x, d.y, 1);
+    }
+    /**
+     * Odmowa kierowania ogniem: namiar na cel poza zasięgiem, spust bez wieży sięgającej kursora albo przy zimnej broni,
+     * Mjolnir bez postoju / wycelowania — `blad` najwyżej raz na `refuseGap` s (malowanie T po celach poza zasięgiem
+     * nie robi serii).
+     */
+    function soundSceneRefuse() {
+      if (!SND) return;
+      const now = performance.now() * 0.001;
+      if (now - SoundScene.lastRefuse < SOUND_SCENE.refuseGap) return;
+      SoundScene.lastRefuse = now;
+      SND.zdarzenie('odmowa', NaN, NaN);
+    }
+    const SOUND_FC_W = { main: null, special: null, missile: null };
+    function soundFcWeapons() {
+      const w = Game.player?.weapons || {};
+      SOUND_FC_W.main = w[HP.MAIN] || null;
+      SOUND_FC_W.special = w[HP.SPECIAL] || null;
+      SOUND_FC_W.missile = w[HP.MISSILE] || null;
+      return SOUND_FC_W;
+    }
+    /** Spust (LPM wciśnięty): grupa w ręku nie ma wieży, która sięga kursora (poza łukiem / wymaga postoju), albo broń zimna. */
+    function soundSceneTriggerCheck() {
+      if (!SND) return;
+      if (stanceTune(shipModes).weaponsCold || hypercruiseBusy(hypercruise)) { soundSceneRefuse(); return; }
+      const hand = fcResolveInHand(fireControl, soundFcWeapons());
+      if (hand !== 'main' && hand !== 'special') return;
+      const list = fireControl.turrets[hand];
+      const count = fireControl.turretCount[hand];
+      let alive = 0, reach = 0;
+      for (let i = 0; i < count; i++) {
+        const st = list[i].state;
+        if (st === FC_TURRET.DOWN) continue;
+        alive++;
+        if (st !== FC_TURRET.NO_ARC && st !== FC_TURRET.STILL) reach++;
+      }
+      if (alive > 0 && reach === 0) soundSceneRefuse();
     }
     /** Kontakt kadłubów słychać zawsze z udziałem gracza, inny — tylko w zasięgu słyszalności. */
     function soundContactAudible(ev) {
@@ -19619,6 +19570,10 @@
         SND.petla('zgrzyt', 'zgrzytPetla', Math.min(1, 0.2 + S.grind / SOUND_SCENE.grindFull), S.grindX, S.grindY);
         S.grind = 0;
       }
+      // Hexlance: ładowanie (narastanie) i okno strzału po naładowaniu (pętla) — stan superbroni gracza
+      const sw = Superweapon?.superweaponState;
+      if (sw && sw.charging) SND.petla(sw, 'hexlanceLadowanie', 1, ship.pos.x, ship.pos.y);
+      else if (sw && sw.armed) SND.petla(sw, HEXLANCE_GOTOWY, 1, ship.pos.x, ship.pos.y);
       // kadłub krytyczny: alarm HULL z szyny ShipAlarm (soundAreasFrame — jeden alarm naraz, jak koguty i ramka HUD)
       // tarcza gracza: zapadnięcie (breaking)
       const st = ship.shield?.state || null;
@@ -19653,6 +19608,8 @@
         saveLocked: !!window.__SAVE_LOCKED,
         locks: lockedTargets.length,
         bron: Object.fromEntries(Object.entries(Game.player.weapons || {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])),
+        zestaw: S.zestaw,
+        bronId: Object.fromEntries(Object.entries(Game.player.weapons || {}).map(([k, v]) => [k, Array.isArray(v) ? [...new Set(v.map((lo) => lo?.weapon?.id).filter(Boolean))] : []])),
         pirates: S.pirates.map((p) => ({ key: p.key, near: p.near, bron: [...new Set(['main', 'aux', 'missile'].flatMap((g) => (p.npc?.weapons?.[g] || []).map((w) => w.weapon?.id)))], dead: !!p.npc?.dead, hp: Math.round(p.npc?.hp || 0), ownBrain: !!p.npc?.ai && !!p.npc?.__soundSceneAnchor, x: Math.round(p.npc?.x || 0), y: Math.round(p.npc?.y || 0), r: Math.round(p.npc?.radius || 0) })),
         player: { x: Math.round(ship.pos.x), y: Math.round(ship.pos.y), hull: Math.round(ship.hull?.val || 0), hullMax: Math.round(ship.hull?.max || 0), shield: ship.shield?.state || null, r: Math.round(ship.radius || 0) },
         dzwieki: SND ? SND.statystyki() : null
@@ -20086,8 +20043,34 @@
       px: 0, py: 0, hasPlayer: false,
       route: (i, x, y, target) => routeEscapePodSlot(i, x, y, target),
       onArrive: (target, people, kind, course, x, y) => onEscapePodArrived(target, people, kind, course, x, y),
-      onLost: null
+      onLost: null,
+      bayPose: (bind, out) => podBayPose(bind, out)
     };
+    // ZATOKI (decyzja użytkownika 2026-11-11: lampy zatok migają przed wyrzutem): kapsuła w kadłubie związana z KOMÓRKĄ
+    // kadłuba (HullBodies.bindCell — najbliższy żywy węzeł miejsca wyrzutu na burcie) jedzie z nią przez śmierć, wrak
+    // (convertToWreck przenosi ciało) i rozpad (odłam rodu — HullBodies.rebindCell po liście wraków); impuls wyrzutu
+    // obraca się z kadłubem. Komórka zniszczona — zatoka przepada (lampa gaśnie), kapsuła jedzie ostatnim ruchem.
+    const _podCell = { entity: null, x: 0, y: 0, dx: 0, dy: 0, vx: 0, vy: 0, angle: 0 };
+    // `out` — Float64Array(5) puli kapsuł: x, y, vx, vy, obrót kadłuba od wiązania.
+    function podBayPose(bind, out) {
+      const c = _podCell;
+      if (!HullBodies.boundCell(bind, c) && !(HullBodies.rebindCell(bind, wrecks) && HullBodies.boundCell(bind, c))) return false;
+      out[0] = c.x; out[1] = c.y; out[2] = c.vx; out[3] = c.vy;
+      out[4] = c.angle - bind.angle0;
+      return true;
+    }
+    /** Zatoka w pozie RENDERU kadłuba (ta sama co skóra: `bridgeRenderPose` — interpolowana w trybach z migawką); out = [x, y]. */
+    function podBayRenderAt(bind, out) {
+      const c = _podCell;
+      if (!HullBodies.boundCell(bind, c)) return false;
+      const rp = bridgeRenderPose(c.entity);
+      if (!rp) { out[0] = c.x; out[1] = c.y; return true; }
+      const da = (Number(rp.angle) || 0) - c.angle;
+      const cs = Math.cos(da), sn = Math.sin(da);
+      out[0] = rp.x + c.dx * cs - c.dy * sn;
+      out[1] = rp.y + c.dx * sn + c.dy * cs;
+      return true;
+    }
 
     function podStationTarget(stationIndex) {
       const st = stationIndex >= 0 ? stations[stationIndex] : null;
@@ -20219,11 +20202,14 @@
       const ferry = e.__trafficFerry === true && Number.isFinite(Number(e.trafficCourse));
       const course = ferry ? Number(e.trafficCourse) | 0 : -1;
       bindEscapePodBridge();
+      const uid0 = escapePods.nextUid;
       const n = launchEscapePods(escapePods, {
         x, y, vx: Number(e.vx) || 0, vy: Number(e.vy) || 0, angle: Number(e.angle) || 0,
         length: _podExtent.length, width: _podExtent.width, seed, target, people: 0,
         kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course
       }, _podEnv);
+      // Zatoki na kadłubie (belki): kapsuła stoi w najbliższej żywej komórce miejsca wyrzutu i jedzie z nią.
+      if (n > 0 && e.beamHull) bindEscapePodBays(escapePods, uid0, (bx, by) => HullBodies.bindCell(e, bx, by, Infinity, {}), _podEnv);
       if (ferry) applyEarlyFerryReply(course);
       return n;
     }
@@ -20277,7 +20263,8 @@
     function escapePodRenderFrame(alpha) {
       // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak paczki łupu).
       const lag = (PAUSED || StoryGame.worldFrozen) ? 0 : (1 - alpha) * PHYS_DT;
-      return fillEscapePodRenderFrame(escapePods, _podRender, lag, _podVisible, _lensDotsActive ? _podLensHidden : null);
+      // Zatoki kapsuł w kadłubie: miejsce w pozie renderu kadłuba (podBayRenderAt), mgła i maskowanie jak kapsuły.
+      return fillEscapePodRenderFrame(escapePods, _podRender, lag, _podVisible, _lensDotsActive ? _podLensHidden : null, podBayRenderAt);
     }
 
     window.EscapePods = {
@@ -23516,6 +23503,7 @@
     function warnTargetOutOfLockRange(target) {
       const sensors = getScannerSensors();
       pushZoneMessage(`LOCK: CEL POZA ZASIEGIEM (${formatSensorRange(playerTargetDistance(target))}/${formatSensorRange(sensors.lockRange)})`, 1.25);
+      if (SND) soundSceneRefuse();
     }
 
     function isFriendlyScanTarget(n) {
@@ -25569,6 +25557,7 @@
           // (panel stacji) i nie przy otwartym kole trybów.
           if (!shipModes.wheel.open && !ScoutBay.controlling && !(scan.target && scan.targetType === 'station' && !isHostileNpc(scan.target))) {
             fcTrigger.mouse = true;
+            if (SND) soundSceneTriggerCheck();
           } else if (SMALL_SCALE_ON && ScoutBay.controlling && !shipModes.wheel.open) {
             scoutGunTrigger.mouse = true;   // mała skala: LPM — działa fregaty zwiadu
           }
@@ -27236,7 +27225,7 @@
       // z dema bronie-webgpu): wylot z wieżyczki, impuls do celu, trafienie. Wiązka jedzie
       // z wieżyczką (nośnik), trafienie — z celem.
       RenderCommands.writer.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
-      if (SND) soundScenePdShot('laser', muzzle.x, muzzle.y);
+      if (SND) soundScenePdShot('laser', muzzle.x, muzzle.y, weaponId);
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -27290,7 +27279,7 @@
       // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy); odrzut wieży — strona gry (RW-26).
       Turret2D.recoilAt(wDef.id, muzzle.x, muzzle.y, ship);
       RenderCommands.writer.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
-      if (SND) soundScenePdShot('flak', muzzle.x, muzzle.y);
+      if (SND) soundScenePdShot('flak', muzzle.x, muzzle.y, wDef.id);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
     }
 
@@ -27373,8 +27362,8 @@
       const shellIvy = Number(b.ivy) || 0;
       ActiveCarrier.set(writeCarrierVelocity(shellIvx, shellIvy, b.clock, SimClock.sim, _impactCarrier));
       RenderCommands.writer.flakBurst(b, b.x, b.y, radius);
+      if (SND) soundSceneFlakBurst(b.x, b.y);
       ActiveCarrier.clear();
-      if (window.AudioSys) AudioSys.playSound('explosion');
     }
 
     function handlePlayerDestroyed() {
@@ -28586,7 +28575,6 @@
             // Jeśli tarcza działa ORAZ (trafiono w elipsę LUB trafiono w kadłub) -> TARCZA BLOKUJE
 
             registerShieldImpact(hitNPC, hitX, hitY, npcDamage, shieldFxClassForBullet(b));
-            if (window.AudioSys) playShieldHitSound(hitX, hitY);
             if (SND) soundSceneShieldHit(hitX, hitY);
 
             // Odejmij HP tarczy
@@ -31924,7 +31912,7 @@
         renderCtx.lineWidth = 2.5;
         renderCtx.strokeStyle = `rgba(${col},0.9)`;
         if (st === 'reload') {
-          const cdMax = Math.max(0.01, (weapon.cooldown || 10) * (mods.fireRate || 1.0));
+          const cdMax = Math.max(0.01, (weapon.cooldown || 10) * (ship.modifiers?.fireRate || 1.0)); // dawniej `mods` spoza zakresu — wyjątek w render() po pierwszej torpedzie
           const u = typeof hp.ammo === 'number' && hp.ammo <= 0 ? 0 : 1 - cd / cdMax;
           renderCtx.beginPath(); renderCtx.arc(_torpS0.x, _torpS0.y, r0, -Math.PI / 2, -Math.PI / 2 + u * Math.PI * 2); renderCtx.stroke();
           renderCtx.fillText(typeof hp.ammo === 'number' && hp.ammo <= 0 ? 'BRAK TORPED' : `${cd.toFixed(1).replace('.', ',')} s`, _torpS0.x, _torpS0.y + r0 + 14);
@@ -33050,24 +33038,7 @@
       }
 
       // --- AUDIO UPDATE ---
-      if (ship && ship.engineSound) {
-        if (!ship.destroyed) {
-          // input.main to wartość 0..1 (moc silnika)
-          let throttle = input.main;
-
-          // Boost napędu podbija również wysokość dźwięku.
-          if ((typeof boost !== 'undefined' && boost.state === 'active') || driveState.shiftBoostTimer > 0) {
-            throttle += 0.5;
-          }
-
-          // Aktualizuj dźwięk
-          ship.engineSound.update(throttle);
-        } else {
-          // Jeśli statek zniszczony - wycisz natychmiast
-          ship.engineSound.gain.gain.setTargetAtTime(0, AudioSys.ctx.currentTime, 0.1);
-        }
-      }
-      // Scena dźwięków: silnik MAIN z syntezy, tarcie, alarm, tarcze, namiar, pomiar szyny (poza sceną — nic).
+      // Warstwa dźwięku gry: silniki MAIN i SIDE z syntezy, tarcie, alarmy, tarcze, namiar, dźwięki obszarów, pomiar szyny.
       if (SND) soundSceneFrame();
       // --------------------
 
@@ -34578,7 +34549,7 @@
       // odpięcie stoją w pauzie i scenach fabuły; każdy ring, także poza kadrem i w podzielonym ekranie), lampki
       // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
       if (haloWorld) {
-        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, frameDt, ship, sun: SUN });
         // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): pozy obsługi i zegar zaworów tej klatki — także w intro i odprawie.
         hallSoundFrame(frameDt);
       }
@@ -34682,8 +34653,6 @@
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
       lootRenderFrame(alpha);
-      // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off).
-      escapePodRenderFrame(alpha);
       // Górnicy i złomiarze NPC (E24): praca w chwili klatki — blok `trafficWork` (worker) albo rysunek tutaj (off).
       const trafficWorkFrame = trafficWorkRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
@@ -34706,6 +34675,9 @@
       // Pozy renderu NPC i wraków między krokami fizyki (renderPoses) — przed wieżami, wyglądem maskowania i migawką;
       // w pauzie i zamrożonym świecie poza bieżąca (α = 1).
       if (npcRenderLerpOn) renderPoses.frame(renderEntities, physicsTickId, (PAUSED || StoryGame.worldFrozen) ? 1 : alpha);
+      // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off); po pozach renderu
+      // (zatoki kapsuł w kadłubie jadą z wrakiem w jego pozie renderu — podBayRenderAt).
+      escapePodRenderFrame(alpha);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -37692,25 +37664,11 @@
       // --- AUDIO START ---
       AudioSys.init();
       startHallSound();
-      // Warstwa dźwięku gry (blok „SCENA DŹWIĘKI”, reguła `dzwiek`): z nią stary AudioSys nie wczytuje efektów — jego
-      // strzały, tarcza, wybuch i pętla silnika z WAV nie grają podwójnie (bez bufora wychodzą od razu). `?dzwiek=stary` —
-      // warstwa nie powstaje, gra brzmi jak dawniej.
+      // Warstwa dźwięku gry (blok „SCENA DŹWIĘKI”, reguła `dzwiek`) — pliki wczytuje w tle.
       startSoundLayer();
-      const oldSfx = !SND;
-      await Promise.all([
-        oldSfx ? AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav') : null,
-        oldSfx ? AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav') : null,
-        oldSfx ? AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav') : null,
-        oldSfx ? AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav') : null,
-        oldSfx ? AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav') : null,
-        // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
-        // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
-        RW_WORKER ? null : prepareShipModels3D()
-      ]);
-
-      if (typeof ship !== 'undefined') {
-        ship.engineSound = oldSfx ? AudioSys.createEngineLoop('engine') : null;
-      }
+      // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
+      // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
+      if (!RW_WORKER) await prepareShipModels3D();
       // --- AUDIO END ---
 
       gameStarted = true;

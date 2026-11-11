@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { WeaponShotBus, on, off, emit, listenerCount } from '../src/game/weaponShotBus.js';
-import { SHOT_AUDIO_LIMITS, createVoiceLimiter, shotDistanceGain } from '../src/game/audioVoiceLimiter.js';
 import { Turret2D } from '../src/vfx/turret2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { readIndexHtml, sliceFunction } from './helpers/indexSource.mjs';
@@ -79,8 +78,9 @@ test('fireWeaponCore nadaje szyną, CustomEvent zostaje tylko dla superbroni', (
   assert.doesNotMatch(html, /new CustomEvent\('game_weapon_fired'/, 'rdzeń broni nie tworzy zdarzeń DOM per strzał');
   assert.match(read('../src/game/superweapon.js'), /new CustomEvent\('game_weapon_fired'/);
   // Słuchacze obu źródeł.
-  assert.match(html, /WeaponShotBus\.on\(onWeaponShotAudio\);/);
-  assert.match(html, /window\.addEventListener\('game_weapon_fired', \(e\) => onWeaponShotAudio\(e\.detail\)\);/);
+  assert.match(html, /WeaponShotBus\.on\(soundSceneShot\);/, 'dźwięk strzału: warstwa dźwięku gry');
+  assert.match(html, /window\.addEventListener\('game_weapon_fired', soundSceneSuperShot\);/, 'Hexlance — poza szyną');
+  assert.doesNotMatch(html, /onWeaponShotAudio|playDynamicSound/, 'dawna centrala dźwiękowa uzbrojenia usunięta');
   // Słuchacz 3D: WeaponFx (zadanie 17, dawniej weapon3DSystem.js) — tylko szyna. Hexlance woła
   // efekty wprost z superweapon.js (WeaponFx.hexlanceFire), więc zdarzenia DOM superbroni efekty
   // NIE słuchają (inaczej podwójny wylot).
@@ -92,52 +92,6 @@ test('fireWeaponCore nadaje szyną, CustomEvent zostaje tylko dla superbroni', (
   assert.match(wfx, /useCommands\(on = true\) \{/);
   assert.doesNotMatch(wfx, /addEventListener\('game_weapon_fired'/);
   assert.match(read('../src/game/superweapon.js'), /RenderCommands\.writer\.hexlanceFire\(/);
-});
-
-// ---------------------------------------------------------------------------
-// Limit głosów audio (bez AudioContext)
-
-test('tłumienie odległością: pełna do 2000 u, zero od 12000 u', () => {
-  assert.equal(SHOT_AUDIO_LIMITS.fullVolumeDist, 2000);
-  assert.equal(SHOT_AUDIO_LIMITS.silentDist, 12000);
-  assert.equal(shotDistanceGain(0), 1);
-  assert.equal(shotDistanceGain(2000), 1);
-  assert.ok(Math.abs(shotDistanceGain(7000) - 0.5) < 1e-9);
-  assert.equal(shotDistanceGain(12000), 0);
-  assert.equal(shotDistanceGain(50000), 0);
-  assert.equal(shotDistanceGain(NaN), 1, 'brak pozycji = pełny głos');
-});
-
-test('najwyżej 12 równoczesnych głosów na dźwięk i 40 ms między startami', () => {
-  const lim = createVoiceLimiter();
-  let played = 0;
-  for (let t = 0; t < 2000; t += 10) {
-    if (lim.admit('sfx_railgun', t, 0.5, 0, 1500) > 0) played++;
-  }
-  // Co 40 ms, ale najwyżej 12 naraz przez 1,5 s życia głosu.
-  assert.equal(lim.activeVoices('sfx_railgun', 1999), 12);
-  assert.ok(played <= 12 + Math.ceil(500 / 40) + 1, `za dużo głosów: ${played}`);
-  assert.equal(lim.admit('sfx_railgun', 2000, 0.5, 0, 1500), 0, 'pełny limit');
-  assert.ok(lim.admit('sfx_hexlance', 2000, 0.5, 0, 1500) > 0, 'limit jest per dźwięk');
-  // Głosy wygasają po czasie trwania.
-  assert.equal(lim.activeVoices('sfx_railgun', 10000), 0);
-  assert.ok(lim.admit('sfx_railgun', 10000, 0.5, 0, 1500) > 0);
-});
-
-test('za cicho (daleko albo mała głośność) = brak głosu i brak zajętego slotu', () => {
-  const lim = createVoiceLimiter();
-  assert.equal(lim.admit('sfx_railgun', 0, 0.05, 11990, 500), 0, '0,05 × ~0,001 < 0,01');
-  assert.equal(lim.activeVoices('sfx_railgun', 1), 0);
-  const v = lim.admit('sfx_railgun', 100, 0.05, 1000, 500);
-  assert.ok(Math.abs(v - 0.05) < 1e-12);
-});
-
-test('playDynamicSound pyta limiter przed utworzeniem BufferSource', () => {
-  const play = sliceFunction(html, 'function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {');
-  const admitAt = play.indexOf('shotVoiceLimiter.admit(');
-  const sourceAt = play.indexOf('ctx.createBufferSource()');
-  assert.ok(admitAt > 0 && sourceAt > admitAt, 'limit i odległość przed alokacją węzłów audio');
-  assert.match(play, /Math\.hypot\(x - camera\.x, y - camera\.y\)/);
 });
 
 // ---------------------------------------------------------------------------

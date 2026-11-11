@@ -39,7 +39,7 @@ import { K7_ABOVE_SCALE, K7_FUEL_STATION, K7_STOWED_POSE, k7Frame, k7HeightToZ, 
 import { K7_INSTANCE_STRIDE, K7_MAT, buildK7Scene } from './haloPortK7Build.js';
 import { haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
-import { K7_BEACON, K7_BEACON_LOOK, K7_VENT_DUR, K7_VENT_WARN } from './haloPortK7Lights.js';
+import { K7_BEACON, K7_BEACON_LOOK, K7_VENT_DUR, K7_VENT_WARN, k7ApproachSpotGain } from './haloPortK7Lights.js';
 import { K7_HOSE_NODES, createK7FuelRig, stepK7FuelRig } from './haloPortK7Fuel.js';
 import { K7_GLB_TAGS, K7_GLB_TUNE, acquireK7GlbGeometry, k7GlbData, releaseK7GlbGeometry } from './haloPortK7Glb.js';
 import { zbierzZakres } from '../zakresyWysylki.js';
@@ -825,11 +825,17 @@ export class HaloPortK7 {
     for (const L of rig.lamps) if (li < MAX_LAMPS) lamps[li++].set(L.x, k7HeightToZ(L.y), L.z, L.k7Type);
     // reflektory: pozycja + zasięg, oś + cos zewn., barwa × moc + cos wewn. (moc na pokładzie jak w siatce gry)
     const spots = Array.from({ length: MAX_SPOTS * 3 }, () => new THREE.Vector4(0, 0, 0, 0));
+    // reflektory podejścia stanowisk (berthId): barwa bazowa × k7ApproachSpotGain(poziom podejścia) — update()
+    this._spotBerth = [];
     rig.spots.slice(0, MAX_SPOTS).forEach((sp, i) => {
       spots[i * 3].set(sp.x, k7HeightToZ(sp.y), sp.z, sp.range);
       spots[i * 3 + 1].set(sp.dir[0], sp.dir[1], sp.dir[2], sp.cosOuter);
       spots[i * 3 + 2].set(sp.color[0] * sp.intensity * K7_SPOT_DECK_GAIN, sp.color[1] * sp.intensity * K7_SPOT_DECK_GAIN,
         sp.color[2] * sp.intensity * K7_SPOT_DECK_GAIN, sp.cosInner);
+      if (sp.berthId) {
+        const c = spots[i * 3 + 2];
+        this._spotBerth.push({ slot: i * 3 + 2, id: sp.berthId, at: -1, r: c.x, g: c.y, b: c.z, gain: 1 });
+      }
     });
     const q = {};
     for (const { layout: bl, xf } of this.bays) {
@@ -1290,13 +1296,40 @@ export class HaloPortK7 {
     if (changed) inst.buf.needsUpdate = true;
   }
 
+  /**
+   * Reflektory podejścia stanowisk capital (haloPortK7Lights.js — k7ApproachSpotGain): moc reflektora stanowiska ×
+   * mnożnik z poziomu podejścia `approachLight` stanowiska w `berths` (rejestr hali — automat obsługi stanowisk gry;
+   * w workerze lustro z bloku `ring`). Stanowisko bez poziomu (NaN, brak) — pełna moc. Zmiana wartości uniformu
+   * (uK7Spots), bez zmiany grafu i liczby reflektorów.
+   */
+  setApproachLights(berths) {
+    const spots = this.k7Uniforms.uK7Spots.value;
+    for (let k = 0; k < this._spotBerth.length; k++) {
+      const s = this._spotBerth[k];
+      let b = berths && s.at >= 0 && s.at < berths.length ? berths[s.at] : null;
+      if (!b || b.id !== s.id) {
+        s.at = -1;
+        b = null;
+        if (berths) for (let j = 0; j < berths.length; j++) if (berths[j] && berths[j].id === s.id) { s.at = j; b = berths[j]; break; }
+      }
+      const gain = k7ApproachSpotGain(b ? b.approachLight : NaN);
+      if (gain === s.gain) continue;
+      s.gain = gain;
+      spots[s.slot].x = s.r * gain;
+      spots[s.slot].y = s.g * gain;
+      spots[s.slot].z = s.b * gain;
+    }
+  }
+
   // roofFade: 0 = dach nieprzezroczysty, 1 = statek w hali (dach znika)
   // clock — zegar migania świateł hali (k7BeaconClock; ten sam dostaje siatka świateł pyłu hali)
   // gameDt — czas gry klatki dla obsługi paliwowej (ramiona, przewody; pauza i sceny = 0; domyślnie dt),
-  // hull — obrys kadłuba statku w hubie TEJ hali (punkty { x, z }; przewody kładą się na nim) albo null
-  update(dt, { poses = null, roofFade = 0, daylight = 1, clock = null, gameDt = null, hull = null } = {}) {
+  // hull — obrys kadłuba statku w hubie TEJ hali (punkty { x, z }; przewody kładą się na nim) albo null,
+  // berths — stanowiska hali w rejestrze (reflektory podejścia: `approachLight`) albo null (pełna moc)
+  update(dt, { poses = null, berths = null, roofFade = 0, daylight = 1, clock = null, gameDt = null, hull = null } = {}) {
     this.time += dt;
     if (poses) this.setServicePoses(poses);
+    this.setApproachLights(berths);
     stepK7FuelRig(this.fuelRig, Number.isFinite(gameDt) ? Math.max(0, gameDt) : dt, this._pose, hull);
     this._updateGroups();
     this._updateHoses();

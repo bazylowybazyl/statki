@@ -8,6 +8,7 @@
 // Dźwięki z plików to ROBOCZE nagrania z generatora AI (public/sounds/ai/, manifest.json — pochodzenie);
 // dwa dźwięki są z syntezy (src/audio/przepisySyntezy.js): silnik MAIN i seria CIWS.
 
+import { tabelaDzwiekowBroni, wystrzalBroni, MYSLIWIEC_DZIALKO, dzialkoMysliwca } from './dzwiekiBroni.js';
 import { DZWIEKI_SWIATA, ZDARZENIA_SWIATA, SYNTEZA_SWIATA } from './dzwiekiSwiata.js';
 
 export const dbToGain = (db) => Math.pow(10, db / 20);
@@ -93,6 +94,8 @@ export const DZWIEKI = Object.freeze({
   namiar: { kat: 'interfejs', limit: 1, odstep: 300, zwloka: 0, ton: 0, glos: 0, ui: true },
   malowanie: { kat: 'interfejs', limit: 3, odstep: 60, zwloka: 1, ton: 0, glos: 0, ui: true },
   alarm: { kat: 'interfejs', petla: true, limit: 1, ui: true },
+  // Uzbrojenie: rodziny broni × wielkość, wiązki, superbronie (src/audio/dzwiekiBroni.js)
+  ...tabelaDzwiekowBroni({ wystrzal: POZIOM_WYSTRZALU, specjalna: POZIOM_SPECJALNEJ }),
   ...DZWIEKI_SWIATA // obszary gry: warp, przyloty, maskowanie, rdzeń reaktora… (src/audio/dzwiekiSwiata.js)
 });
 
@@ -214,10 +217,16 @@ export function kategoriaBroniNpc(weaponId, def = null) {
 }
 
 /**
- * Strzał z szyny broni → id dźwięku (bez CIWS — seria z syntezy). Broń gracza spoza `STRZAL_GRACZA` gra dźwiękiem
- * swojej kategorii jak broń NPC.
+ * Strzał z szyny broni → id dźwięku: najpierw mapa uzbrojenia (`WYSTRZAL_BRONI` — id, `'seria'` CIWS z syntezy,
+ * `'wiazka'`, `null` = bez dźwięku); broń spoza mapy — gracz `STRZAL_GRACZA`, reszta dźwiękiem kategorii jak NPC.
+ * `mysliwiec` — strzelec to myśliwiec: działko gra `mysliwiecDzialko`, gdy to id jest w tabeli warstwy (`tabela`);
+ * bez niego — jak wyżej (rakieta, torpeda i bomba myśliwca zawsze jak wyżej).
  */
-export function dzwiekStrzalu(weaponId, def, gracza) {
+export function dzwiekStrzalu(weaponId, def, gracza, mysliwiec = false, tabela = DZWIEKI) {
+  if (mysliwiec && tabela && tabela[MYSLIWIEC_DZIALKO] && dzialkoMysliwca(def)) return MYSLIWIEC_DZIALKO;
+  // Mapa uzbrojenia (src/audio/dzwiekiBroni.js) — jedna dla gracza i NPC: id, 'seria', 'wiazka' albo null (bez dźwięku).
+  const zMapy = wystrzalBroni(weaponId);
+  if (zMapy !== undefined) return zMapy;
   if (gracza) {
     const id = STRZAL_GRACZA[weaponId];
     if (id) return id;

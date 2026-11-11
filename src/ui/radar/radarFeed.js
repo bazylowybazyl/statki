@@ -338,6 +338,8 @@ export function createRadarFeed(tune = RADAR_TUNE) {
       if (pods && pods.count > 0) {
         let m = 0;
         for (let i = 0; i < pods.count && n < tune.maxTracks && m < 32; i++) {
+          // zatoka (flaga 2 — POD_BLOCK.BAY): kapsuła jeszcze w kadłubie — lampa na wraku, nie ślad na radarze
+          if (pods.flags && (pods.flags[i] & 2) !== 0) continue;
           const dx = pods.x[i] - ox;
           const dy = pods.y[i] - oy;
           if (dx * dx + dy * dy > prSq) continue;

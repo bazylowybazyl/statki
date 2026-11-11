@@ -16,6 +16,7 @@ import {
   zmierzPoziom, wzmocnienieWyrownania, buforPetliBezSzwu, wybierzWariant, utworzLimitGlosow, sciszenieTloku,
   polozenie, liniaWyboru, dbToGain, gainToDb, dzwiekStrzalu, slyszalne
 } from './dzwiekiLogika.js';
+import { wystrzalBroni, SERIA, PETLA_WIAZKI, WIAZKA_START } from './dzwiekiBroni.js';
 import { SoundEngine, paramDefaults } from './synteza.js';
 import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
 import { utworzSilnikiObcych } from './silnikiObcych.js';
@@ -314,7 +315,7 @@ export function utworzDzwiekiGry(opts) {
     if (wylaczony) return;
     const teraz = ctx.currentTime;
     let L = null;
-    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz) { L = petle[i]; break; }
+    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz && petle[i].id === id) { L = petle[i]; break; }
     const d = TAB[id] || {};
     let g = wycisz[id] ? 0 : glos;
     let pan = 0;
@@ -336,14 +337,16 @@ export function utworzDzwiekiGry(opts) {
       wpis.poprzedni = wi;
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.loop = true; // bufor przycięty i przenikający się (buforPetliBezSzwu) — pętla bez szwu
+      // bufor przycięty i przenikający się (buforPetliBezSzwu) — pętla bez szwu; `narastanie` (ładowanie broni) gra
+      // raz od początku pliku i gaśnie jak pętla, gdy przestanie być odświeżane (przerwane ładowanie, strzał)
+      src.loop = !d.narastanie;
       const gn = ctx.createGain();
       gn.gain.value = 0;
       const p = ctx.createStereoPanner();
       src.connect(gn);
       gn.connect(p);
       p.connect(wejscie);
-      src.start(teraz, rand() * buf.duration * 0.9);
+      src.start(teraz, d.narastanie ? 0 : rand() * buf.duration * 0.9);
       L = { klucz, id, src, g: gn, p, ostatnio: teraz, wzm: wpis.wzm[wi] };
       petle.push(L);
       glosyAktywne++;
@@ -449,26 +452,40 @@ export function utworzDzwiekiGry(opts) {
   }
 
   /**
-   * Strzał z szyny broni → dźwięk (gracz: tabela `STRZAL_GRACZA`, reszta broni — kategoria jak u NPC). Poza
-   * słyszalnością — nic (przed klasyfikacją broni); id dźwięku
-   * z pamięci na broń (bez napisów na strzał). `kluczStrzelca` — obiekt strzelca (klucz serii CIWS i pętli wiązki).
+   * Strzał z szyny broni → dźwięk. Jedna mapa dla gracza i NPC (`dzwiekStrzalu` → `WYSTRZAL_BRONI`,
+   * src/audio/dzwiekiBroni.js): plik, seria CIWS z syntezy, pętla wiązki albo jawnie nic (null); broń spoza mapy —
+   * gracz `STRZAL_GRACZA`, potem kategoria. Poza słyszalnością — nic (przed klasyfikacją broni); id dźwięku z pamięci
+   * na broń (bez napisów na strzał). `kluczStrzelca` — obiekt strzelca (klucz serii CIWS i pętli wiązki); pierwszy
+   * strzał wiązki ciągłej gra jeszcze zapłon `wiazkaStart`.
    */
   const dzwiekBroniGracza = new Map();
   const dzwiekBroniNpc = new Map();
-  function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false) {
+  const dzwiekBroniMysliwca = new Map();
+  // `mysliwiec` — strzelec to myśliwiec (działko → `mysliwiecDzialko`, gdy jest w tabeli warstwy; `dzwiekStrzalu`).
+  function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false, mysliwiec = false) {
     stat.zdarzenia.strzal = (stat.zdarzenia.strzal || 0) + 1;
     if (wylaczony || !slyszalne(x, y, kadrFn ? kadrFn() : null)) return;
-    const pamiec = gracza ? dzwiekBroniGracza : dzwiekBroniNpc;
+    const pamiec = mysliwiec ? dzwiekBroniMysliwca : (gracza ? dzwiekBroniGracza : dzwiekBroniNpc);
     let id = pamiec.get(weaponId);
     if (id === undefined) {
-      id = jestCiws(weaponId) ? 'ciws' : dzwiekStrzalu(weaponId, def, gracza);
+      id = jestCiws(weaponId) && wystrzalBroni(weaponId) === undefined ? SERIA : dzwiekStrzalu(weaponId, def, gracza, mysliwiec, TAB);
       pamiec.set(weaponId, id);
     }
-    if (id === 'ciws') { ciwsStrzal(kluczStrzelca, x, y); return; }
-    if (id === 'wiazka' || isBeam) { petla(kluczStrzelca, 'wiazka', 1, x, y); return; }
+    if (id === null) return;
+    if (id === SERIA) { ciwsStrzal(kluczStrzelca, x, y); return; }
+    if (id === PETLA_WIAZKI || isBeam) {
+      if (!maPetle(kluczStrzelca, PETLA_WIAZKI)) graj(WIAZKA_START, x, y, 1);
+      petla(kluczStrzelca, PETLA_WIAZKI, 1, x, y);
+      return;
+    }
     graj(id, x, y, 1);
   }
 
+  /** Czy pętla `id` pod kluczem gra (np. wiązka strzelca — zapłon tylko na początku). */
+  function maPetle(klucz, id) {
+    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz && petle[i].id === id) return true;
+    return false;
+  }
 
   // --- klatka
   function klatka() {
