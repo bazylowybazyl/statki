@@ -12,7 +12,7 @@
 // Web Audio jest jednorazowe z natury — ogranicza je limit głosów, węzły głośności i panoramy są w puli.
 
 import {
-  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, STRZAL_GRACZA, jestCiws, kategoriaBroniNpc, idPlikowSceny,
+  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, STRZAL_GRACZA, jestCiws, kategoriaBroniNpc, idPlikowSceny,
   zmierzPoziom, wzmocnienieWyrownania, buforPetliBezSzwu, wybierzWariant, utworzLimitGlosow, sciszenieTloku,
   polozenie, liniaWyboru, dbToGain, gainToDb
 } from './dzwiekiLogika.js';
@@ -421,7 +421,9 @@ export function utworzDzwiekiGry(opts) {
     for (const id of Object.keys(DZWIEKI_SYNTEZY)) {
       out.push({ id, kat: DZWIEKI_SYNTEZY[id].kat, nazwa: DZWIEKI_SYNTEZY[id].nazwa, pliki: [], wybor: 0, wyciszony: !!wycisz[id], synteza: true });
     }
-    return out;
+    // kolejność kategorii (od najgłośniejszej), w kategorii — kolejność tabeli
+    const rank = Object.keys(KATEGORIE);
+    return out.map((r, i) => ({ r, i })).sort((a, b) => (rank.indexOf(a.r.kat) - rank.indexOf(b.r.kat)) || (a.i - b.i)).map((x) => x.r);
   }
 
   function tekstWyboru() {

@@ -5253,6 +5253,12 @@
         return;
       }
       if (entity.dead || entity.isWreck) return;
+      // Scena dźwięków: cel „niezniszczalny” po utracie mostków dalej walczy — bez agonii hulka (moduł mostków
+      // stawia `commandLost` przed tym hakiem; mostki zostają martwe, dowodzenia drugi raz się nie traci).
+      if (entity.__dzwiekiNiezniszczalny === true) {
+        if (entity.bridgeState) entity.bridgeState.commandLost = false;
+        return;
+      }
       beginBridgeHulk(entity);
       // Kapsuły ratunkowe (E22): załoga opuszcza okręt bez dowodzenia (hulk), przy wraku drugi raz już nie.
       launchShipEscapePods(entity);
@@ -18538,16 +18544,20 @@
        * Piraci: `near` — przy burcie Atlasa (wzdłuż dziobu `along` × promień Atlasa, burta `side`, odstęp kadłubów `gap`
        * j.) — wleć w nich; reszta w zasięgu broni (`along` / `side` [j.] względem dziobu Atlasa).
        */
-      // `bron` — broń sceny zamiast zestawu piratów (armata, CIWS, rakiety): każda kategoria dźwięku broni NPC ma
-      // swojego strzelca (Vulcan — rykoszet od pancerza Atlasa, działko, wiązka ciągła, railgun, laser PD, flak).
+      // `bron` — broń sceny zamiast zestawu piratów (armata, CIWS): każda kategoria dźwięku broni NPC ma swojego
+      // strzelca (Vulcan — rykoszet od pancerza Atlasa, działko, wiązka ciągła, railgun, laser PD, flak), a pancerniki
+      // dostają wyrzutnię (rakiety w Atlasa → jego CIWS; kadłuby piratów jej nie mają — gniazdo na osi kadłuba).
+      // Dalsi piraci stoją w kierunku (`along`, `side`), ale nie dalej niż `inRange` × zasięg ich broni main — Atlas
+      // sięga dużo dalej niż piraci, a pirat poza swoim zasięgiem milczy.
       pirates: [
         { key: 'frigate_pd', near: true, along: 0.35, side: 1, gap: 220, bron: { main: 'vulcan_minigun' } },
         { key: 'destroyer', near: true, along: -0.3, side: -1, gap: 280, bron: { main: 'heavy_autocannon', aux: 'flak_m' } },
-        { key: 'pirate_battleship', along: 3400, side: 500 },
+        { key: 'pirate_battleship', along: 3400, side: 500, bron: { missile: 'missile_rack' } },
         { key: 'frigate_laser', along: 2800, side: -1700, bron: { main: 'beam_continuous', aux: 'laser_pd_mk1' } },
         { key: 'destroyer', along: 4600, side: -400, bron: { main: 'railgun_mk2', aux: 'flak_m' } },
-        { key: 'battleship', along: 5600, side: 1900 }
+        { key: 'battleship', along: 5600, side: 1900, bron: { missile: 'missile_rack' } }
       ],
+      inRange: 0.7,
       /** Broń sceny w gniazdach Atlasa (id z MASTER_WEAPONS); null — gniazdo puste. */
       loadout: {
         main: 'railgun_mk2', special: 'special_yamato_cannon', missile: 'missile_rack',
@@ -18694,7 +18704,7 @@
           x = ship.pos.x + fx * def.along + sx * def.side;
           y = ship.pos.y + fy * def.along + sy * def.side;
         }
-        const res = spawnCallInShip(def.key, { mode: 'pirate', spawnPos: { x, y }, pos: { x, y }, spawnAngle: a, exitK: 0 });
+        const res = spawnCallInShip(def.key, { mode: 'pirate', spawnPos: { x, y }, pos: { x, y }, spawnAngle: def.near ? a : Math.atan2(-(fy * def.along + sy * def.side), -(fx * def.along + sx * def.side)), exitK: 0 });
         const npc = Array.isArray(res) ? res[0] : res;
         if (!npc) { console.warn(`[Dźwięki] scena: brak okrętu ${def.key}`); continue; }
         if (def.near) {
@@ -18708,6 +18718,19 @@
         npc.vx = 0; npc.vy = 0;
         if (npc.vel) { npc.vel.x = 0; npc.vel.y = 0; }
         if (def.bron) soundSceneArmPirate(npc, def.bron);
+        if (!def.near) {
+          // W zasięgu własnej broni main (i dalej niż kadłuby z zapasem).
+          let range = Infinity;
+          for (const w of npc.weapons?.main || []) if (w?.weapon) range = Math.min(range, weaponRangeFor(npc, w.weapon, Number(w.weapon.baseRange) || 0));
+          const d = Math.sqrt(def.along * def.along + def.side * def.side);
+          const minD = ar * 0.55 + (Number(npc.radius) || 200) + 250;
+          const want = Number.isFinite(range) && range > 0 ? Math.max(minD, Math.min(d, range * SOUND_SCENE.inRange)) : d;
+          const k = want / d;
+          x = ship.pos.x + (fx * def.along + sx * def.side) * k;
+          y = ship.pos.y + (fy * def.along + sy * def.side) * k;
+          npc.x = x; npc.y = y;
+          if (npc.pos) { npc.pos.x = x; npc.pos.y = y; }
+        }
         npc.__soundScene = true;
         npc.__soundSceneAnchor = { x, y, angle: a };
         npc.__dzwiekiNiezniszczalny = S.undying;
@@ -18722,6 +18745,14 @@
         const def = MASTER_WEAPONS[id];
         const list = npc.weapons?.[group];
         if (!def || !Array.isArray(list)) continue;
+        if (!list.length && group === HP.MISSILE) {
+          // Kadłub bez zaczepu rakietowego: gniazdo na osi kadłuba (jak wirtualne gniazdo builtin w DevScene.equipDeathRay).
+          if (!Array.isArray(npc.editorHardpoints)) npc.editorHardpoints = [];
+          const hp = { id: `dzwieki_rakiety_${npc.id ?? 'npc'}`, type: HP.MISSILE, size: def.size || 'M', rot: 90, x: 0, y: 0, mount: id };
+          npc.editorHardpoints.push(hp);
+          list.push({ hp, weapon: def });
+          continue;
+        }
         for (const w of list) {
           if (!w?.hp || def.mountType !== w.hp.type) continue;
           w.weapon = def;
@@ -18731,11 +18762,15 @@
       npc._weaponsInit = false;
     }
 
-    /** Mózg pirata sceny: trzyma swoje miejsce (nie ucieka, nie skacze), strzela tylko z przełącznikiem panelu. */
+    /**
+     * Mózg pirata sceny: trzyma swoje miejsce (nie ucieka, nie skacze) dziobem do Atlasa (działa piratów mają łuki
+     * 180° od burty / dziobu — Atlas za rufą byłby poza nimi), strzela tylko z przełącznikiem panelu.
+     */
     function soundScenePirateBrain(npc, dt) {
       const a = npc.__soundSceneAnchor;
       if (!a || npc.dead) return;
-      if (usesShipFlightModel(npc)) setFlightArrive(npc, a.x, a.y, { arrival: 0, speedMode: 'combat', face: a.angle, faceNear: 0, faceFar: 0 });
+      const face = ship && !ship.destroyed ? Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x) : a.angle;
+      if (usesShipFlightModel(npc)) setFlightArrive(npc, a.x, a.y, { arrival: 0, speedMode: 'combat', face, faceNear: 0, faceFar: 0 });
       if (SoundScene.pirFire) processAutonomousWeapons(npc, dt);
     }
 
@@ -18855,6 +18890,19 @@
       if (on && !soundSceneRcs._on) SND.zdarzenie('dyszaBoczna', ship.pos.x, ship.pos.y, 0.8);
       soundSceneRcs._on = on;
     }
+    /**
+     * Rdzenie reaktorów w scenie: cel „niezniszczalny” wypada z kroku ReactorGame (zniszczona osłona komory nie
+     * odlicza stopienia ani nie detonuje — inaczej Tempest i Yamato zabijały go mimo puli trzymanej na 1).
+     */
+    const _soundSceneReactorList = [];
+    function soundSceneReactorList(list) {
+      if (!SoundScene.active || !SoundScene.undying || !Array.isArray(list)) return list;
+      const out = _soundSceneReactorList;
+      out.length = 0;
+      for (let i = 0; i < list.length; i++) if (list[i]?.__dzwiekiNiezniszczalny !== true) out.push(list[i]);
+      return out;
+    }
+
     /** Ochrona Atlasa w scenie: kadłub nie spada poniżej 1 (applyDamageToPlayer). */
     function soundScenePlayerDamage(amount) {
       if (!SoundScene.active) return amount;
@@ -18905,9 +18953,11 @@
         }
       }
       // namiar / malowanie: nowy cel priorytetowy
+      // (cel dopisany malowaniem — T trzymane — podbija fcPaint.added; stuknięcie T to zwykły namiar)
       const locks = lockedTargets.length;
-      if (locks > S.lastLocks) SND.zdarzenie(fcPaint.active ? 'malowanieCelu' : 'namiar', NaN, NaN);
+      if (locks > S.lastLocks) SND.zdarzenie(fcPaint.added > (S.lastPaint | 0) ? 'malowanieCelu' : 'namiar', NaN, NaN);
       S.lastLocks = locks;
+      S.lastPaint = fcPaint.added;
       SND.klatka();
     }
 
@@ -26743,6 +26793,7 @@
     // Zasługę za kill policzył już onBridgeCommandLost.
     function finishBridgeKill(npc) {
       if (!npc || npc.dead) return;
+      if (SND) soundSceneDeath(npc);
       npc.dead = true;
       npc.hp = 0;
       npc.respawnTimer = 3 + Math.random() * 6;
@@ -30485,7 +30536,7 @@
       // Powietrze budowli bazy (src/game/story/pirateBaseAtmosphere.js): wypływ z wyrw, pożary, wyrwy jadą z ciałami.
       stepPirateBaseAtmosphere(dt);
       // Rdzenie reaktorów: stopienie, detonacje (rozpad, fala), strumienie i kule plazmy.
-      ReactorGame.step(dt, allDestructibles);
+      ReactorGame.step(dt, SND ? soundSceneReactorList(allDestructibles) : allDestructibles);
       const destructorMs = performance.now() - tDestructor0;
       PerfHUD.addTiming('destructorTime', destructorMs);
       PerfHUD.addTiming('collisionTime', HullBodies.engine.perf.lastCollisionMs || 0);

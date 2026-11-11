@@ -43,16 +43,21 @@ async function tap(k, modifiers = 0) {
 }
 const mouse = (type, x, y, extra = {}) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'none', ...extra });
 
-const ZAGRAL = `(() => { const s = window.__dzwieki.statystyki(); const o = {}; for (const [k, v] of Object.entries(s.dzwieki)) o[k] = v.zagral; return o; })()`;
+const ZAGRAL = `(() => { const s = window.__dzwieki.statystyki(); const o = {}; for (const [k, v] of Object.entries(s.dzwieki)) o[k] = v.zagral; for (const [k, v] of Object.entries(s.zdarzenia)) o['@' + k] = v; return o; })()`;
 async function etap(nazwa, fn) {
   const przed = await ev(ZAGRAL);
   const t0 = Date.now();
   await fn();
   const po = await ev(ZAGRAL);
   const nowe = {};
-  for (const [k, v] of Object.entries(po)) if (v > (przed[k] || 0)) nowe[k] = v - (przed[k] || 0);
+  const zdarzenia = {};
+  for (const [k, v] of Object.entries(po)) {
+    if (!(v > (przed[k] || 0))) continue;
+    if (k.startsWith('@')) zdarzenia[k.slice(1)] = v - (przed[k] || 0);
+    else nowe[k] = v - (przed[k] || 0);
+  }
   const s = await ev('window.__dzwieki.statystyki()');
-  const wpis = { nazwa, ms: Date.now() - t0, zagraly: nowe, glosy: s.glosyAktywne, szczytPoDb: s.szczytPoDb, przester: s.przester };
+  const wpis = { nazwa, ms: Date.now() - t0, zagraly: nowe, zdarzenia, glosy: s.glosyAktywne, szczytPoDb: s.szczytPoDb, przester: s.przester };
   report.etapy.push(wpis);
   console.log(`[${nazwa}] ${Object.entries(nowe).map(([k, v]) => `${k}×${v}`).join(', ') || '(nic)'}  szczyt po ${s.szczytPoDb} dB`);
   return wpis;
@@ -80,6 +85,11 @@ try {
   report.panel = await ev(`(() => { const p = document.getElementById('dzwieki-panel'); return p ? { wiersze: p.querySelectorAll('.dp-wiersz').length, widoczny: p.getBoundingClientRect().width > 0 } : null; })()`);
   report.wczytanie = await ev(`(() => { const s = window.__dzwieki.statystyki(); const o = {}; for (const [k, v] of Object.entries(s.dzwieki)) if (!v.synteza) o[k] = { wczytane: v.wczytane, warianty: v.warianty, wzmocnienieDb: v.wzmocnienieDb, pomiar: v.pomiar }; return o; })()`);
   await ev('window.__dzwieki.wyzerujStatystyki()');
+  // Diagnostyka: kto i którą ścieżką zabił pirata (pułapka na polu `dead` — stos wywołań, flaga „niezniszczalny”).
+  const PULAPKA = `(() => { window.__smierci = window.__smierci || []; for (const p of window.SoundScene.pirates) { const n = p.npc; if (n.__pulapka) continue; n.__pulapka = true; let v = !!n.dead;
+    Object.defineProperty(n, 'dead', { configurable: true, get() { return v; }, set(x) { if (x && !v) window.__smierci.push({ key: p.key, hp: n.hp, niezniszczalny: n.__dzwiekiNiezniszczalny, t: +window.DevScene.simTime().toFixed(1),
+      stos: String(new Error().stack).split(String.fromCharCode(10)).slice(2, 9).map((l) => l.trim().split(' ')[1] || l.trim()).join(' < ') }); v = x; } }); } return true; })()`;
+  await ev(PULAPKA);
   await screenshotPng(cdp, join(out, '01-start.png'));
 
   await etap('tarcza wył. / wł.', async () => {
@@ -140,7 +150,19 @@ try {
 
   await etap('piraci strzelają (ich broń, rakiety → CIWS, tarcza, kadłub)', async () => {
     await ev('window.DevScene.dzwiekiPiraciStrzelaja(true)');
+    for (let i = 0; i < 6; i++) await step(60);
+    // salwa Atlasa w pancernik (po przeładowaniu wyrzutni) — obrona punktowa piratów ma do czego strzelać
+    await tap('3');
+    const p = await ev(`(() => { const b = window.SoundScene.pirates.find((q) => q.key === 'pirate_battleship'); return window.DevScene.pointerAt(b.npc.x, b.npc.y); })()`);
+    await mouse('mouseMoved', p.x, p.y);
+    await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
+    await step(30);
+    await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
+    await tap('2');
     for (let i = 0; i < 20; i++) await step(60);
+    report.piraciPoOgniu = await ev(`window.SoundScene.pirates.map((q) => { const n = q.npc; const s = window.ship;
+      return { key: q.key, dead: !!n.dead, hp: Math.round(n.hp), hulk: !!n.__bridgeHulk || !!n.bridgeHulk, d: Math.round(Math.hypot(n.x - s.pos.x, n.y - s.pos.y)), angToAtlas: +(((Math.atan2(s.pos.y - n.y, s.pos.x - n.x) - n.angle + 9 * Math.PI) % (2 * Math.PI)) - Math.PI).toFixed(2),
+        bron: (n.autoWeapons || []).map((w) => [w.id, Math.round(window.weaponRangeFor ? 0 : 0), w.cachedTarget ? (w.cachedTarget === s ? 'atlas' : (w.cachedTarget.type || 'x')) : null]).slice(0, 6) }; })`);
     await ev('window.DevScene.dzwiekiTarcza(false)');
     for (let i = 0; i < 6; i++) await step(60);
     await ev('window.DevScene.dzwiekiPiraciStrzelaja(false)');
@@ -156,14 +178,35 @@ try {
   });
 
   await etap('taran fregaty przy burcie', async () => {
-    // Atlas pchnięty burtą na fregatę z przodu po prawej (pierwszy kontakt, tarcie, zgniot).
-    for (let i = 0; i < 6; i++) {
+    // Atlas pchany burtą na fregatę przy burcie (pierwszy kontakt, tarcie, zgniot) — do pierwszego kontaktu szybko,
+    // potem wolno (docisk i tarcie).
+    const kontakt = () => ev('(window.__dzwieki.statystyki().zdarzenia.kontaktKadlubow || 0)');
+    const k0 = await kontakt();
+    let po = -1;
+    for (let i = 0; i < 40; i++) {
+      const szybko = po < 0;
       await ev(`(() => { const s = window.ship; const f = window.SoundScene.pirates.find((q) => q.near && !q.npc.dead)?.npc; if (!f) return false;
-        const dx = f.x - s.pos.x, dy = f.y - s.pos.y, d = Math.sqrt(dx * dx + dy * dy) || 1; s.vel.x = dx / d * ${i < 2 ? 420 : 160}; s.vel.y = dy / d * ${i < 2 ? 420 : 160}; return true; })()`);
-      await step(40);
+        const dx = f.x - s.pos.x, dy = f.y - s.pos.y, d = Math.sqrt(dx * dx + dy * dy) || 1; const v = ${szybko ? 380 : 140}; s.vel.x = dx / d * v; s.vel.y = dy / d * v; return true; })()`);
+      await step(10);
+      if (po < 0 && (await kontakt()) > k0) po = i;
+      if (po >= 0 && i - po > 12) break;
     }
+    report.taranKontaktPo = po;
     await ev('(() => { const s = window.ship; s.vel.x = 0; s.vel.y = 0; return true; })()');
     await step(60);
+  });
+
+  await etap('malowanie celów (T trzymane, kursor po piratach)', async () => {
+    const pts = await ev(`window.SoundScene.pirates.filter((q) => !q.npc.dead).map((q) => ({ x: q.npc.x, y: q.npc.y }))`);
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...KEY('t') });
+    await step(4);
+    for (const w of pts) {
+      const p = await ev(`window.DevScene.pointerAt(${w.x}, ${w.y})`);
+      await mouse('mouseMoved', p.x, p.y);
+      await step(8);
+    }
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...KEY('t') });
+    await step(10);
   });
 
   await etap('cele zniszczalne: śmierć okrętów', async () => {
@@ -174,6 +217,7 @@ try {
 
   await etap('odnów cele', async () => {
     await ev('window.DevScene.dzwiekiNiezniszczalne(true)');
+    report.smierci = await ev('window.__smierci');
     await ev('window.DevScene.dzwiekiOdnow()');
     for (let i = 0; i < 3; i++) await step(60);
   });
