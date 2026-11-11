@@ -193,3 +193,68 @@ test('przelot myśliwca: raz przy najbliższym podejściu, z prędkością, w pr
   for (let k = 0; k < 20; k++, t += 0.05) { f.x += f.vx * 0.05; r.przelotyMysliwcow(lista, 0, 0, 1000, t, () => true); }
   assert.equal(r.stats.mysliwiecPrzelot, 1);
 });
+
+test('stałe reżysera = stałe modułów gry (kopalnia, drony, kapsuły)', async () => {
+  const { FX_KOPALNI, FX_DRONOW, DRON_PRACA, KAPSULA } = await import('../src/game/dzwiekiObszarow.js');
+  const { MINING_FX } = await import('../src/game/asteroidMiningRig.js');
+  const { REPAIR_FX, DRONE_STATE } = await import('../src/game/repairRig.js');
+  const { POD_STATE } = await import('../src/game/escapePods.js');
+  assert.deepEqual({ ...FX_KOPALNI }, { ...MINING_FX });
+  assert.deepEqual({ ...FX_DRONOW }, { ...REPAIR_FX });
+  assert.equal(DRON_PRACA, DRONE_STATE.WORK);
+  assert.deepEqual({ ...KAPSULA }, { ...POD_STATE });
+});
+
+test('kopalnia: pętle pracy, pierścień zdarzeń od kursora (stare pomijane), układ skał → świat', () => {
+  const s = ujscie();
+  const pozycje = [];
+  s.u.graj = (id, x, y) => { s.graj.push(id); pozycje.push([x, y]); return true; };
+  const r = utworzRezyserObszarow(s.u);
+  const fx = [];
+  for (let i = 0; i < 4; i++) fx.push({ kind: 0, x: 0, y: 0 });
+  const rig = { firing: true, drones: [{ laserOn: false }, { laserOn: true }], saw: { active: true, done: false }, tractorOn: false, fx, fxWrite: 0 };
+  const dodaj = (kind, x, y) => { const e = fx[rig.fxWrite % fx.length]; e.kind = kind; e.x = x; e.y = y; rig.fxWrite++; };
+  dodaj(1, 0, 0); // przed pierwszym odczytem — pominięte
+  r.kopalnia(rig, 0, 0);
+  dodaj(1, 10, 20); dodaj(3, 1, 1); dodaj(4, 2, 2); dodaj(2, 3, 3);
+  r.kopalnia(rig, 0, 0);
+  assert.deepEqual(s.graj, ['skalaWybuch', 'skalaPekniecie', 'urobekZbior', 'skalaWybuch']);
+  assert.deepEqual(pozycje[0], [10, -20]);
+  assert.deepEqual([...new Set(s.petle.map((p) => p[1]))], ['kopalniaLaser', 'kopalniaPila']);
+});
+
+test('drony naprawcze: zdarzenia pierścienia i pętla spawu na rig', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  const fx = [{ kind: 0, x: 0, y: 0 }, { kind: 0, x: 0, y: 0 }, { kind: 0, x: 0, y: 0 }];
+  const rig = { fx, fxWrite: 0, drones: [{ state: 1, wx: 0, wy: 0 }, { state: 2, wx: 5, wy: 6 }] };
+  r.dronyNaprawcze([rig]);
+  for (const k of [3, 1, 4, 2]) { const e = fx[rig.fxWrite % 3]; e.kind = k; rig.fxWrite++; }
+  r.dronyNaprawcze([rig]);
+  // 4 zdarzenia przy pierścieniu 3 — najstarsze przepadło
+  assert.deepEqual(s.graj, ['dronLata', 'dronDok', 'wybuchMaly']);
+  assert.equal(s.petle.filter((p) => p[1] === 'dronSpaw').length, 2);
+});
+
+test('kapsuły: wyrzut z liczności PENDING, zapłon COAST → FLY', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  const st = { count: 3, state: [0, 0, 0], x: [1, 2, 3], y: [0, 0, 0] };
+  r.kapsuly(st);
+  st.state[0] = 1;
+  r.kapsuly(st);
+  st.state[1] = 1; st.state[2] = 1;
+  r.kapsuly(st);
+  st.state[0] = 2;
+  r.kapsuly(st);
+  assert.deepEqual(s.graj, ['kapsulaWyrzut', 'kapsulaWyrzut', 'kapsulaSilnik']);
+  assert.equal(r.stats.kapsulaWyrzut, 3);
+});
+
+test('zbiórka łupu: pętla tylko z celami', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  r.zbiorka(0, 0, 0);
+  r.zbiorka(2, 0, 0);
+  assert.deepEqual(s.petle.map((p) => p[1]), ['wiazkaZbiorki']);
+});

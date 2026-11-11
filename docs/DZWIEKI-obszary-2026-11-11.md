@@ -177,3 +177,69 @@ silnika kapitałowego do nich nie pasuje); słychać je przez przelot.
 | mysliwiecLadowanie_3 | 1,00 | 0,0 | −18,5 | 0,05 | 0,45 | 0,59 | 0% | ✗ atak po 0,45 s |
 
 - Kredyty etapu 3: ok. 215 (22,8 s efektów; licznik konta pokazał 136 tuż po przebiegu — odświeża się z opóźnieniem).
+
+## Etap 4 — praca w przestrzeni
+
+| Obszar | Zdarzenie w kodzie | Dźwięk |
+|---|---|---|
+| Kopalnia | `MiningRig`: `firing` i dron z `laserOn` | pętla `kopalniaLaser` |
+| | `saw.active` i nie `done` | pętla `kopalniaPila` |
+| | `tractorOn` (T) | pętla `wiazkaZbiorki` |
+| | pierścień `rig.fx` (układ skał, świat = (x, −y)): BLAST / CONTAINED / SPLIT / COLLECT | `skalaWybuch` / `skalaWybuch` ×0,55 / `skalaPekniecie` / `urobekZbior` |
+| Łup | `lootContainers.targetCount > 0` (wiązka ZBIÓRKA) | pętla `wiazkaZbiorki` |
+| | `env.onCollect(klucz, sztuki, x, y)` | `kontenerZbior` |
+| | drony zbierające łup (`loot_drones`) — nie istnieją w grze (`ready: false`) | — |
+| Drony naprawcze | pierścień `rig.fx` (`RepairSwarm.rigs`): LAUNCH / DOCK / REGROWN / DRONE_LOST | `dronWylot` / `dronDok` / `dronLata` / `wybuchMaly` ×0,7 |
+| | dron w stanie WORK | pętla `dronSpaw` (klucz na rig) |
+| Holownik serwisowy | `ServiceTugGame._lockCargo(m, mode)`: `clamp` / `off` | `zaciskiZalaczenie` / `zaciskiZwolnienie` (pliki hali K-7); przylot i odlot — osie warpa, silnik — synteza obcych |
+| Kapsuły ratunkowe | pula `stepEscapePods`: liczba PENDING maleje / COAST → FLY | `kapsulaWyrzut` / `kapsulaSilnik` |
+
+### Pomiary
+
+| plik | dł. [s] | szczyt | RMS | start | atak | słyszalny do | < 150 Hz | |
+|---|---|---|---|---|---|---|---|---|
+| kopalniaLaser_1 | 4,00 | −4,5 | −17,7 | 0,00 | 0,00 | 4,00 | 0% |  |
+| kopalniaLaser_2 | 4,00 | 0,0 | −14,9 | 0,00 | 0,00 | 4,00 | 0% |  |
+| kopalniaPila_1 | 4,00 | 0,0 | −12,6 | 0,00 | 0,00 | 4,00 | 0% |  |
+| kopalniaPila_2 | 4,00 | 0,0 | −11,5 | 0,00 | 0,02 | 4,00 | 0% |  |
+| skalaWybuch_1 | 1,48 | 0,0 | −10,7 | 0,00 | 0,00 | 1,12 | 26% |  |
+| skalaWybuch_2 | 1,48 | 0,0 | −9,8 | 0,00 | 0,00 | 1,05 | 13% |  |
+| skalaWybuch_3 | 1,48 | 0,0 | −12,7 | 0,00 | 0,00 | 1,08 | 31% |  |
+| skalaWybuch_4 | 1,48 | 0,0 | −12,8 | 0,00 | 0,00 | 1,08 | 18% |  |
+| skalaPekniecie_1 | 1,48 | −0,2 | −14,3 | 0,00 | 0,02 | 1,16 | 36% |  |
+| skalaPekniecie_2 | 1,48 | 0,0 | −15,6 | 0,00 | 0,11 | 1,23 | 22% |  |
+| skalaPekniecie_3 | 1,48 | 0,0 | −14,5 | 0,00 | 0,00 | 0,95 | 42% |  |
+| skalaPekniecie_4 | 1,48 | 0,0 | −11,7 | 0,00 | 0,00 | 1,12 | 59% |  |
+| urobekZbior_1 | 0,60 | 0,0 | −13,3 | 0,00 | 0,02 | 0,30 | 9% |  |
+| urobekZbior_2 | 0,60 | −6,4 | −19,0 | 0,00 | 0,00 | 0,34 | 96% | ✗ bas |
+| urobekZbior_3 | 0,60 | −3,1 | −20,9 | 0,00 | 0,00 | 0,42 | 12% |  |
+| wiazkaZbiorki_1 | 4,00 | −3,7 | −15,8 | 0,00 | 0,06 | 4,00 | 58% |  |
+| wiazkaZbiorki_2 | 4,00 | −3,2 | −10,4 | 0,00 | 0,13 | 4,00 | 89% | ✗ bas |
+| kontenerZbior_1 | 0,80 | 0,0 | −16,9 | 0,00 | 0,37 | 0,53 | 0% | ✗ atak po 0,37 s |
+| kontenerZbior_2 | 0,80 | 0,0 | −16,3 | 0,26 | 0,28 | 0,64 | 0% | ✗ start po 0,26 s |
+| kontenerZbior_3 | 0,80 | 0,0 | −18,2 | 0,06 | 0,12 | 0,49 | 0% |  |
+| dronWylot_1 | 0,60 | −0,1 | −13,3 | 0,00 | 0,00 | 0,42 | 0% |  |
+| dronWylot_2 | 0,60 | 0,0 | −10,2 | 0,00 | 0,00 | 0,44 | 0% |  |
+| dronWylot_3 | 0,60 | 0,0 | −9,4 | 0,00 | 0,00 | 0,49 | 0% |  |
+| dronDok_1 | 0,60 | −2,8 | −15,7 | 0,00 | 0,01 | 0,43 | 0% |  |
+| dronDok_2 | 0,60 | 0,0 | −13,2 | 0,00 | 0,00 | 0,54 | 0% |  |
+| dronDok_3 | 0,60 | 0,0 | −10,9 | 0,00 | 0,00 | 0,55 | 4% |  |
+| dronSpaw_1 | 4,00 | −6,5 | −22,9 | 0,00 | 0,01 | 4,00 | 0% |  |
+| dronSpaw_2 | 4,00 | −0,5 | −17,1 | 0,00 | 0,17 | 4,00 | 0% |  |
+| dronLata_1 | 0,60 | −2,5 | −16,8 | 0,00 | 0,00 | 0,60 | 0% |  |
+| dronLata_2 | 0,60 | −1,3 | −19,7 | 0,00 | 0,01 | 0,06 | 0% | ✗ 0,06 s |
+| dronLata_3 | 0,60 | −0,2 | −17,9 | 0,00 | 0,00 | 0,60 | 0% |  |
+| kapsulaWyrzut_1 | 0,80 | −4,6 | −21,4 | 0,00 | 0,00 | 0,80 | 0% |  |
+| kapsulaWyrzut_2 | 0,80 | −0,5 | −14,2 | 0,00 | 0,00 | 0,50 | 0% |  |
+| kapsulaWyrzut_3 | 0,80 | −14,2 | −30,3 | 0,00 | 0,00 | 0,62 | 3% | cichy (RMS −30) |
+| kapsulaWyrzut_4 | 0,80 | −44,1 | −58,8 | 0,00 | 0,00 | 0,80 | 22% | ✗ prawie cisza |
+| kapsulaSilnik_1 | 1,00 | −1,6 | −14,2 | 0,00 | 0,00 | 0,62 | 0% |  |
+| kapsulaSilnik_2 | 1,00 | −3,1 | −16,8 | 0,00 | 0,00 | 1,00 | 0% |  |
+| kapsulaSilnik_3 | 1,00 | −0,3 | −13,6 | 0,00 | 0,00 | 0,98 | 0% |  |
+| wiazkaZbiorki_3 | 4,00 | −5,2 | −18,5 | 0,00 | 0,00 | 4,00 | 0% |  |
+| wiazkaZbiorki_4 | 4,00 | −3,0 | −16,2 | 0,00 | 0,00 | 4,00 | 0% |  |
+| kontenerZbior_4 | 0,80 | 0,0 | −13,8 | 0,04 | 0,05 | 0,34 | 1% |  |
+| kontenerZbior_5 | 0,80 | −1,2 | −20,1 | 0,06 | 0,14 | 0,57 | 3% |  |
+
+- `wiazkaZbiorki` 3–4 bez „hum” w opisie (0% basu; wariant 2 z „…humming energy field…” — 89%), `kontenerZbior` 4–5 z „the sound starts immediately at the very first moment” (atak 0,05–0,14 s; warianty 1–2 z „with instant attack” — 0,26–0,37 s).
+- Kredyty etapu 4: ok. 640 (67,8 s efektów, w tym 9,6 s dogenerowania).

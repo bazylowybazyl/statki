@@ -33,6 +33,17 @@
 // wprost; tu tylko PRZELOT: `przelotyMysliwcow(lista, …)` — najbliższe podejście myśliwca do środka kadru (odległość
 // przestaje maleć) bliżej niż `przelotPromien` × półprzekątna, z prędkością ≥ `przelotMinV`, raz na `przelotOdstep`
 // na myśliwca. Stan per myśliwiec w WeakMap (wpis raz na życie myśliwca, nie na klatkę).
+//
+// Obszary (etap 4, praca w przestrzeni): pierścienie zdarzeń czytane własnym kursorem (WeakMap pierścień → indeks;
+// pierwsze spotkanie pomija stare zdarzenia, przepełnienie — najnowsze), jak `repairFxEvents.js`:
+//   kopalnia     — `kopalnia(rig, x, y)`: pętle `kopalniaLaser` (strzał LPM i dron z laserem), `kopalniaPila` (piła
+//                  w ruchu), `wiazkaZbiorki` (wiązka T); pierścień `rig.fx` (układ skał: świat = (x, −y)): BLAST →
+//                  `skalaWybuch`, CONTAINED → `skalaWybuch` ciszej, SPLIT → `skalaPekniecie`, COLLECT → `urobekZbior`.
+//   zbiórka łupu — `zbiorka(liczbaCelow, x, y)`: pętla `wiazkaZbiorki`, dopóki wiązka ma cele (`targetCount`).
+//   drony        — `dronyNaprawcze(rigs)`: pierścień `rig.fx` (LAUNCH `dronWylot`, DOCK `dronDok`, REGROWN `dronLata`,
+//                  DRONE_LOST `wybuchMaly`), pętla `dronSpaw` na rig przy pierwszym dronie w stanie WORK.
+//   kapsuły      — `kapsuly(st)`: z liczności stanów (PENDING maleje → wyrzut, COAST → FLY → zapłon; indeksy puli
+//                  przestawiają się przy usuwaniu, więc różnica liczności, nie indeksów), położenie — kapsuła w stanie.
 
 export const DZWIEKI_OBSZAROW_DOMYSLNE = Object.freeze({
   silnikProg: 0.06,          // ciąg MAIN okrętu, od którego jest słyszalny
@@ -49,6 +60,12 @@ export const DZWIEKI_OBSZAROW_DOMYSLNE = Object.freeze({
 });
 
 const SLOTY_RDZENIA = 8;
+/** Kopie stałych gry (strażnik równości w teście): `MINING_FX` (asteroidMiningRig.js), `REPAIR_FX` / `DRONE_STATE`
+ * (repairRig.js), `POD_STATE` (escapePods.js) — reżyser nie importuje modułów gry. */
+export const FX_KOPALNI = Object.freeze({ BLAST: 1, CONTAINED: 2, SPLIT: 3, COLLECT: 4, ACTIVATE: 5 });
+export const FX_DRONOW = Object.freeze({ REGROWN: 1, DRONE_LOST: 2, LAUNCH: 3, DOCK: 4, SOCKET: 5, WELD_START: 6 });
+export const DRON_PRACA = 2;
+export const KAPSULA = Object.freeze({ PENDING: 0, COAST: 1, FLY: 2 });
 const KLUCZE_RDZENIA = Object.freeze(Array.from({ length: SLOTY_RDZENIA }, (_, i) => `rdzen:${i}`));
 
 /**
@@ -72,7 +89,9 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     przylotZwiastun: 0, przylotWyrzut: 0, odlotLadowanie: 0, odlotSkok: 0, spoznione: 0,
     maskowanieWl: 0, maskowanieWyl: 0, maskowanieZerwane: 0,
     rdzenStopienie: 0, rdzenDetonacja: 0, klik: 0,
-    hcRozruch: 0, hcWejscie: 0, hcWyjscie: 0, hcPrzerwany: 0, rakietyKlatki: 0, mysliwiecPrzelot: 0
+    hcRozruch: 0, hcWejscie: 0, hcWyjscie: 0, hcPrzerwany: 0, rakietyKlatki: 0, mysliwiecPrzelot: 0,
+    skalaWybuch: 0, skalaPekniecie: 0, urobekZbior: 0, dronWylot: 0, dronDok: 0, dronLata: 0, dronUtracony: 0,
+    kapsulaWyrzut: 0, kapsulaSilnik: 0
   };
 
   // --- warp gracza
@@ -263,6 +282,97 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     }
   }
 
+  // --- etap 4: pierścienie zdarzeń (kopalnia, drony naprawcze)
+  const kursory = new WeakMap(); // pierścień (tablica `fx`) → przeczytane do
+  function czytajPierscien(fx, zapis, naZdarzenie) {
+    if (!fx || !fx.length) return;
+    let cur = kursory.get(fx);
+    if (cur === undefined) { kursory.set(fx, zapis); return; }
+    const cap = fx.length;
+    if (zapis - cur > cap) cur = zapis - cap;
+    for (; cur < zapis; cur++) naZdarzenie(fx[cur % cap]);
+    kursory.set(fx, cur);
+  }
+  const zdarzenieKopalni = (e) => {
+    const x = e.x;
+    const y = -e.y; // układ skał → świat gry
+    switch (e.kind) {
+      case FX_KOPALNI.BLAST: stats.skalaWybuch++; ujscie.graj('skalaWybuch', x, y, 1); break;
+      case FX_KOPALNI.CONTAINED: stats.skalaWybuch++; ujscie.graj('skalaWybuch', x, y, 0.55); break;
+      case FX_KOPALNI.SPLIT: stats.skalaPekniecie++; ujscie.graj('skalaPekniecie', x, y, 1); break;
+      case FX_KOPALNI.COLLECT: stats.urobekZbior++; ujscie.graj('urobekZbior', x, y, 1); break;
+      default: break;
+    }
+  };
+  /** Kopalnia gracza (`MiningRig`): pętle pracy i pierścień zdarzeń. (x, y) — statek (pętle). */
+  function kopalnia(rig, x, y) {
+    if (!rig) return;
+    if (rig.firing && rig.drones) {
+      for (let i = 0; i < rig.drones.length; i++) {
+        if (rig.drones[i] && rig.drones[i].laserOn) { ujscie.petla('kopalnia:laser', 'kopalniaLaser', 1, x, y); break; }
+      }
+    }
+    if (rig.saw && rig.saw.active && !rig.saw.done) ujscie.petla('kopalnia:pila', 'kopalniaPila', 1, x, y);
+    if (rig.tractorOn) ujscie.petla('kopalnia:wiazka', 'wiazkaZbiorki', 1, x, y);
+    czytajPierscien(rig.fx, rig.fxWrite, zdarzenieKopalni);
+  }
+  /** Wiązka ZBIÓRKA łupu: pętla, dopóki ma cele. */
+  function zbiorka(liczbaCelow, x, y) {
+    if (liczbaCelow > 0) ujscie.petla('zbiorka', 'wiazkaZbiorki', 1, x, y);
+  }
+
+  const zdarzenieDrona = (f) => {
+    switch (f.kind) {
+      case FX_DRONOW.LAUNCH: stats.dronWylot++; ujscie.graj('dronWylot', f.x, f.y, 1); break;
+      case FX_DRONOW.DOCK: stats.dronDok++; ujscie.graj('dronDok', f.x, f.y, 1); break;
+      case FX_DRONOW.REGROWN: stats.dronLata++; ujscie.graj('dronLata', f.x, f.y, 1); break;
+      case FX_DRONOW.DRONE_LOST: stats.dronUtracony++; ujscie.graj('wybuchMaly', f.x, f.y, 0.7); break;
+      default: break;
+    }
+  };
+  const kluczeSpawu = new WeakMap(); // rig → klucz pętli (tekst raz na rig)
+  let nrSpawu = 0;
+  /** Drony naprawcze wszystkich rigów (`RepairSwarm.rigs`): pierścienie zdarzeń i pętla spawu. */
+  function dronyNaprawcze(rigs) {
+    if (!rigs) return;
+    for (let r = 0; r < rigs.length; r++) {
+      const rig = rigs[r];
+      if (!rig) continue;
+      czytajPierscien(rig.fx, rig.fxWrite, zdarzenieDrona);
+      const dr = rig.drones;
+      if (!dr) continue;
+      for (let i = 0; i < dr.length; i++) {
+        const d = dr[i];
+        if (!d || d.state !== DRON_PRACA) continue;
+        let k = kluczeSpawu.get(rig);
+        if (k === undefined) { k = 'spaw:' + (nrSpawu++); kluczeSpawu.set(rig, k); }
+        ujscie.petla(k, 'dronSpaw', 1, d.wx, d.wy);
+        break;
+      }
+    }
+  }
+
+  let kapsulyPending = -1;
+  let kapsulyCoast = 0;
+  /** Kapsuły ratunkowe (pula `stepEscapePods`: `count`, `state[i]`, `x[i]`, `y[i]`). */
+  function kapsuly(st) {
+    if (!st) return;
+    let nP = 0, nC = 0, iC = -1, iF = -1;
+    for (let i = 0; i < st.count; i++) {
+      const s = st.state[i];
+      if (s === KAPSULA.PENDING) nP++;
+      else if (s === KAPSULA.COAST) { nC++; if (iC < 0) iC = i; }
+      else if (s === KAPSULA.FLY && iF < 0) iF = i;
+    }
+    if (kapsulyPending < 0) { kapsulyPending = nP; kapsulyCoast = nC; return; }
+    const wyrzut = kapsulyPending > nP ? kapsulyPending - nP : 0;
+    const zaplon = kapsulyCoast + wyrzut > nC ? kapsulyCoast + wyrzut - nC : 0;
+    kapsulyPending = nP;
+    kapsulyCoast = nC;
+    if (wyrzut > 0 && iC >= 0) { stats.kapsulaWyrzut += wyrzut; ujscie.graj('kapsulaWyrzut', st.x[iC], st.y[iC], 1); }
+    if (zaplon > 0 && iF >= 0) { stats.kapsulaSilnik += zaplon; ujscie.graj('kapsulaSilnik', st.x[iF], st.y[iF], 1); }
+  }
+
   /** Raz na klatkę: pętle stopienia (głośność z postępu, położenie gospodarza). `czas` — zegar gry [s]. */
   function klatka(czas) {
     for (let i = 0; i < SLOTY_RDZENIA; i++) {
@@ -280,12 +390,13 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     maskaPoprz = null;
     zerwaniePoprz = null;
     hcPoprz = null;
+    kapsulyPending = -1;
     for (let i = 0; i < SLOTY_RDZENIA; i++) slotHost[i] = null;
   }
 
   return {
     warpGracza, osieWarpa, maskowanieGracza, maskowanieZdarzenie, rdzenStopienie, rdzenDetonacja, tloMostka, klik,
-    ostrzezenieRakiet, hipercruise, silnikiObcych, przelotyMysliwcow,
+    ostrzezenieRakiet, hipercruise, silnikiObcych, przelotyMysliwcow, kopalnia, zbiorka, dronyNaprawcze, kapsuly,
     klatka, wyzeruj, stats, ustawienia: U
   };
 }

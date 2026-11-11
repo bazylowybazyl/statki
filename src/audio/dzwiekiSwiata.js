@@ -1,5 +1,6 @@
 // Dźwięki obszarów gry, które były nieme: warp gracza, przyloty i odloty obcych okrętów, maskowanie, rdzeń reaktora,
-// tło mostka, klik interfejsu (etap 1); ostrzeżenie o rakietach, hipercruise, silniki obcych okrętów (etap 2); myśliwce i hangary (etap 3).
+// tło mostka, klik interfejsu (etap 1); ostrzeżenie o rakietach, hipercruise, silniki obcych okrętów (etap 2); myśliwce i hangary (etap 3);
+// praca w przestrzeni: kopalnia, zbiórka łupu, drony naprawcze, holownik, kapsuły ratunkowe (etap 4).
 // Czyste dane (bez Web Audio i DOM): wpisy dołączane do tabeli warstwy `DZWIEKI` jednym rozwinięciem w src/audio/dzwiekiLogika.js, zdarzenia — do `ZDARZENIA`.
 // Pola wpisu jak w `DZWIEKI` (kategoria, limit, odstęp, zwłoka, wariacja, pętla, `ui`, `poziom`) oraz:
 //   `obszar`   — grupa w panelu sceny `?scena=dzwieki` (odsłuch obszarami, nie kategoriami),
@@ -46,7 +47,28 @@ export const DZWIEKI_SWIATA = Object.freeze({
   mysliwiecDzialko: { kat: 'drobne', obszar: 'Myśliwce', limit: 6, odstep: 30, zwloka: 2, ton: 0.07, glos: 0.15, warianty: [1, 2] },
   bombaZrzut: { kat: 'drobne', obszar: 'Myśliwce', limit: 3, odstep: 80, zwloka: 1, ton: 0.05, glos: 0.1 },
   bombaWybuch: { kat: 'dzialo', obszar: 'Myśliwce', limit: 4, odstep: 60, zwloka: 2, ton: 0.06, glos: 0.12, warianty: [1, 3] },
-  mysliwiecLadowanie: { kat: 'drobne', obszar: 'Myśliwce', limit: 3, odstep: 120, zwloka: 2, ton: 0.05, glos: 0.1, warianty: [1, 2] }
+  mysliwiecLadowanie: { kat: 'drobne', obszar: 'Myśliwce', limit: 3, odstep: 120, zwloka: 2, ton: 0.05, glos: 0.1, warianty: [1, 2] },
+  // ── Etap 4: praca w przestrzeni ──
+  // Kopalnia (`MiningRig`): laser dronów i piła — pętle, gdy pracują; pierścień `rig.fx`: ładunek (BLAST, CONTAINED
+  // ciszej), rozpad skały (SPLIT), urobek (COLLECT). Wiązka T kopalni i wiązka ZBIÓRKA łupu — ta sama pętla.
+  kopalniaLaser: { kat: 'drobne', obszar: 'Praca w przestrzeni', petla: true, limit: 1 },
+  kopalniaPila: { kat: 'drobne', obszar: 'Praca w przestrzeni', petla: true, limit: 1 },
+  skalaWybuch: { kat: 'dzialo', obszar: 'Praca w przestrzeni', limit: 4, odstep: 60, zwloka: 2, ton: 0.06, glos: 0.12 },
+  skalaPekniecie: { kat: 'trafienie', obszar: 'Praca w przestrzeni', limit: 3, odstep: 80, zwloka: 2, ton: 0.06, glos: 0.12 },
+  urobekZbior: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 80, zwloka: 2, ton: 0.06, glos: 0.12, warianty: [1, 3] },
+  wiazkaZbiorki: { kat: 'drobne', obszar: 'Praca w przestrzeni', petla: true, limit: 2, warianty: [1, 3, 4] },
+  kontenerZbior: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 100, zwloka: 2, ton: 0.05, glos: 0.1, warianty: [3, 4, 5] },
+  // Drony naprawcze (`RepairRig`, pierścień `rig.fx` i stan dronów): wylot, powrót, spaw (pętla na rig), łata gotowa.
+  dronWylot: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 70, zwloka: 2, ton: 0.08, glos: 0.12 },
+  dronDok: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 70, zwloka: 2, ton: 0.08, glos: 0.12 },
+  dronSpaw: { kat: 'drobne', obszar: 'Praca w przestrzeni', petla: true, limit: 2 },
+  dronLata: { kat: 'interfejs', obszar: 'Praca w przestrzeni', limit: 2, odstep: 150, zwloka: 1, ton: 0.04, glos: 0.08, warianty: [1, 3] },
+  // Holownik serwisowy (`ServiceTugGame._lockCargo`): zaciski — pliki hali K-7 (te same id co w `DZWIEKI_HALI`).
+  zaciskiZalaczenie: { kat: 'trafienie', obszar: 'Holownik', limit: 2, odstep: 200, zwloka: 1, ton: 0.03, glos: 0.08 },
+  zaciskiZwolnienie: { kat: 'trafienie', obszar: 'Holownik', limit: 2, odstep: 200, zwloka: 1, ton: 0.03, glos: 0.08 },
+  // Kapsuły ratunkowe (`stepEscapePods`): wyrzut z kadłuba (PENDING → COAST), zapłon po dryfie (COAST → FLY).
+  kapsulaWyrzut: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 110, zwloka: 2, ton: 0.08, glos: 0.12, warianty: [1, 2, 3] },
+  kapsulaSilnik: { kat: 'drobne', obszar: 'Praca w przestrzeni', limit: 3, odstep: 110, zwloka: 2, ton: 0.08, glos: 0.12 }
 });
 
 /**
@@ -79,5 +101,8 @@ export const ZDARZENIA_SWIATA = Object.freeze({
   bombaZrzut: 'bombaZrzut',
   bombaWybuch: 'bombaWybuch',
   mysliwiecLadowanie: 'mysliwiecLadowanie',
+  kontenerZbior: 'kontenerZbior',
+  holownikZacisk: 'zaciskiZalaczenie',
+  holownikZwolnienie: 'zaciskiZwolnienie',
   klik: 'klik'
 });
