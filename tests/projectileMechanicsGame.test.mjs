@@ -110,6 +110,8 @@ const game = {
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false, projectilePassesAlly,
   HullBodies, HullDamageEvents, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  // migotanie świateł po trafieniu (stan zasilania okrętu) — sam obraz
+  notePowerFlick() {},
   noteBridgeHit() {}, bridgeSimTime: 0,
   // mała skala (?malaSkala=1, src/game/smallScale.js): bez flagi pocisk nie jest strzałem fregaty gracza
   scoutPlayerShot: () => false, scoutTurretHit() {}, scoutDeckPasses: () => false,

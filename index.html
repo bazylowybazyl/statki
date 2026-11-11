@@ -10459,6 +10459,42 @@
       }
     }
 
+    // REFLEKTOR DZIOBOWY (decyzja użytkownika 2026-11-11: „reflektor dziobowy sterowany myszą: oświetla skały i wraki
+    // w cieniu planety, ale podnosi sygnaturę”): klawisz ; — snop z dziobu ku kursorowi (łuk ± SEARCHLIGHT.arc od
+    // kursu, obrót z ograniczoną prędkością), sygnatura × SEARCHLIGHT.sigMul (hak sygnatury fleetAwareness —
+    // `__spotSigMul`), gaśnie bez zasilania. Kąt (świat gry, rad) do renderu: `__spotAng` → ENT.SPOT_ANG; światło
+    // stożkowe w siatce świateł (hexShips3D — krok „szperacz dziobowy”: kadłuby, skały, pył, gaz).
+    const SEARCHLIGHT = { arc: 1.05, sigMul: 1.6, turnRate: 2.6 };
+    let _spotOn = false;
+    function togglePlayerSearchlight() {
+      if (!ship || ship.destroyed) return;
+      if (!_spotOn && playerPowerRefuse('REFLEKTOR')) return;
+      _spotOn = !_spotOn;
+      pushZoneMessage(_spotOn ? 'REFLEKTOR DZIOBOWY: WŁ. — SYGNATURA W GÓRĘ' : 'REFLEKTOR DZIOBOWY: WYŁ.', 1.4, { label: 'REFLEKTOR' });
+    }
+    function stepPlayerSearchlight(dt) {
+      if (!ship) return;
+      if (!_spotOn || ship.destroyed || !playerPowered()) {
+        ship.__spotAng = undefined;
+        ship.__spotSigMul = 1;
+        if (_spotOn && !playerPowered()) _spotOn = false;
+        return;
+      }
+      const mw = screenToWorld(mouse.x, mouse.y);
+      const head = Number(ship.angle) || 0;
+      let rel = Math.atan2(mw.y - ship.pos.y, mw.x - ship.pos.x) - head;
+      rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+      rel = Math.max(-SEARCHLIGHT.arc, Math.min(SEARCHLIGHT.arc, rel));
+      const want = head + rel;
+      const cur = ship.__spotAng === undefined ? want : ship.__spotAng;
+      let d = want - cur;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      const step = SEARCHLIGHT.turnRate * dt;
+      ship.__spotAng = cur + Math.max(-step, Math.min(step, d));
+      ship.__spotSigMul = SEARCHLIGHT.sigMul;
+    }
+    window.PlayerSearchlight = { toggle: () => togglePlayerSearchlight(), on: () => _spotOn, tune: SEARCHLIGHT };
+
     /** Komunikat odmowy systemu przy braku zasilania (zwraca true = zablokowane). */
     function playerPowerRefuse(what) {
       if (playerPowered()) return false;
@@ -22549,6 +22585,11 @@
         gate: () => !!ship && gaNotRts() && !stationUI.open && !StoryGame.blocksInput,
         run() { togglePlayerPower(); return GA_STOP; }
       },
+      // Reflektor dziobowy za myszą (blok „ZASILANIE OKRĘTU”): snop z dziobu ku kursorowi, sygnatura w górę.
+      'ship.searchlight': {
+        gate: () => !!ship && gaNotRts() && !stationUI.open && !StoryGame.blocksInput,
+        run() { togglePlayerSearchlight(); return GA_STOP; }
+      },
       // Hipercruise (E5): rozruch / wyjście; odcinki 'drive' TRAVEL TO włączają go same.
       'nav.hypercruise': {
         gate: () => !!ship && gaNotRts(),
@@ -30186,6 +30227,7 @@
       // Zasilanie okrętu (src/game/shipPower.js): rozruch / gaszenie — przed autopilotem i silnikami.
       stepPlayerPower(dt);
       stepPowerFlicks(dt);
+      stepPlayerSearchlight(dt);
       stepTravelNav();
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
