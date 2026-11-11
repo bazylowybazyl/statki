@@ -11,8 +11,11 @@
 
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
 import { collectDrawBoxEntities, getEntityPosX, getEntityPosY, getEntityScale } from '../render/drawBox.js';
-import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
+import { mountedWeaponRenderAngle, getMountedWeaponAim } from '../game/weaponAim.js';
 import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
+// Lampki gotowości wież (2026-11-11): kod z pól broni i stanu zasilania okrętu — rekord niesie go do obrazu (pole `ready`).
+import { shipPowerOn } from '../game/shipPower.js';
+import { TURRET_LAMP, turretLampCode } from '../data/turretReadyLamp.js';
 
 // Barwy odpowiadają materiałom Lambert z dawnego weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
@@ -533,12 +536,14 @@ function getRecoilState(entity, uid) {
   return st;
 }
 
-function pushRecord(entity, keys, info, wx, wy, ang, scale) {
+function pushRecord(entity, keys, info, wx, wy, ang, scale, ready) {
   let rec = frameRecords[frameCount];
   if (!rec) {
-    rec = { entity: null, uid: '', key: '', spec: null, fxKey: '', weaponId: '', recoil: 0, shake: 0, wx: 0, wy: 0, ang: 0, scale: 1, state: null };
+    rec = { entity: null, uid: '', key: '', spec: null, fxKey: '', weaponId: '', recoil: 0, shake: 0, wx: 0, wy: 0, ang: 0, scale: 1, state: null, ready: 0 };
     frameRecords[frameCount] = rec;
   }
+  // Kod lampki gotowości (TURRET_LAMP, src/data/turretReadyLamp.js) — rekord TURRET migawki, pole READY.
+  rec.ready = ready | 0;
   frameCount++;
   rec.entity = entity;
   rec.uid = keys.uid;
@@ -632,7 +637,7 @@ function getSlotKeys(slot, entity, prefix, index, def) {
 
 // Parametry bieżącej encji dla emitTurret — moduł zamiast domknięcia tworzonego
 // w każdym sync().
-const _emit = { entity: null, localX: 1, localY: 1, tierScale: 1, cosA: 1, sinA: 0, shipEx: 0, shipEy: 0, shipScale: 1, renderScale: 1 };
+const _emit = { entity: null, localX: 1, localY: 1, tierScale: 1, cosA: 1, sinA: 0, shipEx: 0, shipEy: 0, shipScale: 1, renderScale: 1, powered: true };
 
 function writeEntityLocalScale(entity, out) {
   const sxRaw = Number(entity?.__hardpointScaleX);
@@ -643,7 +648,7 @@ function writeEntityLocalScale(entity, out) {
   out.localY = Number.isFinite(syRaw) && syRaw > 0 ? syRaw : uniform;
 }
 
-function emitTurret(slot, prefix, index, def, info, localX, localY, angle, useHardpointScale) {
+function emitTurret(slot, prefix, index, def, info, localX, localY, angle, useHardpointScale, ready) {
   const f = _emit;
   const entity = f.entity;
   const psx = useHardpointScale ? f.localX : (entity.isPlayer ? 1 : f.shipScale);
@@ -652,11 +657,36 @@ function emitTurret(slot, prefix, index, def, info, localX, localY, angle, useHa
   const ly = (Number(localY) || 0) * psy * f.renderScale;
   const wx = f.shipEx + lx * f.cosA - ly * f.sinA;
   const wy = f.shipEy + lx * f.sinA + ly * f.cosA;
-  pushRecord(entity, getSlotKeys(slot, entity, prefix, index, def), info, wx, wy, angle, info.scale * f.tierScale * f.renderScale);
+  pushRecord(entity, getSlotKeys(slot, entity, prefix, index, def), info, wx, wy, angle, info.scale * f.tierScale * f.renderScale, ready);
 }
 
-function emitPlayerTurretList(list, prefix, aimAlpha) {
+// ── Lampki gotowości (src/data/turretReadyLamp.js) ───────────────────────────────────────────────────────────
+// Grupy gniazd gracza → pole przeładowania na gnieździe: działa główne `hp.fcCd` (kierowanie ogniem), specjalne
+// `hp.specialCd`, wyrzutnie i torpedy `hp.missileCd`, obrona punktowa `ship.ciws[i].cd` (ciwsStep).
+const PLAYER_CD_MAIN = 0, PLAYER_CD_SPECIAL = 1, PLAYER_CD_MISSILE = 2;
+
+/** Kod lampki wieży NPC z wpisu `autoWeapons` (src/ai/capitalAI.js: `cd`, `ammo`, `charge`, `hpOffset`). */
+export function npcTurretLampCode(w, powered) {
+  if (!powered) return TURRET_LAMP.DARK;
+  const charging = !!(w.charge && w.charge.charge >= 0);
+  return turretLampCode(true, !!w.hpOffset?.destroyed, w.ammo, Number(w.cd) || 0, Number(w.def?.cooldown) || 2.0, charging);
+}
+
+/** Kod lampki wieży gracza z gniazda (`slot.hp`, `slot.weapon`); `left` — sekundy do końca przeładowania. */
+export function playerTurretLampCode(entity, slot, left, powered, withCharge) {
+  if (!powered) return TURRET_LAMP.DARK;
+  const hp = slot.hp;
+  let charging = false;
+  if (withCharge && hp && !hp.destroyed) {
+    const ch = getMountedWeaponAim(entity, slot).charge;
+    charging = !!(ch && ch.charge >= 0);
+  }
+  return turretLampCode(true, !!hp?.destroyed, hp?.ammo, left, Number(slot.weapon?.cooldown) || 0, charging);
+}
+
+function emitPlayerTurretList(list, prefix, aimAlpha, cdKind) {
   const entity = _emit.entity;
+  const powered = _emit.powered;
   for (let i = 0; i < list.length; i++) {
     const slot = list[i];
     const def = slot?.weapon;
@@ -665,8 +695,12 @@ function emitPlayerTurretList(list, prefix, aimAlpha) {
     if (!info.renders) continue;
     const hp = slot.hp?.pos || slot.hp;
     if (!hp) continue;
+    const h = slot.hp;
+    const left = cdKind === PLAYER_CD_MAIN ? Number(h.fcCd) || 0
+      : cdKind === PLAYER_CD_SPECIAL ? Number(h.specialCd) || 0 : Number(h.missileCd) || 0;
     emitTurret(slot, prefix, i, def, info, hp.x ?? 0, hp.y ?? 0,
-      mountedWeaponRenderAngle(entity, slot, aimAlpha), false);
+      mountedWeaponRenderAngle(entity, slot, aimAlpha), false,
+      playerTurretLampCode(entity, slot, left, powered, cdKind !== PLAYER_CD_MISSILE));
   }
 }
 
@@ -775,6 +809,8 @@ export const Turret2D = {
     f.shipEx = shipEx;
     f.shipEy = shipEy;
     f.shipScale = shipScale;
+    // Wyłączony okręt (stan zasilania, src/game/shipPower.js): lampki gotowości gasną, akcenty wież przygasają.
+    f.powered = shipPowerOn(entity);
 
     if (entity.autoWeapons) {
       for (let i = 0; i < entity.autoWeapons.length; i++) {
@@ -792,7 +828,8 @@ export const Turret2D = {
           w.hpOffset.x,
           w.hpOffset.y,
           w.visualAngle !== undefined ? w.visualAngle : shipAngle,
-          true
+          true,
+          npcTurretLampCode(w, f.powered)
         );
       }
       return;
@@ -807,7 +844,7 @@ export const Turret2D = {
       ? window.__weaponAimAlpha : 1;
     const ciwsInterp = Array.isArray(interp?.ciws) ? interp.ciws : null;
 
-    emitPlayerTurretList(entity.weapons.main || [], 'p_main', aimAlpha);
+    emitPlayerTurretList(entity.weapons.main || [], 'p_main', aimAlpha, PLAYER_CD_MAIN);
 
     const auxes = entity.weapons.aux || [];
     for (let i = 0; i < auxes.length; i++) {
@@ -828,13 +865,14 @@ export const Turret2D = {
         hp?.x ?? c?.offset?.x ?? 0,
         hp?.y ?? c?.offset?.y ?? 0,
         Number.isFinite(interpAngle) ? interpAngle : (c?.angle !== undefined ? c.angle : shipAngle),
-        false
+        false,
+        playerTurretLampCode(entity, slot, Number(c?.cd) || 0, f.powered, false)
       );
     }
 
-    emitPlayerTurretList(entity.weapons.missile || [], 'p_missile', aimAlpha);
-    emitPlayerTurretList(entity.weapons.special || [], 'p_special', aimAlpha);
-    emitPlayerTurretList(entity.weapons.special_missile || [], 'p_special_missile', aimAlpha);
+    emitPlayerTurretList(entity.weapons.missile || [], 'p_missile', aimAlpha, PLAYER_CD_MISSILE);
+    emitPlayerTurretList(entity.weapons.special || [], 'p_special', aimAlpha, PLAYER_CD_SPECIAL);
+    emitPlayerTurretList(entity.weapons.special_missile || [], 'p_special_missile', aimAlpha, PLAYER_CD_MISSILE);
     // Grupy `builtin` i `hangar` celowo nie ma na liście — patrz shouldRenderTurret().
   },
 

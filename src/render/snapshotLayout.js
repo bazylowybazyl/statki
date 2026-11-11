@@ -36,7 +36,9 @@ import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 //   HEAD — okręt prowadzony przez kamerę (LEAD_*: niebo-sfera, 2026-10-27).
 // 5 (2026-11-11): ENT — stan zasilania okrętu (PWR_STATE, PWR_T — src/game/shipPower.js), migotanie świateł po trafieniu
 //   (PWR_FLICK), reflektor dziobowy (SPOT_ANG), alarm (ALARM); FLAGS2 — światło bojowe floty (BATTLE_LIGHTS).
-export const SNAPSHOT_LAYOUT_VERSION = 5;
+// 6 (2026-11-11): TURRETS — kod lampki gotowości wieży (READY, na końcu i32 rekordu: zielona / bursztynowa / czerwona /
+//   okręt bez zasilania — src/data/turretReadyLamp.js).
+export const SNAPSHOT_LAYOUT_VERSION = 6;
 
 function fields(names) {
   const o = {};
@@ -230,7 +232,8 @@ export const SHOT_FLAG = Object.freeze({ FORCE_CANVAS: 1, PLAYER: 2 });
 // ── TURRETS (rekord na wieżę tej klatki — rekordy Turret2D) ──────────────────────────────────────────────────
 export const TURRET = record({
   f64: ['WX', 'WY', 'ANG', 'SCALE', 'RECOIL', 'SHAKE', 'R', 'HOUSING', 'BARREL', 'FLASH'],
-  i32: ['ENT_SLOT', 'ENT_GEN', 'KEY', 'UID', 'WEAPON', 'FX_KEY']
+  // READY — kod lampki gotowości wieży (TURRET_LAMP, src/data/turretReadyLamp.js; liczy gra w Turret2D.sync)
+  i32: ['ENT_SLOT', 'ENT_GEN', 'KEY', 'UID', 'WEAPON', 'FX_KEY', 'READY']
 });
 
 // ── STATIONS ─────────────────────────────────────────────────────────────────────────────────────────────────

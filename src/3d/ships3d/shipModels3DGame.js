@@ -62,6 +62,10 @@ import { resolveEntityHullProfileId } from '../../data/ships.js';
 // Modele broni z Blendera (GLB, weapons/weaponGlb.js): pliki idą w tle od importu (menu), gra czeka na nie
 // przed ekranem ładowania (prepareShipModels3D) — buildWeapon3D pyta rejestr synchronicznie przy pierwszym użyciu.
 import { loadWeaponGlbs, weaponGlbAutoLod, weaponGlbLodFor, weaponGlbFamilies } from './weapons/weaponGlb.js';
+// Lampki gotowości przy wieżach (2026-11-11): kod z rekordu wieży (gra — Turret2D, pole `ready`), billboardy CargoLights.
+import { TURRET_LAMP, TURRET_LAMP_TUNE, turretLampColor } from '../../data/turretReadyLamp.js';
+import { CARGO_LIGHT_VIEW, CargoLights } from '../cargo/drones.tsl.js';
+import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 
 const DEG = Math.PI / 180;
 
@@ -296,6 +300,20 @@ function turretBatches() {
   return _batches;
 }
 
+// Lampki gotowości wież (src/data/turretReadyLamp.js): zielona — gotowa, bursztynowa — przeładowanie / ładowanie,
+// czerwona — pusta albo gniazdo zniszczone; okręt bez zasilania — bez lampki. Jedna pula billboardów addytywnych HDR
+// (CargoLights — jeden rysunek na wszystkie lampki w kadrze), na tyle obudowy wieży, nad jej warstwą głębi.
+const TURRET_LAMP_CAP = 2048;
+let _lamps = null;
+function turretLamps() {
+  if (!_lamps && Core3D.scene) {
+    _lamps = new CargoLights(Core3D.scene, TURRET_LAMP_CAP);
+    _lamps.mesh.name = 'wieże 3D: lampki gotowości';
+  }
+  return _lamps;
+}
+const _lampRgb = [0, 0, 0];
+
 // Dysze SIDE (thrusterBatch3D.js): materiał jak wieże (mapa otoczenia, maska słońca), jedna partia na grę.
 let _nozzleMat = null;
 function nozzleMaterial() {
@@ -462,6 +480,22 @@ class TurretState {
     this.wx = 0;
     this.wy = 0;
     this.muzzleZ = 0;
+    // Świecące akcenty (pasy E_*): 1 — świecą, przy wyłączonym okręcie gasną do TURRET_LAMP_TUNE.darkGlow; −1 — jeszcze
+    // nie ustawione (nowa wieża bierze stan od razu, bez rozjarzenia).
+    this.glow = -1;
+  }
+
+  /**
+   * Akcenty do stanu z kodu lampki (TURRET_LAMP.DARK — przygaszone), wykładniczo ze stałą `glowTau`. Wieża, której nie
+   * było w poprzedniej klatce (nowa, wraca z LOD, maskowania albo zza kadru), bierze stan od razu — inaczej rozjarzałaby
+   * się albo gasła na oczach po wejściu w kadr.
+   */
+  glowTo(code, dt) {
+    const want = code === TURRET_LAMP.DARK ? TURRET_LAMP_TUNE.darkGlow : 1;
+    if (this.glow < 0 || this.shown !== _frame - 1) { this.glow = want; return want; }
+    if (!(dt > 0)) return this.glow;
+    this.glow += (want - this.glow) * (1 - Math.exp(-dt / Math.max(1e-3, TURRET_LAMP_TUNE.glowTau)));
+    return this.glow;
   }
 
   /** recoil 0..1, dt → odrzut lufy (j. lokalne); pochylenie i wirnik jak dawne drzewo siatek wieży. */
@@ -725,9 +759,11 @@ export function syncShipModels3D(p) {
   let shown = 0;
   // Partie wież: liczniki na zero i początek przy kamerze (x, −y świata gry) — rekordy tej klatki względem niego.
   const batches = Core3D.scene ? turretBatches() : _batches;
+  const lamps = batches ? turretLamps() : null;
   if (batches) {
     sceneOriginNearCamera(_org);
     batches.begin(_org.x, _org.y);
+    if (lamps) lamps.begin();
   }
   {
     const dt = Math.max(0, Number(p.dt) || 0);
@@ -804,6 +840,15 @@ export function syncShipModels3D(p) {
     }
   }
   if (batches) batches.end();
+  if (lamps) {
+    // Billboardy w płaszczyźnie gry (osie i skala ekranu wspólne z resztą CargoLights: kapsuły, łup, przeładunek).
+    if (lamps.count > 0) {
+      CARGO_LIGHT_VIEW.right.value.set(1, 0, 0);
+      CARGO_LIGHT_VIEW.up.value.set(0, 1, 0);
+    }
+    lamps.commit(null, Core3D.viewZoom ? Core3D.viewZoom(Core3D.activeCam1) : (Number(p.zoom) || 1));
+    lamps.mesh.position.set(batches.orgX, batches.orgY, 0);
+  }
   // Dysze SIDE 3D — w każdym wariancie wyglądu (lista klatki od EngineVfxSystem).
   syncSideNozzles(p);
   // Encje nieobecne w tej klatce (zniknęły, poza kadrem, opcje wyłączone) — chowamy; martwe po chwili zwalniamy.
@@ -839,6 +884,8 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
   const slab = onModel ? SLAB_TURRET_ON_MODEL : SLAB_TURRET_ON_SPRITE;
   const B = _batches;
   const T = _rec;
+  const lamps = _lamps;
+  const LT = TURRET_LAMP_TUNE;
   // pierścień obraca się z kadłubem (θ), obudowa i lufy z kursem lufy
   T.hullCos = c;
   T.hullSin = s;
@@ -888,6 +935,9 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     T.spin = t.spin;
     T.zb = zb;
     T.zt = Math.max(zb + t.height * K, zb + 1e-3);
+    // Lampka gotowości (kod z rekordu — gra): akcenty wyłączonego okrętu przygasają, lampka w kolorze stanu.
+    const code = rec.ready | 0;
+    T.glow = t.glowTo(code, dt);
     // wylot lufy nad płaszczyzną (turretMuzzleZ — błysk i pocisk w kamerach 3D)
     t.wx = rec.wx;
     t.wy = rec.wy;
@@ -897,6 +947,14 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     let lod = 0;
     if (t.autoLod) { lod = weaponGlbLodFor(t.lod, rpx); t.lod = lod; }
     B.family(fam, lod).push(T);
+    if (lamps && rpx >= LT.minTurretPx && turretLampColor(code, _lampRgb)) {
+      // Na tyle obudowy (wstecz od kursu lufy), nad wieżą: z góry — nad jej warstwą głębi (T.hi), kamery 3D — nad bryłą.
+      const R2 = (Number(rec.spec?.r) || 10) * (Number(rec.scale) || 1);
+      const back = LT.back * R2;
+      const lz = _cfg.view3D ? T.zt + LT.lift : T.hi + LT.lift;
+      const lr = Math.min(LT.maxPx, Math.max(LT.minPx, rpx * LT.frac)) / Math.max(1e-4, z);
+      lamps.push(T.x - T.yawCos * back, T.y - T.yawSin * back, lz, lr, _lampRgb[0], _lampRgb[1], _lampRgb[2], 0);
+    }
   }
   // Stan wież niewidzianych od 300 klatek (zdjęta broń, odcięta część) — przegląd co 64 klatki.
   if ((_frame & 63) === 0) {
@@ -1090,6 +1148,10 @@ Core3D.warmup?.add({ name: 'modele 3D statków i broni (kamery 3D)', objects: ()
 const WARM_FLEET = Object.keys(SHIP3D_MODELS).filter((id) => /^(terran|pirate)_/.test(id) || id === 'supercapital' || id === 'capital_carrier');
 Core3D.warmup?.add({ name: 'modele 3D floty', objects: () => warmupShipModels3D(WARM_FLEET), layer: 0, phase: 'after' });
 Core3D.warmup?.add({ name: 'modele 3D floty (kamery 3D)', objects: () => warmupShipModels3D(WARM_FLEET), layer: 0, ortho: false, phase: 'after' });
+// Lampki gotowości wież: pula billboardów rysowana od pierwszej klatki gry (Atlas z wieżami) — ekran ładowania.
+const lampWarm = () => { const l = turretLamps(); return l ? [l.mesh] : []; };
+Core3D.warmup?.add({ name: 'lampki gotowości wież', objects: lampWarm, layer: 0, phase: 'loading', variant: WARIANT_INSTANCJI });
+Core3D.warmup?.add({ name: 'lampki gotowości wież (kamery 3D)', objects: lampWarm, layer: 0, ortho: false, phase: 'loading', variant: WARIANT_INSTANCJI });
 
 /** Stan ostatniej klatki: egzemplarze, widoczne (model albo wieże), wieże w partiach, skóry, rysunki partii. */
 export function shipModels3DStats() {
