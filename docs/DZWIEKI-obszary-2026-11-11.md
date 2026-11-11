@@ -133,3 +133,47 @@ też są słyszalne).
 - `hcLot` z opisem „…airy rushing flow with a soft constant engine whine…” wyszedł w 77–82% basem; bez słowa „engine”
   („…airy rushing hiss with a soft constant high whistle, like air streaming past…”) — 0%.
 - Kredyty etapu 2: ok. 465 (49,5 s efektów, w tym 12 s powtórki `hcLot`).
+
+## Etap 3 — myśliwce i hangary
+
+| Obszar | Zdarzenie w kodzie | Moment / czas | Dźwięk |
+|---|---|---|---|
+| Wyrzut | `ejectFighterFromTube` (gracz: kolejka `updateFighterLaunchQueue`, klawisz Z; NPC: `spawnCarrierFighter`) | co 0,26 s z jednej wyrzutni | `mysliwiecWyrzut` (w miejscu myśliwca po wyrzucie) |
+| Przelot | brak zdarzenia — reżyser: najbliższe podejście do środka kadru < 0,4 półprzekątnej, prędkość ≥ 150 j/s | raz na 2,5 s na myśliwca | `mysliwiecPrzelot` |
+| Działko | szyna strzałów `WeaponShotBus` ze strzelcem `type` `fighter` / `interceptor` | strzał | `mysliwiecDzialko` (zamiast kategorii broni okrętowej) |
+| Rakiety / torpeda myśliwca | ta sama szyna i adapter rakiet | start, wybuch | jak rakiety okrętów (`rakieta`, `wybuchRakiety`) |
+| Bomba | `FighterBombs.drop` (zwraca true) | zrzut | `bombaZrzut` |
+| | callback `hitHull` (`createFighterBombs`) | wybuch na kadłubie | `bombaWybuch`; `hitShield` → `tarcza` (już jest) |
+| Lądowanie | `landFighter` (tylko myśliwce gracza; lotniskowce NPC ich nie przyjmują) | chwyt zaczepu | `mysliwiecLadowanie` |
+
+Silniki myśliwców nie idą przez syntezę obcych okrętów (filtr kleju pomija `fighter` / `interceptor` — przepis
+silnika kapitałowego do nich nie pasuje); słychać je przez przelot.
+
+### Pomiary
+
+| plik | dł. [s] | szczyt | RMS | start | atak | słyszalny do | < 150 Hz | |
+|---|---|---|---|---|---|---|---|---|
+| mysliwiecWyrzut_1 | 1,00 | 0,0 | −9,2 | 0,00 | 0,00 | 0,67 | 0% | |
+| mysliwiecWyrzut_2 | 1,00 | 0,0 | −10,6 | 0,00 | 0,00 | 0,66 | 0% | |
+| mysliwiecWyrzut_3 | 1,00 | 0,0 | −10,5 | 0,00 | 0,00 | 0,56 | 0% | |
+| mysliwiecWyrzut_4 | 1,00 | 0,0 | −9,8 | 0,00 | 0,00 | 0,63 | 0% | |
+| mysliwiecPrzelot_1 | 1,48 | 0,0 | −11,0 | 0,00 | 0,00 | 1,39 | 0% | |
+| mysliwiecPrzelot_2 | 1,48 | 0,0 | −10,1 | 0,00 | 0,04 | 1,30 | 0% | |
+| mysliwiecPrzelot_3 | 1,48 | 0,0 | −8,4 | 0,00 | 0,00 | 1,24 | 0% | |
+| mysliwiecPrzelot_4 | 1,48 | 0,0 | −11,1 | 0,00 | 0,00 | 1,08 | 0% | |
+| mysliwiecDzialko_1 | 0,48 | 0,0 | −18,3 | 0,00 | 0,01 | 0,15 | 5% | |
+| mysliwiecDzialko_2 | 0,48 | −0,6 | −15,6 | 0,00 | 0,00 | 0,11 | 69% | |
+| mysliwiecDzialko_3 | 0,48 | −41,6 | −44,6 | 0,00 | 0,00 | 0,48 | 100% | ✗ prawie cisza |
+| mysliwiecDzialko_4 | 0,48 | −26,7 | −38,4 | 0,00 | 0,00 | 0,21 | 95% | ✗ cichy bas |
+| bombaZrzut_1 | 0,60 | 0,0 | −22,0 | 0,00 | 0,16 | 0,32 | 0% | |
+| bombaZrzut_2 | 0,60 | −2,2 | −21,1 | 0,00 | 0,07 | 0,30 | 0% | |
+| bombaZrzut_3 | 0,60 | −2,9 | −23,7 | 0,00 | 0,20 | 0,42 | 0% | |
+| bombaWybuch_1 | 1,48 | 0,0 | −6,0 | 0,00 | 0,00 | 1,14 | 60% | |
+| bombaWybuch_2 | 1,48 | 0,0 | −9,2 | 0,00 | 0,00 | 0,95 | 73% | ✗ bas |
+| bombaWybuch_3 | 1,48 | 0,0 | −5,5 | 0,00 | 0,00 | 1,02 | 46% | |
+| bombaWybuch_4 | 1,48 | 0,0 | −4,7 | 0,00 | 0,02 | 1,07 | 72% | ✗ bas |
+| mysliwiecLadowanie_1 | 1,00 | −3,8 | −22,2 | 0,03 | 0,13 | 0,87 | 0% | |
+| mysliwiecLadowanie_2 | 1,00 | 0,0 | −21,1 | 0,02 | 0,07 | 0,67 | 0% | |
+| mysliwiecLadowanie_3 | 1,00 | 0,0 | −18,5 | 0,05 | 0,45 | 0,59 | 0% | ✗ atak po 0,45 s |
+
+- Kredyty etapu 3: ok. 215 (22,8 s efektów; licznik konta pokazał 136 tuż po przebiegu — odświeża się z opóźnieniem).

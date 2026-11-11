@@ -27,11 +27,20 @@
 //                  active → drop / idle (`hcWyjscie`); przerwany rozruch nie gra nic.
 //   silniki obcych — `silnikiObcych(npcs, …)`: do `maks` najbliższych kamerze okrętów z ciągiem MAIN > próg, w zasięgu
 //                  kadru; ujście `silnik(npc, ciąg, dopalacz, x, y)` (warstwa: `silnikObcy`, synteza MAIN).
+//
+// Obszary (etap 3, myśliwce): wyrzut (`ejectFighterFromTube`), zrzut i wybuch bomby (`FighterBombs`), lądowanie
+// (`landFighter`) i działko (strzelec `fighter` / `interceptor` na szynie strzałów) — klej woła `zdarzenie` warstwy
+// wprost; tu tylko PRZELOT: `przelotyMysliwcow(lista, …)` — najbliższe podejście myśliwca do środka kadru (odległość
+// przestaje maleć) bliżej niż `przelotPromien` × półprzekątna, z prędkością ≥ `przelotMinV`, raz na `przelotOdstep`
+// na myśliwca. Stan per myśliwiec w WeakMap (wpis raz na życie myśliwca, nie na klatkę).
 
 export const DZWIEKI_OBSZAROW_DOMYSLNE = Object.freeze({
   silnikProg: 0.06,          // ciąg MAIN okrętu, od którego jest słyszalny
   silnikZasieg: 1.6,         // okręt najdalej tyle półprzekątnych kadru od środka (dalej `polozenie` i tak wycisza)
   silnikMaks: 3,             // tyle najbliższych okrętów naraz (głosy syntezy)
+  przelotPromien: 0.4,       // przelot myśliwca: najbliższe podejście bliżej niż tyle półprzekątnych kadru
+  przelotMinV: 150,          // … z prędkością co najmniej [j/s]
+  przelotOdstep: 2.5,        // … i najwyżej raz na tyle sekund na myśliwca
   spoznienieS: 0.6,          // zdarzenie osi warpa NPC zastane później — bez dźwięku
   stopienieMin: 0.45,        // głośność pętli stopienia na starcie (rośnie do 1 przy detonacji)
   stopienieZapas: 0.35,      // pętla gra jeszcze tyle po planowanym końcu stopienia (detonacja w następnym kroku)
@@ -63,7 +72,7 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     przylotZwiastun: 0, przylotWyrzut: 0, odlotLadowanie: 0, odlotSkok: 0, spoznione: 0,
     maskowanieWl: 0, maskowanieWyl: 0, maskowanieZerwane: 0,
     rdzenStopienie: 0, rdzenDetonacja: 0, klik: 0,
-    hcRozruch: 0, hcWejscie: 0, hcWyjscie: 0, hcPrzerwany: 0, rakietyKlatki: 0
+    hcRozruch: 0, hcWejscie: 0, hcWyjscie: 0, hcPrzerwany: 0, rakietyKlatki: 0, mysliwiecPrzelot: 0
   };
 
   // --- warp gracza
@@ -224,6 +233,36 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
     return n;
   }
 
+  // --- etap 3: przelot myśliwca blisko środka kadru
+  const przeloty = new WeakMap(); // myśliwiec → { d, t } (poprzednia odległość, czas ostatniego przelotu)
+  /**
+   * @param {object[]} lista myśliwce (encje z x, y, vx, vy); `slyszalny(e)` — filtr kleju (żywy, nie ukryty, myśliwiec)
+   * @param {number} czas zegar gry [s]
+   */
+  function przelotyMysliwcow(lista, cx, cy, polD, czas, slyszalny) {
+    if (!lista) return;
+    const R = U.przelotPromien * polD;
+    const v2min = U.przelotMinV * U.przelotMinV;
+    for (let i = 0; i < lista.length; i++) {
+      const e = lista[i];
+      if (!e || !slyszalny(e)) continue;
+      const dx = e.x - cx;
+      const dy = e.y - cy;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      let st = przeloty.get(e);
+      if (!st) { st = { d, t: -1e9 }; przeloty.set(e, st); continue; }
+      const vx = Number(e.vx) || 0;
+      const vy = Number(e.vy) || 0;
+      // najbliższe podejście: poprzednio bliżej niż R, teraz dalej (oddala się), z prędkością
+      if (st.d < R && d > st.d && vx * vx + vy * vy >= v2min && czas - st.t >= U.przelotOdstep) {
+        st.t = czas;
+        stats.mysliwiecPrzelot++;
+        ujscie.graj('mysliwiecPrzelot', e.x, e.y, 1);
+      }
+      st.d = d;
+    }
+  }
+
   /** Raz na klatkę: pętle stopienia (głośność z postępu, położenie gospodarza). `czas` — zegar gry [s]. */
   function klatka(czas) {
     for (let i = 0; i < SLOTY_RDZENIA; i++) {
@@ -246,7 +285,7 @@ export function utworzRezyserObszarow(ujscie, opts = {}) {
 
   return {
     warpGracza, osieWarpa, maskowanieGracza, maskowanieZdarzenie, rdzenStopienie, rdzenDetonacja, tloMostka, klik,
-    ostrzezenieRakiet, hipercruise, silnikiObcych,
+    ostrzezenieRakiet, hipercruise, silnikiObcych, przelotyMysliwcow,
     klatka, wyzeruj, stats, ustawienia: U
   };
 }

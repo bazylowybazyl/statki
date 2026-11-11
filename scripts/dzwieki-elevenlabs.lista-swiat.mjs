@@ -84,4 +84,35 @@ export const DZWIEKI_SWIATA = [
     opis: 'Wyjście z przelotu: zryw się urywa, szum opada.',
     prompt: 'Starship dropping out of high-speed cruise with instant attack: engine surge cutting off and a falling rushing whoosh as it slows down, high and mid frequencies only, no low end, no rumble',
   },
+  // ── Etap 3: myśliwce i hangary ────────────────────────────────────────────────────────────────────────────────────
+  {
+    id: 'mysliwiecWyrzut', grupa: 'Myśliwce', nazwa: 'Myśliwiec — wyrzut z hangaru', s: 1, warianty: 4, styl: S,
+    opis: 'Wyrzut z wyrzutni lotniskowca (co 0,26 s z jednej wyrzutni): stuk katapulty, prowadnica, zapłon.',
+    prompt: 'Small fighter craft catapulted out of a carrier launch tube with instant attack: sharp pneumatic clank, fast mechanical rail slide and a short bright thruster ignition burst, high and mid frequencies only, no low end',
+  },
+  {
+    id: 'mysliwiecPrzelot', grupa: 'Myśliwce', nazwa: 'Myśliwiec — przelot', s: 1.5, warianty: 4, styl: S,
+    opis: 'Myśliwiec mija środek kadru z dużą prędkością: krótki gwizd silnika z opadającym tonem.',
+    prompt: 'Small space fighter flying past close at high speed with instant onset: short bright engine whine with a fast doppler pitch drop, high and mid frequencies only, no low end, no rumble',
+  },
+  {
+    id: 'mysliwiecDzialko', grupa: 'Myśliwce', nazwa: 'Myśliwiec — działko', s: 0.5, warianty: 4, styl: S,
+    opis: 'Pojedynczy strzał lekkiego działka myśliwca (lżej niż działka okrętów).',
+    prompt: 'Single shot of a small fighter light rapid-fire cannon with instant attack: tight snappy pop with a short metallic click, dry, high and mid frequencies only, no bass',
+  },
+  {
+    id: 'bombaZrzut', grupa: 'Myśliwce', nazwa: 'Bomba — zrzut', s: 0.6, styl: S,
+    opis: 'Zwolnienie bomby z zaczepu myśliwca.',
+    prompt: 'Bomb released from a small space fighter with instant attack: crisp magnetic clamp release clack and a short hiss, dry, high and mid frequencies only, no bass',
+  },
+  {
+    id: 'bombaWybuch', grupa: 'Myśliwce', nazwa: 'Bomba — wybuch na kadłubie', s: 1.5, warianty: 4, styl: S,
+    opis: 'Bomba myśliwca wybucha na kadłubie: trzask, rozdarcie blachy, krótki ogień.',
+    prompt: 'Fighter bomb detonating against a warship hull with instant attack: sharp explosive crack, tearing metal and a crackling fire burst fading quickly, punchy mid-range, no long bass rumble',
+  },
+  {
+    id: 'mysliwiecLadowanie', grupa: 'Myśliwce', nazwa: 'Myśliwiec — lądowanie w hangarze', s: 1, styl: S,
+    opis: 'Powrót do hangaru: chwyt zaczepu i gaśnięcie silnika.',
+    prompt: 'Small fighter docking back into a carrier hangar with instant attack: firm magnetic clamp clunk and a short engine spool-down whine, high and mid frequencies only, no low end',
+  },
 ];

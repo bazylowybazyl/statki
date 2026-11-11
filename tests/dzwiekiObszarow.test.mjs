@@ -174,3 +174,22 @@ test('silniki obcych: najbliższe z ciągiem, w zasięgu, najwyżej maks', () =>
   assert.equal(n, 3);
   assert.deepEqual(grane, [100, 300, 400]);
 });
+
+test('przelot myśliwca: raz przy najbliższym podejściu, z prędkością, w promieniu, z odstępem', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u, { ustawienia: { przelotPromien: 0.4, przelotMinV: 150, przelotOdstep: 2.5 } });
+  const f = { x: -400, y: 50, vx: 400, vy: 0 };
+  const wolny = { x: -400, y: 60, vx: 50, vy: 0 };
+  const daleki = { x: -400, y: 900, vx: 400, vy: 0 };
+  const lista = [f, wolny, daleki];
+  let t = 0;
+  for (let k = 0; k < 40; k++, t += 0.05) {
+    for (const e of lista) e.x += e.vx * 0.05;
+    r.przelotyMysliwcow(lista, 0, 0, 1000, t, () => true);
+  }
+  assert.deepEqual(s.graj, ['mysliwiecPrzelot']);
+  // zawraca w ciągu 2,5 s — bez drugiego przelotu
+  f.vx = -400;
+  for (let k = 0; k < 20; k++, t += 0.05) { f.x += f.vx * 0.05; r.przelotyMysliwcow(lista, 0, 0, 1000, t, () => true); }
+  assert.equal(r.stats.mysliwiecPrzelot, 1);
+});

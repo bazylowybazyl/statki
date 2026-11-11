@@ -1,5 +1,5 @@
 // Dźwięki obszarów gry, które były nieme: warp gracza, przyloty i odloty obcych okrętów, maskowanie, rdzeń reaktora,
-// tło mostka, klik interfejsu (etap 1); ostrzeżenie o rakietach, hipercruise, silniki obcych okrętów (etap 2).
+// tło mostka, klik interfejsu (etap 1); ostrzeżenie o rakietach, hipercruise, silniki obcych okrętów (etap 2); myśliwce i hangary (etap 3).
 // Czyste dane (bez Web Audio i DOM): wpisy dołączane do tabeli warstwy `DZWIEKI` jednym rozwinięciem w src/audio/dzwiekiLogika.js, zdarzenia — do `ZDARZENIA`.
 // Pola wpisu jak w `DZWIEKI` (kategoria, limit, odstęp, zwłoka, wariacja, pętla, `ui`, `poziom`) oraz:
 //   `obszar`   — grupa w panelu sceny `?scena=dzwieki` (odsłuch obszarami, nie kategoriami),
@@ -36,7 +36,17 @@ export const DZWIEKI_SWIATA = Object.freeze({
   hcRozruch: { kat: 'trafienie', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.02, glos: 0.05 },
   hcKop: { kat: 'dzialo', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08, warianty: [2, 3] },
   hcLot: { kat: 'drobne', obszar: 'Hipercruise', petla: true, limit: 1 },
-  hcWyjscie: { kat: 'trafienie', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08 }
+  hcWyjscie: { kat: 'trafienie', obszar: 'Hipercruise', limit: 1, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08 },
+  // ── Etap 3: myśliwce i hangary (gracza i lotniskowców NPC) ──
+  // Wyrzut: `ejectFighterFromTube` (co 0,26 s z jednej wyrzutni — odstęp 120 ms daje serię, nie zlewa się).
+  mysliwiecWyrzut: { kat: 'drobne', obszar: 'Myśliwce', limit: 4, odstep: 120, zwloka: 2, ton: 0.06, glos: 0.12 },
+  // Przelot: najbliższe podejście myśliwca do środka kadru (reżyser), najwyżej raz na 2,5 s na myśliwca.
+  mysliwiecPrzelot: { kat: 'drobne', obszar: 'Myśliwce', limit: 3, odstep: 150, zwloka: 1, ton: 0.08, glos: 0.12 },
+  // Działko myśliwca (strzelec `fighter` / `interceptor` na szynie strzałów) — lżej niż działka okrętów.
+  mysliwiecDzialko: { kat: 'drobne', obszar: 'Myśliwce', limit: 6, odstep: 30, zwloka: 2, ton: 0.07, glos: 0.15, warianty: [1, 2] },
+  bombaZrzut: { kat: 'drobne', obszar: 'Myśliwce', limit: 3, odstep: 80, zwloka: 1, ton: 0.05, glos: 0.1 },
+  bombaWybuch: { kat: 'dzialo', obszar: 'Myśliwce', limit: 4, odstep: 60, zwloka: 2, ton: 0.06, glos: 0.12, warianty: [1, 3] },
+  mysliwiecLadowanie: { kat: 'drobne', obszar: 'Myśliwce', limit: 3, odstep: 120, zwloka: 2, ton: 0.05, glos: 0.1, warianty: [1, 2] }
 });
 
 /**
@@ -63,5 +73,11 @@ export const ZDARZENIA_SWIATA = Object.freeze({
   hipercruiseRozruch: 'hcRozruch',
   hipercruiseWejscie: 'hcKop',
   hipercruiseWyjscie: 'hcWyjscie',
+  mysliwiecWyrzut: 'mysliwiecWyrzut',
+  mysliwiecPrzelot: 'mysliwiecPrzelot',
+  mysliwiecStrzal: 'mysliwiecDzialko',
+  bombaZrzut: 'bombaZrzut',
+  bombaWybuch: 'bombaWybuch',
+  mysliwiecLadowanie: 'mysliwiecLadowanie',
   klik: 'klik'
 });
