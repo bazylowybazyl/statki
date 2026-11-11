@@ -35,6 +35,8 @@
 import { fxRandom } from './fx/fxRandom.js';
 import { Core3D } from './core3d.js';
 import { shipPowerOn } from '../game/shipPower.js';
+// Zasilanie z siatki belek: brzeg rany w części odciętej od komory reaktora nie iskrzy (maska węzłów, gra i lustro).
+import { hullPowerMask } from '../game/hullPower.js';
 import { ActiveCarrier, writeCarrier } from '../game/carrierVelocity.js';
 import { bridgeBeamHull, beamLatticePose, beamLatticeToWorldPosed } from '../game/shipBridgeBeams.js';
 
@@ -368,6 +370,8 @@ export const PowerArcsFx3D = {
     }
     const i = rec.edges[k];
     if (!s.active[i]) return false;   // węzeł zginął w tej klatce — brzegi poprawi następny przegląd
+    const pw = hullPowerMask(e);
+    if (pw !== null && pw.mask[i] !== 1) return false;   // brzeg bez prądu z komory reaktora
     // kierunek ku dziurze ± rozrzut (siatka: y w górę)
     const a = (fxRandom.next() - 0.5) * T.spread;
     const ca = Math.cos(a), sa = Math.sin(a);

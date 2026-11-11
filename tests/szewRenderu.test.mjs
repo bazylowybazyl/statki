@@ -52,6 +52,7 @@ const SUFITY = {
   'import:src/game/shipBridgeBeams.js': 3, // 2026-11-11 łuki przy ranach zasilanych okrętów (src/3d/powerArcsFx3D.js): kadłub belkowy encji i siatka → świat w pozie renderu (bridgeBeamHull, beamLatticePose, beamLatticeToWorldPosed — czyste przekształcenia, działają na lustrach ciał), klasa A
   'import:src/game/shipBridgeRuntime.js': 1,
   'import:src/game/shipLightRuntime.js': 5,
+  'import:src/game/hullPower.js': 1, // 2026-11-11 zasilanie z siatki belek: powerArcsFx3D.js — brzeg rany w części bez prądu z komory reaktora nie iskrzy (maska węzłów liczona tą samą czystą funkcją na lustrze ciała), klasa A
   'import:src/game/shipPower.js': 5, // 2026-11-11 łuki przy ranach (powerArcsFx3D.js): +1 — iskrzy tylko okręt w PRACY (shipPowerOn na lustrze `shipPower { state, t }`); 2026-11-11 lampki gotowości wież: +1 — src/vfx/turret2D.js (rekordy wież liczy GRA, RW-26) pyta shipPowerOn o kod lampki (wyłączony okręt — bez lampki, akcenty wież przygaszone), klasa A; 2026-11-11 stan zasilania okrętu: bridge3D.js (okna mostka i lampy awaryjne), engineVfxSystem.js (płomyk dyżurny i żar dysz wyłączonego okrętu), hexShips3D.js liczy kanały świateł kadłuba (fala od reaktora, lampy pokładowe, nawigacyjne, migotanie) z SAMEGO stanu i czasu fazy z lustra — czysta funkcja shipPowerLook, ta sama co w grze, klasa A
   'import:src/game/simClock.js': 15, // 2026-10-19: +1 — src/3d/pirateBaseVents3D.js (nośnik cząstek wyrw: czas pozy SimClock.sim jak Fx3D i wybuchy), klasa A
   'import:src/game/skyRegion.js': 1,
