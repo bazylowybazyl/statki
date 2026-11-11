@@ -122,6 +122,44 @@ export class PlanetGenBaker {
     return drainage.uniforms;
   }
 
+  // STRUMIENIE REGIONU (planetGenRegion.js): uniformy i tekstura siatki regionu dla okna `win` — tylko gdy region
+  // jest policzony i leży w układzie tej samej ściany co okno; inaczej gałąź wyłączona, uniformy skończone.
+  _regionU(type, base, win) {
+    const g = this.graph(`field:${type}`);
+    const rg = base.region;
+    if (!g.drain2 || !rg || !rg.texture || rg.axes !== win.frame) return { uDr2: [1, 1, 0, 0], uRg: [0, 0, 1, 0], uRg2: [0, 0, 0, 0] };
+    g.drain2.value = rg.texture;
+    return { uDr2: [rg.size, rg.size, 1, rg.seed], uRg: [rg.a0, rg.b0, rg.cell, rg.carve], uRg2: [rg.ox, rg.oy, 0, 0] };
+  }
+
+  /**
+   * Pole planety w oknie REGIONU (`region`: { axes, a0, b0, cell, size }) do odczytu CPU — wysokość z wyciętymi
+   * dolinami rzek planety (x) i woda słodka (y > 0); bez strumieni regionu. Zwraca obietnicę tablicy RGBA (float).
+   */
+  readRegionField(base, region) {
+    const r = this.renderer;
+    const spec = base.spec;
+    const N = region.size;
+    const texKm = spec.rKm * region.cell;
+    const t = SOLID_TYPES[spec.type].uniformsFor(spec, { size: Math.round(2 * Math.PI / region.cell), rKm: spec.rKm, texKm });
+    if (!this._regionRt || this._regionRt.width !== N) {
+      if (this._regionRt) this._regionRt.dispose();
+      this._regionRt = makeTarget(N, N, { float32: true, mips: false, name: 'planetGenRegionIn' });
+    }
+    const prev = r.getRenderTarget();
+    try {
+      this._draw(`field:${spec.type}`, this._regionRt, {
+        uSeed: [...spec.seedOffset, spec.seedInt], uRes: [N, N, 1 / N, 1 / N], uGeo: [spec.rKm, texKm, 0, 0],
+        uWin: [region.a0, region.b0, region.cell, 1], uFrX: region.axes.x, uFrY: region.axes.y, uFrZ: region.axes.z,
+        uLevels: [t.water ? 0 : -1e3, t.landTop || 3, t.water ? 1 : 0, 0], uQ: base.levels.uQ, uQ2: base.levels.uQ2,
+        uOct: [t.octaves.x, t.octaves.y, t.octaves.z, t.octaves.w], ...t.field, uDr: this._bindDrain(spec.type, base.drainage)
+      });
+    } finally {
+      r.setRenderTarget(prev);
+    }
+    return r.readRenderTargetPixelsAsync(this._regionRt, 0, 0, N, N);
+  }
+
   /** Rozgrzewka pipeline'ów przejść dla rodzajów (w tle; obietnica — gotowe). */
   async compile(types) {
     const r = this.renderer;
@@ -156,6 +194,13 @@ export class PlanetGenBaker {
     }
     await Promise.all(jobs);
     for (const k of ['srgb', 'half', 'red', 'rgba', 'rg32']) dummies[k].dispose();
+  }
+
+  // Uniform `uRel` grafu rzeźby + mapa dnia tego samego celu (alfa na lądzie = wysokość koron — rodzaje z `canopyKm`).
+  _reliefU(spec, dayTexture, canopy = true) {
+    this.graph('relief').day.value = dayTexture;
+    const r = spec.relief.rough;
+    return [r[0], r[1], r[2], canopy ? (SOLID_TYPES[spec.type].canopyKm || 0) : 0];
   }
 
   _draw(graphKey, target, values) {
@@ -324,7 +369,7 @@ export class PlanetGenBaker {
         out.rt.day = day;
         const relief = makeTarget(W, H, { half: true, name: name('relief') });
         out.targets.push(relief);
-        this._draw('relief', relief, { ...common(it, W, H), ...levels, uRel: spec.relief.rough });
+        this._draw('relief', relief, { ...common(it, W, H), ...levels, uRel: this._reliefU(spec, day.texture) });
         out.maps.relief = relief.texture;
         out.rt.relief = relief;
         if (plan.spec) {
@@ -430,7 +475,9 @@ export class PlanetGenBaker {
       this._draw('relief', relief, {
         uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
         uWin: [0, 0, 1e-3, 0], uFrX: [1, 0, 0], uFrY: [0, 1, 0], uFrZ: [0, 0, 1],
-        uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: levels.uQ, uQ2: levels.uQ2, uRel: spec.relief.rough
+        // (wysokość z pliku ma już w sobie korony — bez dodatku: w = 0)
+        uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: levels.uQ, uQ2: levels.uQ2,
+        uRel: this._reliefU(spec, out.rt.day.texture, false)
       });
       out.maps.relief = relief.texture;
       out.rt.relief = relief;
@@ -491,9 +538,9 @@ export class PlanetGenBaker {
     const prev = r.getRenderTarget();
     try {
       this._ensureField(W, H);
-      this._draw(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage) });
+      this._draw(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage), ...this._regionU(spec.type, base, win) });
       this._draw(`day:${spec.type}`, set.day, { ...common, ...t.color });
-      this._draw('relief', set.relief, { ...common, uRel: spec.relief.rough });
+      this._draw('relief', set.relief, { ...common, uRel: this._reliefU(spec, set.day.texture) });
       this._draw('mask', set.mask, common);
     } finally {
       r.setRenderTarget(prev);
@@ -579,9 +626,9 @@ export class PlanetGenBaker {
       };
       if (step.pass === 'field') {
         this._ensureField(W, H);
-        this._drawBand(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage) }, step.band, step.bands);
+        this._drawBand(`field:${spec.type}`, this.field, { ...common, ...t.field, uDr: this._bindDrain(spec.type, base.drainage), ...this._regionU(spec.type, base, win) }, step.band, step.bands);
       } else if (step.pass === 'day') this._drawBand(`day:${spec.type}`, set.day, { ...common, ...t.color }, step.band, step.bands);
-      else if (step.pass === 'relief') this._drawBand('relief', set.relief, { ...common, uRel: spec.relief.rough }, step.band, step.bands);
+      else if (step.pass === 'relief') this._drawBand('relief', set.relief, { ...common, uRel: this._reliefU(spec, set.day.texture) }, step.band, step.bands);
       else this._drawBand('mask', set.mask, common, step.band, step.bands);
       if (step.band === step.bands - 1 && step.pass === 'mask') this.stats.patches = (this.stats.patches || 0) + 1;
       return t;

@@ -248,7 +248,7 @@ test('planeta z daleka: barwy krajobrazu z palet mapy terenu, woda słodka ciemn
   assert.ok(!/mix\(U\.uShallow, U\.uOcean, 0\.75\)/.test(src), 'woda słodka bez barwy morza');
   for (const u of ['uFenA', 'uFenB', 'uGrassA', 'uMeadowB', 'uWDark', 'uWMud', 'uWIce', 'uSilt', 'uSandB']) assert.ok(src.includes(`U.${u}`), u);
   // warstwa pól, której cel nie rozdziela, wchodzi średnią (jasność krainy ta sama na każdym poziomie zbliżenia)
-  assert.match(src, /return mix\(fenMean, edge\(/);
+  assert.match(src, /return vec2\(mix\(mean, edge\(v, 0\.003\), on\)/);
   // smuga osadu: głębokość z widoczności dna, bez wynoszenia nad wodę; barwa tylko pod wodą
   assert.match(src, /const hSea = mix\(hSea0, max\(hSea0, hPlume\), smoothstep\(0\.0, 0\.25, plume\)\)/);
   assert.match(src, /const plume = max\(f\.y\.negate\(\), 0\.0\)\.mul\(float\(1\.0\)\.sub\(onLand\)\)\.mul\(float\(1\.0\)\.sub\(step\(0\.0, h\)\)\)/);
@@ -256,4 +256,37 @@ test('planeta z daleka: barwy krajobrazu z palet mapy terenu, woda słodka ciemn
   const near = fs.readFileSync(new URL('../src/3d/planetGen/planetGenSurfaceNear.tsl.js', import.meta.url), 'utf8');
   assert.match(near, /foam\.assign\(shal\.mul\(mix\(float\(0\.08\)/);
   assert.match(near, /smoothstep\(0\.004, 0\.03, length\(gMap\)\)/);
+});
+
+test('głębokie zbliżenie: rzeka o ostrym brzegu i gładkich łączeniach, drobne pola, korony w rzeźbie', async () => {
+  const fs = await import('node:fs');
+  const read = (f) => fs.readFileSync(new URL(`../src/3d/planetGen/${f}`, import.meta.url), 'utf8');
+  const src = read('planetGenSolid.tsl.js');
+  const { RIVER_MEANDER, EARTH_CANOPY_KM } = await import('../src/3d/planetGen/planetGenSolid.tsl.js');
+  // sąsiedztwo 7 × 7 (łuk należy do dawcy, a leży wokół odbiorcy)
+  assert.match(src, /Loop\(\{ start: int\(-3\), end: int\(4\), type: 'int', condition: '<', name: 'dj' \}/);
+  // łączenia łuków: obwiednia sin² (wychylenie i jego pochodna znikają w węzłach), wychylenie ≤ 0,45 promienia łuku
+  assert.match(src, /const env = envS\.mul\(envS\)\.toVar\(\)/);
+  assert.match(src, /rMin\.mul\(0\.45\)/);
+  assert.ok(RIVER_MEANDER <= 0.55, 'zakola łagodne (zbocze do ~57°), nie zęby piły');
+  // odległość od koryta: poprawka stromości tylko przy korycie
+  assert.match(src, /const dn = abs\(dc\)\.div\(sqrt\(dm\.mul\(dm\)\.mul\(nearK\)\.add\(1\.0\)\)\)/);
+  // brzeg ostry z bliska, ta sama średnia szerokość (0,7 szerokości) na każdym poziomie
+  assert.match(src, /inv\(wt\.mul\(0\.7\)\.sub\(soft\.mul\(0\.5\)\), wt\.mul\(0\.7\)\.add\(soft\.mul\(0\.5\)\), dist\)/);
+  // szerokość i muł płynnie wzdłuż odcinka głównego dawcy; muł ważony pokryciem
+  assert.match(src, /const lfT = mix\(lf, lfRc, tt\.mul\(step\(lfRc\.sub\(1\.0\), lf\)\)\.mul\(hasRR\)\)/);
+  assert.match(src, /mud: clamp\(mud\.div\(max\(line, 1e-3\)\), 0\.0, 1\.0\)/);
+  // drobne warstwy pól i wyspy drzew wchodzą średnią, gdy cel ich nie rozdziela
+  assert.match(src, /fenLayer\(2200\.0,/);
+  assert.match(src, /fenLayer\(8000\.0,/);
+  assert.match(src, /return mix\(float\(0\.06\), step\(0\.72, c\.z\)/);
+  // wysokość koron: alfa mapy dnia na lądzie → graf rzeźby (na morzu alfa to lód)
+  assert.equal(EARTH_CANOPY_KM, 0.12);
+  assert.match(src, /const alpha = mix\(seaIce, clamp\(canopyM\.div\(EARTH_CANOPY_KM \* 1000\), 0\.0, 1\.0\), step\(0\.0, h\)\)/);
+  const bake = read('planetGenBake.tsl.js');
+  assert.match(bake, /h0\.add\(day\.load\(ivec2\(x, y\)\)\.a\.mul\(U\.uRel\.w\)\.mul\(step\(0\.0, h0\)\)\)/);
+  const baker = read('planetGenBaker.js');
+  assert.match(baker, /_reliefU\(spec, dayTexture, canopy = true\)/);
+  // planeta z plików: wysokość w pliku ma już korony — bez drugiego dodatku
+  assert.match(baker, /uRel: this\._reliefU\(spec, out\.rt\.day\.texture, false\)/);
 });

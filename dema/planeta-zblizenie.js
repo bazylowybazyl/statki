@@ -303,7 +303,10 @@ async function build(style = S.style, seed = null) {
     $('b-vent').textContent = volcanic ? 'Następny wulkan' : 'Następne wybrzeże';
     if (S.view === null) S.view = 'orbit';
     const body = createGenNearBody(spec, baked, baker, {
-      lava: S.lavaStrength, patch: { width: S.patchW, height: S.patchW / 2 },
+      // (najgłębszy poziom okna: 10 — teksel ~8 m przy mapie 4096; kadr ~30 km, skala mapy terenu, jest ostry)
+      lava: S.lavaStrength, patch: { width: S.patchW, height: S.patchW / 2, maxLevel: pickNum('poziom', [6, 7, 8, 9, 10, 11], 10) },
+      // strumienie regionu pod kamerą (`?strumienie=0` — bez; `?region=2048` — większa siatka)
+      streams: params.get('strumienie') === '0' ? false : { size: pickNum('region', [512, 1024, 1536, 2048], 1024) },
       weather: { speed: S.wx, time: num('czas', 0), size: Number(params.get('mapaPogody')) === 2048 ? 2048 : 1024 }
     });
     scene.add(body.group);

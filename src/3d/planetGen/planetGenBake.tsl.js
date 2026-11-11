@@ -197,15 +197,29 @@ export function buildHeightCopyGraph() {
 // odległościach (teksel na wschód 2πR cos φ / W, na północ πR / H), w — szorstkość 0…1 (siła detalu dokładanego
 // w shaderze ponad rozdzielczość mapy). Bez przesadzenia i bez przycinania: materiał przesadza rzeźbę sam i liczy cień
 // terenu, a połówki (nie 8 bitów) nie dają schodków na łagodnych stokach. Mipmapy średniej nachylenia = nachylenie
-// średniej wysokości. uRel: x — szorstkość bazowa, y — przyrost z nachyleniem, z — przyrost przy brzegu (planety z wodą).
+// średniej wysokości. uRel: x — szorstkość bazowa, y — przyrost z nachyleniem, z — przyrost przy brzegu (planety z wodą),
+// w — WYSOKOŚĆ KORON [km na jednostkę alfy mapy dnia] (planety z lasem: alfa mapy dnia na lądzie niesie wysokość
+// pokrycia — planetGenSolid.tsl.js; 0 — bez dodatku). Mapa dnia tego samego celu co rzeźba: węzeł `day`
+// (wypiekacz podstawia teksturę przed rysunkiem).
 export const RELIEF_DEFS = Object.freeze({ ...COMMON_DEFS, uRel: 'vec4' });
 export function buildReliefGraph(F) {
   const U = bakeUniforms(RELIEF_DEFS);
+  const day = texture(copySource(false), vec2(0.0));
   const node = Fn(() => {
     const C = bakeCoords(U);
-    const hC = fieldAt(F, U, C.ix, C.iy).x;
+    // wysokość terenu + wysokość koron (tylko na lądzie — na morzu alfa mapy dnia to lód)
+    const W = int(U.uRes.x);
+    const H = int(U.uRes.y);
+    const hAt = (dx, dy) => {
+      const ix = C.ix.add(dx);
+      const x = select(U.uWin.w.greaterThan(0.5), clamp(ix, int(0), W.sub(1)), mod(ix.add(W), W));
+      const y = clamp(C.iy.add(dy), int(0), H.sub(1));
+      const h0 = textureLoad(F, ivec2(x, y)).x;
+      return h0.add(day.load(ivec2(x, y)).a.mul(U.uRel.w).mul(step(0.0, h0)));
+    };
+    const hC = hAt(0, 0).toVar();
     // Sobel 3 × 3 (izotropowy — krzyż ±1 teksel rysował małe kratery jako romby)
-    const hh = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
+    const hh = (dx, dy) => hAt(dx, dy);
     const gx = hh(1, -1).add(hh(1, 0).mul(2.0)).add(hh(1, 1)).sub(hh(-1, -1)).sub(hh(-1, 0).mul(2.0)).sub(hh(-1, 1)).mul(0.125);
     const gy = hh(-1, 1).add(hh(0, 1).mul(2.0)).add(hh(1, 1)).sub(hh(-1, -1)).sub(hh(0, -1).mul(2.0)).sub(hh(1, -1)).mul(0.125);
     const cosLat = max(cos(C.latGrid), U.uRes.w.mul(PI)).toVar();
@@ -220,7 +234,7 @@ export function buildReliefGraph(F) {
     const rough = clamp(U.uRel.x.add(slope.mul(U.uRel.y)).add(coast.mul(U.uRel.z)), 0.0, 1.0);
     return vec4(hC, dE, dN, rough);
   })();
-  return { U, material: bakeMaterial('PlanetGenRelief', node) };
+  return { U, material: bakeMaterial('PlanetGenRelief', node), day };
 }
 const inv01 = (lo, hi, x) => float(1.0).sub(smoothstep(lo, hi, x));
 

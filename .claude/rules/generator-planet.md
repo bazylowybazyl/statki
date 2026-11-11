@@ -249,6 +249,50 @@ paths:
   rzek i więcej prawdziwych zakrętów), okno pod kamerą 6144 × 3072. Okno ma stały kształt 2 : 1 i zapas 1,5 —
   na ekranie 5120 × 1440 okno 4096 daje 0,27–0,53 teksela na piksel.
 
+## Płynne zbliżenie: głębokie poziomy okna pod kamerą (etap 1; opis, liczby, błędy po drodze: `docs/OPIS-generator-planet.md` § 10.18)
+
+- Cel użytkownika: planeta sama wyostrza się do skali mapy terenu (kadr ~30 km) w każdym miejscu, bez panelu.
+  Droga: te same funkcje pola i barw, tylko z drobniejszymi warstwami — spójność z poziomami dalszymi wynika
+  z budowy. Mapa terenu na CPU (`planetGenTerrainMap.js`) nie jest poziomem zbliżenia planety: jej rzeka i pola
+  mają własny układ.
+- RZEKA (`riverNet`): sąsiedztwo 7 × 7 komórek (łuk należy do DAWCY, a leży wokół odbiorcy — jego dalszy koniec
+  bywa ponad 2 komórki od niej); brzeg miękki z daleka, ostry z bliska, zawsze w 0,7 szerokości (`soft`);
+  wychylenie zakola × obwiednia sin²(πt) (w węzłach łuku znika wychylenie i jego pochodna — bez załamań),
+  ≤ 0,45 najmniejszego promienia łuku Béziera (większe: wstęga przecina samą siebie — „namioty” i proste cięcie
+  wzdłuż osi łuku) i gasnące z kątem zakrętu; `RIVER_MEANDER` = 0,5 (zbocze zakola do ~57°; 0,7 = zęby piły);
+  szerokość i muł interpolowane wzdłuż odcinka GŁÓWNEGO dawcy do wartości odbiorcy (`lfT` — bez schodka na
+  łączeniu; dopływ zostaje przy swojej szerokości); muł ważony pokryciem (czysty dopływ nie maluje ciemnej wody
+  na mętnej rzece).
+- Odległość od koryta z przybliżenia |poprzek − m| / √(1 + m′²) jest dobra tylko PRZY korycie: poprawka stromości
+  gaśnie poza ~2–6 szerokościami (`nearK`), inaczej strome zbocze zakola daje „odległość ~0” daleko od rzeki.
+- POLA: pięć warstw (`fenLayer`: ~120, ~33, ~9, ~2,5, ~0,7 km; dwie drobne rzadsze), pas zarośli wokół pól
+  (ten sam szum z niższym progiem), wyspy drzew z komórek w dwóch skalach (`isle`: promień z haszu, obrys
+  łamany szumem — równe kółka wyglądają jak dziurkacz). Wszystko, czego cel nie rozdziela, wchodzi średnią.
+- KORONY W RZEŹBIE: alfa mapy dnia na LĄDZIE = wysokość pokrycia (`EARTH_CANOPY_KM` = 0,12 km na jednostkę; na
+  morzu alfa to dalej lód morski). Graf rzeźby dodaje ją do wysokości (`uRel.w`, węzeł `day` — `_reliefU` podstawia
+  mapę dnia tego samego celu), więc materiał liczy światło i cień także od lasu: skraj lasu rzuca cień na
+  torfowisko, korony mają fakturę (komórki ~210, ~107, ~53 m). Planeta z plików: wysokość w pliku ma już korony
+  (`_reliefU(…, false)`). Drobny detal w dziedzinie surowej (`C.dir`, bez przesunięcia ziarna) — float32.
+- Okno ma poziomy do 10 (demo: `?poziom=`); okna głębszych poziomów pieką się kaskadą poziom po poziomie —
+  narzędzie zrzutów czeka, aż poziom się ustali. Przy stałym kształcie okna 2 : 1 poziom zależy od ułożenia
+  kadru względem ściany sześcianu (ten sam kadr: poziom 8 albo 10).
+- STRUMIENIE REGIONU (etap 2, `planetGenRegion.js`, opis § 10.19): gdy okno zejdzie dość głęboko, żeby zmieścić
+  się w regionie (siatka 1024 × 1024 komórek ~0,5 km w układzie ściany okna, początek na stałej kracie co 64
+  komórki), `PlanetGenRegionStreams.update()` zleca: pole planety w oknie regionu → odczyt CPU
+  (`baker.readRegionField`) → UJŚCIA (`regionSinkHeights`: morze, woda słodka planety i pierścień brzegu regionu
+  mają wysokość −1) → `computeDrainage` w workerze (`planetGenRegion.worker.js`) → tekstura → `base.region` →
+  `patches.refresh()`. Graf pola rysuje ją drugim wywołaniem `riverNet` (uniformy `uDr2`, `uRg`, `uRg2`; skala =
+  komórka regionu), z odkształceniem biegu gasnącym przy rzece planety i gaśnięciem przy brzegu siatki.
+- Rzeki planety jako ujścia to warunek: bez nich spływ regionu rysuje drugą rzekę obok rzeki planety (dolina jest
+  wycięta w wysokości). Brzeg regionu jako ujście — inaczej zlewnie przecięte krawędzią szukają drogi w środku.
+- Wypiekacz podaje siatkę regionu tylko oknu w układzie TEJ SAMEJ ściany (`rg.axes !== win.frame` → gałąź
+  wyłączona, uniformy skończone); liczenie nie startuje w trakcie wypieku okna (wspólny graf pola).
+- Hasze węzłów siatki regionu biorą numer komórki na kracie planety (`hash: { ox, oy }` w `riverNet`) — przesunięty
+  region daje tym samym komórkom te same węzły.
+- NIE zrobione (kolejne etapy): zakola z symulacji wędrówki koryta i starorzecza, delta i wybrzeże z bliska
+  (brzeg z szumu jest postrzępiony, piana obrysowuje każdy ząbek), pozostałe biomy; strumienie poza regionem
+  (poziomy płytsze niż ~7) nie istnieją.
+
 ## Planety przygotowane: mapy jako pliki (opis, liczby, format: `docs/OPIS-generator-planet.md` § 10.17)
 
 - Decyzja użytkownika (2026-11-11): planety pierwszego przejścia gry (kampania) są PRZYGOTOWANE i dostarczane jako
@@ -392,7 +436,8 @@ paths:
   `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
   `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
   (demo: `?ultra=1|0`, `?mapa=2048|4096|8192`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`,
-  `?plik=<nazwa>` — planeta z plików map;
+  `?plik=<nazwa>` — planeta z plików map, `?poziom=6…11` — najgłębszy poziom okna, `?strumienie=0`,
+  `?region=512|1024|1536|2048` — strumienie regionu;
   orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
   `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,
   `--bez-raf 1` — start bez klatek rAF), demo: `?pogoda=0…12|off`, `?czas=`, `?mapaPogody=2048`; testy

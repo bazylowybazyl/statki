@@ -878,3 +878,89 @@ Czego nie ma / nie sprawdzono: pamięć karty przy mapie 8192 nie była mierzona
 z tego samego pliku — nie zrobione; wybór miejsca na pliki w wydaniu (repozytorium / LFS / osobna paczka) — do
 decyzji, dziś `.tmp/planety/`; narzędzie wypala jedną planetę naraz (bez listy planet kampanii); olbrzymy gazowe
 nie mają zapisu do plików; pipeline'y przepisania powstają synchronicznie przy pierwszym wczytaniu.
+
+### 10.18. Płynne zbliżenie, etap 1: głębokie poziomy okna pod kamerą (2026-11-11, demo)
+
+Polecenie użytkownika: „teraz płynne zbliżenie” (planeta ma sama wyostrzać się do skali mapy terenu, bez panelu).
+
+Stan przed (ta sama tajga, kadr ~30 km, poziom 8): rozmyta rzeka o miękkich brzegach, załamania na łączeniach
+łuków, pas rzeki obcięty prostą krawędzią, „namioty” na ostrych zakrętach, kilka płaskich plam torfowisk, las bez
+faktury, żadnego światła od pokrycia terenu.
+
+Zrobione (wszystko w grafach wypieku — bez zmian w materiałach rysowanych co klatkę):
+
+- **Rzeka**: ostry brzeg z bliska (średnia szerokość bez zmian), obwiednia wychylenia zakola (gładkie łączenia),
+  ograniczenie wychylenia promieniem łuku i kątem zakrętu, łagodniejsze zakola (`RIVER_MEANDER` 0,7 → 0,5),
+  szerokość i muł płynnie wzdłuż odcinka głównego dawcy, sierpy łach o ostrym brzegu, sąsiedztwo 7 × 7.
+- **Pola torfowisk**: dwie drobne warstwy (komórka ~2,5 km i ~0,7 km), pas zarośli wokół pól, wyspy drzew.
+- **Las**: faktura koron (komórki ~210, ~107, ~53 m), odcień drzewostanu z komórki ~2,3 km.
+- **Światło od pokrycia**: wysokość koron w alfie mapy dnia na lądzie → graf rzeźby dodaje ją do wysokości;
+  skraj lasu i wyspy drzew rzucają cień, korony mają relief.
+- **Poziomy okna do 10** w demie (`?poziom=`), narzędzie serii zrzutów czeka na kaskadę wypieków.
+
+Koszt: wypiek okna 4096 × 2048 na GPU 41,5 ms (pole 20,9, dzień 20,3; przed zmianami tego dnia 19,2 ms) — robiony
+w pasach przez kilka klatek, więc pojedyncza klatka podczas wypieku okna jest cięższa mniej więcej dwukrotnie niż
+dotąd; okno 6144 × 3072 to z proporcji ok. 93 ms (niemierzone). Koszt klatki bez wypieku bez zmian (materiały nie
+były ruszane). Pliki planety przygotowanej po ponownym wypaleniu: 69,6 MB (alfa mapy dnia niesie teraz korony:
+10,1 MB zamiast 5,8).
+
+Błędy po drodze: wyspy drzew jako równe czarne kółka („dziurkacz”) → promień z haszu, obrys z szumu, rzadziej;
+dopływ malował ciemną wodę na mętnej rzece głównej → muł ważony pokryciem; prostokątne wycięcie pasa rzeki
+brane kolejno za granicę sąsiedztwa komórek (7 × 7 nie pomogło), za schodek szerokości na łączeniu (nie) i za
+fałszywą odległość daleko od koryta (poprawka `nearK` została, ale to też nie to) — przyczyną było wychylenie
+zakola większe niż promień ciasnego łuku (punkt najbliższy łukowi przeskakuje między jego ramionami wzdłuż prostej);
+zmienna `qx` zadeklarowana drugi raz w `riverNet` (demo nie wstawało — narzędzie zrzutów czekało 10 minut).
+
+Czego brakuje do wyglądu mapy terenu (uczciwie — to dopiero pierwszy etap):
+
+- nie ma strumieni w skali kilometra (planeta ma rzeki z komórek 8,5–17 km) — potrzebny spływ regionu pod kamerą,
+  zgodny z rzekami planety;
+- zakola to nadal fala na łuku, nie symulacja wędrówki koryta — bez starorzeczy i odcięć, a kilka ostrych „zębów”
+  zostało;
+- ujście rzeki i wybrzeże z bliska wyglądają źle: brzeg z szumu jest postrzępiony, piana obrysowuje każdy ząbek,
+  smuga osadu zalewa cały kadr mleczną barwą;
+- wnętrze pól jest dość płaskie (bez pasm i oczek), wyspy drzew to wciąż plamy;
+- poziom okna zależy od ułożenia kadru (ten sam kadr 30 km: poziom 8 w tajdze, 10 przy ujściu) — przy poziomie 8
+  obraz jest ~2 razy za mało gęsty;
+- tylko las ma tę szczegółowość; pustynia, step, tundra i góry z bliska zostają jak były.
+
+### 10.19. Płynne zbliżenie, etap 2: strumienie regionu (2026-11-11, demo)
+
+Wybór użytkownika po etapie 1: „Strumienie regionu”.
+
+Problem: siatka spływu planety ma komórki 8,5–17 km, więc w kadrze ~30 km jest na niej jedna rzeka. Mapa terenu ma
+cieki co 1–2 km.
+
+Zrobione (`planetGenRegion.js`, `planetGenRegion.worker.js`, zmiany w `riverNet` / `earthField` i w wypiekaczu):
+
+- Dla obszaru pod kamerą liczy się druga siatka spływu: 1024 × 1024 komórek po ~0,53 km (teksel mapy planety / 2^k),
+  w układzie ściany okna, z początkiem na stałej kracie co 64 komórki.
+- Wejście: pole planety w oknie regionu z karty (wysokość z wyciętymi dolinami rzek + woda słodka). Morze, rzeki
+  i jeziora planety oraz pierścień brzegu regionu to ujścia — strumienie spływają do rzek planety i tam się kończą.
+- Spływ liczy worker (`computeDrainage` w trybie mapy lokalnej, szum trasowania 20 m), wynik idzie jako tekstura
+  do grafu pola; okno pod kamerą piecze się wtedy od nowa.
+- Rysunek: to samo `riverNet` co rzeki planety, w skali komórek regionu — cienkie cieki (od ~17 m szerokości,
+  z daleka linia ~1,3 teksela z pokryciem), małe zakola, płytkie doliny (widoczne w rzeźbie), pasy wilgotności przy
+  ciekach; bieg odkształcony długimi falami (bez tego cieki szły prostymi odcinkami po osiach siatki), przy rzece
+  planety odkształcenie gaśnie.
+- Strumienie pojawiają się od poziomu okna, które mieści się w regionie (okno 6144 × 3072: od poziomu 7), najpierw
+  tylko większe cieki (próg widoczności rośnie z tekselem), głębiej cała sieć.
+
+Liczby (headless, ta maszyna): region gotowy 0,64–0,81 s po zejściu okna na głęboki poziom, z tego spływ na CPU
+(worker) 0,32–0,45 s; odczyt pola 1024 × 1024 z karty — reszta. Koszt wypieku okna z drugą siatką NIE był mierzony
+(drugie przejście pętli 7 × 7 w grafie pola — wypiek pola będzie wyraźnie droższy niż 20,9 ms z etapu 1).
+
+Sprawdzone: tajga (kadry ~90 km i ~30 km) i ujście wielkiej rzeki przy morzu (kadr ~90 km) — sieć cieków wpada do
+rzeki planety, konsola bez błędów; testy `tests/planetGenRegion.test.mjs` (plan regionu, ujścia, spływ do rzeki bez
+przechodzenia na drugi brzeg, wpięcie).
+
+Czego nie ma / wady:
+
+- cieki w ciemnym lesie są ledwo widoczne (ciemna woda na ciemnym tle) — widać głównie dolinki; w torfowiskach
+  czytelne;
+- część małych cieków ma drobny zygzak (zakola o kilku półfalach na krótkim łuku);
+- przesunięcie kamery poza region przelicza go od nowa (~0,7 s w tle) — przy brzegu regionu sieć może się wtedy
+  nieco zmienić (zlewnie przecięte nową krawędzią); nie sprawdzałem tego na ruchu kamery, tylko na postojach;
+- na planecie przygotowanej (z plików) strumienie liczą się u gracza — układ drobnych cieków może się różnić
+  między kartami;
+- zakola wielkiej rzeki, delta, wybrzeże i pozostałe biomy — bez zmian (§ 10.18).

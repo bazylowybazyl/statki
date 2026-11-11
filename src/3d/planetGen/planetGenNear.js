@@ -13,6 +13,7 @@ import { createGenCloudNearMaterial, GEN_CLOUD_NEAR_DATA_KEYS } from './planetGe
 import { createGenNearSurfaceMaterial, GEN_NEAR_DATA_KEYS } from './planetGenSurfaceNear.tsl.js';
 import { createPlumeMaterial, plumeUniforms } from './planetGenPlume.tsl.js';
 import { PlanetGenPatches, patchToDir } from './planetGenPatch.js';
+import { PlanetGenRegionStreams } from './planetGenRegion.js';
 import { PlanetGenWeather, bandRateAt } from './planetGenWeather.js';
 
 /** Wygląd lawy wg rodzaju i stylu: częstość płyt skorupy [1/promień], szerokość szwu [komórki], albedo skorupy, połysk. */
@@ -136,7 +137,7 @@ export function plumeLookFor(spec) {
  * patches, eruption, setSun(dir), setView(dirScene), updatePatches(dirsObject, dt), erupt(dirObject) / stopEruption(),
  * step(dt, { spin }), dispose() }.
  */
-export function createGenNearBody(spec, baked, baker, { segments = 384, halo = true, lava = 0, patch = {}, weather: weatherOpts = {} } = {}) {
+export function createGenNearBody(spec, baked, baker, { segments = 384, halo = true, lava = 0, patch = {}, weather: weatherOpts = {}, streams = true } = {}) {
   const group = new THREE.Group();
   const maps = baked.maps;
   const U = nearSurfaceUniforms(spec, maps, { lava });
@@ -206,6 +207,8 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
   const HAZE_WITH_SHELL = 0.6;
   const patches = new PlanetGenPatches(baker, baked, patch);
   bindPatches(U, patches);
+  // strumienie regionu pod kamerą (planety z rzekami): gęsta sieć cieków dla głębokich poziomów okna
+  const region = streams && baked.drainage ? new PlanetGenRegionStreams(baker, baked, patches, typeof streams === 'object' ? streams : {}) : null;
 
   // ── pióropusz: kula jednostkowa w układzie planety (środek i promień daje graf), dziecko kuli planety ──
   const PL = plumeLookFor(spec);
@@ -232,7 +235,7 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
   const _d = new THREE.Vector3();
   const ease = (x) => { const c = Math.min(1, Math.max(0, x)); return 1 - (1 - c) * (1 - c) * (1 - c); };
   return {
-    spec, group, mesh, clouds, cloudVol, atm, aurora, plume, uniforms: U, cloudUniforms, patches, cloudPatches, eruption, weather,
+    spec, group, mesh, clouds, cloudVol, atm, aurora, plume, uniforms: U, cloudUniforms, patches, cloudPatches, eruption, weather, region,
     /** Pogoda: włączona / wyłączona (wyłączona — mapa chmur wypieczona raz, nieruchoma) i mnożnik czasu. */
     setWeather(on, speed = weather ? weather.speed : 1) {
       if (!weather) return;
@@ -305,6 +308,7 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
     updatePatches(dirs, dt, force = false) {
       let baked2 = patches.update(dirs, dt, force);
       bindPatches(U, patches);
+      if (region) region.update();
       if (cloudPatches) {
         // te same kierunki w układzie kuli chmur (obrót wokół osi Y względem gruntu)
         const on = clouds.visible && patches.enabled;
@@ -396,6 +400,7 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
       for (const s of shells) { s.geometry.dispose(); s.material.dispose(); }
       plume.geometry.dispose();
       plume.material.dispose();
+      if (region) region.dispose();
       patches.dispose();
       if (cloudPatches) cloudPatches.dispose();
       if (weather) weather.dispose();
