@@ -158,7 +158,14 @@ try {
   await shot('7b-praca-blisko');
   await ev(`(async () => { ship.__battleLights = true; await window.__harness.step(120); return true; })()`);
   await shot('7c-praca-bojowe-blisko');
-  await ev(`(async () => { ship.__battleLights = false; window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42); await window.__harness.step(90); return true; })()`);
+  await ev(`(async () => { ship.__battleLights = false; await window.__harness.step(90); return true; })()`);
+  // Alarm (szyna ShipAlarm): kadłub krytyczny — koguty na kadłubie, czerwona ramka HUD, lampy pokładowe na czerwono.
+  result.kroki.alarm = await ev(`(async () => { window.ShipAlarmDev.set(2, 8); await window.__harness.step(20); return window.ShipAlarmDev.state(); })()`);
+  check(result.kroki.alarm.active === true && result.kroki.alarm.id === 2, `alarm kadłuba aktywny (${JSON.stringify(result.kroki.alarm)})`);
+  await shot('7d-alarm-blisko');
+  await ev(`(async () => { await window.__harness.step(9); return true; })()`);
+  await shot('7e-alarm-blisko-pozniej');
+  await ev(`(async () => { window.ShipAlarm.clear(); await window.__harness.step(120); window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42); return true; })()`);
   const fa2 = await ev(`(async () => { const fa = await import('/src/ai/fleetAwareness.js'); fa.updateFleetAwareness(npcs, ship, 0, true); return { sig: ship.__sigMul, piratWidzi: fa.isVisibleToSide('pirate', ship) }; })()`);
   check(fa2.sig === 1, `po rozruchu sygnatura 1 (${JSON.stringify(fa2)})`);
 
