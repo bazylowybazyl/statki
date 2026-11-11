@@ -947,7 +947,7 @@
       npcCollidesWithWorld,
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
-    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange, unitSensorProfile } from "./src/ai/fleetAwareness.js";
+    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange, unitSensorProfile, setAwarenessSignatureHook, isVisibleToSide } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
     import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
@@ -1023,6 +1023,10 @@
     // Odpalanie i gaszenie silników MAIN (etap E2 2026-10-09): automat WYŁ. → ZAPŁON (dym, błysk) → PRACA → GASZENIE;
     // klawisz 0 (akcja 'ship.engines'), autozapłon ciągiem, kampania: Atlas w doku z wyłączonymi silnikami.
     import { engineIgnitionOf, engineThrustScale, engineBlocksDrive, engineHudLabel, engineStateOf, igniteEngine, shutdownEngine, toggleEngine, stepEngineIgnition, ENGINE_OFF, ENGINE_SHUTDOWN, ENGINE_IGNITION_TUNE } from "./src/game/engineIgnition.js";
+    // Stan zasilania okrętu (2026-11-11, src/game/shipPower.js): wyłączony okręt gasi naraz silniki, tarczę, broń, F, skan,
+    // hangary i drony; sygnatura spada z gaszeniem. Osłona gazu dla czujników — src/game/gasCover.js. Blok „ZASILANIE OKRĘTU”.
+    import { shipPowerOf, powerStateOf, shipPowerOn, shipPowerDown, powerAllowsEngines, powerSignatureMul, powerSensorMul, powerDownShip, powerUpShip, toggleShipPower, setShipPowerState, stepShipPower, powerHudLabel, powerStartupLeft, powerSequenceProgress, POWER_OFF, POWER_STARTUP, POWER_ON, POWER_SHUTDOWN, SHIP_POWER_TUNE } from "./src/game/shipPower.js";
+    import { gasCoverAt, gasSignatureMul } from "./src/game/gasCover.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
@@ -4698,7 +4702,7 @@
     let railTimer = 0;
 
     function triggerEnergyShot() {
-      if (!ship?.shield) return;
+      if (!ship?.shield || playerPowerRefuse('STRZAŁ ENERGII')) return;
       applyEnergyShot(ship);
       const gained = Math.max(1, (Number(ship.shield.max) || 0) * 0.5);
       if (typeof toast === 'function') toast(`Energy Shot: +${Math.round(gained)} shield`);
@@ -10215,6 +10219,7 @@
     function autoIgnitePlayerEngines(reason = '') {
       if (!ENGINE_IGNITION_TUNE.autoIgnite || ship.destroyed || ship.__carriedBy || playerDriveDown()) return false;
       if (StoryGame.blocksInput) return false;
+      if (!powerAllowsEngines(ship)) return false;
       if (engineStateOf(ship) !== ENGINE_OFF) return false;
       if (!igniteEngine(ship)) return false;
       pushZoneMessage(reason ? `ZAPŁON SILNIKÓW — ${reason}` : 'ZAPŁON SILNIKÓW', 1.6, { label: 'SILNIKI' });
@@ -10224,6 +10229,7 @@
     function playerEnginesBlockDrive(what) {
       if (!playerEnginesNotRunning()) return false;
       if (autoIgnitePlayerEngines(`${what} PO ROZRUCHU`)) return true;
+      if (!powerAllowsEngines(ship)) { playerPowerRefuse(what); return true; }
       if (engineStateOf(ship) === ENGINE_OFF) pushZoneMessage(`${what}: SILNIKI WYŁĄCZONE — ODPAL (0)`, 1.6, { label: 'SILNIKI', tone: 'warn' });
       else pushZoneMessage(`${what}: SILNIKI W ROZRUCHU`, 1.2, { label: 'SILNIKI', tone: 'warn' });
       return true;
@@ -10234,6 +10240,7 @@
       if (ship.__carriedBy) { pushZoneMessage('SILNIKI: STATEK NA POKŁADZIE HOLOWNIKA', 1.4, { label: 'SILNIKI', tone: 'warn' }); return; }
       if (warp.state !== 'idle' || warp.exitRamp?.active) { pushZoneMessage('SILNIKI: NIE W SKOKU', 1.4, { label: 'SILNIKI', tone: 'warn' }); return; }
       const st = engineStateOf(ship);
+      if ((st === ENGINE_OFF || st === ENGINE_SHUTDOWN) && !powerAllowsEngines(ship)) { playerPowerRefuse('SILNIKI'); return; }
       if ((st === ENGINE_OFF) && playerDriveDown()) { pushZoneMessage('SILNIKI: NAPĘD GŁÓWNY ZNISZCZONY', 1.6, { label: 'SILNIKI', tone: 'warn' }); return; }
       engineIgnitionOf(ship);
       if (!toggleEngine(ship)) return;
@@ -10252,6 +10259,107 @@
       shutdown: () => shutdownEngine(ship),
       state: () => ship?.engineIgn ? { ...ship.engineIgn } : null,
       tune: ENGINE_IGNITION_TUNE
+    };
+
+    // ZASILANIE OKRĘTU (2026-11-11, src/game/shipPower.js; prośba użytkownika: „możliwość włączenia / wyłączenia statku
+    // oraz wizualnie pokazać i rozróżniać włączony statek od wyłączonego; wyłączony będzie miał mniejszą sygnaturę”).
+    // Decyzje użytkownika: wyłączenie gasi WSZYSTKO NARAZ, sygnatura spada razem z gaszeniem, NPC — opcja bez zachowań AI.
+    // Wyłączony okręt: silniki MAIN gasną (engineIgnition — autozapłon zablokowany), dysze SIDE, stabilizator, tłumik
+    // i regulator bez mocy (okręt dryfuje), tarcza wymuszona wył. (własność zasilania — `__powerShieldOff`; wymuszenia
+    // z konsoli i sceny dźwięków zasilanie nie zdejmuje), broń, PD, F, skan X, hangary, drony, maskowanie, wydobycie
+    // i zbiórka stoją. ROZRUCH 5 s: silniki od `enginesAt`, broń i tarcza na końcu. Bramka gracza: playerPowered().
+    // NPC: shipPowerOn (processAutonomousWeapons), powerAllowsEngines (npcStep, stepShipFlight). Klawisz − (ship.power).
+    function playerPowered() { return shipPowerOn(ship); }
+    // Rozkaz dysz wyłączonego okrętu (physicsStep): zero na wszystkich dyszach.
+    const _UNPOWERED_THRUST_CMD = Object.freeze({ main: 0, torque: 0, leftSide: 0, rightSide: 0, mainTorque: 0, suppressManualTorque: true });
+    /** Skutki WYŁĄCZENIA (wejście w GASZENIE) — gracz i NPC. */
+    function entityPowerDownEffects(e) {
+      if (!e) return;
+      const isPlayerShip = e === ship;
+      engineIgnitionOf(e);
+      shutdownEngine(e);
+      if (e.shield && !e._shieldForcedOff) { setEntityShieldForcedOff(e, true); e.__powerShieldOff = true; }
+      if (isPlayerShip) {
+        cancelTravel(null);
+        ship.command = null;
+        clearPlayerAttackState();
+        if (warp.state === 'charging') { warp.state = 'idle'; warp.charge = 0; }
+        stopBoost();
+        if (scannerState.active) setScannerActive(false);
+        if (ship.cloak && isPlayerCloakOn()) { toggleCloak(ship.cloak); syncShipMode(); }
+        if (miningInput.active) leaveShipMode('mining');
+        if (torpedoAim.active) setTorpedoMode(false, true);
+        __fighterLaunchQueue.length = 0;
+        if (playerRepairRig.launched) playerRepairRig.recall?.();
+        const sw = Superweapon?.superweaponState;
+        if (sw) { sw.charging = false; sw.armed = false; if (Array.isArray(sw.queue)) sw.queue.length = 0; }
+      }
+    }
+    /** Skutki końca ROZRUCHU (PRACA). */
+    function entityPowerUpDone(e) {
+      if (!e) return;
+      if (e.__powerShieldOff) { setEntityShieldForcedOff(e, false); e.__powerShieldOff = false; }
+    }
+    /** Krok stanu zasilania bytu (czas gry). NPC po `enginesAt` rozruchu odpala silniki sam (NPC nie ma autozapłonu). */
+    function stepEntityPower(e, dt) {
+      const s = e?.shipPower;
+      if (!s) return;
+      const before = s.state;
+      const enginesBefore = powerAllowsEngines(e);
+      const now = stepShipPower(e, dt);
+      if (now === POWER_ON) entityPowerUpDone(e);
+      if (e !== ship && !enginesBefore && powerAllowsEngines(e) && before === POWER_STARTUP) igniteEngine(e);
+    }
+    /** Włącz / wyłącz byt (gracz, NPC). Zwraca true, gdy sekwencja ruszyła. */
+    function setEntityPower(e, on) {
+      if (!e || e.dead || e.destroyed) return false;
+      shipPowerOf(e);
+      if (on) return powerUpShip(e);
+      if (!powerDownShip(e)) return false;
+      entityPowerDownEffects(e);
+      return true;
+    }
+    /** Przełącznik zasilania gracza (klawisz −). */
+    function togglePlayerPower() {
+      if (!ship || ship.destroyed) return;
+      if (ship.__carriedBy) { pushZoneMessage('ZASILANIE: STATEK NA POKŁADZIE HOLOWNIKA', 1.4, { label: 'ZASILANIE', tone: 'warn' }); return; }
+      if (warp.state !== 'idle' || warp.exitRamp?.active || hypercruiseBusy(hypercruise)) {
+        pushZoneMessage('ZASILANIE: NIE W SKOKU', 1.4, { label: 'ZASILANIE', tone: 'warn' }); return;
+      }
+      const st = powerStateOf(ship);
+      const on = st === POWER_OFF || st === POWER_SHUTDOWN;
+      if (!setEntityPower(ship, on)) return;
+      pushZoneMessage(on ? `ROZRUCH REAKTORA — ${Math.round(SHIP_POWER_TUNE.startupTime)} s` : 'OKRĘT WYŁĄCZONY — CISZA', 1.8, { label: 'ZASILANIE' });
+    }
+    /** Krok zasilania gracza (physicsStep, przed silnikami). */
+    function stepPlayerPower(dt) {
+      if (!ship || ship.destroyed) return;
+      const was = powerStateOf(ship);
+      stepEntityPower(ship, dt);
+      if (was === POWER_STARTUP && powerStateOf(ship) === POWER_ON) pushZoneMessage('ZASILANIE: PRACA — SYSTEMY GOTOWE', 1.6, { label: 'ZASILANIE' });
+    }
+    /** Komunikat odmowy systemu przy braku zasilania (zwraca true = zablokowane). */
+    function playerPowerRefuse(what) {
+      if (playerPowered()) return false;
+      const st = powerStateOf(ship);
+      pushZoneMessage(st === POWER_STARTUP
+        ? `${what}: ROZRUCH — ${Math.ceil(powerStartupLeft(ship))} s`
+        : `${what}: OKRĘT WYŁĄCZONY — WŁĄCZ (−)`, 1.3, { label: 'ZASILANIE', tone: 'warn' });
+      return true;
+    }
+    window.PlayerPower = {
+      toggle: () => togglePlayerPower(),
+      on: () => setEntityPower(ship, true),
+      off: () => setEntityPower(ship, false),
+      state: () => ship?.shipPower ? { ...ship.shipPower } : null,
+      tune: SHIP_POWER_TUNE
+    };
+    // Opcja dla NPC (decyzja użytkownika: „daj taką opcję NPC” — żaden mózg jej dziś nie używa): ShipPower.off(npc).
+    window.ShipPower = {
+      on: (e) => setEntityPower(e, true),
+      off: (e) => setEntityPower(e, false),
+      toggle: (e) => setEntityPower(e, !(powerStateOf(e) === POWER_ON || powerStateOf(e) === POWER_STARTUP)),
+      state: (e) => powerStateOf(e)
     };
 
     // Skok gracza z ładunkiem (holownik pod nim): automat skoku gracza (rulon, soczewka, ośrodek „Nurtu”) z wyjściem
@@ -10805,6 +10913,9 @@
 
     /** Powód, dla którego trybu nie da się teraz włączyć (tekst komunikatu), albo ''. */
     function shipModeBlockReason(id) {
+      if ((id === 'cloak' || id === 'mining' || id === 'torpedo' || id === 'hypercruise') && !playerPowered()) {
+        return powerStateOf(ship) === POWER_STARTUP ? `ROZRUCH — ${Math.ceil(powerStartupLeft(ship))} s` : 'OKRĘT WYŁĄCZONY — WŁĄCZ (−)';
+      }
       if (id === 'cloak') {
         const why = cloakBlockReason(ship?.cloak);
         if (why) return `MASKOWANIE: ${why.toUpperCase()}`;
@@ -11498,6 +11609,8 @@
     window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {
       const weapon = MASTER_WEAPONS[weaponId];
       if (!weapon) return null;
+      // Zabezpieczenie: wyłączony okręt nie strzela (src/game/shipPower.js; bramki właściwe są wcześniej — tu ostatnia).
+      if (shooter && shooter.shipPower && !shipPowerOn(shooter)) return null;
       // Promień śmierci (pole `deathRay` broni — isDeathRayWeapon): czoło promienia w systemie promieni
       // (src/game/deathRay.js), nie pocisk ani wiązka. Bez wywołań dla innych broni (wycinki fireWeaponCore w testach).
       if (weapon.deathRay) return fireDeathRayCore(shooter, target, weapon, muzzleData);
@@ -11890,7 +12003,7 @@
       const weapon = loadout.weapon;
       const aim = getMountedWeaponAim(ship, loadout);
       const st = mountChargeState(aim);
-      if (!p1WeaponCtrl || !ship || ship.dead || ship.destroyed || hp.destroyed || warp.isBusy()) {
+      if (!p1WeaponCtrl || !ship || ship.dead || ship.destroyed || hp.destroyed || warp.isBusy() || !playerPowered()) {
         if (st.charge >= 0 || st.want > 0) cancelMountCharge(st);
         return '';
       }
@@ -11974,6 +12087,7 @@
     // manual — naciśnięcie klawisza (komunikaty ładowania); auto-fire i spust pada — bez.
     function _fireSpecialGroup(loadouts, manual = false) {
       if (!loadouts.length) return false;
+      if (!playerPowered()) { if (manual) playerPowerRefuse('BROŃ'); return false; }
       let fired = false;
       let emptyMag = null;
       if (!p1WeaponCtrl) return false;
@@ -12025,6 +12139,7 @@
     // kadłubie i przeładowanie wyglądały identycznie: jak nic. Każde wyjście ma
     // teraz komunikat, tak jak klawisze 1/2/3/5.
     function tryFireMountedBuiltInWeapons() {
+      if (playerPowerRefuse('HEXLANCE')) return false;
       const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
       const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege' && loadout?.hp);
       if (!hasHexlance) {
@@ -19509,7 +19624,7 @@
       env.shipSpeed = Math.sqrt(env.pvx * env.pvx + env.pvy * env.pvy);
       env.cx = env.px;
       env.cy = env.py;
-      env.gear = alive ? playerLootGear() : null;
+      env.gear = alive && playerPowered() ? playerLootGear() : null;
       stepLootContainers(lootContainers, dt, env);
       if (!alive) return;
       flushLootMessage();
@@ -20257,7 +20372,7 @@
     }
 
     function playerShipSystemBlocked() {
-      return ship.destroyed || PAUSED || warp.state !== 'idle' || warp.isBusy() || StoryGame.blocksInput || stationUI.open;
+      return ship.destroyed || !playerPowered() || PAUSED || warp.state !== 'idle' || warp.isBusy() || StoryGame.blocksInput || stationUI.open;
     }
     const fmtSysMul = (v) => String(Math.round((Number(v) || 1) * 10) / 10).replace('.', ',');
     function tryStartPlayerShipSystem(silent = false) {
@@ -20454,7 +20569,7 @@
         if (playerRamBurnActive()) {
           braking = !isRtsModeActive() && ((keyboardOwnsP1() && Input.keyHeld('fly.back')) || p1PadAxis('fly.thrust') < -0.15);
         }
-        if (ship.destroyed || warp.state !== 'idle' || warp.isBusy() || braking) {
+        if (ship.destroyed || warp.state !== 'idle' || warp.isBusy() || braking || !playerPowered()) {
           stopShipSystem(ramBurn);
           if (braking) pushZoneMessage(`${def.label}: PRZERWANA`, 1.1, { tone: 'warn' });
         }
@@ -21447,6 +21562,7 @@
     }
 
     function setTravelTarget(worldX, worldY, label = '') {
+      if (playerPowerRefuse('TRAVEL')) return false;
       if (!ship || ship.destroyed) return false;
       travelNav.target = {
         x: clamp(Number(worldX) || 0, 0, WORLD.w),
@@ -21927,6 +22043,7 @@
     // w PRZELOCIE 3000 j/s).
     function activateBoostIfAllowed() {
       if (warp.state !== 'idle' || warp.exitRamp?.active || hypercruiseDriving(hypercruise)) return false;
+      if (!powerAllowsEngines(ship)) return false;
       if (boost.fuel > 0) {
         boost.state = 'active';
         return true;
@@ -22044,6 +22161,7 @@
       if (ship.destroyed) return;
       const cmd = ship.command;
       if (!cmd) return;
+      if (!powerAllowsEngines(ship)) { ship.command = null; return; }
       if (PAUSED || warp.state !== 'idle') return;
       if (playerHasManualInput()) { ship.command = null; return; }
 
@@ -22264,6 +22382,11 @@
         gate: () => !!ship && gaNotRts(),
         run() { togglePlayerEngines(); }
       },
+      // Zasilanie okrętu (src/game/shipPower.js): wyłącz — wszystko naraz, cisza; włącz — rozruch 5 s.
+      'ship.power': {
+        gate: () => !!ship && gaNotRts() && !stationUI.open && !StoryGame.blocksInput,
+        run() { togglePlayerPower(); return GA_STOP; }
+      },
       // Hipercruise (E5): rozruch / wyjście; odcinki 'drive' TRAVEL TO włączają go same.
       'nav.hypercruise': {
         gate: () => !!ship && gaNotRts(),
@@ -22407,6 +22530,7 @@
         run(ev) {
           ev.preventDefault();
           if (stationUI.open || ship.destroyed || !HullBodies.hasHull(ship)) return;
+          if (!playerRepairRig.launched && playerPowerRefuse('DRONY')) return;
           playerRepairRig.cargo = PLAYER.cargo;
           playerRepairRig.toggle();
         }
@@ -23162,6 +23286,7 @@
       scanOverlay.ping(wave.x, wave.y, waveSpeed, activeRange, scanOverlayClock);
     }
     function setScannerActive(nextActive) {
+      if (nextActive && playerPowerRefuse('SKANER')) return;
       scannerState.active = !!nextActive;
       if (scannerState.active) {
         scannerState.burstSerial += 1;
@@ -25462,6 +25587,7 @@
     }
 
     function fireRocket(side) {
+      if (!playerPowered()) return false;
       if (p1WeaponCtrl && typeof p1WeaponCtrl.fireRocket === 'function') {
         const fired = !!p1WeaponCtrl.fireRocket(side);
         if (fired) {
@@ -25760,6 +25886,7 @@
     // Kolejka startów — opróżniana w update'cie klatki, nie w jednym rzucie.
     function updateFighterLaunchQueue(dt) {
       if (!__fighterLaunchQueue.length) return;
+      if (!playerPowered()) { __fighterLaunchQueue.length = 0; return; }
       let ready = 0;
       for (let i = 0; i < __fighterLaunchQueue.length; i++) {
         const req = __fighterLaunchQueue[i];
@@ -25781,6 +25908,7 @@
     window.isFighterLaunchInProgress = () => __fighterLaunchQueue.length > 0;
 
     function launchMountedFighterSquadrons() {
+      if (playerPowerRefuse('HANGARY')) return [];
       const tubes = getPlayerHangarTubes();
       if (!tubes.length) {
         if (typeof toast === 'function') toast('Brak modułu hangaru!');
@@ -26265,7 +26393,7 @@
       env.trigger = (fcTrigger.mouse || fcTrigger.pad) && !blockedUi && !torpedoAim.active && !miningInput.active;
       // Hipercruise (i postawa z weaponsCold): broń zimna — nie strzela ani grupa w ręku, ani auto.
       env.canFire = !ship.destroyed && !warp.isBusy() && !stationUI.open && !StoryGame.blocksInput
-        && !stanceTune(shipModes).weaponsCold && !hypercruiseBusy(hypercruise);
+        && !stanceTune(shipModes).weaponsCold && !hypercruiseBusy(hypercruise) && playerPowered();
       // Maskowanie: wieże na auto milczą (strzał zrywa maskowanie); grupa w ręku strzela na rozkaz gracza.
       // To samo na rozkaz misji (podejście po cichu — StoryGame: api.fire.hold); rozkaz gaśnie z misją.
       if (fireControl.storyHold && !StoryGame.active) fireControl.storyHold = false;
@@ -26514,6 +26642,8 @@
       // Rakiety 3D (salwy gracza i NPC, src/game/rockets/rocketSim.js) — zastępniki w kształcie pocisku,
       // pozycja w czasie tego kroku; wroga rakieta we mgle wojny nie jest celem strony gracza.
       window.rocketSystem3D?.syncThreats(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock.sim, _pdHostileRocketVisible);
+      // Wyłączony okręt (stan zasilania): obrona punktowa milczy — bufory rakiet wyżej czytają też NPC i pociski.
+      if (!playerPowered()) return;
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
       // Bez PD CHIP-a obrona punktowa gracza strzela tylko do rakiet i myśliwców.
       const pdHullsAllowed = hasShipChip(ship, PD_CHIP_ID);
@@ -28434,7 +28564,7 @@
         if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
         updateShieldFx(npc, dt);
 
-        if (npc.shield && npc.shield.max > 0) {
+        if (npc.shield && npc.shield.max > 0 && !npc.__powerShieldOff) {
           if (npc.shield.regenTimer > 0) {
             npc.shield.regenTimer = Math.max(0, npc.shield.regenTimer - dt);
           } else if (npc.shield.val < npc.shield.max) {
@@ -28467,6 +28597,21 @@
         if (isBridgeHulk(npc)) {
           if (!npc.dead && stepBridgeHulk(npc, dt, bridgeSimTime)) finishBridgeKill(npc);
           continue;
+        }
+
+        // Zasilanie (src/game/shipPower.js — opcja NPC: ShipPower.off(npc); żaden mózg jej dziś nie używa): wyłączony
+        // okręt (i rozruch przed `enginesAt`) bez AI, broni i ciągu — dryf jak hulk; tarcza gaśnie (wymuszona wył.).
+        if (npc.shipPower) {
+          stepEntityPower(npc, dt);
+          if (!npc.dead && !powerAllowsEngines(npc)) {
+            npc.x += (Number(npc.vx) || 0) * dt;
+            npc.y += (Number(npc.vy) || 0) * dt;
+            npc.angle = (Number(npc.angle) || 0) + (Number(npc.angVel) || 0) * dt;
+            // automat silników krokuje model lotu — tu go nie ma: gaszenie dysz musi dobiec końca
+            stepEngineIgnition(npc, dt);
+            if (npc.shield) updateShieldFx(npc, dt);
+            continue;
+          }
         }
 
         // --- LOGIKA MISJI I WALKI ---
@@ -29840,7 +29985,8 @@
 
       ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
       updateSpecialWeaponCooldowns(dt);
-      if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
+      if (ship.__powerShieldOff) { /* zasilanie wył.: tarcza się nie ładuje */ }
+      else if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
       else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * stanceTune(shipModes).shieldRegen * solarExposureFactor * dt, 0, ship.shield.max);
       updateShieldFx(ship, dt);
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
@@ -29871,6 +30017,8 @@
 
       // Napęd warp z kadłuba / wyposażenia (Mk I / II / III) — przed automatem podróży i ładowaniem skoku.
       syncPlayerWarpDrive();
+      // Zasilanie okrętu (src/game/shipPower.js): rozruch / gaszenie — przed autopilotem i silnikami.
+      stepPlayerPower(dt);
       stepTravelNav();
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
@@ -29898,6 +30046,9 @@
         lastDriveShiftSerial = driveState.shiftSerial;
       }
       const manualTorqueInput = clamp(Number(ship?.thrusterInput?.torque) || 0, -1, 1);
+      // ZASILANIE: okręt wyłączony (albo w rozruchu przed `enginesAt`) — dysze MAIN i SIDE, stabilizator, tłumik
+      // i regulator bez mocy: okręt dryfuje (opór liniowy zostaje — fizyka świata). Na pokładzie holownika — bez zmian.
+      const _unpowered = !powerAllowsEngines(ship) && !ship.__carriedBy;
       const stabilizerState = getShipStabilizerState(ship);
       const commandHeadingActive = !!ship.command && !playerHasManualInput();
       let stabilizerAssistTorque = 0;
@@ -29906,7 +30057,7 @@
       let stabilizerMainTurning = false;
       // Akcja manewru (system F) prowadzi kurs i prędkość boczną sama — stabilizator czeka, potem trzyma nowy kurs.
       const maneuverAction = ramBurn.action;
-      const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive && !maneuverAction;
+      const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive && !maneuverAction && !_unpowered;
       if (stabilizerActive) {
         // Ręczny skręt przesuwa strzałkę kursu: A / D albo lewa gałka (B3 — dawniej tylko klawisze, a ręczny
         // moment był tłumiony, więc z włączonym stabilizatorem gałka nie skręcała).
@@ -29985,7 +30136,11 @@
         input.leftSide = 0;
         input.rightSide = 0;
       }
-      const thrusterCommand = composeShipThrusterCommand(ship, {
+      if (_unpowered) {
+        input.main = 0; input.retro = 0; input.leftSide = 0; input.rightSide = 0; input.torque = 0;
+        if (ship.input) { ship.input.thrustX = 0; ship.input.thrustY = 0; }
+      }
+      const thrusterCommand = composeShipThrusterCommand(ship, _unpowered ? _UNPOWERED_THRUST_CMD : {
         // Szarża: silniki główne na pełnym ciągu przez cały zryw.
         main: playerRamBurnActive() ? 1 : 0,
         torque: maneuverAction === 'turn' ? _manTorque : stabilizerAssistTorque,
@@ -30160,7 +30315,7 @@
         const manualBrakeHeld = !!((!isRtsModeActive() && keyboardOwnsP1() && Input.keyHeld('fly.back')) || gamepadReverse);
         const reverseEngaged = !!(reverseInput > 0.05 && retroState?.reverseEngaged);
         const manualReverseHeld = manualBrakeHeld && reverseEngaged;
-        const damperActive = !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));
+        const damperActive = !_unpowered && !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));
         const reverseThrustInput = reverseEngaged ? reverseInput : 0;
         const massSafe = Math.max(1, Number(ship.mass) || SHIP_PHYSICS.PLAYER_MASS || 1);
         const invMass = 1 / massSafe;
@@ -30232,7 +30387,7 @@
         // (jak okręty NPC), zamiast kręcić się do skontrowania. Regulatory kursu (stabilizator,
         // autopilot) hamują obrót same.
         const specTurnBrake = Number(driveState.brakeTurnAccel) || 0;
-        if (specTurnBrake > 0 && Math.abs(activeTurnCommand) < 0.03 && !commandHeadingActive && !stabilizerActive) {
+        if (specTurnBrake > 0 && Math.abs(activeTurnCommand) < 0.03 && !commandHeadingActive && !stabilizerActive && !_unpowered) {
           ship.angVel = approachValue(ship.angVel, 0, (specTurnBrake / 1.5) * dt);
         }
 
@@ -30306,12 +30461,12 @@
           }
         }
 
-        applyDriveSpeedGovernor(driveState, ship.vel, dt);
+        if (!_unpowered) applyDriveSpeedGovernor(driveState, ship.vel, dt);
         const driveMaxTurnSpeed = SHIP_PHYSICS.MAX_TURN_SPEED * driveState.maxTurnSpeedScale * burnTurnScale
           * stanceTune(shipModes).turnRate;
         ship.angVel = clamp(ship.angVel, -driveMaxTurnSpeed, driveMaxTurnSpeed);
         if (shouldZeroStabilizedAngularVelocity({
-          stabilizerEnabled: flightAssist.stabilizer,
+          stabilizerEnabled: flightAssist.stabilizer && !_unpowered,
           activeTurnCommand,
           angVel: ship.angVel
         })) {
@@ -30958,7 +31113,7 @@
 
     /** Salwa: każda gotowa (naładowana i wycelowana) wyrzutnia odpala swój wachlarz. */
     function fireTorpedoSalvos() {
-      if (warp.isBusy() || ship.destroyed) return 0;
+      if (warp.isBusy() || ship.destroyed || !playerPowered()) return 0;
       const list = playerTorpedoLoadouts(_torpLoadouts);
       let fired = 0;
       let turning = 0;
@@ -31958,7 +32113,7 @@
         && !(npc.state === 'warping_in' && npc.warpData)
         && (count === 1 || (sepUid(npc) % count) === phase)
         && (npc.fighter || usesShipFlightModel(npc))
-        && !isBridgeHulk(npc));
+        && !isBridgeHulk(npc) && powerAllowsEngines(npc));
     }
     // Praca decyzyjna dla kroku `tick` (następnego) do chwili `deadline` (performance.now()).
     function runAiOffStep(tick, deadline) {
@@ -33225,6 +33380,24 @@
       for (const f of _ringGasFields) if (f.rectTouchesBelt(cx - r, cy - r, cx + r, cy + r)) return f;
       return null;
     }
+    // OSŁONA GAZU DLA CZUJNIKÓW (2026-11-11, src/game/gasCover.js — scenariusz użytkownika: „ktoś cię goni, wchodzisz
+    // w chmurę gazową, wyłączasz i jest cisza”): ta sama obwiednia co obraz gazu (pas, ring w budowie), bez kamery i opcji.
+    function gasCoverAtGame(x, y) {
+      const belt = beltWorld ? beltWorld.field : null;
+      if (belt && belt.rectTouchesBelt(x, y, x, y)) return gasCoverAt(belt, x, y);
+      const ring = ringGasFieldNear(x, y, 1);
+      return ring ? gasCoverAt(ring, x, y) : 0;
+    }
+    // Sygnatura stanu bytu dla wykrywania AI i mgły gracza (src/ai/fleetAwareness.js — `__sigMul`): zasilanie × gaz
+    // × reflektor dziobowy. Liczone raz na odświeżenie obrazu AI.
+    setAwarenessSignatureHook((e, x, y) => {
+      let m = powerSignatureMul(e);
+      const cover = gasCoverAtGame(x, y);
+      if (cover > 0) m *= gasSignatureMul(cover);
+      if (e.__spotSigMul > 1) m *= e.__spotSigMul;
+      return m;
+    });
+    window.gasCoverAt = gasCoverAtGame;
     function packSpaceGas(cam, camNs, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
@@ -35424,6 +35597,12 @@
         if (engLabel) {
           _panelArgs.sub = deadEng > 0 ? `SILNIKI ${nEng - deadEng}/${nEng} ${engLabel}` : `SILNIKI: ${engLabel}`;
           _panelArgs.subColor = engLabel === 'ZAPŁON' ? '#ffd27a' : (engLabel === 'GASZENIE' ? '#ffb86b' : '#ff8a94');
+        }
+        // Zasilanie okrętu (src/game/shipPower.js) — ma pierwszeństwo przed napisem silników.
+        const pwrLabel = powerHudLabel(ship);
+        if (pwrLabel) {
+          _panelArgs.sub = pwrLabel === 'ROZRUCH' ? `ROZRUCH ${Math.ceil(powerStartupLeft(ship))} s` : `ZASILANIE: ${pwrLabel}`;
+          _panelArgs.subColor = pwrLabel === 'ROZRUCH' ? '#ffd27a' : (pwrLabel === 'GASZENIE' ? '#ffb86b' : '#8fb0ff');
         }
         drawTurretPanel(tp.ctx, _panelArgs);
       }
