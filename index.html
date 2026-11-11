@@ -74,7 +74,9 @@
         return wiped;
       }
 
-      window.__SAVE_LOCKED = false;
+      // Scena dźwięków (?scena=dzwieki — blok „SCENA DŹWIĘKI”): zapis gry zamknięty od startu strony do przeładowania —
+      // scena zmienia wyposażenie Atlasa tylko w pamięci i nie może nadpisać zapisu gracza.
+      window.__SAVE_LOCKED = new URLSearchParams(location.search).get('scena') === 'dzwieki';
       // Z konsoli w trakcie gry: zapisy zamknięte do przeładowania — inaczej `beforeunload` (loadout, economy, game)
       // wpisałby klucze z powrotem ze stanu w pamięci przy F5. `?reset` w adresie woła resetGameSave bez blokady.
       window.resetGameSave = (scope) => { window.__SAVE_LOCKED = true; return resetGameSave(scope); };
@@ -1037,6 +1039,22 @@
     import { installExplosionCommands } from "./src/3d/explosions/explosionCommands.js";
     const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
     window.GameBlasts = GameBlasts;
+    // Scena dźwięków (blok „SCENA DŹWIĘKI”): wybuchy z gry → dźwięk (poza sceną SND = null, zero pracy).
+    {
+      const blast = GameBlasts.blast;
+      GameBlasts.blast = function (o, drones) {
+        if (SND) soundSceneBlast(o);
+        return blast.call(this, o, drones);
+      };
+    }
+    // Zdarzenia rakiet (adapter efektów rakiet) → dźwięk sceny: wyrzut, detonacja, zestrzelenie przez obronę punktową.
+    function soundRocketEffects(fx) {
+      const onLaunch = fx.onLaunch, onDetonate = fx.onDetonate, onIntercept = fx.onIntercept;
+      fx.onLaunch = function (r, theme) { if (SND) soundSceneRocketLaunch(r); return onLaunch.call(this, r, theme); };
+      fx.onDetonate = function (r, x, y, hit, hitShield) { if (SND) soundSceneRocketDetonate(r, x, y); return onDetonate.call(this, r, x, y, hit, hitShield); };
+      fx.onIntercept = function (r, x, y) { if (SND) soundSceneRocketKilled(x, y); return onIntercept.call(this, r, x, y); };
+      return fx;
+    }
     installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
     // RW-22: obraz rdzenia reaktora — fasada env.fx ReactorGame pisze rekordy RX_* (src/game/reactorFxEvents.js: pęknięcia
     // i rzazy liczy gra, strumienie i kule przez id), dekoder renderu woła reżysera (src/3d/reactorBlast/reactorCommands.js).
@@ -1441,6 +1459,10 @@
     // myśliwca) i wariacja tonu dźwięku nie zużywają Math.random gry — przebieg bitwy nie zależy od obrazu.
     // RW-20: wizualia i drobna losowość wątku głównego — strumień gry (osobny od strumienia renderu fxRandom).
     import { fxRandomGame } from "./src/game/fxRandomGame.js";
+    // Scena dźwięków (?scena=dzwieki, blok „SCENA DŹWIĘKI”): warstwa dźwięku gry i panel sceny — reguła `dzwiek`.
+    import { utworzDzwiekiGry } from "./src/audio/dzwiekiGry.js";
+    import { utworzPanelDzwiekow } from "./src/ui/dzwiekiPanel.js";
+    import { LAUNCH_SPLIT } from "./src/game/rockets/rocketSim.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
     // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
     import { WeaponFx } from "./src/3d/weapons/weaponFx.js";
@@ -1838,6 +1860,8 @@
         const rocketFx = createRocketFx(Core3D);
         // RW-23: lot (gra) → rekordy RKT_* → reżyser efektów (pula rakiet i dekoder renderu).
         const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
+        // Scena dźwięków: zdarzenia rakiet (wyrzut, detonacja, zestrzelenie) także do warstwy dźwięku — adapter owinięty w miejscu.
+        soundRocketEffects(rocketSim.effects);
         if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(rocketSim.rockets);
         installRocketFxCommands(RenderCommands.reader, rocketFx?.director || null, (i) => rocketSim.rockets[i]);
         // RW-30: wstrząs Supernowej — żądanie do gry.
@@ -2657,6 +2681,8 @@
       }
     }
     function applyAudioOptions() {
+      // Scena dźwięków: stary AudioSys zostaje wyciszony, głośność opcji idzie do warstwy sceny.
+      if (SND && SoundScene.active) { SND.ustawGlosnosc(soundSceneVolume()); return; }
       if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
     }
     try {
@@ -5235,6 +5261,12 @@
         return;
       }
       if (entity.dead || entity.isWreck) return;
+      // Scena dźwięków: cel „niezniszczalny” po utracie mostków dalej walczy — bez agonii hulka (moduł mostków
+      // stawia `commandLost` przed tym hakiem; mostki zostają martwe, dowodzenia drugi raz się nie traci).
+      if (entity.__dzwiekiNiezniszczalny === true) {
+        if (entity.bridgeState) entity.bridgeState.commandLost = false;
+        return;
+      }
       beginBridgeHulk(entity);
       // Kapsuły ratunkowe (E22): załoga opuszcza okręt bez dowodzenia (hulk), przy wraku drugi raz już nie.
       launchShipEscapePods(entity);
@@ -11969,6 +12001,7 @@
       }
       if (!fired && emptyMag && manual) {
         pushZoneMessage(`${String(emptyMag.name || 'RAKIETA').toUpperCase()}: MAGAZYNEK PUSTY`, 1.6);
+        if (SND) soundSceneUi('odmowa');
       }
       return fired;
     }
@@ -11991,6 +12024,7 @@
       const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege' && loadout?.hp);
       if (!hasHexlance) {
         pushZoneMessage('HEXLANCE: BRAK DZIAŁA NA KADŁUBIE', 2.0);
+        if (SND) soundSceneUi('odmowa');
         return false;
       }
 
@@ -13114,6 +13148,14 @@
         holowanieStop() { return stopTowScene(); },
         /** Kadr sceny „holowanie” od nowa (plac, lejek, Atlas) — po przesunięciu kamery. */
         holowanieKadr() { towSceneCamera(); return !!TowScene.spot; },
+        // Scena dźwięków (?scena=dzwieki): Atlas z bronią sceny, piraci obok i w zasięgu, panel; stan i liczniki dźwięków.
+        dzwieki(opts = {}) { return startSoundScene(opts); },
+        dzwiekiStop() { return stopSoundScene(); },
+        dzwiekiState() { return soundSceneState(); },
+        dzwiekiTarcza(on) { soundSceneShield(on); return SoundScene.shieldOn; },
+        dzwiekiNiezniszczalne(on) { soundSceneUndying(on); return SoundScene.undying; },
+        dzwiekiPiraciStrzelaja(on) { SoundScene.pirFire = !!on; return SoundScene.pirFire; },
+        dzwiekiOdnow() { soundSceneRenew(); return SoundScene.pirates.length; },
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
         // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
@@ -18632,6 +18674,465 @@
         for (const rec of trafficSalvage.reported.values()) if (towSceneShipOf(rec.wreck)) left++;
         if (!left) { S.phase = 'koniec'; towSceneNote('koniec'); }
       }
+    }
+
+    // SCENA „DŹWIĘKI” — `?scena=dzwieki` (sekundę po wejściu do gry swobodnej, jak `?scena=holowanie`) albo
+    // `DevScene.dzwieki()` (z `?dev`). Próba dźwięków W GRZE (reguła `dzwiek`): Atlas z bronią sceny (Tempest Ion, Yamato,
+    // Cruise Missile Rack, Supernova, CIWS Mk II — tylko w pamięci), piraci tuż obok (taran, tarcie, zgniot) i w zasięgu
+    // broni, panel (`src/ui/dzwiekiPanel.js`): tarcza Atlasa, cele niezniszczalne, piraci strzelają, odnowienie celów,
+    // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) działa TYLKO w scenie:
+    // poza nią `SND` = null, a każdy hak w grze to jedno `if (SND)`. Stary AudioSys poza sceną bez zmian; w scenie jego
+    // szyna jest wyciszona (słychać tylko nowe dźwięki). ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
+    // (`__SAVE_LOCKED` w bloku resetu zapisu), scena z konsoli — od swojego startu; do przeładowania strony (wyposażenie
+    // sceny zostaje w pamięci, więc odblokowanie po końcu sceny zapisałoby je jako wyposażenie gracza). Atlas w scenie
+    // nie ginie (kadłub nie spada poniżej 1 — alarm kadłuba krytycznego da się usłyszeć bez końca gry).
+    const SOUND_SCENE = {
+      /**
+       * Piraci: `near` — przy burcie Atlasa (wzdłuż dziobu `along` × promień Atlasa, burta `side`, odstęp kadłubów `gap`
+       * j.) — wleć w nich; reszta w zasięgu broni (`along` / `side` [j.] względem dziobu Atlasa).
+       */
+      // `bron` — broń sceny zamiast zestawu piratów (armata, CIWS): każda kategoria dźwięku broni NPC ma swojego
+      // strzelca (Vulcan — rykoszet od pancerza Atlasa, działko, wiązka ciągła, railgun, laser PD, flak), a pancerniki
+      // dostają wyrzutnię (rakiety w Atlasa → jego CIWS; kadłuby piratów jej nie mają — gniazdo na osi kadłuba).
+      // Dalsi piraci stoją w kierunku (`along`, `side`), ale nie dalej niż `inRange` × zasięg ich broni main — Atlas
+      // sięga dużo dalej niż piraci, a pirat poza swoim zasięgiem milczy.
+      pirates: [
+        { key: 'frigate_pd', near: true, along: 0.35, side: 1, gap: 220, bron: { main: 'vulcan_minigun' } },
+        { key: 'destroyer', near: true, along: -0.3, side: -1, gap: 280, bron: { main: 'heavy_autocannon', aux: 'flak_m' } },
+        { key: 'pirate_battleship', along: 3400, side: 500, bron: { missile: 'missile_rack' } },
+        { key: 'frigate_laser', along: 2800, side: -1700, bron: { main: 'beam_continuous', aux: 'laser_pd_mk1' } },
+        { key: 'destroyer', along: 4600, side: -400, bron: { main: 'railgun_mk2', aux: 'flak_m' } },
+        { key: 'battleship', along: 5600, side: 1900, bron: { missile: 'missile_rack' } }
+      ],
+      inRange: 0.7,
+      /** Broń sceny w gniazdach Atlasa (id z MASTER_WEAPONS); null — gniazdo puste. */
+      loadout: {
+        main: 'railgun_mk2', special: 'special_yamato_cannon', missile: 'missile_rack',
+        special_missile: 'supernova_missile', aux: 'ciws_mk2', hangar: null, builtin: null
+      },
+      /** Kadłub krytyczny (alarm) poniżej tej części kadłuba. */
+      hullCritical: 0.25,
+      /** Pierwszy kontakt kadłubów: głośność z prędkości zbliżenia [j/s] (pełna od `impactFull`); taran od `ramSpeed`. */
+      impactFull: 220,
+      ramSpeed: 260,
+      /** Tarcie: głośność pętli z prędkości poślizgu × docisku (pełna od `grindFull`). */
+      grindFull: 9000,
+      /** Promień sprzątania wraków przy odnowieniu celów [j.] i odsłonięcia mgły. */
+      area: 14000,
+      /** Głośność główna sceny, gdy w opcjach gry jest 0 (domyślnie). */
+      masterFallback: 0.7
+    };
+    let SND = null;
+    const SoundScene = {
+      active: false, starting: false, t: 0, spot: null, opts: null, pirates: [], panel: null,
+      shieldOn: true, undying: true, pirFire: false,
+      lastShield: null, lastLocks: 0, critical: false, grind: 0, grindX: NaN, grindY: NaN, grindRam: false,
+      lastDeath: { t: -1, x: 0, y: 0 }, ammoT: 0, oldMasterGain: null
+    };
+    window.SoundScene = SoundScene;
+
+    /**
+     * Głośność sceny: główna × efekty z opcji; główna 0 (domyślna wartość opcji gry — gra startuje wyciszona) daje
+     * `SOUND_SCENE.masterFallback`, żeby scena nie była niema (panel to pokazuje).
+     */
+    function soundSceneVolume() {
+      const master = Number(OPTIONS?.audio?.master) || 0;
+      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
+      SoundScene.masterFallback = !(master > 0);
+      return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
+    }
+    function soundSceneActiveFor(e) {
+      return !!(e && (e === ship || e.__soundScene));
+    }
+    function soundSceneCamera() {
+      const z = Number(camera.zoom) || 0.3;
+      const kadr = soundSceneCamera._k || (soundSceneCamera._k = { x: 0, y: 0, polW: 1, polH: 1, zoom: 1 });
+      kadr.x = camera.x;
+      kadr.y = camera.y;
+      kadr.polW = (W * 0.5) / z;
+      kadr.polH = (H * 0.5) / z;
+      kadr.zoom = z;
+      return kadr;
+    }
+
+    async function startSoundScene(opts = {}) {
+      if (SoundScene.active || SoundScene.starting) return { blad: 'scena już działa' };
+      if (!gameStarted || !ship || ship.dead) return { blad: 'gra nie wystartowała' };
+      if (StoryGame.active) return { blad: 'scena tylko w grze swobodnej' };
+      SoundScene.starting = true;
+      // Zapis gry zamknięty do przeładowania strony (wyposażenie sceny tylko w pamięci).
+      window.__SAVE_LOCKED = true;
+      if (WarScene.active) stopWarScene({ clear: false });
+      if (TowScene.active) stopTowScene();
+      if (RadarRangeScene.active) stopRadarScene();
+      AudioSys.init();
+      const ctx = AudioSys.ctx;
+      if (!SND) {
+        SND = utworzDzwiekiGry({ ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: soundSceneVolume(), baza: './sounds/ai/' });
+        window.__dzwieki = SND;
+        WeaponShotBus.on(soundSceneShot);
+        await SND.wczytaj();
+      } else {
+        SND.wlacz();
+      }
+      // Stary AudioSys wyciszony na czas sceny (silnik z pliku, shieldHit, railgun) — słychać tylko nowe dźwięki.
+      if (AudioSys.masterGain) {
+        SoundScene.oldMasterGain = AudioSys.masterGain.gain.value;
+        AudioSys.masterGain.gain.value = 0;
+      }
+      Object.assign(SoundScene, { active: true, starting: false, t: 0, opts, lastShield: ship.shield?.state || null, lastLocks: lockedTargets.length, critical: false, grind: 0 });
+      soundScenePlace();
+      if (!SoundScene.panel) {
+        SoundScene.panel = utworzPanelDzwiekow({
+          dzwieki: SND,
+          akcje: {
+            tarcza: (on) => soundSceneShield(on),
+            niezniszczalne: (on) => soundSceneUndying(on),
+            piraciStrzelaja: (on) => { SoundScene.pirFire = !!on; },
+            odnow: () => soundSceneRenew()
+          },
+          stan: () => ({ tarcza: SoundScene.shieldOn, niezniszczalne: SoundScene.undying, piraciStrzelaja: SoundScene.pirFire, zapisZablokowany: !!window.__SAVE_LOCKED, glosnoscZastepcza: !!SoundScene.masterFallback })
+        });
+      }
+      return { start: true, pirates: SoundScene.pirates.length, spot: SoundScene.spot };
+    }
+
+    function stopSoundScene() {
+      const S = SoundScene;
+      if (!S.active) return false;
+      S.active = false;
+      if (SND) SND.wylacz();
+      if (S.panel) { S.panel.usun(); S.panel = null; }
+      if (AudioSys.masterGain && S.oldMasterGain != null) AudioSys.masterGain.gain.value = S.oldMasterGain;
+      SensorSystem.clearArea('scena-dzwieki');
+      for (const p of S.pirates) if (p.npc && !p.npc.dead) p.npc.__dzwiekiNiezniszczalny = false;
+      return true;
+    }
+
+    /** Miejsce sceny (pusta przestrzeń jak bitwa w głębi — `pickDeepSpot`), Atlas z bronią sceny, piraci. */
+    function soundScenePlace() {
+      const S = SoundScene;
+      const bodies = [...planets, ...(window.smallBodies || [])]
+        .filter((b) => b && Number.isFinite(b.x) && Number.isFinite(b.y))
+        .map((b) => ({ x: b.x, y: b.y, r: (Number(b.r) || 0) + 400000 }));
+      const spot = Number.isFinite(S.opts?.x) && Number.isFinite(S.opts?.y) ? { x: S.opts.x, y: S.opts.y }
+        : pickDeepSpot(SUN, bodies, WAR_SCENE_DEFAULTS.deepRadius);
+      S.spot = { x: spot.x, y: spot.y };
+      const heading = 0;
+      if (typeof window.devTeleportTo === 'function') window.devTeleportTo(spot.x, spot.y, { angle: heading, quiet: true });
+      soundSceneEquip();
+      SensorSystem.revealArea('scena-dzwieki', spot.x, spot.y, SOUND_SCENE.area, Infinity);
+      soundSceneSpawnPirates();
+      soundSceneShield(true, true);
+    }
+
+    /** Wyposażenie sceny — tylko w pamięci (zapis zamknięty), montaż ścieżką gry (setHardpointMount + syncWeaponSystems). */
+    function soundSceneEquip() {
+      if (normalizePlayerHullId(PLAYER.activeHullId || ship.activeHullId) !== DEFAULT_PLAYER_HULL_ID) {
+        ensurePlayerOwnsHull(DEFAULT_PLAYER_HULL_ID);
+        applyPlayerHullProfile(DEFAULT_PLAYER_HULL_ID, { preserveDamageRatio: false, syncVisuals: true, persist: false });
+      }
+      const L = SOUND_SCENE.loadout;
+      for (const hp of Game.player.hardpoints || []) {
+        if (!hp || hp.destroyed) continue;
+        let id = Object.prototype.hasOwnProperty.call(L, hp.type) ? L[hp.type] : hp.mount;
+        if (id && !canMountWeaponOnHardpoint(WEAPONS[id], hp)) id = null;
+        setHardpointMount(hp, id, { skipInventory: true });
+      }
+      refillHardpointAmmo(Game.player.hardpoints, playerWeaponAmmo);
+      syncWeaponSystems();
+      if (ship.hull) ship.hull.val = ship.hull.max;
+    }
+
+    function soundSceneSpawnPirates() {
+      const S = SoundScene;
+      const a = Number(ship.angle) || 0;
+      const fx = Math.cos(a), fy = Math.sin(a), sx = -fy, sy = fx;
+      const ar = Number(ship.radius) || 600;
+      S.pirates = [];
+      for (const def of SOUND_SCENE.pirates) {
+        let x, y;
+        if (def.near) {
+          x = ship.pos.x + fx * def.along * ar;
+          y = ship.pos.y + fy * def.along * ar;
+        } else {
+          x = ship.pos.x + fx * def.along + sx * def.side;
+          y = ship.pos.y + fy * def.along + sy * def.side;
+        }
+        const res = spawnCallInShip(def.key, { mode: 'pirate', spawnPos: { x, y }, pos: { x, y }, spawnAngle: def.near ? a : Math.atan2(-(fy * def.along + sy * def.side), -(fx * def.along + sx * def.side)), exitK: 0 });
+        const npc = Array.isArray(res) ? res[0] : res;
+        if (!npc) { console.warn(`[Dźwięki] scena: brak okrętu ${def.key}`); continue; }
+        if (def.near) {
+          // Przy burcie: odstęp z promieni (kadłub NPC znany dopiero po spawnie).
+          const off = ar * 0.55 + (Number(npc.radius) || 200) * 0.6 + def.gap;
+          x += sx * def.side * off;
+          y += sy * def.side * off;
+          npc.x = x; npc.y = y;
+          if (npc.pos) { npc.pos.x = x; npc.pos.y = y; }
+        }
+        npc.vx = 0; npc.vy = 0;
+        if (npc.vel) { npc.vel.x = 0; npc.vel.y = 0; }
+        if (def.bron) soundSceneArmPirate(npc, def.bron);
+        if (!def.near) {
+          // W zasięgu własnej broni main (i dalej niż kadłuby z zapasem).
+          let range = Infinity;
+          for (const w of npc.weapons?.main || []) if (w?.weapon) range = Math.min(range, weaponRangeFor(npc, w.weapon, Number(w.weapon.baseRange) || 0));
+          const d = Math.sqrt(def.along * def.along + def.side * def.side);
+          const minD = ar * 0.55 + (Number(npc.radius) || 200) + 250;
+          const want = Number.isFinite(range) && range > 0 ? Math.max(minD, Math.min(d, range * SOUND_SCENE.inRange)) : d;
+          const k = want / d;
+          x = ship.pos.x + (fx * def.along + sx * def.side) * k;
+          y = ship.pos.y + (fy * def.along + sy * def.side) * k;
+          npc.x = x; npc.y = y;
+          if (npc.pos) { npc.pos.x = x; npc.pos.y = y; }
+        }
+        npc.__soundScene = true;
+        npc.__soundSceneAnchor = { x, y, angle: a };
+        npc.__dzwiekiNiezniszczalny = S.undying;
+        npc.ai = (dt) => soundScenePirateBrain(npc, dt);
+        S.pirates.push({ key: def.key, near: !!def.near, npc });
+      }
+    }
+
+    /** Broń sceny na uzbrojonych gniazdach pirata (te same wpisy `npc.weapons`, co z `equipNpcWeapons`; wieże od nowa). */
+    function soundSceneArmPirate(npc, bron) {
+      for (const [group, id] of Object.entries(bron)) {
+        const def = MASTER_WEAPONS[id];
+        const list = npc.weapons?.[group];
+        if (!def || !Array.isArray(list)) continue;
+        if (!list.length && group === HP.MISSILE) {
+          // Kadłub bez zaczepu rakietowego: gniazdo na osi kadłuba (jak wirtualne gniazdo builtin w DevScene.equipDeathRay).
+          if (!Array.isArray(npc.editorHardpoints)) npc.editorHardpoints = [];
+          const hp = { id: `dzwieki_rakiety_${npc.id ?? 'npc'}`, type: HP.MISSILE, size: def.size || 'M', rot: 90, x: 0, y: 0, mount: id };
+          npc.editorHardpoints.push(hp);
+          list.push({ hp, weapon: def });
+          continue;
+        }
+        for (const w of list) {
+          if (!w?.hp || def.mountType !== w.hp.type) continue;
+          w.weapon = def;
+          w.hp.mount = id;
+        }
+      }
+      npc._weaponsInit = false;
+    }
+
+    /**
+     * Mózg pirata sceny: trzyma swoje miejsce (nie ucieka, nie skacze) dziobem do Atlasa (działa piratów mają łuki
+     * 180° od burty / dziobu — Atlas za rufą byłby poza nimi), strzela tylko z przełącznikiem panelu.
+     */
+    function soundScenePirateBrain(npc, dt) {
+      const a = npc.__soundSceneAnchor;
+      if (!a || npc.dead) return;
+      const face = ship && !ship.destroyed ? Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x) : a.angle;
+      if (usesShipFlightModel(npc)) setFlightArrive(npc, a.x, a.y, { arrival: 0, speedMode: 'combat', face, faceNear: 0, faceFar: 0 });
+      if (SoundScene.pirFire) processAutonomousWeapons(npc, dt);
+    }
+
+    function soundSceneShield(on, quiet = false) {
+      SoundScene.shieldOn = !!on;
+      togglePlayerShieldForcedState(!on);
+      if (!quiet && SND) SND.zdarzenie(on ? 'tarczaWlaczona' : 'tarczaWylaczona', NaN, NaN);
+      SoundScene.lastShield = ship.shield?.state || null;
+    }
+
+    function soundSceneUndying(on) {
+      SoundScene.undying = !!on;
+      for (const p of SoundScene.pirates) if (p.npc) p.npc.__dzwiekiNiezniszczalny = SoundScene.undying;
+    }
+
+    /** Odnów cele: żywi piraci sceny znikają bez wraków, wraki w obszarze sceny — do puli, piraci od nowa. */
+    function soundSceneRenew() {
+      const S = SoundScene;
+      if (!S.active) return;
+      for (const p of S.pirates) if (p.npc && !p.npc.dead) dematerializeSupportUnit(p.npc);
+      const R2 = SOUND_SCENE.area * SOUND_SCENE.area;
+      for (const w of (window.wrecks || []).slice()) {
+        const wx = w?.x ?? w?.pos?.x, wy = w?.y ?? w?.pos?.y;
+        if (!Number.isFinite(wx) || (wx - S.spot.x) ** 2 + (wy - S.spot.y) ** 2 > R2) continue;
+        recycleWreckEntity(w);
+      }
+      soundSceneSpawnPirates();
+    }
+
+    // --- haki zdarzeń (wołane tylko przy SND ≠ null)
+    function soundSceneShot(d) {
+      if (!SND || !SoundScene.active) return;
+      const def = MASTER_WEAPONS[d.weaponId] || null;
+      // Rakiety: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny.
+      if (def && (def.category === 'rocket' || def.category === 'torpedo')) return;
+      const shooter = d.shooter;
+      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter === ship ? 'p' : (shooter?.id ?? 'npc'), d.isBeam && d.beamMode === 'continuous');
+    }
+    /** Obrona punktowa gracza (poza szyną strzałów): CIWS — seria z syntezy, laser PD, flak. */
+    function soundScenePdShot(kind, x, y) {
+      if (!SND || !SoundScene.active) return;
+      if (kind === 'ciws') SND.ciwsStrzal('p:ciws', x, y);
+      else SND.graj(kind === 'flak' ? 'flak' : 'laserPD', x, y, 0.8);
+    }
+    /** Trafienie pocisku w kadłub (po efekcie trafienia w pętli pocisków). */
+    function soundSceneBulletHit(b, hitNPC, x, y, ricochet) {
+      if (!SND || !SoundScene.active) return;
+      if (ricochet) { SND.zdarzenie('rykoszet', x, y); return; }
+      if (hitNPC?._isPlayerShip) { SND.zdarzenie('trafienieGracza', x, y); return; }
+      if (b.type === 'ciws') { SND.zdarzenie('trafienie', x, y, 0.5); return; }
+      const id = b.vfxKey || '';
+      SND.zdarzenie(id === 'special_yamato_cannon' || id === 'special_yamato_l' ? 'trafieniePlazma' : 'trafienie', x, y);
+    }
+    function soundSceneShieldHit(x, y) {
+      if (SND && SoundScene.active) SND.zdarzenie('tarczaTrafiona', x, y);
+    }
+    function soundSceneDeath(npc) {
+      if (!SND || !SoundScene.active) return;
+      SoundScene.lastDeath.t = SimClock.sim;
+      SoundScene.lastDeath.x = npc.x;
+      SoundScene.lastDeath.y = npc.y;
+      SND.zdarzenie('smiercOkretu', npc.x, npc.y);
+    }
+    /** Wybuch z gry (GameBlasts.blast): śmierć okrętu ma już swój dźwięk — wybuchy w jej pobliżu przez 0,6 s pomija. */
+    function soundSceneBlast(o) {
+      if (!SND || !SoundScene.active || !o) return;
+      const L = SoundScene.lastDeath;
+      const dx = (o.x || 0) - L.x, dy = (o.y || 0) - L.y;
+      if (SimClock.sim - L.t < 0.6 && dx * dx + dy * dy < 4000 * 4000) return;
+      if (o.profile === 'crush') return; // dym zgniotu — dźwięk daje zgniot sekcji
+      SND.zdarzenie('wybuchWtorny', o.x, o.y, o.profile === 'fighter' ? 0.6 : 1);
+    }
+    function soundSceneRocketLaunch(r) {
+      if (!SND || !SoundScene.active) return;
+      const id = r?.weaponDef?.id;
+      SND.graj(id === 'supernova_missile' ? 'supernovaStart' : 'rakieta', r.position.x, r.position.z, r.mode === LAUNCH_SPLIT ? 0.4 : 1);
+    }
+    function soundSceneRocketDetonate(r, x, y) {
+      if (!SND || !SoundScene.active) return;
+      SND.zdarzenie(r?.weaponDef?.id === 'supernova_missile' ? 'supernovaDetonacja' : 'rakietaTrafila', x, y);
+    }
+    function soundSceneRocketKilled(x, y) {
+      if (SND && SoundScene.active) SND.zdarzenie('rakietaZestrzelona', x, y);
+    }
+    /** Pierwszy kontakt kadłubów (CollisionFX 'impact'): uderzenie z prędkości, ciężki taran z Atlasem — `taran`. */
+    function soundSceneImpact(ev) {
+      if (!SND || !SoundScene.active || !ev) return;
+      if (!soundSceneActiveFor(ev.A) && !soundSceneActiveFor(ev.B)) return;
+      const v = Math.abs(Number(ev.impactSpeed ?? ev.approachSpeed) || 0);
+      const g = Math.min(1, 0.25 + v / SOUND_SCENE.impactFull);
+      SND.zdarzenie('kontaktKadlubow', ev.x, ev.y, g);
+      if ((ev.A === ship || ev.B === ship) && v >= SOUND_SCENE.ramSpeed) SND.zdarzenie('taran', ev.x, ev.y);
+    }
+    /** Tarcie (CollisionFX 'grind', co krok kontaktu): najsilniejsze w klatce → pętla `zgrzytPetla` w soundSceneFrame. */
+    function soundSceneGrind(ev) {
+      if (!SND || !SoundScene.active || !ev) return;
+      if (!soundSceneActiveFor(ev.A) && !soundSceneActiveFor(ev.B)) return;
+      const k = Math.abs(Number(ev.slideSpeed) || 0) * Math.max(1, Math.sqrt(Math.abs(Number(ev.bounceForce) || 0)));
+      if (k > SoundScene.grind) {
+        SoundScene.grind = k;
+        SoundScene.grindX = ev.x;
+        SoundScene.grindY = ev.y;
+      }
+    }
+    /** Węzeł kadłuba stracony poza bronią (zgniot przy zderzeniu). */
+    function soundSceneNodeLost(entity, x, y) {
+      if (!SND || !SoundScene.active || !soundSceneActiveFor(entity?.owner || entity)) return;
+      SND.zdarzenie('zgniotKadluba', x, y);
+    }
+    function soundSceneUi(name) {
+      if (SND && SoundScene.active) SND.zdarzenie(name, NaN, NaN);
+    }
+    /** Dysze SIDE gracza: dźwięk na zboczu włączenia (z kroku fizyki). */
+    function soundSceneRcs(left, right) {
+      if (!SND || !SoundScene.active) return;
+      const on = left > 0.2 || right > 0.2;
+      if (on && !soundSceneRcs._on) SND.zdarzenie('dyszaBoczna', ship.pos.x, ship.pos.y, 0.8);
+      soundSceneRcs._on = on;
+    }
+    /**
+     * Rdzenie reaktorów w scenie: cel „niezniszczalny” wypada z kroku ReactorGame (zniszczona osłona komory nie
+     * odlicza stopienia ani nie detonuje — inaczej Tempest i Yamato zabijały go mimo puli trzymanej na 1).
+     */
+    const _soundSceneReactorList = [];
+    function soundSceneReactorList(list) {
+      if (!SoundScene.active || !SoundScene.undying || !Array.isArray(list)) return list;
+      const out = _soundSceneReactorList;
+      out.length = 0;
+      for (let i = 0; i < list.length; i++) if (list[i]?.__dzwiekiNiezniszczalny !== true) out.push(list[i]);
+      return out;
+    }
+
+    /** Ochrona Atlasa w scenie: kadłub nie spada poniżej 1 (applyDamageToPlayer). */
+    function soundScenePlayerDamage(amount) {
+      if (!SoundScene.active) return amount;
+      return Math.min(amount, Math.max(0, ship.hull.val - 1));
+    }
+
+    /** Krok sceny (physicsStep): zapas amunicji sceny. */
+    function stepSoundScene(dt) {
+      const S = SoundScene;
+      if (!S.active) return;
+      S.t += dt;
+      S.ammoT += dt;
+      if (S.ammoT >= 2) {
+        S.ammoT = 0;
+        refillHardpointAmmo(Game.player.hardpoints, playerWeaponAmmo);
+      }
+    }
+
+    /** Klatka sceny (loop, raz na klatkę): silnik, tarcie, alarm, stany tarcz, namiar, pomiar szyny. */
+    function soundSceneFrame() {
+      const S = SoundScene;
+      if (!S.active || !SND) return;
+      // silnik MAIN z ciągu (jak dawny dźwięk silnika: input.main + dopalacz)
+      const boosting = (typeof boost !== 'undefined' && boost.state === 'active') || driveState.shiftBoostTimer > 0;
+      SND.silnikMain(ship.destroyed ? 0 : input.main, boosting);
+      // tarcie kadłubów: głośność z najsilniejszego kontaktu w klatce
+      if (S.grind > 0) {
+        SND.petla('zgrzyt', 'zgrzytPetla', Math.min(1, 0.2 + S.grind / SOUND_SCENE.grindFull), S.grindX, S.grindY);
+        S.grind = 0;
+      }
+      // kadłub krytyczny
+      const crit = ship.hull && ship.hull.max > 0 && ship.hull.val / ship.hull.max < SOUND_SCENE.hullCritical;
+      if (crit) SND.petla('alarm', 'alarm', 1, NaN, NaN);
+      // tarcza gracza: zapadnięcie (breaking)
+      const st = ship.shield?.state || null;
+      if (st !== S.lastShield) {
+        if (st === 'breaking') SND.zdarzenie('tarczaZapadnieta', ship.pos.x, ship.pos.y);
+        S.lastShield = st;
+      }
+      // tarcze piratów: zapadnięcie
+      for (const p of S.pirates) {
+        const n = p.npc;
+        if (!n || n.dead) continue;
+        const s = n.shield?.state || null;
+        if (s !== p.lastShield) {
+          if (s === 'breaking') SND.zdarzenie('tarczaZapadnieta', n.x, n.y);
+          p.lastShield = s;
+        }
+      }
+      // namiar / malowanie: nowy cel priorytetowy
+      // (cel dopisany malowaniem — T trzymane — podbija fcPaint.added; stuknięcie T to zwykły namiar)
+      const locks = lockedTargets.length;
+      if (locks > S.lastLocks) SND.zdarzenie(fcPaint.added > (S.lastPaint | 0) ? 'malowanieCelu' : 'namiar', NaN, NaN);
+      S.lastLocks = locks;
+      S.lastPaint = fcPaint.added;
+      SND.klatka();
+    }
+
+    function soundSceneState() {
+      const S = SoundScene;
+      return {
+        active: S.active, t: Math.round(S.t * 10) / 10, spot: S.spot, shieldOn: S.shieldOn, undying: S.undying, pirFire: S.pirFire,
+        saveLocked: !!window.__SAVE_LOCKED,
+        locks: lockedTargets.length,
+        bron: Object.fromEntries(Object.entries(Game.player.weapons || {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])),
+        pirates: S.pirates.map((p) => ({ key: p.key, near: p.near, bron: [...new Set(['main', 'aux', 'missile'].flatMap((g) => (p.npc?.weapons?.[g] || []).map((w) => w.weapon?.id)))], dead: !!p.npc?.dead, hp: Math.round(p.npc?.hp || 0), ownBrain: !!p.npc?.ai && !!p.npc?.__soundSceneAnchor, x: Math.round(p.npc?.x || 0), y: Math.round(p.npc?.y || 0), r: Math.round(p.npc?.radius || 0) })),
+        player: { x: Math.round(ship.pos.x), y: Math.round(ship.pos.y), hull: Math.round(ship.hull?.val || 0), hullMax: Math.round(ship.hull?.max || 0), shield: ship.shield?.state || null, r: Math.round(ship.radius || 0) },
+        dzwieki: SND ? SND.statystyki() : null
+      };
+    }
+    window.soundSceneState = soundSceneState;
+    /** Zdarzenie szyny zderzeń (z nasłuchu dymu zgniotu `_crushContact` — 'impact' i 'grind'): tarcie ma `pointCount`. */
+    function soundSceneContact(ev) {
+      if ('pointCount' in ev) soundSceneGrind(ev);
+      else soundSceneImpact(ev);
     }
 
     // AWANS DO PEŁNEGO NPC (E6, src/game/trafficPromotion.js): encja z kursem trafiona przez gracza (pocisk, taran)
@@ -25864,13 +26365,16 @@
       const label = FC_GROUP_LABEL[group];
       if (!(weapons[group]?.length > 0)) {
         pushZoneMessage(`${label}: BRAK BRONI NA KADŁUBIE`, 1.4, { tone: 'warn' });
+        if (SND) soundSceneUi('odmowa');
         return;
       }
       if (ctrl) {
         const on = fcToggleAuto(fireControl, group);
         pushZoneMessage(`${label}: AUTO ${on ? 'WŁ.' : 'WYŁ.'}`, 1.3);
+        if (SND) soundSceneUi(on ? 'ogienAutoWl' : 'zmianaGrupy');
         return;
       }
+      if (SND) soundSceneUi('zmianaGrupy');
       fcSetInHand(fireControl, group, weapons);
       pushZoneMessage(`${label}: W RĘKU (LPM)`, 1.3);
     }
@@ -25878,6 +26382,8 @@
     function fcPostureKey() {
       const posture = fcCyclePosture(fireControl);
       pushZoneMessage(`POSTAWA: ${FC_POSTURE_LABEL[posture]}`, 1.4);
+      // ogień swobodny = wszystkie wieże na auto strzelają same → potwierdzenie; zawężenie / wstrzymanie → przeskok grupy
+      if (SND) soundSceneUi(posture === 'free' ? 'ogienAutoWl' : 'zmianaGrupy');
     }
 
     // =============== CIWS (point-defence) ===============
@@ -25934,6 +26440,7 @@
       spawnBulletImpactEffect(rb, rb.x, rb.y, fxScale);
       ActiveCarrier.clear();
       rb.life = -1;
+      if (SND) soundSceneRocketKilled(rb.x, rb.y);
       return true;
     }
     window.killRocketThreat = killRocketThreat;
@@ -26135,6 +26642,7 @@
       // z rekordu wieżyczki p_aux, nośnik — wieżyczka. Odrzut wieży — strona gry (RW-26).
       Turret2D.recoilAt(wDef?.id || 'ciws_mk1', px, py, ship);
       RenderCommands.writer.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
+      if (SND) soundScenePdShot('ciws', px, py);
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
 
@@ -26154,6 +26662,7 @@
       // z dema bronie-webgpu): wylot z wieżyczki, impuls do celu, trafienie. Wiązka jedzie
       // z wieżyczką (nośnik), trafienie — z celem.
       RenderCommands.writer.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
+      if (SND) soundScenePdShot('laser', muzzle.x, muzzle.y);
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -26207,6 +26716,7 @@
       // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy); odrzut wieży — strona gry (RW-26).
       Turret2D.recoilAt(wDef.id, muzzle.x, muzzle.y, ship);
       RenderCommands.writer.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
+      if (SND) soundScenePdShot('flak', muzzle.x, muzzle.y);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
     }
 
@@ -26337,6 +26847,8 @@
         amount -= s / taken;
         ship.shield.regenTimer = ship.shield.regenDelay * stance.shieldDelay;
       }
+      // Scena dźwięków: Atlas nie ginie (kadłub ≥ 1 — alarm kadłuba krytycznego bez końca gry).
+      if (SND && amount > 0) amount = soundScenePlayerDamage(amount);
       if (amount > 0) ship.hull.val = Math.max(0, ship.hull.val - amount);
       if (!ship.destroyed && prevHull > 0 && ship.hull.val <= 0) {
         handlePlayerDestroyed();
@@ -26436,6 +26948,7 @@
     // Zasługę za kill policzył już onBridgeCommandLost.
     function finishBridgeKill(npc) {
       if (!npc || npc.dead) return;
+      if (SND) soundSceneDeath(npc);
       npc.dead = true;
       npc.hp = 0;
       npc.respawnTimer = 3 + Math.random() * 6;
@@ -26474,6 +26987,8 @@
         if (byPlayer) notePlayerHitMarker(npc, HIT_MARK.SHIELD, dmg);
         return;
       }
+      // Scena dźwięków: cel „niezniszczalny” przyjmuje trafienie, ale pula nie schodzi poniżej 1.
+      if (npc.__dzwiekiNiezniszczalny === true) remaining = Math.min(remaining, Math.max(0, npc.hp - 1));
 
       npc.hp -= remaining;
       if (npc.fleetEntry) {
@@ -26484,6 +26999,7 @@
         npc.dead = true;
         npc.respawnTimer = 3 + Math.random() * 6;
         registerFactionKill(npc);
+        if (SND) soundSceneDeath(npc);
         // Kapsuły ratunkowe (E22): obrys z kadłuba przed wrakiem, wyrzut po chwili (pula kapsuł).
         launchShipEscapePods(npc);
         const npcType = String(npc.type || '').toLowerCase();
@@ -26623,11 +27139,14 @@
     const _crushOpts = { x: 0, y: 0, size: 0, profile: CRUSH_SMOKE_TUNE.profile, vx: 0, vy: 0, hostKey: 0 };
     function noteHullNodeLost(entity, hull, u, v, x, y) {
       HullDamageEvents.nodeLost(entity, hull, u, v, x, y);
+      if (SND) soundSceneNodeLost(entity, x, y);
       if (entity?.fuelTank) crushSmoke.lost(entity, x, y, HullBodies.simTime);
       else if (entity?.isWorldPiece || entity?.worldDebris) atmoNodeLost(entity, hull, x, y, NaN);
     }
     const _crushContact = (ev) => {
       if (!ev) return;
+      // Scena dźwięków: pierwszy kontakt i tarcie kadłubów (ten sam nasłuch — bez nowych słuchaczy szyny zderzeń).
+      if (SND) soundSceneContact(ev);
       const t = HullBodies.simTime;
       if (ev.A?.fuelTank) crushSmoke.contact(ev.A, t);
       if (ev.B?.fuelTank) crushSmoke.contact(ev.B, t);
@@ -27492,6 +28011,7 @@
 
             registerShieldImpact(hitNPC, hitX, hitY, npcDamage, shieldFxClassForBullet(b));
             if (window.AudioSys) playShieldHitSound(hitX, hitY);
+            if (SND) soundSceneShieldHit(hitX, hitY);
 
             // Odejmij HP tarczy
             const absorbed = Math.min(hitNPC.shield.val, npcDamage);
@@ -27567,6 +28087,7 @@
             ActiveCarrier.set(hitCarrier);
             spawnBulletImpactEffect(b, hitX, hitY, 1.0, _impactHit);
             ActiveCarrier.clear();
+            if (SND) soundSceneBulletHit(b, hitNPC, hitX, hitY, decision === HIT_RICOCHET);
 
             if (decision === HIT_PENETRATE) {
               // Rzaz, wyjście albo zakleszczenie w tym samym kroku (droga od punktu wejścia).
@@ -29165,6 +29686,8 @@
       trafficSalvageStep(dt);
       // Scena „holowanie” (?scena=holowanie): rozstawienie, śmierć statków, kolejka wraków dla złomiarzy.
       stepTowScene(dt);
+      // Scena „dźwięki” (?scena=dzwieki): zapas amunicji sceny.
+      stepSoundScene(dt);
       // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
       ServiceTugGame.restorePose();
       let tPhysSection0 = performance.now();
@@ -29446,6 +29969,7 @@
       const driveMain = clamp(thrusterDrive?.main ?? input.main, 0, 1);
       const driveLeft = clamp(thrusterDrive?.leftSide ?? input.leftSide, 0, 1);
       const driveRight = clamp(thrusterDrive?.rightSide ?? input.rightSide, 0, 1);
+      if (SND) soundSceneRcs(driveLeft, driveRight);
       const driveRetro = clamp(thrusterDrive?.retro ?? input.retro, 0, 1);
       const driveTurn = clamp((thrusterDrive?.torque || 0) + (thrusterDrive?.mainTorqueAssist || 0), -1, 1);
       const commandTurn = clamp(Number(thrusterCommand?.manualTorque) || 0, -1, 1);
@@ -30167,7 +30691,7 @@
       // Powietrze budowli bazy (src/game/story/pirateBaseAtmosphere.js): wypływ z wyrw, pożary, wyrwy jadą z ciałami.
       stepPirateBaseAtmosphere(dt);
       // Rdzenie reaktorów: stopienie, detonacje (rozpad, fala), strumienie i kule plazmy.
-      ReactorGame.step(dt, allDestructibles);
+      ReactorGame.step(dt, SND ? soundSceneReactorList(allDestructibles) : allDestructibles);
       const destructorMs = performance.now() - tDestructor0;
       PerfHUD.addTiming('destructorTime', destructorMs);
       PerfHUD.addTiming('collisionTime', HullBodies.engine.perf.lastCollisionMs || 0);
@@ -31938,6 +32462,8 @@
           ship.engineSound.gain.gain.setTargetAtTime(0, AudioSys.ctx.currentTime, 0.1);
         }
       }
+      // Scena dźwięków: silnik MAIN z syntezy, tarcie, alarm, tarcze, namiar, pomiar szyny (poza sceną — nic).
+      if (SND) soundSceneFrame();
       // --------------------
 
       const tDraw0 = performance.now();
@@ -36759,6 +37285,10 @@
       // Złomiarze NPC (E24): ?scena=holowanie — plac wraków przy Ziemi, hol i cięcie (blok „GÓRNICY I ZŁOMIARZE”).
       if (warQuery.get('scena') === 'holowanie' && !storyCampaign) {
         setTimeout(() => { try { startTowScene(); } catch (err) { console.error('[Holowanie] start sceny:', err); } }, 1000);
+      }
+      // Scena dźwięków: ?scena=dzwieki — Atlas, piraci i panel dźwięków (blok „SCENA DŹWIĘKI”, reguła `dzwiek`).
+      if (warQuery.get('scena') === 'dzwieki' && !storyCampaign) {
+        setTimeout(() => { startSoundScene().catch((err) => console.error('[Dźwięki] start sceny:', err)); }, 1000);
       }
     }
     if (newGameButton) {
