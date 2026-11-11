@@ -1449,6 +1449,7 @@ export class SnapshotPacker {
     i32[bi + TI.UID] = tc.code(tcb + 1, r.uid);
     i32[bi + TI.WEAPON] = tc.code(tcb + 2, r.weaponId);
     i32[bi + TI.FX_KEY] = tc.code(tcb + 3, r.fxKey);
+    i32[bi + TI.READY] = r.ready | 0;
     f64[b + TF.WX] = raw(r.wx);
     f64[b + TF.WY] = raw(r.wy);
     f64[b + TF.ANG] = raw(r.ang);
