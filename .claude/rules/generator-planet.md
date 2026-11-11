@@ -249,6 +249,31 @@ paths:
   rzek i więcej prawdziwych zakrętów), okno pod kamerą 6144 × 3072. Okno ma stały kształt 2 : 1 i zapas 1,5 —
   na ekranie 5120 × 1440 okno 4096 daje 0,27–0,53 teksela na piksel.
 
+## Planety przygotowane: mapy jako pliki (opis, liczby, format: `docs/OPIS-generator-planet.md` § 10.17)
+
+- Decyzja użytkownika (2026-11-11): planety pierwszego przejścia gry (kampania) są PRZYGOTOWANE i dostarczane jako
+  pliki map („to jest pewniak”); tryb „sandbox” (nowa gra bez fabuły) generuje planety z ziarna, z ostrzeżeniem
+  o czekaniu. Jeden generator dla obu — plik to zapisany wynik wypieku.
+- `planetGenFiles.js`: `exportPlanet(renderer, baked)` → { meta, files }, `loadPlanet(baker, url)` → wynik o kształcie
+  `bakeSystem` (przez `PlanetGenBaker.importPlanet`). Katalog planety: `meta.json` (cały `spec`, `levels` z próby,
+  rozmiary), obrazy map (dzień, noc, chmury — WebP stratny; maski, połysk i alfa — PNG bezstratny), `height.i16.bin`
+  (Int16 co 0,5 m, różnice w wierszu, gzip), `drain.*.bin` (siatka spływu i dane miejsc). Wiersz 0 = biegun S.
+- Mapa rzeźby NIE jest w pliku: przy wczytaniu wysokość idzie do celu pola i liczy ją ten sam graf rzeźby co
+  w wypieku (nachylenia, szorstkość). Mapy 8-bitowe są przepisywane do celów tego samego rodzaju co po wypieku
+  (`copy8`: bajty sRGB przez krzywą odwrotną, alfa z osobnego obrazu — kanwa 2D premultiplikuje alfę, więc mapa
+  z alfą idzie jako dwa obrazy).
+- Okna pod kamerą planety z plików piecze dalej wypiekacz na karcie gracza — z `levels` i siatki spływu z pliku,
+  więc układ rzek i brzegów jest ten sam u każdego; `spec` w pliku jest kompletny (wczytanie nie woła
+  `describePlanet`). Zmiana generatora = ponowne wypalenie plików.
+- Pliki spakowane gzipem mają rozszerzenie `.bin`, nie `.gz`: serwery (Vite w dev) podają `.gz`
+  z `Content-Encoding: gzip` i przeglądarka rozpakowuje je sama; wczytanie rozpoznaje gzip po bajtach 1F 8B.
+- `importPlanet` tworzy pipeline'y przejść przepisania synchronicznie przy pierwszym użyciu — przy wpięciu do gry
+  wołać na ekranie ładowania albo dopisać do rozgrzewki.
+- Narzędzia: `node scripts/webgpu/planeta-wypal.mjs --nazwa terran-21 [--styl terran --ziarno 21 --mapa 8192
+  --rzeki 4096 --out .tmp/planety/<nazwa>]`, podgląd `dema/planeta-zblizenie.html?plik=<nazwa>` (albo
+  `?plik=ścieżka/od/korzenia`), testy `node --test tests/planetGenFiles.test.mjs`. Gdzie pliki mają leżeć
+  w wydaniu (repozytorium, LFS, osobna paczka) — do decyzji; dziś `.tmp/planety/` (poza gitem).
+
 ## Mapa terenu — trzeci poziom (prototyp; opis, wzorzec i różnice: `docs/OPIS-generator-planet.md` § 10.13–10.15)
 
 - CEL użytkownika: ostrzał miast z orbity i desant (minigra RTS o miasta) — wokół miasta ma być krajobraz jak na
@@ -366,7 +391,8 @@ paths:
   `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `?widok=orbita|gora`, `?bryla=0|1`, `?chmury=0…1`, `window.__zbl`: `setView`,
   `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
   `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
-  (demo: `?ultra=1|0`, `?mapa=2048|4096`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`;
+  (demo: `?ultra=1|0`, `?mapa=2048|4096|8192`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`,
+  `?plik=<nazwa>` — planeta z plików map;
   orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
   `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,
   `--bez-raf 1` — start bez klatek rAF), demo: `?pogoda=0…12|off`, `?czas=`, `?mapaPogody=2048`; testy

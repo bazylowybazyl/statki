@@ -151,6 +151,46 @@ export function bakeMaterial(name, fragmentNode) {
   return m;
 }
 
+// ── WCZYTANIE MAP Z PLIKÓW (planetGenFiles.js, PlanetGenBaker.importPlanet) ───────────────────────────────────────
+// Przepisanie mapy z tekstury źródłowej do celu tego samego rodzaju co po wypieku (te same próbniki i mipmapy).
+// Mapy 8-bitowe: RGB ze źródła A; alfa z kanału R źródła B (uCopy.x = 1) albo 1. uCopy.y = 1 — bajty źródła są
+// w sRGB, a cel jest sRGB: zapis przez krzywą odwrotną (cel koduje z powrotem — bajty zostają te same).
+// Wysokość: źródło R32F [km] → kanał x celu pola (z niego graf rzeźby liczy nachylenia i szorstkość jak w wypieku).
+export const COPY_DEFS = Object.freeze({ uCopy: 'vec4' });
+function copySource(float32) {
+  const t = new THREE.DataTexture(float32 ? new Float32Array(1) : new Uint8Array(4), 1, 1,
+    float32 ? THREE.RedFormat : THREE.RGBAFormat, float32 ? THREE.FloatType : THREE.UnsignedByteType);
+  t.minFilter = THREE.NearestFilter;
+  t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+export function buildCopyGraph() {
+  const U = bakeUniforms(COPY_DEFS);
+  // (osobne tekstury zastępcze — węzły tekstur skleja się po uuid tekstury; uv-atrapa — pułapka 7)
+  const srcA = texture(copySource(false), vec2(0.0));
+  const srcB = texture(copySource(false), vec2(0.0));
+  const node = Fn(() => {
+    const p = ivec2(int(floor(screenCoordinate.x)), int(floor(screenCoordinate.y))).toVar();
+    const a = srcA.load(p).toVar();
+    const b = srcB.load(p).toVar();
+    const lin = mix(pow(a.rgb.add(0.055).div(1.055), vec3(2.4)), a.rgb.div(12.92), step(a.rgb, vec3(0.04045)));
+    return vec4(mix(a.rgb, lin, U.uCopy.y), mix(float(1.0), b.r, U.uCopy.x));
+  })();
+  return { U, material: bakeMaterial('PlanetGenCopy', node), srcA, srcB };
+}
+export function buildHeightCopyGraph() {
+  const U = bakeUniforms(COPY_DEFS);
+  const src = texture(copySource(true), vec2(0.0));
+  const node = Fn(() => {
+    const p = ivec2(int(floor(screenCoordinate.x)), int(floor(screenCoordinate.y)));
+    return vec4(src.load(p).r.add(U.uCopy.w), 0.0, 0.0, 0.0);
+  })();
+  return { U, material: bakeMaterial('PlanetGenCopyHeight', node), src };
+}
+
 // ── RZEŹBA (wspólna; RGBA16F) ─────────────────────────────────────────────────────────────────────────────────────
 // Mapa rzeźby dla materiału powierzchni generatora (planetGenSurface.tsl.js): x — wysokość [km] (planety z wodą:
 // 0 = poziom morza), y / z — nachylenie dh/d(wschód), dh/d(północ) [km/km] z operatora Sobela 3 × 3 na prawdziwych

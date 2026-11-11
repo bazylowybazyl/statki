@@ -18,6 +18,7 @@ import { PlanetGenBaker } from '../src/3d/planetGen/planetGenBaker.js';
 import { createGenNearBody } from '../src/3d/planetGen/planetGenNear.js';
 import { freshSeed, mix32 } from '../src/3d/planetGen/planetGenRng.js';
 import { describePlace } from '../src/3d/planetGen/planetGenPlace.js';
+import { exportPlanet, loadPlanet } from '../src/3d/planetGen/planetGenFiles.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -130,7 +131,10 @@ const S = {
   // TRYB ULTRA (`?ultra=1|0`, domyślnie na szerokich ekranach): mapa planety 4096 × 2048 zamiast 2048 × 1024, siatka
   // rzek 4096 (dwa razy gęstsza sieć), okno pod kamerą 6144 × 3072. `?mapa=`, `?rzeki=`, `?wycinek=` — wprost.
   ultra: ULTRA,
-  mapW: pickNum('mapa', [2048, 4096], ULTRA ? 4096 : 2048),
+  // PLANETA Z PLIKÓW (`?plik=nazwa` → /.tmp/planety/nazwa/ albo `?plik=ścieżka/od/korzenia`): gotowe mapy zamiast
+  // wypieku — planety przygotowane (planetGenFiles.js; zapis: scripts/webgpu/planeta-wypal.mjs)
+  file: params.get('plik') ? (params.get('plik').includes('/') ? `/${params.get('plik').replace(/^\/+|\/+$/g, '')}/` : `/.tmp/planety/${params.get('plik')}/`) : null,
+  mapW: pickNum('mapa', [2048, 4096, 8192], ULTRA ? 4096 : 2048),
   drainW: pickNum('rzeki', [1024, 2048, 4096], ULTRA ? 4096 : 2048),
   patchW: pickNum('wycinek', [2048, 4096, 6144, 8192], ULTRA ? 6144 : (innerWidth * DPR > 3000 ? 4096 : 2048)),
   body: null, baked: null, spec: null, vents: [], ventIdx: 0, lavaStrength: 1,
@@ -266,20 +270,30 @@ async function build(style = S.style, seed = null) {
     if (S.body) { scene.remove(S.body.group); S.body.dispose(); S.baked.dispose(); S.body = null; }
     S.style = style;
     S.seed = seed ?? STYLE_SEED[style];
-    const type = typeOf(style);
+    // planeta z plików: opis i rodzaj z pliku, mapy wczytane zamiast wypieku
+    let filed = null;
+    if (S.file && seed == null) {
+      const meta = await (await fetch(`${S.file}meta.json`)).json();
+      await baker.compile([meta.spec.type]);
+      S.paused = true;
+      try { filed = await loadPlanet(baker, S.file); } finally { S.paused = false; }
+      S.seed = filed.spec.seed;
+    }
+    const type = filed ? filed.spec.type : typeOf(style);
     const volcanic = type === 'volcanic';
-    await baker.compile([type]);
+    if (!filed) await baker.compile([type]);
     const spec0 = describePlanet({ type, seed: S.seed });
     // wulkaniczna — noc bez lawy: żar daje materiał zbliżenia (w dzień i w nocy), mapa nocy zostaje dla świateł kolonii
     // bohater dema (domyślne ziarno planety z wodą): zachmurzenie ze środka zakresu generatora (0,26–0,48; z ziarna
     // wyszło najmniejsze) — bryły chmur widać od razu; planety z „Losuj” mają je z ziarna. `?chmury=0…1` — wprost.
     const cover = params.has('chmury') ? num('chmury', 0.33) : (S.seed === STYLE_SEED[style] ? 0.33 : null);
     const heroClouds = !volcanic && cover != null && spec0.clouds ? { ...spec0.clouds, cover } : null;
-    const spec = volcanic ? describePlanet({ type, seed: S.seed, night: { lava: 0 } })
-      : (heroClouds ? describePlanet({ type, seed: S.seed, clouds: heroClouds }) : spec0);
+    const spec = filed ? filed.spec : (volcanic ? describePlanet({ type, seed: S.seed, night: { lava: 0 } })
+      : (heroClouds ? describePlanet({ type, seed: S.seed, clouds: heroClouds }) : spec0));
     S.paused = true;
-    let baked;
-    try { baked = (await baker.bakeSystem([spec], { size: S.mapW, mask: true, drainSize: S.drainW }))[0]; } finally { S.paused = false; }
+    let baked = filed;
+    if (baked) S.paused = false;
+    else { try { baked = (await baker.bakeSystem([spec], { size: S.mapW, mask: true, drainSize: S.drainW }))[0]; } finally { S.paused = false; } }
     const vents = volcanic ? await findVents(baked) : await findCoasts(baked);
     if (gen !== S.gen) { baked.dispose(); return; }
     S.lavaStrength = volcanic ? 0.55 + 0.6 * spec0.night.lava : 0;
@@ -687,7 +701,7 @@ function updateStat() {
   const texPx = (act ? act.st : 2 * Math.PI / S.baked.size) * R_GAME * S.zoom;
   const lines = [
     `${S.view === 'orbit' ? `widok orbitalny, ${(S.orb.dist - 1).toFixed(2)} R nad powierzchnią` : `1 px = ${(1 / S.zoom).toFixed(2)} j.`} · planeta R = ${R_GAME.toLocaleString('pl')} j. · ${b.spec.look.style || b.spec.name}, ziarno ${b.spec.seed}`,
-    `${act ? `wycinek ${P.width} × ${P.height}, poziom ${act.level}` : `mapa planety ${S.baked.size}`}${S.view === 'orbit' ? '' : ` · teksel ${texPx.toFixed(1)} px`} · wypieków ${P.stats.bakes}, ostatni ${S.stats.bakeMs.toFixed(1)} ms`
+    `${act ? `wycinek ${P.width} × ${P.height}, poziom ${act.level}` : `mapa planety ${S.baked.size}${S.baked.fromFiles ? ' z plików' : ''}`}${S.view === 'orbit' ? '' : ` · teksel ${texPx.toFixed(1)} px`} · wypieków ${P.stats.bakes}, ostatni ${S.stats.bakeMs.toFixed(1)} ms`
       + ` · ${S.stats.fps.toFixed(0)} kl/s${S.stats.gpuMs != null ? ` · GPU ${S.stats.gpuMs.toFixed(2)} ms` : ''}`
   ];
   $('stat').textContent = lines.join('\n');
@@ -769,6 +783,20 @@ window.__zbl = {
   build, rebuild, goVent, orbitAt, viewAll, toggleEruption, nearestVent, seedForStyle, viewDirs,
   /** Mapa terenu miejsca: `openPlace(kierunek planety)` / `pickDir(x, y ekranu)`; stan w `terrain` (place, ready, stats). */
   openPlace, closePlace, pickDir, terrain: TER,
+  /** Zapis planety do plików (planetGenFiles.js): `exportPlanet(nazwa)` → lista { name, size }; dane kawałkami base64 przez `exportChunk`. */
+  exportPlanet: async (name = '') => {
+    const out = await exportPlanet(renderer, S.baked, { name });
+    const bufs = new Map();
+    for (const f of out.files) bufs.set(f.name, new Uint8Array(await f.blob.arrayBuffer()));
+    window.__zblExport = bufs;
+    return { meta: out.meta, files: out.files.map((f) => ({ name: f.name, size: f.blob.size })) };
+  },
+  exportChunk: (name, offset, len) => {
+    const b = window.__zblExport.get(name).subarray(offset, offset + len);
+    let str = '';
+    for (let i = 0; i < b.length; i += 32768) str += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+    return btoa(str);
+  },
   /** Kadr: środek [R], zoom [px / j.]. */
   setView(cx, cy, zoom) { S.cx = cx; S.cy = cy; if (zoom) S.zoom = zoom; },
   /** Przewija symulację (erupcja, lawa, przenikanie wycinków) o `sec` sekund bez rysowania. */

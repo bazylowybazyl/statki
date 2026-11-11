@@ -18,7 +18,8 @@ import { resizeRenderTarget } from '../renderTargetResize.js';
 import { describePlanet, plannedMaps, plannedBytes } from './planetGenSpec.js';
 import { PLANET_GEN_TYPE } from './planetGenTypes.js';
 import {
-  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, buildMaskGraph, setBakeUniforms, drainTexture, CLOUD_CYCLONES
+  buildReliefGraph, buildSpecGraph, buildNightGraph, buildCloudGraph, buildMaskGraph, buildCopyGraph, buildHeightCopyGraph,
+  setBakeUniforms, drainTexture, CLOUD_CYCLONES
 } from './planetGenBake.tsl.js';
 import { computeDrainage } from './planetGenDrainage.js';
 import { PLACE_T, PLACE_M, encodeClimate } from './planetGenPlace.js';
@@ -96,6 +97,8 @@ export class PlanetGenBaker {
     else if (pass === 'clouds') g = buildCloudGraph();
     else if (pass === 'mask') g = buildMaskGraph(F);
     else if (pass === 'gas') g = GAS_BAKE.build();
+    else if (pass === 'copy8') g = buildCopyGraph();
+    else if (pass === 'copyH') g = buildHeightCopyGraph();
     else throw new Error(`planetGen: nieznane przejście „${key}”`);
     this._graphs.set(key, g);
     return g;
@@ -366,6 +369,81 @@ export class PlanetGenBaker {
     this.stats.lastGpuMs = gpuMs;
     for (const it of items) { it.out.ms.total = total; it.out.ms.system = items.length; it.out.ms.gpu = gpuMs; }
     return items.map((it) => it.out);
+  }
+
+  /**
+   * PLANETA Z PLIKÓW (planetGenFiles.js): wynik o tym samym kształcie co `bakeSystem`, złożony z map wczytanych
+   * z dysku — bez próby, pola i liczenia spływu. `pack`: { spec, size, levels, maps (opis z meta.json), images
+   * { day, dayA?, night, clouds, spec, mask… } (tekstury z bajtami jak w celu wypieku), height (Float32Array, km,
+   * size × size / 2), drainage { width, height, data, heightM, temp, moist, uniforms, stats } albo null }.
+   * Mapy idą do celów tych samych rodzajów co po wypieku (te same próbniki i mipmapy); mapę rzeźby liczy z wysokości
+   * ten sam graf co w wypieku. Okna pod kamerą piecze dalej wypiekacz (poziomy i siatka spływu są w wyniku).
+   * Pierwsze wywołanie tworzy pipeline'y dwóch przejść przepisania synchronicznie — wołać na ekranie ładowania.
+   */
+  importPlanet(pack) {
+    const r = this.renderer;
+    const { spec, size: W, levels } = pack;
+    const H = W / 2;
+    const texKm = 2 * Math.PI * spec.rKm / W;
+    const out = { spec, size: W, maps: {}, targets: [], rt: {}, levels, gas: null, bytes: plannedBytes(spec, W), ms: {}, fromFiles: true };
+    out.dispose = () => {
+      for (const t of out.targets) t.dispose();
+      out.targets.length = 0;
+      if (out.drainage) { out.drainage.texture.dispose(); out.drainage = null; }
+    };
+    const name = (m) => `planetGen:${spec.type}:${spec.seed}:${m}`;
+    const prev = r.getRenderTarget();
+    try {
+      if (pack.drainage) {
+        const texture = drainTexture(pack.drainage.data, pack.drainage.width, pack.drainage.height);
+        r.initTexture(texture);
+        out.drainage = { ...pack.drainage, texture };
+      }
+      const g8 = this.graph('copy8');
+      const copy = (key, opts) => {
+        const src = pack.images[key];
+        const m = pack.maps[key];
+        if (!src || !m) return;
+        const alpha = pack.images[`${key}A`] || null;
+        g8.srcA.value = src;
+        g8.srcB.value = alpha || src;
+        const t = makeTarget(m.w, m.h, { ...opts, name: name(key) });
+        out.targets.push(t);
+        this._draw('copy8', t, { uCopy: [alpha ? 1 : 0, opts.srgb ? 1 : 0, 0, 0] });
+        out.maps[key] = t.texture;
+        out.rt[key] = t;
+      };
+      copy('day', { srgb: true });
+      // rzeźba: wysokość do kanału x celu pola, potem graf rzeźby jak w wypieku (nachylenia, szorstkość)
+      const tu = SOLID_TYPES[spec.type].uniformsFor(spec, { size: W, rKm: spec.rKm, texKm });
+      const hTex = new THREE.DataTexture(pack.height, W, H, THREE.RedFormat, THREE.FloatType);
+      hTex.minFilter = THREE.NearestFilter;
+      hTex.magFilter = THREE.NearestFilter;
+      hTex.generateMipmaps = false;
+      hTex.colorSpace = THREE.NoColorSpace;
+      hTex.needsUpdate = true;
+      this._ensureField(W, H);
+      this.graph('copyH').src.value = hTex;
+      this._draw('copyH', this.field, { uCopy: [0, 0, 0, 0] });
+      const relief = makeTarget(W, H, { half: true, name: name('relief') });
+      out.targets.push(relief);
+      this._draw('relief', relief, {
+        uSeed: [...spec.seedOffset, spec.seedInt], uRes: [W, H, 1 / W, 1 / H], uGeo: [spec.rKm, texKm, 0, 0],
+        uWin: [0, 0, 1e-3, 0], uFrX: [1, 0, 0], uFrY: [0, 1, 0], uFrZ: [0, 0, 1],
+        uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, tu.water ? 1 : 0, 0], uQ: levels.uQ, uQ2: levels.uQ2, uRel: spec.relief.rough
+      });
+      out.maps.relief = relief.texture;
+      out.rt.relief = relief;
+      hTex.dispose();
+      copy('spec', { red: true });
+      copy('night', { srgb: true });
+      copy('clouds', { srgb: true });
+      copy('mask', {});
+    } finally {
+      r.setRenderTarget(prev);
+    }
+    this.stats.imports = (this.stats.imports || 0) + 1;
+    return out;
   }
 
   /**

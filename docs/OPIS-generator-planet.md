@@ -827,3 +827,54 @@ różnić; palety roślinności planety (oliwkowa, zielona…) bez zmian; zakola
 
 Narzędzia: seria zbliżeń `.tmp/planeta-zblizenie/seria.mjs` dostała cel `tajga` (chłodny wilgotny las w głębi lądu)
 i wypisuje czasy wypieku; testy — `tests/planetGenDrainage.test.mjs` (smugi osadu, barwy wspólne z mapą terenu).
+
+### 10.17. Planety przygotowane: mapy jako pliki, planeta 8192 × 4096 (2026-11-11, demo)
+
+Decyzja użytkownika po rozmowie o Star Citizen: na pierwsze przejście gry przygotowujemy zestaw planet („gracz,
+grając po raz pierwszy, nie wie, jakie są planety”), tryb „sandbox” z generowaniem przyjdzie później z ostrzeżeniem
+o czekaniu. Planety przygotowane mają być plikami map: „to jest pewniak”. Polecenie: „jedziemy z mapami. Rób,
+planeta ultra”.
+
+Dlaczego pliki, a nie przepis liczony u gracza: każdy gracz widzi dokładnie tę samą planetę (różne karty i sterowniki
+mogą dać minimalnie inne wysokości, a na płaskim terenie to zmienia bieg rzeki — miejsce postawione ręcznie przy
+ujściu mogłoby stać obok rzeki; różnicy między kartami nie mierzyliśmy, mamy jedną maszynę), to, co sprawdzone,
+trafia do gracza, i nie ma czekania.
+
+Zrobione:
+
+- `src/3d/planetGen/planetGenFiles.js` — zapis wypieczonej planety do plików i wczytanie (format w nagłówku pliku
+  i w regule obszaru), `PlanetGenBaker.importPlanet` — wynik o kształcie `bakeSystem` z map z dysku; dwa przejścia
+  przepisania w `planetGenBake.tsl.js` (`copy8`, `copyH`).
+- `scripts/webgpu/planeta-wypal.mjs` — piecze planetę w demie (domyślnie mapa 8192 × 4096, siatka rzek 4096)
+  i ściąga pliki na dysk; demo planety: `?plik=<nazwa>`, `?mapa=8192`.
+
+Planeta bohater dema (terran, ziarno 21), mapa 8192 × 4096:
+
+| Plik | Rozmiar |
+|---|---|
+| day.webp (dzień, jakość 0,95) | 6,90 MB |
+| day.a.png (lód morski) | 5,78 MB |
+| night.webp | 0,03 MB |
+| clouds.webp | 2,86 MB |
+| mask.png | 11,55 MB |
+| height.i16.bin (wysokość) | 25,98 MB |
+| drain.*.bin (rzeki i dane miejsc) | 12,15 MB |
+| razem | 65,3 MB |
+
+Czasy (headless, ta maszyna): wypiek na żywo 8192 — 1,8–2,7 s (spływ na CPU 1,1–1,8 s); zapis do plików
+w przeglądarce 20–27 s (kodowanie obrazów); wczytanie z plików 1,3–1,4 s (pobranie i dekodowanie 0,7–0,8 s,
+przepisanie na karcie 0,56–0,66 s).
+
+Zgodność z wypiekiem na żywo (ten sam kadr z orbity, sama mapa planety, 1600 × 900): średnia różnica 0,06–0,21
+na 255, największa 19, żaden piksel ponad 8 w jasności — ślad stratnej kompresji mapy dnia. Kadry rysowane przez
+okno pod kamerą są identyczne co do bitu albo różnią się o 1–2 (okno liczy się tak samo w obu przypadkach).
+
+Błąd po drodze: pliki z rozszerzeniem `.gz` serwer deweloperski podaje z `Content-Encoding: gzip`, więc przeglądarka
+rozpakowywała je sama, a moduł próbował drugi raz („Failed to fetch”, demo nie wstawało) → rozszerzenie `.bin`
+i rozpoznawanie gzipa po pierwszych bajtach.
+
+Czego nie ma / nie sprawdzono: pamięć karty przy mapie 8192 nie była mierzona (z rozmiarów celów: mapy planety
+~0,9 GB z mipmapami, do tego cel pola 536 MB na czas wczytania); słabsze presety powinny dostać pomniejszoną mapę
+z tego samego pliku — nie zrobione; wybór miejsca na pliki w wydaniu (repozytorium / LFS / osobna paczka) — do
+decyzji, dziś `.tmp/planety/`; narzędzie wypala jedną planetę naraz (bez listy planet kampanii); olbrzymy gazowe
+nie mają zapisu do plików; pipeline'y przepisania powstają synchronicznie przy pierwszym wczytaniu.
