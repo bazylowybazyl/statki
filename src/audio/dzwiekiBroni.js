@@ -115,6 +115,23 @@ export const WIAZKA_START = 'wiazkaStart';
 /** Rozerwanie pocisku flak (zapalnik). */
 export const FLAK_ROZPRYSK = 'flakRozprysk';
 
+/**
+ * Działko myśliwca: strzelec z `type` `fighter` / `interceptor` strzelający bronią lufową (nie rakietą, torpedą ani
+ * bombą — te zostają na swoich ścieżkach) gra `mysliwiecDzialko` zamiast dźwięku broni okrętowej. Id i plik należą do
+ * warstwy dźwięków świata (src/audio/dzwiekiSwiata.js); dopóki id nie ma w tabeli warstwy — dźwięk broni z mapy.
+ */
+export const MYSLIWIEC_DZIALKO = 'mysliwiecDzialko';
+const BEZ_DZIALKA_MYSLIWCA = new Set(['rocket', 'torpedo', 'bomb', 'hangar']);
+/** Czy strzelec to myśliwiec (pole `type` encji). */
+export function jestMysliwcem(strzelec) {
+  const t = strzelec ? strzelec.type : null;
+  return t === 'fighter' || t === 'interceptor';
+}
+/** Czy broń myśliwca to działko (nie rakieta, torpeda, bomba). */
+export function dzialkoMysliwca(def) {
+  return !BEZ_DZIALKA_MYSLIWCA.has(String(def?.category || ''));
+}
+
 /** Rodziny plazmy — trafienie pociskiem w kadłub gra `trafieniePlazma` zamiast kinetycznego `trafienie`. */
 const PLAZMA = new Set(['helios_laser_s', 'helios_laser', 'helios_lance_l', 'special_plasma_gatling', 'special_yamato_cannon', 'special_yamato_l']);
 

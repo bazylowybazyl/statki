@@ -4,10 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
-import { DZWIEKI, KATEGORIE } from '../src/audio/dzwiekiLogika.js';
+import { DZWIEKI, KATEGORIE, dzwiekStrzalu } from '../src/audio/dzwiekiLogika.js';
 import {
   WYSTRZAL_BRONI, BEZ_DZWIEKU, LADOWANIE_BRONI, HEXLANCE_GOTOWY, WIAZKA_TRAFIENIE, WIAZKA_START, FLAK_ROZPRYSK,
-  SERIA, PETLA_WIAZKI, wystrzalBroni, zdarzenieTrafienia
+  SERIA, PETLA_WIAZKI, wystrzalBroni, zdarzenieTrafienia, MYSLIWIEC_DZIALKO, jestMysliwcem, dzialkoMysliwca
 } from '../src/audio/dzwiekiBroni.js';
 import { DZWIEKI_BRONI } from '../scripts/dzwieki-elevenlabs.lista-bronie.mjs';
 import { DZWIEKI as LISTA } from '../scripts/dzwieki-elevenlabs.lista.mjs';
@@ -96,4 +96,26 @@ test('lista generatora: każdy dźwięk uzbrojenia w liście, tabeli i manifeśc
     const strzal = !w.petla && !DZWIEKI[w.id].narastanie;
     if (strzal) assert.match(w.prompt, /instant attack/, `${w.id}: wystrzał / trafienie bez „instant attack”`);
   }
+});
+
+test('działko myśliwca: `mysliwiecDzialko`, gdy jest w tabeli warstwy; bez niego — dźwięk broni z mapy (oba stany)', () => {
+  assert.ok(jestMysliwcem({ type: 'fighter' }) && jestMysliwcem({ type: 'interceptor' }));
+  assert.ok(!jestMysliwcem({ type: 'npc' }) && !jestMysliwcem(null));
+  assert.ok(dzialkoMysliwca(MASTER_WEAPONS.gunship_autocannon) && !dzialkoMysliwca(MASTER_WEAPONS.aerial_torpedo) && !dzialkoMysliwca(MASTER_WEAPONS.fighter_bomb));
+  const W = MASTER_WEAPONS.gunship_autocannon;
+  const zId = { ...DZWIEKI, [MYSLIWIEC_DZIALKO]: { kat: 'dzialo' } };
+  const bezId = { ...DZWIEKI };
+  delete bezId[MYSLIWIEC_DZIALKO];
+  // id jest w tabeli: działko myśliwca → mysliwiecDzialko; rakieta, torpeda, bomba myśliwca — swoja ścieżka
+  assert.equal(dzwiekStrzalu('gunship_autocannon', W, false, true, zId), MYSLIWIEC_DZIALKO);
+  assert.equal(dzwiekStrzalu('heavy_autocannon', MASTER_WEAPONS.heavy_autocannon, false, true, zId), MYSLIWIEC_DZIALKO);
+  assert.equal(dzwiekStrzalu('aerial_torpedo', MASTER_WEAPONS.aerial_torpedo, false, true, zId), 'rakietaS');
+  assert.equal(dzwiekStrzalu('fighter_bomb', MASTER_WEAPONS.fighter_bomb, false, true, zId), null);
+  // id nie ma: dźwięk broni z mapy, bez wyjątku
+  assert.equal(dzwiekStrzalu('gunship_autocannon', W, false, true, bezId), 'dzialkoS');
+  // okręt (nie myśliwiec) nigdy nie gra dźwięku myśliwca
+  assert.equal(dzwiekStrzalu('gunship_autocannon', W, false, false, zId), 'dzialkoS');
+  // stan bieżącej tabeli (przed i po scaleniu dźwięków świata) — wynik zawsze grywalny
+  const d = dzwiekStrzalu('gunship_autocannon', W, false, true);
+  assert.equal(d, DZWIEKI[MYSLIWIEC_DZIALKO] ? MYSLIWIEC_DZIALKO : 'dzialkoS');
 });

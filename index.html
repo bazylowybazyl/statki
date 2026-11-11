@@ -1474,7 +1474,7 @@
       migrujGlosnoscGlowna, GLOSNOSC_GLOWNA_DOMYSLNA
     } from "./src/audio/dzwiekiLogika.js";
     // Dźwięki uzbrojenia (mapa broń → dźwięk, ładowanie superbroni, trafienia wiązką) — reguła `dzwiek`, § „Uzbrojenie”.
-    import { wystrzalBroni, zdarzenieTrafienia, LADOWANIE_BRONI, HEXLANCE_GOTOWY, WIAZKA_TRAFIENIE, FLAK_ROZPRYSK } from "./src/audio/dzwiekiBroni.js";
+    import { wystrzalBroni, jestMysliwcem, zdarzenieTrafienia, LADOWANIE_BRONI, HEXLANCE_GOTOWY, WIAZKA_TRAFIENIE, FLAK_ROZPRYSK } from "./src/audio/dzwiekiBroni.js";
     import { createK7HallSound, stepK7HallSound, K7_HALL_SOUND_TUNE } from "./src/game/k7HallSound.js";
     import { LAUNCH_SPLIT } from "./src/game/rockets/rocketSim.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
@@ -19315,7 +19315,8 @@
       // nie mają adaptera — grają ze strzału szyny (mapa uzbrojenia).
       if (def && def.category === 'rocket' && !def.forceCanvas && window.rocketSystem3D) return;
       const shooter = d.shooter;
-      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous');
+      // myśliwiec (`type` fighter / interceptor): działko gra `mysliwiecDzialko` (gdy jest w tabeli warstwy)
+      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous', jestMysliwcem(shooter));
     }
     /** Obrona punktowa gracza (poza szyną strzałów): CIWS — seria z syntezy, laser PD, flak. */
     function soundScenePdShot(kind, x, y, weaponId) {

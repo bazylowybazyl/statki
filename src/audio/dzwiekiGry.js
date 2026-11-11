@@ -451,13 +451,15 @@ export function utworzDzwiekiGry(opts) {
    */
   const dzwiekBroniGracza = new Map();
   const dzwiekBroniNpc = new Map();
-  function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false) {
+  const dzwiekBroniMysliwca = new Map();
+  // `mysliwiec` — strzelec to myśliwiec (działko → `mysliwiecDzialko`, gdy jest w tabeli warstwy; `dzwiekStrzalu`).
+  function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false, mysliwiec = false) {
     stat.zdarzenia.strzal = (stat.zdarzenia.strzal || 0) + 1;
     if (wylaczony || !slyszalne(x, y, kadrFn ? kadrFn() : null)) return;
-    const pamiec = gracza ? dzwiekBroniGracza : dzwiekBroniNpc;
+    const pamiec = mysliwiec ? dzwiekBroniMysliwca : (gracza ? dzwiekBroniGracza : dzwiekBroniNpc);
     let id = pamiec.get(weaponId);
     if (id === undefined) {
-      id = jestCiws(weaponId) && wystrzalBroni(weaponId) === undefined ? SERIA : dzwiekStrzalu(weaponId, def, gracza);
+      id = jestCiws(weaponId) && wystrzalBroni(weaponId) === undefined ? SERIA : dzwiekStrzalu(weaponId, def, gracza, mysliwiec, TAB);
       pamiec.set(weaponId, id);
     }
     if (id === null) return;

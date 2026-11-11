@@ -8,7 +8,7 @@
 // Dźwięki z plików to ROBOCZE nagrania z generatora AI (public/sounds/ai/, manifest.json — pochodzenie);
 // dwa dźwięki są z syntezy (src/audio/przepisySyntezy.js): silnik MAIN i seria CIWS.
 
-import { tabelaDzwiekowBroni, wystrzalBroni } from './dzwiekiBroni.js';
+import { tabelaDzwiekowBroni, wystrzalBroni, MYSLIWIEC_DZIALKO, dzialkoMysliwca } from './dzwiekiBroni.js';
 
 export const dbToGain = (db) => Math.pow(10, db / 20);
 export const gainToDb = (g) => (g > 0 ? 20 * Math.log10(g) : -Infinity);
@@ -215,8 +215,11 @@ export function kategoriaBroniNpc(weaponId, def = null) {
 /**
  * Strzał z szyny broni → id dźwięku: najpierw mapa uzbrojenia (`WYSTRZAL_BRONI` — id, `'seria'` CIWS z syntezy,
  * `'wiazka'`, `null` = bez dźwięku); broń spoza mapy — gracz `STRZAL_GRACZA`, reszta dźwiękiem kategorii jak NPC.
+ * `mysliwiec` — strzelec to myśliwiec: działko gra `mysliwiecDzialko`, gdy to id jest w tabeli warstwy (`tabela`);
+ * bez niego — jak wyżej (rakieta, torpeda i bomba myśliwca zawsze jak wyżej).
  */
-export function dzwiekStrzalu(weaponId, def, gracza) {
+export function dzwiekStrzalu(weaponId, def, gracza, mysliwiec = false, tabela = DZWIEKI) {
+  if (mysliwiec && tabela && tabela[MYSLIWIEC_DZIALKO] && dzialkoMysliwca(def)) return MYSLIWIEC_DZIALKO;
   // Mapa uzbrojenia (src/audio/dzwiekiBroni.js) — jedna dla gracza i NPC: id, 'seria', 'wiazka' albo null (bez dźwięku).
   const zMapy = wystrzalBroni(weaponId);
   if (zMapy !== undefined) return zMapy;
