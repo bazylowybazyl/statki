@@ -54,6 +54,9 @@ test('tabela hali zgodna z manifestem dźwięków (pliki, pętle, kategorie); g�
   assert.ok(status.length >= 5 && status.every((f) => typeof f.tekst === 'string' && f.tekst.length > 20));
   const cel = (id) => KATEGORIE[DZWIEKI_HALI[id].kat].cel + (DZWIEKI_HALI[id].poziom || 0);
   assert.ok(cel(K7_HALL_VOICE.status) > cel('halaTlo') + 6, 'głos wyraźnie nad tłem hali');
+  // zwolnienie zacisków gra razem z komunikatem o mocowaniach — nie może go zagłuszyć; mechanizmy nad tłem
+  assert.ok(cel('zaciskiZwolnienie') <= cel(K7_HALL_VOICE.clamps), 'zaciski nie głośniej niż spiker');
+  for (const id of ['serwo', 'syk', 'buchPary', 'zaciskiZwolnienie']) assert.ok(cel(id) > cel('halaTlo'), `${id} nad tłem`);
 });
 
 test('tabela hali ma wszystkie dźwięki reżysera (pętle i jednorazowe)', () => {

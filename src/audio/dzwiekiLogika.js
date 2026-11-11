@@ -98,19 +98,22 @@ export const DZWIEKI = Object.freeze({
  * tło i pompy, przepływ paliwa, ramiona w ruchu, syk zaworów i upustu (pętle z głośnością z pozy / obwiedni zaworu),
  * złączki, zaciski, gong i głos spikera. Gra w zwykłej grze (kampania i swobodna), gdy kamera jest przy hali —
  * niezależnie od sceny dźwięków. `szyna: 'megafon'` — głos idzie przez filtr głośnika i echo hali.
- * Użytkownik 2026-11-11: „Wszystko jest zdecydowanie za głośne” — hala zaczyna cicho (tło −34, mechanizmy −29…−25).
+ * Proporcje w hali (cel kategorii + `poziom`, dB): tło −34, pompownia −31, przepływ −33, serwo i syk −31, buch pary
+ * −27, zapięcie złączki −29, zaciski −25, gong −30, spiker −25 — zaciski nie głośniej niż równoczesny komunikat
+ * („Magnetic clamps released…”). Kategorie wspólne ze sceną wróciły 2026-11-11 do poziomów pierwotnych (+4 dB po
+ * naprawie podbicia szyny), więc mechanizmy hali mają tu −4 dB względem kategorii — proporcje bez zmian.
  */
 export const DZWIEKI_HALI = Object.freeze({
   halaTlo: { kat: 'tlo', petla: true, limit: 1, ui: true },
   halaMaszyny: { kat: 'tlo', petla: true, limit: 1, poziom: 3 },
-  przeplyw: { kat: 'drobne', petla: true, limit: 4, poziom: -4 },
-  serwo: { kat: 'drobne', petla: true, limit: 4, poziom: -2 },
-  syk: { kat: 'drobne', petla: true, limit: 6, poziom: -2 },
-  buchPary: { kat: 'drobne', limit: 4, odstep: 60, zwloka: 2, ton: 0.05, glos: 0.1, poziom: 2 },
-  zlaczeZapiecie: { kat: 'drobne', limit: 4, odstep: 60, zwloka: 2, ton: 0.05, glos: 0.1 },
-  zaciskiZwolnienie: { kat: 'trafienie', limit: 2, odstep: 200, zwloka: 2, ton: 0.03, glos: 0.08 },
-  zaciskiZalaczenie: { kat: 'trafienie', limit: 2, odstep: 200, zwloka: 2, ton: 0.03, glos: 0.08 },
-  gong: { kat: 'interfejs', limit: 1, odstep: 1500, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: 2 },
+  przeplyw: { kat: 'drobne', petla: true, limit: 4, poziom: -8 },
+  serwo: { kat: 'drobne', petla: true, limit: 4, poziom: -6 },
+  syk: { kat: 'drobne', petla: true, limit: 6, poziom: -6 },
+  buchPary: { kat: 'drobne', limit: 4, odstep: 60, zwloka: 2, ton: 0.05, glos: 0.1, poziom: -2 },
+  zlaczeZapiecie: { kat: 'drobne', limit: 4, odstep: 60, zwloka: 2, ton: 0.05, glos: 0.1, poziom: -4 },
+  zaciskiZwolnienie: { kat: 'trafienie', limit: 2, odstep: 200, zwloka: 2, ton: 0.03, glos: 0.08, poziom: -4 },
+  zaciskiZalaczenie: { kat: 'trafienie', limit: 2, odstep: 200, zwloka: 2, ton: 0.03, glos: 0.08, poziom: -4 },
+  gong: { kat: 'interfejs', limit: 1, odstep: 1500, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: -2 },
   // Spiker hali (głos z syntezy mowy ElevenLabs): statusy ringu co 40–75 s, komunikaty obsługi stanowiska gracza.
   spikerStatus: { kat: 'glos', limit: 1, odstep: 3000, zwloka: 0, ton: 0, glos: 0, ui: true, szyna: 'megafon' },
   spikerOdcumowanie: { kat: 'glos', limit: 1, odstep: 3000, zwloka: 0, ton: 0, glos: 0, ui: true, szyna: 'megafon' },
