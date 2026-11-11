@@ -86,7 +86,7 @@ const WARP_BOOST_SPEED = 1200;
 
 // Billboardy lamp pozycyjnych (ShipLights3D) od tego promienia kadłuba na ekranie — jak
 // buildPositionLightWorldSprites (poniżej i tak pomija); widoków nie budujemy na zapas.
-const LIGHT_VIEW_MIN_PX = 2.5;
+const LIGHT_VIEW_MIN_PX = 10;   // = NAV_SPRITE_FADE_PX[0] (shipLightRuntime.js — od tego promienia lampy w ogóle są)
 // Lampy proxy w puli billboardów ShipLights3D (MAX_NAV_LIGHT_SPRITES, wspólna z NPC — pełne kadłuby idą pierwsze):
 // setki cywilów przy porcie × 6 lamp to kilka razy więcej — przy nadmiarze zostają kadłuby największe na ekranie.
 const PROXY_LIGHT_SPRITE_BUDGET = 384;

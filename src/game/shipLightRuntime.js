@@ -8,6 +8,9 @@ import { navBlinkCode, navBlinkValue, navPhaseOf, navLightHullKeyOf } from '../d
 import { SHIP_DECK_LIGHTS } from '../data/shipDeckLights.js';
 import { shipPowerLook } from './shipPower.js';
 
+/** Billboardy lamp nawigacyjnych: od promienia kadłuba [px ekranu] zaczynają się, od drugiej wartości — pełne. */
+export const NAV_SPRITE_FADE_PX = Object.freeze([10, 30]);
+
 // Stan zasilania okrętu (src/game/shipPower.js): mnożnik świateł zewnętrznych (billboardy, rozlew lamp na sąsiadów,
 // reflektory, siatka świateł) — `nav` dla lamp nawigacyjnych, inaczej kanał lamp i reflektorów; migotanie po trafieniu
 // dużego kalibru (`__powerFlick` 0..1) przygasza. Encja bez stanu i bez migotania — 1.
@@ -1052,14 +1055,15 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
     const s = Math.sin(angle);
     const navPhase = navPhaseOf(entity);
 
-    // Daleki zoom: statek ma pojedyncze piksele — wygaszamy lampy zamiast
-    // malować plamę większą od kadłuba.
+    // Daleki zoom: lampy gasną, zanim statek zrobi się mały na ekranie (NAV_SPRITE_FADE_PX — promień kadłuba
+    // w px), zamiast malować plamy porównywalne z kadłubem (zgłoszenie użytkownika 2026-11-11: przy oddaleniu lampy
+    // „mocno się powiększają, są za duże”; halo skaluje się z kadłubem — shipLights3D.minHaloPx).
     let fade = 1;
     if (hasZoom) {
       const radiusWorld = getEntityRadiusWorld(entity, grid, spriteScale, options);
       const screenRadiusPx = radiusWorld * zoom;
-      if (screenRadiusPx < 2.5) continue;
-      fade = smoothstep01(2.5, 9, screenRadiusPx);
+      if (screenRadiusPx < NAV_SPRITE_FADE_PX[0]) continue;
+      fade = smoothstep01(NAV_SPRITE_FADE_PX[0], NAV_SPRITE_FADE_PX[1], screenRadiusPx);
     }
 
     for (let i = 0; i < markers.length && out.length < maxSprites; i++) {

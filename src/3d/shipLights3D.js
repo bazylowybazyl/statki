@@ -31,7 +31,10 @@ const NAV_LIGHT_DEFAULTS = Object.freeze({
   coreGain: 6.5,   // mnożnik HDR jasnego rdzenia lampy
   haloGain: 1.3,   // mnożnik miękkiego halo (świadomie pod progiem bloomu)
   haloScale: 19,   // promień halo = radius lampy * haloScale
-  minHaloPx: 3.2   // minimalny rozmiar ekranowy błysku (mryganie z daleka)
+  // Minimalny promień błysku na ekranie: tylko przeciw migotaniu subpiksela. Zgłoszenie użytkownika 2026-11-11 („zielone
+  // światła — jak oddalę kamerę, mocno się powiększają; są za duże”, też lampy nawigacyjne): dawne 3,2 px trzymało
+  // błysk przy oddaleniu w stałym rozmiarze, więc rósł względem kadłuba — halo skaluje się teraz z kadłubem.
+  minHaloPx: 1.0
 });
 
 function getNavLightTuning() {
