@@ -51,7 +51,8 @@ export const MISSION01_HINTS = Object.freeze({
   flight: { keys: ['W', 'S', 'A', 'D', 'Q', 'E'], title: 'Sterowanie', text: 'Atlas stoi dziobem do bramy, silniki główne są zimne. W — zapłon i ciąg naprzód (najpierw dym z dysz, potem płomień), S — wstecz, A / D — obrót, Q / E — ruch na boki. Wyprowadź Atlasa naprzód przez bramę G-01.' },
   scoutBay: { keys: ['H'], title: 'Fregata zwiadu', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła; czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. W ładowni Atlasa czeka fregata zwiadu: H — wrota się otwierają, fregata wylatuje, a ty przejmujesz jej stery i kamerę (Atlas stoi w miejscu). Jej wzrok sięga 10 km. Niezamaskowanego Atlasa obrona zobaczy z ~9 km — podleć nim najwyżej do skraju mgły.' },
   scoutFly: { keys: ['W', 'S', 'A', 'D', 'I', 'X', '3', '4', 'T', 'H'], title: 'Zwiad', text: 'W / S — prędkość, A / D — skręt, Q / E — w bok. I — maskowanie fregaty (obrona jej nie widzi; pęka przy trafieniu i taranie). 3 — OKO: sonda odsłania mgłę w kole pod kursorem (do 22 km od fregaty, z baterii). 4 — DALEKI SKAN w stronę kursora: klin do 70 km zostawia echa — przybliżone położenie, klasę masy i liczbę obiektów. X — skan: fala oznacza wrogie kontakty w 10 km od fregaty. T nad kontaktem — oznacz go (trzymaj T i przeciągnij kursor — kilka naraz). Obleć bazę dookoła — to, co leży za habitatem, widać dopiero z drugiej strony. Bez maskowania obrona wykryje fregatę bliżej niż ~3 km od bazy. H — fregata sama wraca do ładowni.' },
-  scout: { keys: ['PPM', 'M'], title: 'Mgła wojny', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła. Czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. Rozpoznaj ją: PPM w pustej przestrzeni → DRON ZWIADU (leci w punkt i odsłania mgłę wokół siebie; także mapa CIC, M) albo podejdź ostrożnie — niezamaskowanego Atlasa obrona wykryje z ~9 km.' },
+  czujka: { keys: ['PPM'], title: 'Czujka', text: 'Trzymaj PPM i wskaż kursorem kierunek. Struna czujki drga tym mocniej, im silniejszy sygnał technologiczny w tę stronę — ząbki na strunie to okręty w namiarze (duże — budowle); czerwień znaczy, że oni mają ciebie. Błona wokół Atlasa wybrzusza się ku planetom. Szare X-y w przestrzeni to kontakt: wiesz, że coś tam jest, ale nie wiesz co. Puść PPM — czujka gaśnie. Menu rozkazów jest teraz pod Alt + PPM.' },
+  scout: { keys: ['Alt', 'PPM', 'M'], title: 'Mgła wojny', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła. Czujniki mają kontakt, ale nie mówią, czym jest. Rozpoznaj go: Alt + PPM w pustej przestrzeni → DRON ZWIADU (leci w punkt i odsłania mgłę wokół siebie; także mapa CIC, M) albo podejdź ostrożnie — niezamaskowanego Atlasa obrona wykryje z ~9 km.' },
   warp: { keys: ['CapsLock', '9', 'A', 'D', 'Shift'], title: 'Skok warp', text: 'Kurs jest wyznaczony; TRAVEL TO może wykonać podróż sam. W studni grawitacji Ziemi skok nie ruszy — najpierw odleć za jej brzeg (TRAVEL TO wyprowadzi okręt sam). Jeśli przejmiesz stery, A / D obróć dziób według wskaźnika WARP. Dziób do 20° od kursu (zielone pasmo to ±5°): naciśnij CapsLock (albo 9) — komputer obróci dziób na kurs i sam wyjdzie przy punkcie kursu. Dalej od kursu skok idzie do celu przed dziobem albo awaryjnie 400 km w dziób. CapsLock / 9 w skoku — wyjście od razu. Shift to dopalacz.' },
   cloak: { keys: ['I'], title: 'Maskowanie', text: 'I — maskowanie. Czujniki i działa piratów cię nie widzą. Pęka przy strzale, taranie i trafieniu; energia wystarcza na minutę.' },
   sneak: { keys: [], title: 'Podejście', text: 'Nie strzelaj. Wleć w lejek między ramionami bazy i ustaw się na początku rzędu okrętów przy lewym ramieniu — znacznik na ekranie.' },
@@ -175,7 +176,6 @@ export async function mission01(ctx) {
   if (run('scout')) {
     const off = 4200;
     const massOffset = { x: Math.cos(site.axis + 2.1) * off, y: Math.sin(site.axis + 2.1) * off };
-    const massAt = { x: site.building.x + massOffset.x, y: site.building.y + massOffset.y };
     api.fog.mass(massId, {
       x: site.building.x, y: site.building.y,
       offset: massOffset,
@@ -186,33 +186,29 @@ export async function mission01(ctx) {
     });
     api.say(frigate ? D.massContactScout : D.massContact, 'radio');
     watchAlarm();
-    let droneSent = false;
-    ctx.spawn(async (sub) => { await sub.event('droneLaunched'); droneSent = true; });
-    const scoutGoing = () => droneSent || api.scout.launched();
-    api.ui.marker('mass', massAt, 'Nieznana masa', {
-      action: frigate ? { text: 'H → fregata zwiadu' } : { mouse: 'rmb', text: 'PPM → dron zwiadu' }
-    });
+    // CZUJKA (2026-11-11, decyzja użytkownika: „po przylocie nigdzie kamera nie leci. Gracz klika PPM i pokaże mu się,
+    // gdzie są wrogowie, i będzie musiał tam polecieć”): bez przelotu kamery i bez znacznika miejsca — kierunek pokazuje
+    // czujka na PPM (struna z zębami grup w namiarze, kontakty jako obłok X-ów; src/ui/czujkaView.js).
     // budowle bazy rozpoznane przez stronę gracza (zbiorniki i magazyn leżą za habitatem — trzeba oblecieć)
     const total = api.site.structureCount(site);
     const reconDone = () => api.site.structuresSeen(site) >= total;
     api.ui.objective('scout', frigate
-      ? 'Rozpoznaj sygnaturę masy — fregata zwiadu z ładowni (H)'
-      : 'Rozpoznaj sygnaturę masy — dron zwiadu (PPM) albo ostrożne podejście',
+      ? 'Znajdź wroga czujką (trzymaj PPM) i rozpoznaj go fregatą zwiadu z ładowni (H)'
+      : 'Znajdź wroga czujką (trzymaj PPM) i rozpoznaj go — dron zwiadu (Alt + PPM) albo ostrożne podejście',
     // licznik budowli od startu fregaty (do 2026-10-11 dopiero od pierwszej rozpoznanej budowli)
     frigate && total > 0 ? () => (api.scout.launched() ? `budowle ${api.site.structuresSeen(site)} / ${total}` : '') : undefined);
-    hint(frigate ? 'scoutBay' : 'scout', () => spotted || api.site.scouted(site) || api.scout.controlling());
-    if (frigate) {
-      ctx.spawn(async (sub) => {
-        await sub.until(() => api.scout.controlling() || spotted);
-        if (!spotted) hint('scoutFly', () => spotted || reconDone() || !api.scout.controlling());
-      });
-    }
-    await api.cinema.lookAt(massAt, {
-      viewHeight: 30000, inSec: 1.8, holdSec: 30, outSec: 1.4,
-      holdUntil: () => scoutGoing() || spotted || api.site.scouted(site)
+    const scoutStarted = () => spotted || api.site.scouted(site) || api.scout.controlling();
+    ctx.spawn(async (sub) => {
+      // najpierw czujka (do pierwszego użycia), potem zwiad
+      hint('czujka', () => api.sensors.czujkaUsed() || scoutStarted());
+      await sub.until(() => api.sensors.czujkaUsed() || scoutStarted());
+      if (spotted || api.site.scouted(site)) return;
+      if (!api.scout.controlling()) hint(frigate ? 'scoutBay' : 'scout', scoutStarted);
+      if (!frigate) return;
+      await sub.until(() => api.scout.controlling() || spotted);
+      if (!spotted) hint('scoutFly', () => spotted || reconDone() || !api.scout.controlling());
     });
     await ctx.until(() => spotted || api.site.scouted(site));
-    api.ui.marker('mass', null);
     if (!spotted) api.say(D.identified, 'radio');
     // OBLOT BAZY fregatą (wzrok 10 km): ostrzeżenie w celu misji, gdy fregata podchodzi pod zasięg wykrycia.
     if (frigate && !spotted && total > 0 && !reconDone() && !api.scout.lost()) {

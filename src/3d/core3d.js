@@ -33,7 +33,7 @@ import { zbierzZakres } from './zakresyWysylki.js';
 import { BloomGryCompute } from './tsl/bloomCompute.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
 import { CZYSZCZENIE_AB, renderCzyszczac } from './czyszczenieWPassie.js';
-import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
+import { FxFrame, FX_DISTORT_LAYER, FX_OVERLAY_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
 import { syncSky3D } from './sky3D.js';
@@ -179,7 +179,7 @@ export const GPU_REQUIRED_LIMITS = Object.freeze([
 const SHIELD_RENDER_LAYER = 7;
 // Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
 // tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
-const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER]);
+const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER, FX_OVERLAY_LAYER]);
 // Warstwy passów sceny gry w kolejności rozgrzewki (wpisy „start gry” rejestru, klatka zero — prewarmVisibleNow).
 const GAME_PASS_LAYERS = Object.freeze([0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]);
 // Kamera perspektywy z góry (gałąź płaska syncCamera): wysokość nad płaszczyzną gry liczona z FOV tak, żeby
@@ -744,10 +744,11 @@ export const Core3D = {
   // Infrastruktura efektów GPU (zadanie 12-B, src/3d/fx/fxFrame.js, docs/webgpu/FX-INFRA.md): kroki
   // compute raz na klatkę przed passami (addFxStep), początek pul i zegar efektów (fx.origin, fx.time),
   // siatka świateł (fx.grid; renderer.lighting = GridLighting „optIn”), światła efektów (fx.lights),
-  // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget).
+  // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget),
+  // warstwa NAKŁADKI (FX_OVERLAY_LAYER → overlayTarget; czujniki — po mgle wojny, bez bloomu).
   // fxStats — pomiar klatki (PerfHUD, harness). fxFrameKey — klucz klatki efektów z zewnątrz (worker: numer strony gry —
   // klatka efektów raz na stronę, nie raz na takt rAF workera; NaN — renderer.info.frame, tryb off / inline).
-  fx: null, fxStats: null, fxNowMs: NaN, fxFrameKey: NaN, distortionTarget: null,
+  fx: null, fxStats: null, fxNowMs: NaN, fxFrameKey: NaN, distortionTarget: null, overlayTarget: null,
 
   _getBloomConfig() {
     const bloom = RenderWorld.devVFX?.bloom || null;
@@ -999,6 +1000,12 @@ export const Core3D = {
       format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
       generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
     });
+    // Warstwa NAKŁADKI (czujniki: kontakty, czujka, granice wykrycia): premultiplied rgb + alfa pokrycia, rozmiar bufora
+    // sceny; „uber” kładzie ją po mgle wojny (obraz czujników pokazuje to, czego mgła nie odsłania).
+    this.overlayTarget = new THREE.RenderTarget(w0, h0, {
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
+    });
     // Pre-pass halo: głębia planet bez koloru (overrideMaterial, SPIKE 12).
     this.haloDepthMaskMaterial = new THREE.MeshBasicNodeMaterial({ color: 0x000000 });
     this.haloDepthMaskMaterial.name = 'Core3D.haloDepthMask';
@@ -1158,13 +1165,16 @@ export const Core3D = {
   },
 
   // Kamera i cel rozgrzewki dla warstwy passa (Core3D.warmup — src/3d/rozgrzewka.js), jak w prewarmPass:
-  // typ kamery passa warstwy ('all' = perspektywa), cel composerTarget (warstwa DIST — distortionTarget).
+  // typ kamery passa warstwy ('all' = perspektywa), cel composerTarget (warstwa DIST — distortionTarget, NAKŁADKA —
+  // overlayTarget).
   warmupCamera(layer, ortho) {
     const isOrtho = typeof ortho === 'boolean' ? ortho : (layer !== 'all' && ORTHO_PASS_LAYERS.has(layer));
     return this.getPassCamera(isOrtho);
   },
   warmupTarget(layer) {
-    return layer === FX_DISTORT_LAYER && this.distortionTarget ? this.distortionTarget : this.composerTarget;
+    if (layer === FX_DISTORT_LAYER && this.distortionTarget) return this.distortionTarget;
+    if (layer === FX_OVERLAY_LAYER && this.overlayTarget) return this.overlayTarget;
+    return this.composerTarget;
   },
 
   // Passy Core3D w rejestrze rozgrzewki (zadanie 11). W tle menu: to, co już widać w passach tła i planet (mgławica,
@@ -1449,9 +1459,10 @@ export const Core3D = {
     // Zniekształcenia efektów (fxFrame.js): blok źródeł i warstwa DIST — wspólne dla obu pipeline'ów.
     const distortion = this.fx ? this.fx.distortion.node : null;
     const distortionLayer = this.distortionTarget ? this.distortionTarget.texture : null;
-    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms, distortion, distortionLayer }));
+    const overlayLayer = this.overlayTarget ? this.overlayTarget.texture : null;
+    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms, distortion, distortionLayer, overlayLayer }));
     post.outputColorTransform = false;
-    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms, distortion, distortionLayer }));
+    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms, distortion, distortionLayer, overlayLayer }));
     postBezBloomu.outputColorTransform = false;
     this.bloomPass = bloom;
     this._postUniforms = uniforms;
@@ -1472,6 +1483,7 @@ export const Core3D = {
       try { this._fogCache?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
       try { this.distortionTarget?.dispose?.(); } catch { }
+      try { this.overlayTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
@@ -1485,6 +1497,7 @@ export const Core3D = {
     this.shadowShaftsPass = null;
     this.sunShadowTarget = null;
     this.distortionTarget = null;
+    this.overlayTarget = null;
     // Węzeł tekstury nie przyjmuje null — materiały wracają do maski zastępczej.
     sunShadowUniforms.uSunShadowMap.value = SUN_SHADOW_MAP_PLACEHOLDER;
     sunShadowUniforms.uSunShadowOn.value = 0;
@@ -1643,6 +1656,7 @@ export const Core3D = {
     resizeRenderTarget(this.composerTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.sunShadowTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.distortionTarget, bufW, bufH, readyRenderer);
+    resizeRenderTarget(this.overlayTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.planetHaloTarget, bufW, bufH, readyRenderer);
     // Bloom sam bierze rozmiar bufora rysowania w każdym renderze (BloomNode.updateBefore);
     // tu tylko skala rozdzielczości.
@@ -2254,6 +2268,8 @@ export const Core3D = {
     this._resolveSkipTarget = null;
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
     this._renderFxDistortion(freePerspective || t.fxDistortion === false);
+    // Nakładka czujników (po mgle wojny w „uber”): tylko widok gracza — bez kamer 3D i podzielonego ekranu.
+    this._renderOverlayLayer(freePerspective || RenderWorld.splitScreenMode === true);
     renderer.setRenderTarget(null);
     this._renderPost();
 
@@ -2542,6 +2558,37 @@ export const Core3D = {
     this._addRenderInfoDelta('ortho', performance.now() - t0, before);
   },
 
+  // Warstwa NAKŁADKI (FX_OVERLAY_LAYER, kamera ortho) do overlayTarget — tylko gdy właściciel zgłosił w tej klatce
+  // zawartość (setOverlayLayerActive, z kroku Core3D.fx), inaczej „uber” jej nie czyta (uOverlayLayerOn = 0).
+  // Cel czyszczony do (0, 0, 0, 0) w passie warstwy; materiały piszą premultiplied rgb i alfę pokrycia.
+  _renderOverlayLayer(off) {
+    const fx = this.fx;
+    const u = this._postUniforms;
+    if (!u || !u.uOverlayLayerOn) return;
+    const target = this.overlayTarget;
+    const layerOn = !off && !!fx && fx.overlayLayerActive === true && !!target;
+    if (fx) fx.stats.overlayLayer = layerOn;
+    u.uOverlayLayerOn.value = layerOn ? 1 : 0;
+    if (!layerOn) return;
+    const renderer = this.renderer;
+    const prevTarget = renderer.getRenderTarget();
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0.0);
+    const inPass = CZYSZCZENIE_AB.pomocnicze !== false;
+    if (!inPass) renderer.clear(true, false, false);
+    const camera = this.getPassCamera(true);
+    const prevMask = camera.layers.mask;
+    camera.layers.set(FX_OVERLAY_LAYER);
+    if (inPass) renderCzyszczac(renderer, this.scene, camera, true, false, false);
+    else renderer.render(this.scene, camera);
+    camera.layers.mask = prevMask;
+    renderer.setRenderTarget(prevTarget);
+    this._addRenderInfoDelta('ortho', performance.now() - t0, before);
+  },
+
   // Halo planet: głębia planet (warstwa 3, bez koloru) + poświaty (warstwa 5)
   // do planetHaloTarget; quad halo w passach sceny dokłada je addytywnie.
   _renderPlanetHaloPrepass() {
@@ -2634,6 +2681,7 @@ export const Core3D = {
     if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
     // Tło menu: bez zniekształceń efektów i bez źródeł gorącego powietrza (przed startem gry
     // nic ich nie zgłasza).
+    this._renderOverlayLayer(true);
     this._renderFxDistortion(true);
     this._updatePostUniforms(false, 0);
     renderer.setRenderTarget(null);
@@ -2682,6 +2730,7 @@ export const Core3D = {
     // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u
     // (głębia celu, nie renderera: compileAsyncNaCelu).
     if (layer === FX_DISTORT_LAYER && this.distortionTarget) renderer.setRenderTarget(this.distortionTarget);
+    if (layer === FX_OVERLAY_LAYER && this.overlayTarget) renderer.setRenderTarget(this.overlayTarget);
     let promise;
     try {
       promise = compileAsyncNaCelu(renderer, object3d, camera, object3d.isScene ? null : this.scene);
@@ -2962,6 +3011,8 @@ export const Core3D = {
   // Warstwa DIST: zgłoszenia właścicieli w klatce łączone przez OR (broń, rakiety, …) — FxFrame
   // kasuje flagę na starcie klatki efektów, właściciel zgłasza w swoim kroku (update).
   setDistortLayerActive(active) { if (this.fx && active) this.fx.distortLayerActive = true; },
+  // Warstwa NAKŁADKI (FX_OVERLAY_LAYER — czujniki): zgłoszenie z kroku Core3D.fx, jak DIST (kasuje je start klatki efektów).
+  setOverlayLayerActive(active) { if (this.fx && active) this.fx.overlayLayerActive = true; },
 
   // Pass sceny bez widocznej zawartości pomijamy w całości.
   _scenePassHasContent(pass, activity) {

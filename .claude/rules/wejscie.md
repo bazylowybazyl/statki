@@ -35,7 +35,7 @@ paths:
 
 - `LPM` (trzymany) — ogień grupy W RĘKU w kursor
 
-- `PPM` — menu rozkazów
+- `PPM` (trzymany) — CZUJKA czujników: struna w stronę kursora, błona wokół okrętu (puszczenie gasi; reguła `kontakt-czujnikow`, „W grze”); `Alt` + `PPM` — menu rozkazów świata (2026-11-11, decyzja użytkownika: „menu PPM teraz działa tylko po Alt — w końcu PPM zabieramy na radar”). Tryb RTS, wydobycie, torpedy i CIC mają PPM po staremu
 
 - `ŚPM` (trzymany) — koło trybów okrętu: bojowy / tarcze / hipercruise / maskowanie / torpedy / wydobycie / flota; stuknięcie — poprzedni tryb
 
@@ -57,9 +57,9 @@ paths:
 
 - `` ` `` — łączność ze stacjami (dawniej CapsLock)
 
-- Mapa CIC / menu PPM / skaner — TRAVEL TO (podróż do punktu: obrót, skok, wyjście w celu)
+- Mapa CIC / menu Alt + PPM / skaner — TRAVEL TO (podróż do punktu: obrót, skok, wyjście w celu)
 
-- PPM (pusta przestrzeń albo cel) → DRON ZWIADU (odsłania mgłę wojny wokół siebie; mapa CIC → SEND DRONE)
+- Alt + PPM (pusta przestrzeń albo cel) → DRON ZWIADU (odsłania mgłę wojny wokół siebie; mapa CIC → SEND DRONE)
 
 - `M` — mapa
 

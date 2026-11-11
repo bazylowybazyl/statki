@@ -532,11 +532,14 @@ test('fala: suma kół skurczonych do ułamka zasięgu (scaleCoverageInto)', () 
   assert.equal(dst.n, 0);
 });
 
-test('wpięcie w grę: prototyp za flagą adresu, krok w kroku informacji, nakładka pod CIC, Z w CIC przed myśliwcami', () => {
+test('wpięcie w grę: obraz zawsze (czujka, granice, kontakty), prototyp za flagą, krok w kroku informacji, nakładka pod CIC, Z w CIC przed myśliwcami', () => {
   const html = read('index.html');
   assert.match(html, /const RADAR_RANGE_PROTO = RADAR_RANGE_QUERY\.has\('radarZasiegi'\);/);
-  assert.match(html, /const sensorPicture = RADAR_RANGE_PROTO \? createSensorPicture\(radarRangeAdapters\) : null;/);
-  assert.match(html, /CICDisplay\.update\(frameLogicDt, ship, npcs, stations, SensorSystem\);\n\s+\/\/ Zasięg radarów[^\n]*\n\s+stepRadarRangePicture\(frameLogicDt\);/);
+  // 2026-11-11: obraz czujników liczy się zawsze (czujka na PPM w grze); nakładka 2D, CIC i ] — prototyp
+  assert.match(html, /const sensorPicture = createSensorPicture\(radarRangeAdapters\);/);
+  assert.match(html, /const radarRangeOverlay = RADAR_RANGE_PROTO \? createRadarRangeOverlay\(\) : null;/);
+  assert.match(html, /if \(RADAR_RANGE_PROTO\) CICDisplay\.setCoverageSource\(\(\) => sensorPicture\);/);
+  assert.match(html, /CICDisplay\.update\(frameLogicDt, ship, npcs, stations, SensorSystem\);\n\s+\/\/ Obraz czujników[^\n]*\n\s+stepRadarRangePicture\(frameLogicDt\);/);
   assert.match(html, /if \(radarRangeOverlay && gameStarted && !CICDisplay\.active[^\n]*\n[^\n]*!isView3DCamera\(cam\)\) \{\n\s+drawRadarRangeOverlay\(cam, frameDt\);/);
   assert.match(html, /'cic\.coverage': \{\n\s+gate: \(\) => CICDisplay\.active && CICDisplay\.coverageAvailable,/);
   assert.match(html, /'radar\.look': \{\n\s+gate: \(\) => RADAR_RANGE_PROTO && gameStarted,/);

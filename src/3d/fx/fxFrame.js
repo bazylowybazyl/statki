@@ -34,6 +34,9 @@ import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 
 /** Warstwa zniekształceń (DIST, dema/bronie-webgpu): siatki na niej rysują przesunięcie w px do Core3D.distortionTarget. */
 export const FX_DISTORT_LAYER = 10;
+/** Warstwa NAKŁADKI (czujniki — `src/3d/czujniki/`): siatki na niej rysują do Core3D.overlayTarget (premultiplied:
+ *  rgb + alfa pokrycia), „uber” kładzie ją PO mgle wojny i rulonie, przed wizjerem maskowania i ACES — bez bloomu. */
+export const FX_OVERLAY_LAYER = 11;
 /** Zapas kadru siatki świateł i świateł efektów (ułamek połowy kadru). */
 export const FX_VIEW_MARGIN = 0.15;
 /** Kadr wolnej kamery 3D (lot nad miastem ringu) — pół boku wokół kamery [j.]. */
@@ -66,6 +69,8 @@ export class FxFrame {
     this._distortFrame = -1;
     /** Warstwa DIST ma w tej klatce widoczną zawartość (właściciel zgłasza co klatkę — Core3D.setDistortLayerActive). */
     this.distortLayerActive = false;
+    /** Warstwa NAKŁADKI ma w tej klatce widoczną zawartość (Core3D.setOverlayLayerActive — jak DIST). */
+    this.overlayLayerActive = false;
     this._warmed = new WeakSet();
     this.view = { x0: 0, y0: 0, x1: 0, y1: 0 };
     this._rollHalf = { hw: 0, hh: 0 };
@@ -226,6 +231,7 @@ export class FxFrame {
     this.post.bloomBoost = 0;
     // Warstwa DIST: właściciele zgłaszają zawartość w tej klatce (OR — Core3D.setDistortLayerActive).
     this.distortLayerActive = false;
+    this.overlayLayerActive = false;
     const steps = this.steps;
     const n = steps.length;
     // 1. paczki z CPU (stara rama)

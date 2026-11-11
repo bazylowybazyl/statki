@@ -147,6 +147,9 @@ if (isWorker) {
     st.spaceGas = (await import('../3d/spaceGas/spaceGas.js')).SpaceGas;
     st.spaceGasBlk = await import('./blocks/spaceGasBlock.js');
     st.gasObstBlk = await import('./blocks/gasObstBlock.js');
+    // obraz czujników (czujka na PPM, granice wykrycia, kontakty): blok `czujniki` — widok policzony na stronie gry
+    st.czujniki = (await import('../3d/czujniki/czujniki3D.js')).Czujniki;
+    st.czujnikiBlk = await import('./blocks/czujnikiBlock.js');
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
@@ -961,6 +964,8 @@ if (isWorker) {
       const sg = st.spaceGasBlk.spaceGasInputOf(v);
       if (sg) { st.spaceGas.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); st.spaceGas.submit(sg); }
     } } catch (e) { modFail('gaz przestrzeni', e); }
+    // obraz czujników: wejście = blok `czujniki` (kopia CZUJNIKI_IN strony); krok Core3D.fx rzutuje je kamerą renderu
+    try { if (st.czujniki) st.czujniki.submit(st.czujnikiBlk.czujnikiInputOf(v)); } catch (e) { modFail('czujniki', e); }
     try { if (st.dust) {
       const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM], roll: h[H.CAMNS_ROLL] || 0 });
       st.dust.frame(dt, cns, null, st.dustOn !== false);

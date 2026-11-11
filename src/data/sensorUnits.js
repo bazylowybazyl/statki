@@ -48,7 +48,14 @@ export const SENSOR_PROFILE_BY_UNIT = Object.freeze({
   // promy z ludźmi (workforce W7) — kopie frachtowców bazowych (ten sam sprite i rozmiar), te same wartości
   crew_shuttle: 'frigate_combat',
   crew_liner: 'frigate_combat',
-  colony_liner: 'frigate_combat'
+  colony_liner: 'frigate_combat',
+  // kadłuby robocze NPC w bańce (E24, src/data/workHulls.js) — wartości dawnej gałęzi awaryjnej (typ → fregata)
+  work_zlomiarz: 'frigate_combat',
+  work_paszcza: 'frigate_combat',
+  work_mlyn: 'frigate_combat',
+  work_rafineria: 'frigate_combat',
+  work_rampowiec: 'frigate_combat',
+  work_dzwig: 'frigate_combat'
 });
 
 /**
@@ -81,7 +88,14 @@ export const SENSOR_SIGNATURE_BY_UNIT = Object.freeze({
   rescue_ship: 1.0,
   crew_shuttle: 0.85,         // = inter_station_shuttle (200 / 80 j.)
   crew_liner: 1.0,            // = container_ship (520 / 180 j.)
-  colony_liner: 1.0           // = long_haul_freighter (900 / 260 j.)
+  colony_liner: 1.0,          // = long_haul_freighter (900 / 260 j.)
+  // kadłuby robocze E24 — dawny kubełek promienia (168–624 j. ≥ 100)
+  work_zlomiarz: 1.0,
+  work_paszcza: 1.0,
+  work_mlyn: 1.0,
+  work_rafineria: 1.0,
+  work_rampowiec: 1.0,
+  work_dzwig: 1.0
 });
 
 /**

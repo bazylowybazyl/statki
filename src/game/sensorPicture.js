@@ -368,6 +368,7 @@ function createThreats(cap) {
     meIdR: new Float64Array(cap), meId: new Float64Array(cap),
     leadErr: new Float64Array(cap),  // błąd miejsca lidera
     est: new Uint8Array(cap), count: new Uint16Array(cap),
+    nSt: new Uint16Array(cap),       // stacje w grupie (czujka: duży ząb struny = budowla, mały = statek)
     // członkowie (scratch): wpis, miejsce, odległość, ułamki, zasięgi, oszacowanie, kolejność po THEM malejąco
     _k: new Array(cap).fill(null),
     _x: new Float64Array(cap), _y: new Float64Array(cap), _d: new Float64Array(cap),
@@ -436,7 +437,7 @@ function buildThreatGroups(P) {
       }
       if (g < 0) {
         g = gn++;
-        F.count[g] = 0; F.them[g] = -1; F.me[g] = -1;
+        F.count[g] = 0; F.nSt[g] = 0; F.them[g] = -1; F.me[g] = -1;
         F.themLvl[g] = 0; F.meLvl[g] = 0; F.themId[g] = -1; F.themIdR[g] = 0; F.meId[g] = -1; F.meIdR[g] = pl.vision;
         F.lead[g] = k;
         F.leadErr[g] = ex;
@@ -446,6 +447,7 @@ function buildThreatGroups(P) {
       }
       F._g[i] = g;
       F.count[g]++;
+      if (P.A.isStation && P.A.isStation(k.e)) F.nSt[g]++;
       if (F._t[i] > F.them[g]) { F.them[g] = F._t[i]; F.themR[g] = F._tr[i]; F.themD[g] = F._d[i]; F.est[g] = F._e[i]; }
       if (F._m[i] > F.me[g]) { F.me[g] = F._m[i]; F.meR[g] = F._mr[i]; }
       if (k.themLvl > F.themLvl[g]) F.themLvl[g] = k.themLvl;

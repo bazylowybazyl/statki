@@ -15,8 +15,8 @@
 import {
   createNamiarBlock, createNamiarMeshes, NAMIAR_STYLES, NAMIAR_ANCH, NAMIAR_ANCH_VEC, NAMIAR_MARKS, NAMIAR_HDR,
   NAMIAR_MARK_BASE, NAMIAR_MARK_VEC, NAMIAR_GEOM
-} from './namiarTSL.js';
-import { createGranicaMeshes, GRANICA_STYLES, HULL_ASPECT } from './granicaTSL.js';
+} from '../../src/3d/czujniki/namiarTSL.js';
+import { createGranicaMeshes, GRANICA_STYLES, HULL_ASPECT } from '../../src/3d/czujniki/granicaTSL.js';
 
 const ATLAS_LEN = 3000;
 const ENEMY_LEN = 1200;           // pancernik piratów (src/data/ships.js: pirate_battleship)

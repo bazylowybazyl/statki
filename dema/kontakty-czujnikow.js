@@ -18,7 +18,7 @@ import { Core3D } from '../src/3d/core3d.js';
 import {
   createContactBlock, createContactMesh, createSpaceBackdrop, KONTAKT_STYLES, KONTAKT_MAX, KONTAKT_HDR,
   KONTAKT_NOISE_TILE, wrap01
-} from './kontakty-czujnikow/kontaktyTSL.js';
+} from '../src/3d/czujniki/kontaktyTSL.js';
 import { createNamiarDemo, NAMIAR_SCENES, GRANICA_VARIANTS } from './kontakty-czujnikow/namiarDemo.js';
 import { FX_DISTORT_LAYER } from '../src/3d/fx/fxFrame.js';
 

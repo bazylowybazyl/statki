@@ -57,6 +57,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Rzecz rysowana przy obcym okręcie po stronie gry → poza z `bridgeRenderPose` (interpolowana), nie `npc.x / y`.
 - Światło albo efekt przypięty do statku gracza w module renderu → poza renderu `RenderWorld.playerPose` (ta sama co kadłub), nie poza encji z końca kroku fizyki — przy 240 Hz obrazu jechałaby piłą (1 − α) · v / 60 wobec kadłuba (reguła `pas-asteroid`, „POZA ŚWIATEŁ”).
 - Obiekt na warstwach planet (3), halo (5), ring-planet (6) albo tarcz (7) → zgłaszaj co klatkę (`Core3D.markPlanetLayersActive` / `setShieldLayerActive`), inaczej pass się pominie.
+- Rzecz w 3D, która ma leżeć NAD mgłą wojny (HUD w świecie: kontakty, czujka, granice) → warstwa NAKŁADKI `FX_OVERLAY_LAYER` (11, bez bloomu), zgłoszenie z kroku `Core3D.fx` — `Core3D.setOverlayLayerActive(true)` (reguła `core3d`); nie pass gry (mgła w „uber” przygasza wszystko pod sobą).
 - Rysunek do celu sceny (`composerTarget`) w haku passa albo odczyt jego tekstury przed postem → reguła `core3d` („Czyszczenie w passie”): cel czyści pierwszy render passa, a MSAA rozwiązuje tylko ostatni pass sceny renderu.
 - Pozycje świata (5–10 mln j.) nie trafiają do shadera we float32: duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego (`sceneOriginNearCamera`), w grafie `modelViewMatrix` — nie `positionWorld` ani ręczne `cameraViewMatrix.mul(modelWorldMatrix)`; pozycje w pulach CPU — `Float64Array`.
 - Układ gra → scena / silnik belek: `X = x`, `Y = −y`, `θ = −(kąt + obrót sprite'a)`; kotwica statku = środek sprite'a.
@@ -187,7 +188,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `kapsuly-ratunkowe` | Kapsuły ratunkowe: wyrzut po śmierci statku (bez pirackich), lot do stacji (objazd ringu i doków), obraz, radar, rozliczenie bez obrazu w workerze ruchu |
 | `mgla-wojny` | Mgła wojny |
-| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany obłok szarych X-ów, ECHO = skały), CZUJKI na PPM (struna w stronę myszki — statki i budowle, błona 360° — ciała niebieskie) i GRANICY WYKRYCIA (tafla / przybój, podświetlenie kadłuba): demo w TSL na Core3D, zasady pod wpięcie |
+| `kontakt-czujnikow` | Czujniki w grze: CZUJKA na PPM (struna w stronę myszki — statki i budowle, błona 360° — ciała niebieskie), GRANICE WYKRYCIA (tafla: szara — ich kontakt, czerwona — ich wzrok, obustronnie) i KONTAKTY (obłok szarych X-ów); widok `src/ui/czujkaView.js`, obraz `src/3d/czujniki/` na warstwie nakładki; demo propozycji |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `zasieg-czujnikow` | Zasięg czujników (radarów) jak w Starsectorze: czujniki × sygnatura × osłona, KONTAKT / IDENTYFIKACJA, suma stref radarów, obraz czujników z gry, prototyp `?radarZasiegi` (ocena obustronna: wachlarz / struna / błona, warstwa ZASIĘGI w CIC, scena), demo 2D propozycji |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |

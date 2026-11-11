@@ -227,8 +227,14 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.ok(mass, 'czujniki grawitacyjne: sygnatura masy');
   assert.equal(mass.entity, S.site.station, 'rozpoznanie sygnatury = zobaczenie budynku');
   assert.ok(mass.offset && Math.hypot(mass.offset.x, mass.offset.y) > 1000, 'miejsce niepewne (odchyłka)');
-  assert.ok(/sygnatur/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
-  assert.ok(S.ui.hint, 'samouczek: mgła wojny i dron zwiadu');
+  // 2026-11-11: po przylocie kamera nigdzie nie leci, bez znacznika miejsca — kierunek pokazuje czujka na PPM
+  assert.ok(/czujką \(trzymaj PPM\)/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
+  assert.ok(/Alt \+ PPM/.test(S.ui.objective?.text || ''), 'dron zwiadu pod Alt + PPM');
+  assert.ok(!S.ui.markers.has('mass'), 'bez znacznika miejsca masy');
+  assert.equal(S.ui.hint?.spec?.title, 'Czujka', 'samouczek: najpierw czujka');
+  w.deps.czujkaUsed = () => true;
+  await frames(S, w, 3, view);
+  assert.equal(S.ui.hint?.spec?.title, 'Mgła wojny', 'po czujce: mgła wojny i dron zwiadu');
   await frames(S, w, 30, view);
   assert.equal(S.phase, 'scout', 'bez rozpoznania misja czeka');
   assert.ok(!S.site.alarmed, 'zwiad z daleka nie budzi bazy');
@@ -720,7 +726,10 @@ test('zwiad fregatą z ładowni: oblot bazy (budowle n / 6), ostrzeżenie, powr�
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'scout');
   assert.ok(bay.available(), 'kampania daje fregatę do ładowni');
-  assert.ok(/fregata zwiadu/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
+  assert.ok(/fregatą zwiadu/.test(S.ui.objective?.text || ''), S.ui.objective?.text);
+  assert.equal(S.ui.hint?.spec?.title, 'Czujka', 'najpierw czujka (PPM)');
+  w.deps.czujkaUsed = () => true;
+  await frames(S, w, 3, view);
   assert.equal(S.ui.hint?.spec?.title, 'Fregata zwiadu');
   // start fregaty daleko od bazy (poza mgłą — nic nie widać)
   const far = pointOffBase(S.site, 15000);

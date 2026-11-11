@@ -34,7 +34,7 @@ import {
   Fn, If, Loop, float, int, uint, vec2, vec3, vec4, uniform, uniformArray, screenCoordinate, positionGeometry,
   exp, sin, cos, atan, length, sqrt, mix, smoothstep, clamp, max, min, abs, fract, floor, step, texture3D, dot
 } from 'three/tsl';
-import { fxNoise } from '../../src/3d/fx/noise.js';
+import { fxNoise } from '../fx/noise.js';
 import { tv, u01, uOf, hash3 } from './kontaktyTSL.js';
 
 export const NAMIAR_STYLES = Object.freeze(['wachlarz', 'struna', 'blona']);
@@ -60,7 +60,7 @@ const wrapAngle = (a) => a.sub(floor(a.add(PI).div(TAU)).mul(TAU));
 const gauss = (x, w) => { const q = x.div(w); return exp(q.mul(q).negate()); };
 
 export function createNamiarBlock() {
-  const arr = Array.from({ length: NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * NAMIAR_MARKS }, () => new THREE.Vector4());
+  const arr = Array.from({ length: NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * NAMIAR_MARKS }, () => new THREE.Vector4(0, 0, 0, 0));
   const node = uniformArray(arr, 'vec4').setName('namiarCzujnikow');
   return { node, array: node.array };
 }

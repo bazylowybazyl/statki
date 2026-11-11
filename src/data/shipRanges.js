@@ -27,7 +27,10 @@ const HULL_CLASSES = Object.assign(Object.create(null), {
   salvage_hauler: 'frigate', construction_tug: 'frigate', distress_beacon_ship: 'frigate', rescue_ship: 'frigate',
   repair_drone: 'frigate',
   // promy z ludźmi (workforce W7, kopie frachtowców bazowych): jak ich frachtowce bazowe
-  crew_shuttle: 'frigate', crew_liner: 'frigate', colony_liner: 'frigate'
+  crew_shuttle: 'frigate', crew_liner: 'frigate', colony_liner: 'frigate',
+  // kadłuby robocze NPC w bańce (E24, src/data/workHulls.js): dzisiejszy wzrok awaryjny (klasa fregaty)
+  work_zlomiarz: 'frigate', work_paszcza: 'frigate', work_mlyn: 'frigate', work_rafineria: 'frigate',
+  work_rampowiec: 'frigate', work_dzwig: 'frigate'
 });
 for (const id in SHIP_FLIGHT_SPECS) {
   const cls = SHIP_FLIGHT_SPECS[id].flightClass;

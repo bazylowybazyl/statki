@@ -23,7 +23,7 @@ import {
   exp, log, sin, cos, atan, length, dot, mix, smoothstep, clamp, max, min, abs, fract, floor, step, fwidth, texture,
   texture3D, select
 } from 'three/tsl';
-import { fxNoise } from '../../src/3d/fx/noise.js';
+import { fxNoise } from '../fx/noise.js';
 
 export const KONTAKT_MAX = 48;
 /** vec4 nagłówka: (liczba, czas, zoom bufora [px/j.], px bufora na px CSS), (bufor W, H, początek szumu x, y),
@@ -38,7 +38,7 @@ const TAU = 6.283185307;
 /** Blok kontaktów: nagłówek + 2 vec4 na kontakt — A = (x, y, R, err) [j., osie sceny względem środka kadru],
  *  B = (klasa 0–3, masa, ziarno 0–1, alfa). */
 export function createContactBlock() {
-  const arr = Array.from({ length: KONTAKT_HDR + 2 * KONTAKT_MAX }, () => new THREE.Vector4());
+  const arr = Array.from({ length: KONTAKT_HDR + 2 * KONTAKT_MAX }, () => new THREE.Vector4(0, 0, 0, 0));
   const node = uniformArray(arr, 'vec4').setName('kontaktyCzujnikow');
   return { node, array: node.array };
 }

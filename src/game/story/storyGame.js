@@ -1435,6 +1435,11 @@ export const StoryGame = {
         collapse: (site, key) => self._structureCollapse(site, key)
       },
 
+      // Czujniki gracza (2026-11-11): czujka na PPM użyta (trzymana dłużej niż chwilę) — podpowiedzi samouczka.
+      sensors: {
+        czujkaUsed: () => !!d.czujkaUsed?.()
+      },
+
       // Fregata zwiadu w ładowni Atlasa (src/game/scoutBay.js — window.ScoutBay w grze; bez niej wszystko „nie ma”).
       scout: {
         grant() { const b = d.scoutBay?.(); if (!b?.grant) return false; if (!b.available()) self._scoutGranted = true; b.grant(); return b.available(); },

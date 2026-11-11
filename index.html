@@ -479,7 +479,8 @@
               <div class="mm-keys-card">
                 <div class="mm-group-title">Mysz</div>
                 <div class="mm-mouse-row"><kbd>LPM</kbd><span>Ogień grupy w ręku (trzymaj)</span></div>
-                <div class="mm-mouse-row"><kbd>PPM</kbd><span>Menu rozkazów</span></div>
+                <div class="mm-mouse-row"><kbd>PPM</kbd><span>Czujka czujników (trzymaj, wskaż kierunek)</span></div>
+                <div class="mm-mouse-row"><kbd>Alt + PPM</kbd><span>Menu rozkazów</span></div>
                 <div class="mm-mouse-row"><kbd>ŚPM</kbd><span>Koło trybów okrętu (trzymaj; stuknięcie — poprzedni)</span></div>
                 <div class="mm-mouse-row"><kbd>Kółko</kbd><span>Zoom kamery</span></div>
               </div>
@@ -1329,6 +1330,7 @@
     import { packSpaceGasFrame, createSpaceGasInputState, SPACE_GAS_IN, SPACE_GAS_ICY_TYPES, SPACE_GAS_INPUT_TUNE, SPACE_GAS_SCENE } from "./src/game/spaceGasInput.js";
     import { createRingGasField, RING_GAS_VENT_TYPES } from "./src/game/ringGasField.js";
     import { createSpaceGasBlock } from "./src/render/blocks/spaceGasBlock.js";
+    import { createCzujnikiBlock } from "./src/render/blocks/czujnikiBlock.js";
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
@@ -1516,6 +1518,8 @@
     import { auditSensorUnit, sensorPair } from "./src/game/sensorUnitAudit.js";
     import { DETECTION_TUNE, SENSOR_DRIVE } from "./src/game/sensorDetection.js";
     import { createRadarRangeOverlay, nextRadarLook, RADAR_LOOK_LABELS, setRadarLook } from "./src/ui/radarRangeOverlay.js";
+    import { createCzujkaView, createCzujnikiInput, stepCzujkaView, packCzujkaView, czujkaBodyKind } from "./src/ui/czujkaView.js";
+    import { Czujniki } from "./src/3d/czujniki/czujniki3D.js";
     import { loadFogOption, saveFogOption, formatMassEstimate } from "./src/game/fogOfWar.js";
     import { createFogHud } from "./src/ui/fogHud.js";
     window.SensorSystem = SensorSystem;
@@ -13001,7 +13005,9 @@
         }
       }
     };
-    const sensorPicture = RADAR_RANGE_PROTO ? createSensorPicture(radarRangeAdapters) : null;
+    // Obraz czujników liczy się zawsze (2026-11-11: czujka na PPM, granice wykrycia i kontakty w grze — blok „CZUJNIKI
+    // W GRZE” niżej); nakładka 2D prototypu, warstwa ZASIĘGI w CIC i klawisz ] — tylko z ?radarZasiegi.
+    const sensorPicture = createSensorPicture(radarRangeAdapters);
     const radarRangeOverlay = RADAR_RANGE_PROTO ? createRadarRangeOverlay() : null;
     // Wygląd oceny obustronnej: ?radarWyglad=wachlarz|struna|blona, klawisz ], RadarZasiegi.wyglad(nazwa).
     if (RADAR_RANGE_PROTO && RADAR_RANGE_QUERY.has('radarWyglad')) setRadarLook(RADAR_RANGE_QUERY.get('radarWyglad'));
@@ -13010,7 +13016,7 @@
     if (sensorPicture) {
       // Strzał zdradza strzelca (ciepło ostrzału — szyna strzałów gry; `d` jest wielokrotnego użytku, nie trzymać).
       WeaponShotBus.on((d) => { if (d.shooter) noteSensorPictureFire(sensorPicture, d.shooter); });
-      CICDisplay.setCoverageSource(() => sensorPicture);
+      if (RADAR_RANGE_PROTO) CICDisplay.setCoverageSource(() => sensorPicture);
     }
     // Krok obrazu w kroku informacji klatki (po czujnikach i CIC); przebudowa co ~0,2 s czasu logiki.
     function stepRadarRangePicture(dt) {
@@ -13068,6 +13074,83 @@
       radarRangeOverlay.draw(ctx, sensorPicture, v);
       v.lastMs = performance.now() - t0;
     }
+
+    // ============================================================
+    // CZUJNIKI W GRZE (2026-11-11, reguła kontakt-czujnikow; plan docs/PLAN-kontakt-czujnikow.md § 7–7b): CZUJKA na PPM
+    // (trzymany: struna w stronę myszki drga z sygnału technologicznego, zęby = grupy w namiarze, błona 360° wybrzusza
+    // się ku ciałom niebieskim), GRANICE WYKRYCIA (tafla: szara — ich kontakt, jedzie z moim śladem; czerwona — ich wzrok;
+    // obustronnie — „zależy, kto ma dalszy sensor”) i KONTAKTY (obłok szarych X-ów; identyfikacja zwija go w kadłub).
+    // Widok (src/ui/czujkaView.js) liczy się w render() z obrazu czujników (sensorPicture); obraz rysuje Czujniki
+    // (src/3d/czujniki/czujniki3D.js) — tryb off: submit, worker: blok migawki `czujniki`. Alt + PPM — menu rozkazów
+    // świata (dawniej sam PPM). Rozgrywki nie zmienia.
+    // ============================================================
+    const czujkaInput = { held: false };
+    const czujkaView = createCzujkaView();
+    const czujnikiIn = createCzujnikiInput();
+    const _czBodies = [];
+    const _czInp = {
+      time: 0, on: false, aim: NaN, px: 0, py: 0, shipLen: 3000, sig: 1, picture: sensorPicture,
+      poseOf: czujkaPoseOf, bodies: _czBodies, alpha: 1, show: false
+    };
+    let _czTime = 0;
+    let _czTimeFrame = -1;
+    function czujkaPoseOf(e, out) {
+      const p = bridgeRenderPose(e);
+      if (p) { out.x = p.x; out.y = p.y; return true; }
+      out.x = Number(e.pos?.x ?? e.x) || 0;
+      out.y = Number(e.pos?.y ?? e.y) || 0;
+      return true;
+    }
+    // Ciała niebieskie układu (błona): planety i gwiazda — rekordy wielokrotnego użytku.
+    function czujkaPutBody(n, id, x, y, R, kind) {
+      const b = _czBodies[n] || (_czBodies[n] = { id: '', x: 0, y: 0, R: 0, kind: 0 });
+      b.id = id; b.x = x; b.y = y; b.R = R; b.kind = kind;
+      return n + 1;
+    }
+    function czujkaBodies() {
+      let n = 0;
+      if (SUN && SUN.r > 0) n = czujkaPutBody(n, 'sun', SUN.x, SUN.y, SUN.r, 3);
+      for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !(p.r > 0)) continue;
+        n = czujkaPutBody(n, p.id || p.name || i, p.x, p.y, p.r, czujkaBodyKind(p.type));
+      }
+      _czBodies.length = n;
+    }
+    // Widok czujek tej klatki → czujnikiIn (świat); `pose` — poza renderu gracza (ta sama co kadłub).
+    function stepCzujniki(cam, frameDt, pose) {
+      if (_czTimeFrame !== window.__frameId) {
+        _czTimeFrame = window.__frameId;
+        _czTime += Math.min(0.1, Math.max(0, Number(frameDt) || 0));
+      }
+      const alive = gameStarted && ship && !ship.destroyed && !ship.dead;
+      const show = !!alive && !CICDisplay.active && !stationUI.open && !splitScreenMode && !isView3DCamera(cam)
+        && !StoryGame.letterbox;
+      if (!show) czujkaInput.held = false;
+      const I = _czInp;
+      I.time = _czTime;
+      I.show = show;
+      I.on = show && czujkaInput.held && !StoryGame.blocksInput;
+      I.px = pose ? pose.x : (ship?.pos?.x || 0);
+      I.py = pose ? pose.y : (ship?.pos?.y || 0);
+      if (I.on) {
+        const w = screenToWorld(mouse.x, mouse.y, cam);
+        I.aim = Math.atan2(w.y - I.py, w.x - I.px);
+      }
+      const m = ship ? getCicEntityHullMetrics(ship, 1) : null;
+      I.shipLen = m ? Math.max(m.worldW, m.worldH) : 3000;
+      const base = ship ? Math.max(0.1, Number(radarRangeAdapters.baseSigOf(ship)) || 1) : 1;
+      I.sig = sensorPicture.ready ? sensorPicture.player.sigEff / base : 1;
+      I.alpha = _hudLensAlpha;
+      czujkaBodies();
+      stepCzujkaView(czujkaView, frameDt, I);
+      packCzujkaView(czujkaView, czujnikiIn, I);
+      if (!RW_WORKER) Czujniki.submit(czujnikiIn);
+    }
+    window.Czujka = { view: czujkaView, input: czujkaInput, wejscie: czujnikiIn, render: Czujniki, picture: sensorPicture, inp: _czInp };
+    // PPM puszczony poza kanwą (nad kokpitem, poza oknem) albo utrata fokusu — czujka gaśnie
+    window.addEventListener('mouseup', (e) => { if (e.button === 2) czujkaInput.held = false; });
+    window.addEventListener('blur', () => { czujkaInput.held = false; });
 
     // Scena „zasięg radarów”: Atlas w pustej przestrzeni z eskortą; w kadrze czata piratów (2 fregaty, odsłonięta jak po
     // zwiadzie — jej fale nie sięgają Atlasa), dalej radar Corvus i flota (KONTAKT — miejsce przybliżone, moc zgadnięta).
@@ -25573,9 +25656,17 @@
       if (e.button === 2) {
         e.preventDefault();
         if (gameStarted && !stationUI.open && !CICDisplay.active) {
-          openNormalWorldCommandMenuAt(e.clientX, e.clientY);
-          worldCommandMenu.rightHeld = true;
           mouse.right = false;
+          // Alt + PPM — menu rozkazów świata; sam PPM (trzymany) — czujka czujników (blok „CZUJNIKI W GRZE”, 2026-11-11:
+          // „menu PPM teraz działa tylko po Alt — w końcu PPM zabieramy na radar”)
+          if (e.altKey) {
+            czujkaInput.held = false;
+            openNormalWorldCommandMenuAt(e.clientX, e.clientY);
+            worldCommandMenu.rightHeld = true;
+            return;
+          }
+          closeWorldCommandMenu();
+          czujkaInput.held = true;
           return;
         }
       }
@@ -25593,6 +25684,8 @@
       }
     });
     canvas.addEventListener('mouseup', e => {
+      // czujka żyje tylko przy trzymanym PPM — puszczenie gasi ją zawsze, przed resztą obsługi
+      if (e.button === 2) czujkaInput.held = false;
       if (LineSpawnState.active && e.button === 0) {
         if (LineSpawnState.dragging) finishLineSpawnDrag(e.clientX, e.clientY);
         e.preventDefault();
@@ -30259,7 +30352,7 @@
 
       // === CIC UPDATE ===
       CICDisplay.update(frameLogicDt, ship, npcs, stations, SensorSystem);
-      // Zasięg radarów — prototyp ?radarZasiegi (obraz czujników ~5 Hz; bez prototypu nic nie robi).
+      // Obraz czujników (~5 Hz czasu logiki): czujka na PPM, granice wykrycia, kontakty; prototyp ?radarZasiegi.
       stepRadarRangePicture(frameLogicDt);
     } // koniec stepFrameInfo (skan/sensory/CIC)
 
@@ -33241,6 +33334,8 @@
     if (renderSnapshot) {
       renderSnapshot.addBlock(createGasObstBlock());
       renderSnapshot.addBlock(createSpaceGasBlock());
+      // obraz czujników (czujka na PPM, granice wykrycia, kontakty — src/ui/czujkaView.js → czujnikiIn)
+      renderSnapshot.addBlock(createCzujnikiBlock());
       renderSnapshot.addBlock(createWarpBlock());
       renderSnapshot.addBlock(createPirateBaseBlock());
       // wyrwy bazy piratów (dekompresja, pożary — src/game/story/pirateBaseAtmosphere.js): stan klatki obrazu wyrw
@@ -33476,6 +33571,7 @@
       // przeszkody gazu wybuchów (packGasObstacles w render(); bez reżysera wybuchów — brak wejścia)
       f.gasObst = window.__explosions ? gasObstIn : null;
       f.spaceGas = spaceGasIn;
+      f.czujniki = czujnikiIn;
       renderSnapshot.finish(f);
       if (rwHost) rwHost.postFrame();
     }
@@ -34636,6 +34732,8 @@
       // efektów „wybuchy” czyta tylko tę tablicę.
       packGasObstacles(cam, Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1), (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       if (!RW_WORKER) { SpaceGas.setObstacleInput(window.__explosions ? gasObstIn : null); SpaceGas.submit(spaceGasIn); }
+      // Czujniki (blok „CZUJNIKI W GRZE”): czujka na PPM, granice wykrycia, kontakty — widok w świecie, obraz w kroku Core3D.fx.
+      stepCzujniki(cam, frameDt, window.__interpShipPose);
       const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);
@@ -37568,6 +37666,8 @@
       fogSeen: (e) => !SensorSystem.hides(e),
       // Fregata zwiadu w ładowni Atlasa (src/game/scoutBay.js) — etap rozpoznania misji 1.
       scoutBay: () => ScoutBay,
+      // czujka na PPM użyta (samouczek misji 1)
+      czujkaUsed: () => czujkaView.usedSec > 0.4,
       setMassSignature: (id, spec) => SensorSystem.setMassSignature(id, spec),
       clearMassSignature: (id) => SensorSystem.clearMassSignature(id),
       massResolved: (id) => SensorSystem.isMassResolved(id),

@@ -129,6 +129,8 @@ paths:
   „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`): cztery grafy
   (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
 
+- WARSTWA NAKŁADKI (`FX_OVERLAY_LAYER` = 11, `src/3d/fx/fxFrame.js`; 2026-11-11, czujniki): siatki na niej rysuje `_renderOverlayLayer` (kamera ortho, po DIST) do `Core3D.overlayTarget` (RGBA16F bez głębi i MSAA, czyszczony do (0, 0, 0, 0) w passie warstwy), a „uber” kładzie go PO mgle wojny i rulonie, przed wizjerem maskowania i ACES: scena × (1 − alfa) + rgb (premultiplied), bez bloomu (`uOverlayLayerOn`). Właściciel zgłasza zawartość co klatkę Z KROKU `Core3D.fx` — `Core3D.setOverlayLayerActive(true)` (jak DIST; flagę kasuje start klatki efektów); bez zgłoszenia pass się pomija. Tylko widok gracza: kamery 3D, podzielony ekran i tło menu — bez nakładki. Rozgrzewka: wpis z `layer: FX_OVERLAY_LAYER` (`warmupTarget` / `prewarmPass` dają własny cel). Na tę warstwę idzie to, co ma leżeć NAD mgłą wojny (HUD w 3D: kontakty czujników, czujka, granice wykrycia — reguła `kontakt-czujnikow`).
+
 - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
 
 - Nie duplikuj postprocessingu w innych modułach. Nowe efekty GPU: compute przez `Core3D.addFxStep` (raz na klatkę, przed passami), światła przez siatkę (`Core3D.fx.lights` / `ctx.grid`), refrakcja przez `Core3D.fxDistortion()` albo warstwę DIST (`FX_DISTORT_LAYER`) — nie własne `renderer.compute` w pętli gry, własne cele ani passy (`docs/webgpu/FX-INFRA.md` §10).

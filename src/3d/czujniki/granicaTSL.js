@@ -33,7 +33,7 @@ import {
   Fn, If, float, int, uint, vec2, vec3, vec4, uniform, screenCoordinate, texture, texture3D,
   exp, sin, cos, atan, length, mix, smoothstep, clamp, max, min, abs, fract, floor, step, dot, normalize
 } from 'three/tsl';
-import { fxNoise } from '../../src/3d/fx/noise.js';
+import { fxNoise } from '../fx/noise.js';
 import { tv, pcg, u01, uOf, hash2, hash3 } from './kontaktyTSL.js';
 import { header, anchorAt, markLoop, baseMaterial, rectMask, gauss, wrapAngle, c3, BLUE, RED, PI } from './namiarTSL.js';
 

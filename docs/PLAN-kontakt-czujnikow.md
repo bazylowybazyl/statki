@@ -401,3 +401,28 @@ w wiedzy gracza (`knowList`), `lvl` = poziom, na którym grupa wroga ma gracza (
 źródeł), granice = ich `detectR` (× mój ślad) i `ident`. Audyt zasięgów każdej jednostki i dane pod obustronność — sesja
 pomocnicza (`docs/AUDYT-zasiegi-jednostek-2026-11-11.md` na jej gałęzi).
 Decyzje: (17) całe koło słabo, gdy wiem, gdzie są — czy zostaje; (18) przesunięcie okna szarej, gdy mnie namierzają.
+
+### 7c. Wpięcie w grę (2026-11-11)
+
+Prośba użytkownika: „wdróż system radarów do gry. Od razu zmień pierwszą misję — po przylocie nigdzie kamera nie leci.
+Gracz klika PPM i pokaże mu się, gdzie są wrogowie, i będzie musiał tam polecieć. Menu PPM — teraz działa tylko po Alt
+(w końcu PPM zabieramy na radar)”.
+
+- W grze: czujka na PPM (struna + błona), granice (tafla dwóch poziomów, obustronnie) i kontakty (obłok X-ów, objawienie
+  przez zanik obłoku — kadłub odsłania mgła wojny). Shadery przeniesione z dema do `src/3d/czujniki/` (demo importuje je
+  stamtąd). Widok: `src/ui/czujkaView.js` (port `step` dema) na stronie, z obrazu czujników gry (`sensorPicture` liczy się
+  zawsze — prototyp `?radarZasiegi` zostaje dla nakładki 2D, CIC i `]`). Render: `src/3d/czujniki/czujniki3D.js` (krok
+  `Core3D.fx`, rzut kamerą renderu), blok migawki `czujniki` (worker). Nowa warstwa Core3D NAKŁADKI (11) — kładziona w
+  „uber” po mgle wojny, bez bloomu.
+- Wejście: PPM trzymany (bez Alt, tryb lotu) — czujka; Alt + PPM — menu rozkazów świata (RTS, wydobycie, torpedy, CIC — bez
+  zmian). Misja 1: bez `cinema.lookAt` i bez znacznika miejsca masy; samouczek „Czujka” do pierwszego użycia, potem zwiad;
+  dron zwiadu pod Alt + PPM.
+- Sprawdzenie (`node scripts/webgpu/czujniki-gra.mjs [--query renderWorker=1] [--blisko 21 --zoom 0.035]`, 1600 × 900):
+  off i worker — czujka, granica i kontakty rysują się, 0 pipeline'ów synchronicznych workera, 0 błędów; kamera po
+  przylocie stoi przy Atlasie.
+- DO DECYZJI (wynik pomiaru w misji 1): w punkcie wyjścia z warpa (~61 km od bazy) herszt (supercapital, profil
+  `capital_combat` 60 km × ślad Atlasa 1,3 = 78 km) ma Atlasa w KONTAKCIE — czujka od razu pokazuje czerwień i „!”, szara
+  granica stoi ~3 km od Atlasa, choć fabuła mówi, że obrona wykryje Atlasa z ~9 km (logika misji jest osobna, obraz
+  czujników rozgrywki nie zmienia). Możliwości: okręty w doku (przed alarmem) z wyłączonym zasilaniem / cichą pracą,
+  dalszy punkt wyjścia, decyzja D4 (ślad gracza 1,3). Znacznik „NIEZNANA MASA” przy krawędzi kadru (mgła wojny) wciąż
+  wskazuje kierunek bez PPM — do decyzji, czy zostaje.

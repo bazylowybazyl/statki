@@ -5,11 +5,11 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
 import {
   createContactBlock, createContactMesh, createSpaceBackdrop, KONTAKT_STYLES, KONTAKT_MAX, KONTAKT_HDR
-} from '../dema/kontakty-czujnikow/kontaktyTSL.js';
+} from '../src/3d/czujniki/kontaktyTSL.js';
 import {
   createNamiarBlock, createNamiarMeshes, NAMIAR_STYLES, NAMIAR_MARKS, NAMIAR_MARK_BASE, NAMIAR_MARK_VEC
-} from '../dema/kontakty-czujnikow/namiarTSL.js';
-import { createGranicaMeshes, GRANICA_STYLES } from '../dema/kontakty-czujnikow/granicaTSL.js';
+} from '../src/3d/czujniki/namiarTSL.js';
+import { createGranicaMeshes, GRANICA_STYLES } from '../src/3d/czujniki/granicaTSL.js';
 
 function build(renderer, mesh) {
   const b = renderer.backend.createNodeBuilder(mesh, renderer);
