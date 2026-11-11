@@ -688,3 +688,43 @@ testy `node --test tests/planetGenTerrainMap.test.mjs`.
 
 Życzenie użytkownika z tej samej rozmowy (nie zrobione): tryb „ultra” — planeta bardziej szczegółowa z daleka
 (większa mapa planety i drobniejsza siatka spływu; koszt: pamięć i czas wypieku).
+
+### 10.14. Mapa terenu: style rzek, wpływ morza, palety roślinności (2026-11-11, prototyp)
+
+Powód: użytkownik przysłał sześć nowych wzorców rzek (wielka rzeka niosąca muł z wyspami i jeziorami w dolinie, rzeka
+roztokowa na żwirze, delta z kanałami pływowymi i smugami osadu w morzu, meandry ze starorzeczami, delta typu „ptasia
+stopa”, ujście wielkiej rzeki w barwach umownych) i napisał: „masz też wpływ od morza, możesz też szaleć z kolorami
+roślinności — czerwień, why not? Drzewa są nie tylko zielone”.
+
+`generateTerrainMap` dostał parametry `river` (`TERRAIN_RIVERS`) i `veg` (`TERRAIN_VEGETATION`):
+
+- **meandry** — jak w § 10.13 (symulacja wędrówki koryta).
+- **wielka** — szerokie, łagodne koryto (oś doliny z kołysaniem), rozszerzenia z wyspami-soczewkami, boczne ramiona
+  odchodzące od koryta i wracające, dolina zalewowa jako pas wokół koryta z „wiekiem” rosnącym od brzegu (łuki dawnych
+  koryt równoległe do rzeki), jeziora niosące muł. Symulacja meandrów dawała tu węża o równych pętlach — odrzucona.
+- **roztoki** — żwirowe łożysko o zmiennej szerokości i nierównym brzegu; plecionka koryt = linie zera trzech szumów
+  rozciągniętych wzdłuż spływu (łachy-soczewki), nurt główny, zarośnięte stare łachy, terasa wokół.
+- **delta** — morze w mapie: brzeg w poprzek spływu z zatokami, rzeka kończy się w wierzchołku delty i rozdziela na
+  ramiona (`growDistributaries`), których szerokość rośnie ku morzu (lejki pływowe; siła z ziarna), wały ujściowe
+  wysunięte w morze, potoki pływowe ze spływu wody po nizinie, namorzyny / trzcinowiska / błota, w morzu głębia →
+  szelf → smugi osadu z ujść ramion (dwa rozmycia czytane z przesunięciem: wiry, znoszenie wzdłuż brzegu).
+- **roślinność**: `tajga`, `tropik`, `czerwona`, `purpura`, `zlota` — ten sam krajobraz w innych barwach, z kępami
+  drugiego gatunku drzew (`accent`); udział torfowisk zależy od palety (`VEG_FEN`).
+
+Błędy po drodze: potoki pływowe z każdego strumyka niziny (gęsty „system korzeni”) i smuga osadu ze wszystkich
+potoków (równy pas wzdłuż brzegu — źródła tylko w ujściach ramion); wały ujściowe długie jak palce; cienkie potoki
+rysowane wprost po ścieżce spływu (zygzak po ośmiu kierunkach — położenie uśrednione z kilku komórek w dół cieku,
+ciemna barwa); jasny brzeg wąskich ramion jak krawężnik; współrzędne „wzdłuż / w poprzek” liczone od najbliższego
+węzła osi skaczą między węzłami o ~odległość × kąt załamania — przy węzłach co pół szerokości koryta wyspy i jeziora
+wielkiej rzeki były pocięte prostymi krawędziami, a brzeg koryta z kół wyglądał jak sznur korali (węzły co ⅛
+szerokości, brzeg także z punktów pośrednich); jeziora w każdym obniżeniu między łukami (przerywane kreski jak
+ścieg); kępy drugiego gatunku gęste i nasycone (konfetti).
+
+Czas (Node, 2048 × 2048): 4–8 s w spokojnym przebiegu, 9–14 s w przebiegu przy obciążonej maszynie; 1024 × 1024:
+1,5–3 s. Wzorce oceniane tym razem tylko wzrokowo (bez kwantyzacji palety).
+
+Znane wady: potoki pływowe i strumienie wysoczyzny nadal kanciaste; wyspy wielkiej rzeki miewają ostre, ścięte końce;
+ramiona delty kończą się zaokrąglonymi „czubkami” z ciemną obwódką; brzeg morza dość prosty (bez lagun, mierzei,
+wysp barierowych); nurt rzeki roztokowej zbyt prosty i równy; brak chmur, fal i przyboju na morzu.
+
+Demo: `dema/mapa-terenu.html` — listy „rzeka” i „roślinność” (`?rzeka=`, `?ros=`), domyślnie delta + tropik.

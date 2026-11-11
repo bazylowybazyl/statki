@@ -1,9 +1,9 @@
 // Demo MAPY TERENU (src/3d/planetGen/planetGenTerrainMap.js) — trzeci poziom szczegółowości planety: wycinek
-// kilkudziesięciu kilometrów dla jednego miejsca (cel ostrzału z orbity, strefa desantu). Prototyp biomu „tajga
-// z rzeką nizinną”. Obraz to gotowa warstwa barw z generatora na kanwie 2D (ocena wyglądu); w grze te same warstwy
-// trafią do materiału TSL.
-//   ?ziarno=N  ?roz=1024|2048  ?km=20…60  ?rzeka=szerokość koryta [m]
-// Sterowanie: przeciąganie — przesuw, kółko — zoom, „Losuj” — nowe miejsce.
+// kilkudziesięciu kilometrów dla jednego miejsca (cel ostrzału z orbity, strefa desantu). Obraz to gotowa warstwa
+// barw z generatora na kanwie 2D (ocena wyglądu); w grze te same warstwy trafią do materiału TSL.
+//   ?rzeka=meandry|wielka|roztoki|delta  ?ros=tajga|tropik|czerwona|purpura|zlota  ?ziarno=N  ?roz=1024|2048
+//   ?km=5…80 (domyślnie ze stylu rzeki)  ?szer=szerokość koryta [m]
+// Sterowanie: przeciąganie — przesuw, kółko — zoom, „Losuj miejsce” — nowe ziarno, listy — styl rzeki i roślinność.
 
 const params = new URLSearchParams(location.search);
 const num = (k, d) => (params.has(k) && Number.isFinite(Number(params.get(k))) ? Number(params.get(k)) : d);
@@ -11,15 +11,35 @@ const $ = (id) => document.getElementById(id);
 const canvas = $('c');
 const ctx = canvas.getContext('2d');
 
+// style rzek: nazwa na liście i domyślny bok mapy [km] (skala, w której styl dobrze widać)
+const RIVERS = {
+  delta: ['delta i morze', 40], wielka: ['wielka rzeka z wyspami', 40], meandry: ['rzeka nizinna (zakola)', 40], roztoki: ['rzeka roztokowa', 16]
+};
+const VEGS = { tropik: 'zielona (tropik)', tajga: 'tajga', czerwona: 'czerwona', purpura: 'purpurowa', zlota: 'złota' };
+
 const S = {
-  seed: num('ziarno', 7) >>> 0,
+  seed: num('ziarno', 4) >>> 0,
   size: num('roz', 2048) === 1024 ? 1024 : 2048,
-  km: Math.min(80, Math.max(5, num('km', 40))),
-  riverW: Math.min(400, Math.max(40, num('rzeka', 120))),
+  river: RIVERS[params.get('rzeka')] ? params.get('rzeka') : 'delta',
+  veg: VEGS[params.get('ros')] ? params.get('ros') : 'tropik',
+  km: 0,
+  riverW: Math.min(2000, Math.max(0, num('szer', 0))),
   bitmap: null, mapSize: 0, mapKm: 0, stats: null,
   cx: 0.5, cy: 0.5, zoom: 1,          // środek kadru w ułamkach mapy, zoom: piksele ekranu na teksel mapy
   job: 0, busy: false
 };
+const kmFor = () => (params.has('km') ? Math.min(80, Math.max(5, num('km', 40))) : RIVERS[S.river][1]);
+
+for (const [id, list, cur] of [['river', Object.entries(RIVERS).map(([k, v]) => [k, v[0]]), S.river], ['veg', Object.entries(VEGS), S.veg]]) {
+  const el = $(id);
+  for (const [k, label] of list) {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = label;
+    if (k === cur) o.selected = true;
+    el.appendChild(o);
+  }
+}
 
 const worker = new Worker(new URL('./mapa-terenu.worker.js', import.meta.url), { type: 'module' });
 worker.onmessage = async (ev) => {
@@ -35,27 +55,29 @@ worker.onmessage = async (ev) => {
   S.stats = m.stats;
   fit();
   draw();
-  window.__teren = { ready: true, seed: m.seed, stats: m.stats, size: m.size };
+  window.__teren = { ready: true, seed: m.seed, stats: m.stats, size: m.size, river: S.river, veg: S.veg };
 };
 
 function generate() {
   S.busy = true;
   S.job++;
+  S.km = kmFor();
   $('load').style.display = 'flex';
   $('seed').value = String(S.seed);
-  worker.postMessage({ id: S.job, opts: { seed: S.seed, size: S.size, extentKm: S.km, riverWidthM: S.riverW } });
+  if (window.__teren) window.__teren.ready = false;
+  worker.postMessage({ id: S.job, opts: { seed: S.seed, size: S.size, extentKm: S.km, river: S.river, veg: S.veg, riverWidthM: S.riverW } });
 }
 
-// kadr na start: cała mapa wypełnia krótszy bok okna z lekkim zbliżeniem na rzekę (środek mapy)
+// kadr na start: mapa wypełnia dłuższy bok okna
 function fit() {
-  S.zoom = Math.max(canvas.width, canvas.height) / S.mapSize * 1.0;
+  S.zoom = Math.max(canvas.width, canvas.height) / S.mapSize;
   S.cx = 0.5;
   S.cy = 0.5;
   clampView();
 }
 function clampView() {
   const zMin = Math.min(canvas.width, canvas.height) / S.mapSize;
-  // (górna granica: 3 piksele ekranu na teksel — głębiej widać już tylko rozmyte teksele 20-metrowe)
+  // (górna granica: 3 piksele ekranu na teksel — głębiej widać już tylko rozmyte teksele)
   S.zoom = Math.min(3, Math.max(zMin, S.zoom));
   const hw = canvas.width / (2 * S.zoom * S.mapSize);
   const hh = canvas.height / (2 * S.zoom * S.mapSize);
@@ -84,7 +106,7 @@ function draw() {
   $('scale').querySelector('i').style.width = `${(len / mPerPx / dpr).toFixed(0)}px`;
   $('scale').querySelector('b').textContent = len >= 1000 ? `${len / 1000} km` : `${len} m`;
   const st = S.stats;
-  $('info').textContent = `tajga z rzeką · ziarno ${S.seed} · ${S.mapKm} × ${S.mapKm} km · teksel ${(S.mapKm * 1000 / n).toFixed(1)} m`
+  $('info').textContent = `${RIVERS[S.river][0]} · roślinność ${VEGS[S.veg]} · ziarno ${S.seed} · ${S.mapKm} × ${S.mapKm} km · teksel ${(S.mapKm * 1000 / n).toFixed(1)} m`
     + (st ? ` · generacja ${(st.ms / 1000).toFixed(1)} s` : '');
 }
 
@@ -126,6 +148,8 @@ canvas.addEventListener('wheel', (e) => {
 
 $('roll').addEventListener('click', () => { if (S.busy) return; S.seed = (Math.imul(S.seed ^ 0x9E3779B9, 0x85EBCA6B) + 0x1234567) >>> 0; generate(); });
 $('seed').addEventListener('change', () => { const v = Number($('seed').value); if (Number.isFinite(v) && !S.busy) { S.seed = v >>> 0; generate(); } });
+$('river').addEventListener('change', () => { if (S.busy) { $('river').value = S.river; return; } S.river = $('river').value; generate(); });
+$('veg').addEventListener('change', () => { if (S.busy) { $('veg').value = S.veg; return; } S.veg = $('veg').value; generate(); });
 
 resize();
 generate();

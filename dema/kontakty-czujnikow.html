@@ -48,7 +48,7 @@
 <div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
 <div id="panel">
   <h1>KONTAKT CZUJNIKÓW — PROPOZYCJE</h1>
-  <div class="sub">Shadery TSL na Core3D (dema/kontakty-czujnikow/kontaktyTSL.js, namiarTSL.js), dane przykładowe: kontakt = { x, y, err, rozmiar }, miejsce przybliżone co 0,2 s jak w prototypie zasięgu radarów; namiar = ułamki zasięgu them („oni → ja”, ≥ 1: wykryli mnie) i me („ja → oni”).</div>
+  <div class="sub">Shadery TSL na Core3D (dema/kontakty-czujnikow/kontaktyTSL.js, namiarTSL.js), dane przykładowe: kontakt = { x, y, err, rozmiar }, miejsce przybliżone co 0,2 s jak w prototypie zasięgu radarów; czujka (PPM) = struna w stronę myszki (technologia) + błona 360° (ciała niebieskie); them ≥ 1 — wykryli mnie.</div>
 
   <h2>Tryb</h2>
   <div class="btns">
@@ -63,6 +63,7 @@
     <button id="v3">3 · WIR<kbd>3</kbd></button>
     <button id="v4">4 · RÓJ<kbd>4</kbd></button>
     <button id="v5">Porównanie 2 × 2<kbd>5</kbd></button>
+    <button id="v6">6 · X-Y (wybrany)<kbd>6</kbd></button>
     <button id="v0">Dziś (prototyp)<kbd>0</kbd></button>
   </div>
   <div id="desc"></div>
@@ -78,9 +79,12 @@
   <div id="scena-namiar" style="display:none">
   <h2>Scena</h2>
   <div class="btns">
-    <button id="s-stany">Stany<kbd>S</kbd></button>
+    <button id="s-misja">Misja 1<kbd>S</kbd></button>
+    <button id="s-uklad">Układ<kbd>S</kbd></button>
     <button id="s-przelot">Przelot<kbd>S</kbd></button>
-    <button id="s-grupy">Grupy<kbd>S</kbd></button>
+    <button id="s-granica">Granica<kbd>S</kbd></button>
+    <button id="s-namierzanie">Namierzanie<kbd>S</kbd></button>
+    <button id="s-patrol">Patrol<kbd>S</kbd></button>
   </div>
   </div>
 

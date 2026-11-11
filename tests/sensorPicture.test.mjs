@@ -553,3 +553,73 @@ test('wpięcie w grę: prototyp za flagą adresu, krok w kroku informacji, nakł
     assert.doesNotMatch(src, /Math\.random/, `${f}: bez Math.random`);
   }
 });
+
+// Mechanika obustronna (użytkownik 2026-11-11): „zależy, kto ma dalszy sensor”.
+test('obustronnie: wróg z dłuższym czujnikiem, którego nie wykrywam — sama granica (watchers), bez wpisu w grupach', () => {
+  const player = { x: 0, y: 0, side: 'friendly', passive: 8000, sig: 0.5, vision: 5000 }; // mały statek
+  const lowca = { x: 30000, y: 0, side: 'pirate', passive: 80000, sig: 0.5, vision: 18000 }; // ma mnie: 80 km × 0,5 = 40 km
+  const adapters = {
+    alive: (e) => !!e && !e.dead, sideOf: (e) => e.side,
+    posOf: (e, out) => { out.x = e.x; out.y = e.y; return out; },
+    passiveOf: (e) => e.passive, activeOf: (e, p) => p, baseSigOf: (e) => e.sig, visionOf: (e) => e.vision,
+    coverAt: () => 1, identified: (e) => Math.hypot(e.x - player.x, e.y - player.y) <= player.vision,
+    cloaked: () => false, writeState: () => {}
+  };
+  const P = SP.createSensorPicture(adapters);
+  const W = { player, npcs: [lowca], stations: null, extraSources: null };
+  SP.updateSensorPicture(P, 0, W, true);
+  assert.equal(P.know.get(lowca).level, D.SENSOR_LEVEL.NONE, 'mój czujnik 8 km × 0,5 = 4 km — nie sięga 30 km');
+  assert.equal(P.threats.n, 0, 'nieznany wróg nie jest grupą (bez obłoku X-ów)');
+  assert.equal(P.player.detectedTrue, 1);
+  const Wt = P.watchers;
+  assert.equal(Wt.n, 1, 'ale jego granica jest');
+  assert.equal(Wt.k[0].e, lowca);
+  assert.ok(near(Wt.R[0], 80000 * 0.5));
+  assert.equal(Wt.idR[0], 18000);
+  assert.equal(Wt.lvl[0], D.SENSOR_LEVEL.CONTACT, 'ma mnie w kontakcie, nie w identyfikacji');
+  assert.ok(near(Wt.dist[0], 30000));
+  // podlatuje na 15 km: identyfikuje mnie; wciąż go nie wykrywam
+  lowca.x = 15000;
+  SP.updateSensorPicture(P, 0, W, true);
+  assert.equal(P.watchers.lvl[0], D.SENSOR_LEVEL.IDENTIFIED);
+  // odlatuje poza swój zasięg — granicy nie ma
+  lowca.x = 50000;
+  SP.updateSensorPicture(P, 0, W, true);
+  assert.equal(P.watchers.n, 0);
+  assert.equal(P.watchers.k[0], null, 'bez trzymania wpisów');
+});
+
+test('obustronnie: patrol z krótszym czujnikiem — widzę go (kontakt / cały), on mnie nie ma; poziomy obu stron w grupie', () => {
+  const player = { x: 0, y: 0, side: 'friendly', passive: 42000, sig: 0.5, vision: 7000 }; // mały statek z dobrym radarem
+  const patrol = { x: 15000, y: 0, side: 'pirate', passive: 18000, sig: 0.7, vision: 5000 }; // 18 km × 0,5 = 9 km — nie sięga
+  const adapters = {
+    alive: (e) => !!e && !e.dead, sideOf: (e) => e.side,
+    posOf: (e, out) => { out.x = e.x; out.y = e.y; return out; },
+    passiveOf: (e) => e.passive, activeOf: (e, p) => p, baseSigOf: (e) => e.sig, visionOf: (e) => e.vision,
+    coverAt: () => 1, identified: (e) => Math.hypot(e.x - player.x, e.y - player.y) <= player.vision,
+    cloaked: () => false, writeState: () => {}
+  };
+  const P = SP.createSensorPicture(adapters);
+  const W = { player, npcs: [patrol], stations: null, extraSources: null };
+  SP.updateSensorPicture(P, 0, W, true);
+  const F = P.threats;
+  assert.equal(F.n, 1);
+  assert.equal(F.meLvl[0], D.SENSOR_LEVEL.CONTACT, 'w mojej szarej strefie (42 × 0,7 = 29,4 km), poza wzrokiem — X-y');
+  assert.equal(F.themLvl[0], D.SENSOR_LEVEL.NONE, 'on mnie nie ma');
+  assert.ok(F.them[0] < 1 && F.me[0] >= 1);
+  assert.equal(F.est[0], 1);
+  assert.equal(F.themIdR[0], P.tune.visionGuess[D.contactSizeClass(0.7)], 'wzrok kontaktu zgadnięty z rozmiaru');
+  assert.equal(F.meIdR[0], 7000);
+  assert.ok(near(F.meId[0], 7000 / 15000, 0.08), 'odległość z miejsca przybliżonego kontaktu');
+  assert.equal(P.watchers.n, 0, 'znany wróg nie jest obserwatorem bez twarzy');
+  // podlatuję na 6 km: widzę go całego, on ma mnie w kontakcie (9 km), nie identyfikuje (5 km)
+  patrol.x = 6000;
+  SP.updateSensorPicture(P, 0, W, true);
+  assert.equal(F.meLvl[0], D.SENSOR_LEVEL.IDENTIFIED);
+  assert.equal(F.themLvl[0], D.SENSOR_LEVEL.CONTACT);
+  assert.equal(F.themIdR[0], 5000, 'po identyfikacji — prawdziwy wzrok');
+  assert.ok(near(F.themId[0], 5000 / 6000));
+  patrol.x = 4000;
+  SP.updateSensorPicture(P, 0, W, true);
+  assert.equal(F.themLvl[0], D.SENSOR_LEVEL.IDENTIFIED);
+});

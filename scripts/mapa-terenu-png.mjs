@@ -1,5 +1,6 @@
 // Mapa terenu (src/3d/planetGen/planetGenTerrainMap.js) do pliku PNG — bez przeglądarki i GPU.
-//   node scripts/mapa-terenu-png.mjs [--ziarno 1] [--roz 1024] [--km 20] [--rzeka 120] [--out .tmp/teren/mapa.png]
+//   node scripts/mapa-terenu-png.mjs [--ziarno 1] [--roz 1024] [--km 20] [--rzeka meandry|wielka|roztoki|delta]
+//        [--ros tajga|tropik|czerwona|purpura|zlota] [--szer <szerokość koryta, m>] [--out .tmp/teren/mapa.png]
 //        [--wytnij "x,y,szer,wys"]  (wycinek w tekselach — do porównań ze zdjęciem wzorca)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -40,7 +41,10 @@ export function encodePng(rgba, w, h) {
 }
 
 const size = Number(args.roz || 1024);
-const map = generateTerrainMap({ seed: Number(args.ziarno || 1), size, extentKm: Number(args.km || 20), riverWidthM: Number(args.rzeka || 120) });
+const map = generateTerrainMap({
+  seed: Number(args.ziarno || 1), size, extentKm: Number(args.km || 20), river: args.rzeka || 'meandry', veg: args.ros || 'tajga',
+  riverWidthM: Number(args.szer || 0)
+});
 let { albedo } = map;
 let w = size;
 let h = size;
