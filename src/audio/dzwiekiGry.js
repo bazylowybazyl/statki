@@ -405,6 +405,10 @@ export function utworzDzwiekiGry(opts) {
     stat.przester = 0;
     stat.glosyMax = glosyAktywne;
     limit.wyzeruj();
+    // dźwięki ciągłe, które grają w chwili zerowania, liczą się jako jedno odtworzenie
+    if (silnik) zagral.silnikMain = 1;
+    for (const c of ciws) zagral.gatling = (zagral.gatling || 0) + 1;
+    for (const L of petle) zagral[L.id] = (zagral[L.id] || 0) + 1;
   }
 
   /** Lista dźwięków sceny dla panelu: id, warianty, wybór, wyciszenie. */

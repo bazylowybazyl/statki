@@ -40,15 +40,20 @@ test('mapa zdarzeń: wymagane z opisu zadania', () => {
   assert.ok(jestCiws('ciws_mk2') && jestCiws('ciws_mk1') && !jestCiws('railgun_mk1'));
 });
 
-test('kategoria broni NPC', () => {
-  assert.equal(kategoriaBroniNpc('railgun_mk2', { type: 'kinetic' }), 'railgun');
-  assert.equal(kategoriaBroniNpc('flak_mk1', {}), 'flak');
-  assert.equal(kategoriaBroniNpc('laser_pd', {}), 'laserPD');
-  assert.equal(kategoriaBroniNpc('x', { beam: true }), 'wiazka');
-  assert.equal(kategoriaBroniNpc('autocannon_mk1', {}), 'autocannon');
-  assert.equal(kategoriaBroniNpc('heavy_cannon', { cooldown: 2 }), 'dzialo');
-  assert.equal(kategoriaBroniNpc('whatever', { fireRate: 8 }), 'autocannon');
-  for (const k of ['autocannon', 'dzialo', 'railgun', 'laserPD', 'flak', 'wiazka']) assert.ok(DZWIEKI[k]);
+test('kategoria broni NPC (z pola category MASTER_WEAPONS)', async () => {
+  const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
+  const k = (id) => kategoriaBroniNpc(id, MASTER_WEAPONS[id]);
+  assert.equal(k('railgun_mk2'), 'railgun');
+  assert.equal(k('flak_m'), 'flak');
+  assert.equal(k('laser_pd_mk1'), 'laserPD');
+  assert.equal(k('beam_continuous'), 'wiazka');
+  assert.equal(k('heavy_autocannon'), 'autocannon');
+  assert.equal(k('armata_mk1'), 'dzialo');
+  assert.equal(k('missile_rack'), 'rakieta');
+  assert.equal(kategoriaBroniNpc('nieznana', { cooldown: 2 }), 'dzialo');
+  assert.equal(kategoriaBroniNpc('nieznana', { fireRate: 8 }), 'autocannon');
+  for (const [id, def] of Object.entries(MASTER_WEAPONS)) assert.ok(DZWIEKI[kategoriaBroniNpc(id, def)], id);
+  for (const id of ['railgun_mk1', 'railgun_mk2', 'tempest_ion_s', 'tempest_ion_l']) assert.equal(STRZAL_GRACZA[id], 'tempestIon');
 });
 
 test('limit głosów: salwa czterech wież przesuwa starty o odstęp, piąta ponad zwłokę odpada', () => {

@@ -116,7 +116,11 @@ export const ZDARZENIA = Object.freeze({
 
 /** Strzał broni gracza / piratów → id dźwięku. Broń wiązki (pętla) i CIWS (synteza) obsługuje warstwa osobno. */
 export const STRZAL_GRACZA = Object.freeze({
-  tempest_ion: 'tempestIon',
+  // Tempest Ion (MASTER_WEAPONS: railgun_mk1 / mk2 to „Tempest Ion Mk I / II”, plus S i L)
+  railgun_mk1: 'tempestIon',
+  railgun_mk2: 'tempestIon',
+  tempest_ion_s: 'tempestIon',
+  tempest_ion_l: 'tempestIon',
   special_yamato_cannon: 'yamato',
   missile_rack: 'rakieta',
   supernova_missile: 'supernovaStart'
@@ -128,23 +132,34 @@ export function jestCiws(weaponId) {
 }
 
 /**
- * Broń NPC → kategoria dźwięku (`autocannon`, `dzialo`, `railgun`, `laserPD`, `flak`, `wiazka`) z pól wpisu
- * `MASTER_WEAPONS` (`type`, `fx`, `role`, `beam`, `id`, `fireRate`, `damage`). Bez wpisu — z samego id.
+ * Broń NPC → dźwięk kategorii (`autocannon`, `dzialo`, `railgun`, `laserPD`, `flak`, `wiazka`, rakiety → `rakieta`)
+ * z pola `category` wpisu `MASTER_WEAPONS` (rail, autocannon, armata, plasma, beam, flak, rocket, torpedo…);
+ * bez wpisu — z samego id.
  */
 export function kategoriaBroniNpc(weaponId, def = null) {
   const id = String(weaponId || '').toLowerCase();
-  const typ = String(def?.type || def?.kind || '').toLowerCase();
-  const fx = String(def?.fx || def?.fxProfile || def?.fxKey || '').toLowerCase();
-  const rola = String(def?.role || '').toLowerCase();
-  const tekst = `${id} ${typ} ${fx} ${rola}`;
-  if (def?.beam || def?.isBeam || /beam|wiazk|death_ray|lance/.test(tekst)) return 'wiazka';
-  if (/flak/.test(tekst)) return 'flak';
-  if (/rail|gauss|mass_driver/.test(tekst)) return 'railgun';
-  if (/laser|pd\b|point|ciws|pdc/.test(tekst)) return 'laserPD';
-  if (/autocannon|gatling|vulcan|minigun|machine|rapid|chain/.test(tekst)) return 'autocannon';
+  const kat = String(def?.category || '').toLowerCase();
+  const ciagla = def?.beam || def?.isBeam || /continuous/.test(id) || def?.beamMode === 'continuous';
+  switch (kat) {
+    case 'rail': return 'railgun';
+    case 'autocannon': return 'autocannon';
+    case 'armata': return 'dzialo';
+    case 'flak': return 'flak';
+    case 'ciws': return 'autocannon';
+    case 'rocket': case 'torpedo': return 'rakieta';
+    case 'beam': return ciagla ? 'wiazka' : 'laserPD';
+    case 'plasma': return /helios|laser|lance/.test(id) ? 'laserPD' : 'dzialo';
+    case 'superweapon': return 'wiazka';
+    default: break;
+  }
+  if (ciagla || /beam_cont|death_ray/.test(id)) return 'wiazka';
+  if (/flak/.test(id)) return 'flak';
+  if (/rail|gauss|tempest|lance/.test(id)) return 'railgun';
+  if (/laser|_pd|helios/.test(id)) return 'laserPD';
+  if (/autocannon|gatling|vulcan|minigun|ciws/.test(id)) return 'autocannon';
+  if (/missile|rocket|torped|rack/.test(id)) return 'rakieta';
   const szybkostrzelna = Number(def?.fireRate) > 3 || (Number(def?.cooldown) > 0 && Number(def.cooldown) < 0.35);
-  if (szybkostrzelna) return 'autocannon';
-  return 'dzialo';
+  return szybkostrzelna ? 'autocannon' : 'dzialo';
 }
 
 /** Wszystkie id plików potrzebne w scenie (dekodujemy tylko je). */
