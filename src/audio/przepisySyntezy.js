@@ -164,3 +164,79 @@ export const engineMain = {
     return h;
   },
 };
+
+// Silniki SIDE: mniejsze silniki rakietowe burt o pracy ciągłej. Decyzja użytkownika 2026-11-11: „sam syk nic nie
+// robi — bo side to też silniki rakietowe z ciągłą pracą”. Budowa jak silnik MAIN (dudnienie, ryk, ton), pasma
+// wyżej (mniejsza dysza), szybsze narastanie i gaśnięcie, zapłon z krótkim kopnięciem; syk dyszy to tylko dodatek.
+export const engineSide = {
+  id: 'silnikSide',
+  group: 'Okręt',
+  name: 'Silniki SIDE',
+  desc: 'Mniejszy silnik rakietowy burty: zapłon, ryk, dudnienie i ton. Praca ciągła.',
+  hold: true,
+  params: [
+    { id: 'throttle', name: 'Ciąg', min: 0, max: 1, step: 0.01, value: 0.7 },
+  ],
+  length: (p, hold) => hold + 0.8,
+  play(E, p, at) {
+    const V = E.voice(at);
+    const h = E.handle(V);
+    const t = V.t;
+    const master = V.gain(0);
+    V.env(master.gain, t, [[0, 0, 's'], [0.12, 1, 'l']]);
+    // dudnienie, ryk
+    const ruf = V.lp(150, 0.8, t);
+    const rug = V.gain(0);
+    V.chain(V.noise('brown', 1, t), ruf, rug, master);
+    const rof = V.bp(480, 0.7, t);
+    const rog = V.gain(0);
+    V.chain(V.noise('pink', 1, t), rof, rog, master);
+    // ton: piły w kwincie + sub, oktawę nad silnikiem MAIN
+    const DR = [72, 108, 36];
+    const dr = [V.osc('sawtooth', DR[0], t), V.osc('sawtooth', DR[1], t), V.osc('sine', DR[2], t)];
+    const drf = V.lp(280, 2, t);
+    const drift = V.osc('sine', 0.21, t);
+    const dg = V.gain(6);
+    V.chain(drift, dg);
+    dr.forEach((o, i) => {
+      dg.connect(o.detune);
+      V.chain(o, V.gain(i === 2 ? 0.8 : 0.45), drf);
+    });
+    V.chain(drf, V.gain(0.16), master);
+    // syk dyszy — cicho, pod rykiem
+    const hig = V.gain(0);
+    V.chain(V.noise('white', 1, t), V.hp(3000, 0.7, t), hig, master);
+    V.chain(master, V.in);
+    const st = { thr: p.throttle };
+    const apply = (tt, tau) => {
+      const x = st.thr;
+      ruf.frequency.setTargetAtTime(150 + 380 * x, tt, tau);
+      rug.gain.setTargetAtTime(0.3 + 0.45 * x, tt, tau);
+      rof.frequency.setTargetAtTime(480 + 1000 * x, tt, tau);
+      rog.gain.setTargetAtTime(0.12 + 0.5 * x, tt, tau);
+      const pm = 1 + 0.3 * x;
+      dr.forEach((o, i) => o.frequency.setTargetAtTime(DR[i] * pm, tt, tau * 1.5));
+      drf.frequency.setTargetAtTime(280 + 480 * x, tt, tau);
+      hig.gain.setTargetAtTime(0.02 + 0.05 * x, tt, tau);
+    };
+    apply(t, 0.01);
+    // zapłon: kopnięcie i podmuch
+    V.thump(t, 96, 46, 0.09, 0.4, 0.4, { drive: 2 });
+    V.burst(t, 'pink', { type: 'bandpass', f: 420, f1: 2200, sweep: 0.22, Q: 1.1, attack: 0.02, decay: 0.3, peak: 0.4 });
+    h.params.throttle = (v, tt) => {
+      st.thr = v;
+      apply(tt, 0.12);
+    };
+    h.onRelease((tr) => {
+      E.hold(master.gain, tr);
+      master.gain.setTargetAtTime(0, tr, 0.14);
+      for (const o of dr) {
+        o.detune.setValueAtTime(0, tr);
+        o.detune.linearRampToValueAtTime(-700, tr + 0.6);
+      }
+      V.stop(tr + 0.8);
+    });
+    V.start();
+    return h;
+  },
+};

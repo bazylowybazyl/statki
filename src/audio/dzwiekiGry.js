@@ -17,10 +17,12 @@ import {
   polozenie, liniaWyboru, dbToGain, gainToDb
 } from './dzwiekiLogika.js';
 import { SoundEngine, paramDefaults } from './synteza.js';
-import { engineMain, gatling } from './przepisySyntezy.js';
+import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
 
 const CZAS_PETLI_BEZ_ODSWIEZENIA = 0.25; // s — pętla nieodświeżona tyle czasu gaśnie (zdarzenie się skończyło)
 const CZAS_CIWS_BEZ_STRZALU = 0.16; // s — seria CIWS wygasa, gdy tyle nie było strzału
+const PROG_CIAGU_SIDE = 0.05; // ciąg burty, od którego silniki SIDE grają
+const CZAS_SIDE_BEZ_CIAGU = 0.18; // s — silniki SIDE gasną, gdy tyle nie było ciągu (impulsy automatu dysz to jedna praca)
 
 /**
  * @param {{ ctx: AudioContext, rand: () => number, kadr: () => ({x,y,polW,polH,zoom}), baza?: string,
@@ -312,6 +314,32 @@ export function utworzDzwiekiGry(opts) {
     if (b !== silnikDopal) { silnik.set('boost', b); silnikDopal = b; }
   }
 
+  let side = null;
+  let sideCiag = -1;
+  let sideOstatnio = 0;
+  /**
+   * Silniki SIDE gracza — praca ciągła (silnik rakietowy, nie syk): ciąg 0…1 mocniejszej burty, wołane co krok
+   * fizyki w scenie. Poniżej progu nic nie gasi od razu: `klatka()` wygasza po `CZAS_SIDE_BEZ_CIAGU`, żeby
+   * impulsy automatu dysz nie odpalały zapłonu raz za razem.
+   */
+  function silnikSide(ciag) {
+    if (wylaczony) return;
+    if (wycisz.silnikSide) {
+      if (side) { side.release(); side = null; }
+      return;
+    }
+    const c = Math.max(0, Math.min(1, Number(ciag) || 0));
+    if (c < PROG_CIAGU_SIDE) return;
+    sideOstatnio = ctx.currentTime;
+    if (!side) {
+      side = engineSide.play(E(), paramDefaults(engineSide, { throttle: c }), { dist: 0, pan: 0, gain: dbToGain(DZWIEKI_SYNTEZY.silnikSide.poziom), reverb: 0.3 });
+      sideCiag = c;
+      zagral.silnikSide = (zagral.silnikSide || 0) + 1;
+      return;
+    }
+    if (Math.abs(c - sideCiag) > 0.03) { side.set('throttle', c); sideCiag = c; }
+  }
+
   const ciws = []; // { klucz, h, ostatnio }
   /** Strzał CIWS strzelca `klucz` — seria z syntezy trwa, dopóki przychodzą strzały. */
   function ciwsStrzal(klucz, x, y) {
@@ -352,6 +380,7 @@ export function utworzDzwiekiGry(opts) {
         ciws.length--;
       }
     }
+    if (side && teraz - sideOstatnio > CZAS_SIDE_BEZ_CIAGU) { side.release(); side = null; }
     pomiarPrzed.getFloatTimeDomainData(probkiPrzed);
     pomiarPo.getFloatTimeDomainData(probkiPo);
     let a = 0, b = 0;
@@ -371,6 +400,7 @@ export function utworzDzwiekiGry(opts) {
     for (const c of ciws) c.h.release();
     ciws.length = 0;
     if (silnik) { silnik.release(); silnik = null; }
+    if (side) { side.release(); side = null; }
     if (syntezator) syntezator.stopAll();
   }
 
@@ -407,6 +437,7 @@ export function utworzDzwiekiGry(opts) {
     limit.wyzeruj();
     // dźwięki ciągłe, które grają w chwili zerowania, liczą się jako jedno odtworzenie
     if (silnik) zagral.silnikMain = 1;
+    if (side) zagral.silnikSide = 1;
     for (const c of ciws) zagral.gatling = (zagral.gatling || 0) + 1;
     for (const L of petle) zagral[L.id] = (zagral[L.id] || 0) + 1;
   }
@@ -436,7 +467,7 @@ export function utworzDzwiekiGry(opts) {
   }
 
   return {
-    ctx, wczytaj, graj, zdarzenie, petla, silnikMain, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
+    ctx, wczytaj, graj, zdarzenie, petla, silnikMain, silnikSide, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
     statystyki, wyzerujStatystyki, lista, tekstWyboru,
     ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); },
     ustawWyciszenie(id, b) { wycisz[id] = !!b; },

@@ -19038,12 +19038,12 @@
     function soundSceneUi(name) {
       if (SND && SoundScene.active) SND.zdarzenie(name, NaN, NaN);
     }
-    /** Dysze SIDE gracza: dźwięk na zboczu włączenia (z kroku fizyki). */
+    /** Silniki SIDE gracza: ciąg burt co krok fizyki → ciągły dźwięk silnika (warstwa sama gasi po zaniku ciągu). */
     function soundSceneRcs(left, right) {
       if (!SND || !SoundScene.active) return;
-      const on = left > 0.2 || right > 0.2;
-      if (on && !soundSceneRcs._on) SND.zdarzenie('dyszaBoczna', ship.pos.x, ship.pos.y, 0.8);
-      soundSceneRcs._on = on;
+      // Silniki SIDE to silniki rakietowe o pracy ciągłej (decyzja użytkownika 2026-11-11: „sam syk nic nie robi”) —
+      // ciągły dźwięk z syntezy sterowany ciągiem mocniejszej burty, nie pojedynczy syk przy zapłonie.
+      SND.silnikSide(ship.destroyed ? 0 : Math.max(left, right));
     }
     /**
      * Rdzenie reaktorów w scenie: cel „niezniszczalny” wypada z kroku ReactorGame (zniszczona osłona komory nie

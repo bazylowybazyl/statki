@@ -29,6 +29,8 @@ export const KATEGORIE = Object.freeze({
 
 /** Poprawka wystrzałów [dB] względem kategorii: strzał powtarza się najczęściej, więc gra pod wybuchami. */
 export const POZIOM_WYSTRZALU = -6;
+/** Broń specjalna (Yamato, Supernova) — użytkownik: „specjalne delikatnie głośniejsze niż main”: +3 dB nad main. */
+export const POZIOM_SPECJALNEJ = POZIOM_WYSTRZALU + 3;
 
 /** Najwięcej, ile wyrównanie podbija cichy plik [dB] (powyżej — podbijałoby szum i ogon). */
 export const MAX_PODBICIE_DB = 18;
@@ -43,9 +45,9 @@ export const SZCZYT_PO_WYROWNANIU_DB = -3;
 export const DZWIEKI = Object.freeze({
   // Działa gracza
   tempestIon: { kat: 'dzialo', limit: 6, odstep: 28, zwloka: 4, ton: 0.05, glos: 0.12, poziom: POZIOM_WYSTRZALU },
-  yamato: { kat: 'superbron', limit: 4, odstep: 60, zwloka: 3, ton: 0.03, glos: 0.08, poziom: POZIOM_WYSTRZALU },
+  yamato: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 3, ton: 0.03, glos: 0.08, poziom: POZIOM_SPECJALNEJ },
   rakieta: { kat: 'dzialo', limit: 6, odstep: 45, zwloka: 4, ton: 0.06, glos: 0.12, poziom: POZIOM_WYSTRZALU },
-  supernovaStart: { kat: 'dzialo', limit: 3, odstep: 90, zwloka: 3, ton: 0.04, glos: 0.08, poziom: POZIOM_WYSTRZALU },
+  supernovaStart: { kat: 'dzialo', limit: 3, odstep: 90, zwloka: 3, ton: 0.04, glos: 0.08, poziom: POZIOM_SPECJALNEJ },
   // Broń piratów (wg kategorii broni)
   autocannon: { kat: 'dzialo', limit: 6, odstep: 35, zwloka: 2, ton: 0.07, glos: 0.15, poziom: POZIOM_WYSTRZALU },
   dzialo: { kat: 'dzialo', limit: 5, odstep: 50, zwloka: 3, ton: 0.05, glos: 0.12, poziom: POZIOM_WYSTRZALU },
@@ -75,8 +77,7 @@ export const DZWIEKI = Object.freeze({
   zgrzytPetla: { kat: 'drobne', petla: true, limit: 2 },
   zgniot: { kat: 'dzialo', limit: 3, odstep: 150, zwloka: 1, ton: 0.06, glos: 0.12 },
   taran: { kat: 'superbron', limit: 2, odstep: 400, zwloka: 0, ton: 0.04, glos: 0.08 },
-  // Okręt
-  rcs: { kat: 'drobne', limit: 3, odstep: 90, zwloka: 1, ton: 0.08, glos: 0.2 },
+  // Okręt: silnik MAIN i silniki SIDE są z syntezy (DZWIEKI_SYNTEZY); syk `rcs` z plików wypadł ze sceny.
   // Interfejs (bez położenia: środek, pełna głośność)
   grupa: { kat: 'interfejs', limit: 2, odstep: 60, zwloka: 0, ton: 0, glos: 0, ui: true },
   potwierdzenie: { kat: 'interfejs', limit: 2, odstep: 60, zwloka: 0, ton: 0, glos: 0, ui: true },
@@ -90,6 +91,8 @@ export const DZWIEKI = Object.freeze({
 export const DZWIEKI_SYNTEZY = Object.freeze({
   // Synteza nie przechodzi przez wyrównanie plików — `poziom` to cała jej głośność [dB].
   silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -18 },
+  // Silniki SIDE: praca ciągła jak MAIN, nie pojedynczy syk (decyzja użytkownika 2026-11-11).
+  silnikSide: { kat: 'drobne', nazwa: 'Silniki SIDE (synteza)', poziom: -20 },
   gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -14 }
 });
 
@@ -114,7 +117,6 @@ export const ZDARZENIA = Object.freeze({
   kontaktKadlubow: 'uderzenieKadluba',
   zgniotKadluba: 'zgniot',
   taran: 'taran',
-  dyszaBoczna: 'rcs',
   zmianaGrupy: 'grupa',
   ogienAutoWl: 'potwierdzenie',
   odmowa: 'blad',

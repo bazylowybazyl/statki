@@ -21,7 +21,20 @@ test('każdy dźwięk z tabeli sceny i z mapy zdarzeń jest w manifeście (pętl
   }
   for (const [zd, id] of Object.entries(ZDARZENIA)) assert.ok(DZWIEKI[id], `zdarzenie ${zd} → ${id} spoza tabeli`);
   for (const [bron, id] of Object.entries(STRZAL_GRACZA)) assert.ok(DZWIEKI[id], `strzał ${bron} → ${id}`);
-  assert.ok(DZWIEKI_SYNTEZY.silnikMain && DZWIEKI_SYNTEZY.gatling);
+  assert.ok(DZWIEKI_SYNTEZY.silnikMain && DZWIEKI_SYNTEZY.silnikSide && DZWIEKI_SYNTEZY.gatling);
+});
+
+test('poziomy: broń specjalna delikatnie głośniejsza niż main, wystrzały pod wybuchami, SIDE nie głośniej niż MAIN', () => {
+  const cel = (id) => KATEGORIE[DZWIEKI[id].kat].cel + (DZWIEKI[id].poziom || 0);
+  for (const [spec, main] of [['yamato', 'tempestIon'], ['supernovaStart', 'rakieta']]) {
+    const d = cel(spec) - cel(main);
+    assert.ok(d > 0 && d <= 4, `${spec} − ${main} = ${d} dB`);
+  }
+  for (const strzal of ['tempestIon', 'yamato', 'rakieta', 'supernovaStart', 'autocannon', 'dzialo', 'railgun', 'flak']) {
+    assert.ok(cel(strzal) < cel('wybuchRakiety'), `${strzal} pod wybuchem rakiety`);
+  }
+  assert.ok(cel('tarcza') < cel('kadlub'), 'tarcza łagodniejsza niż trafienie w kadłub');
+  assert.ok(DZWIEKI_SYNTEZY.silnikSide.poziom <= DZWIEKI_SYNTEZY.silnikMain.poziom);
 });
 
 test('mapa zdarzeń: wymagane z opisu zadania', () => {
@@ -30,7 +43,7 @@ test('mapa zdarzeń: wymagane z opisu zadania', () => {
     tarczaTrafiona: 'tarcza', tarczaWlaczona: 'tarczaWl', tarczaWylaczona: 'tarczaWyl', tarczaZapadnieta: 'tarczaPekniecie',
     rakietaTrafila: 'wybuchRakiety', supernovaDetonacja: 'supernovaWybuch', rakietaZestrzelona: 'wybuchMaly',
     smiercOkretu: 'wybuchOkretu', wybuchWtorny: 'wybuch', kontaktKadlubow: 'uderzenieKadluba', zgniotKadluba: 'zgniot',
-    taran: 'taran', dyszaBoczna: 'rcs', zmianaGrupy: 'grupa', ogienAutoWl: 'potwierdzenie', odmowa: 'blad',
+    taran: 'taran', zmianaGrupy: 'grupa', ogienAutoWl: 'potwierdzenie', odmowa: 'blad',
     namiar: 'namiar', malowanieCelu: 'malowanie'
   };
   for (const [k, v] of Object.entries(oczekiwane)) assert.equal(ZDARZENIA[k], v, k);
