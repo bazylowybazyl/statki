@@ -121,7 +121,7 @@ export class HaloRingGame {
     this._hubC = { x: 0, y: 0 };
     this._cut0 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
     this._cut1 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
-    this._hallOpts = { poses: null, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
+    this._hallOpts = { poses: null, berths: null, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
     // obrys kadłuba gracza w hubie rysowanej hali (przewody paliwowe kładą się na kadłubie) — bufor bez alokacji
     this._hallHull = [];
     // Fabuła: { key: 'earth', hall: 0, roofFade: 0..1 (1 = dachu nie ma), cut: 0..1 } albo null (dach z kadłuba gracza).
@@ -559,6 +559,8 @@ export class HaloRingGame {
       // stanowisk obsługiwanych przez automat — z niego
       const owner = reg.halls[i];
       opts.poses = owner?.poses || null;
+      // stanowiska hali w rejestrze: poziom reflektorów podejścia (`approachLight` — automat obsługi stanowisk)
+      opts.berths = owner?.layout?.berths || null;
       // ramiona i przewody w czasie gry (pauza i sceny fabuły — stoją), obrys kadłuba gracza w hubie TEJ hali
       opts.gameDt = gameDt;
       opts.hull = hull && owner?.inv ? this._hullInHall(hull, owner.inv) : null;

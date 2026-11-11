@@ -1229,7 +1229,7 @@
     } from "./src/data/lootGear.js";
     import {
       createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND,
-      fillEscapePodRenderFrame, escapePodCloakHidden, retargetEscapePods
+      fillEscapePodRenderFrame, escapePodCloakHidden, retargetEscapePods, bindEscapePodBays
     } from "./src/game/escapePods.js";
     import {
       createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -19981,8 +19981,34 @@
       px: 0, py: 0, hasPlayer: false,
       route: (i, x, y, target) => routeEscapePodSlot(i, x, y, target),
       onArrive: (target, people, kind, course, x, y) => onEscapePodArrived(target, people, kind, course, x, y),
-      onLost: null
+      onLost: null,
+      bayPose: (bind, out) => podBayPose(bind, out)
     };
+    // ZATOKI (decyzja użytkownika 2026-11-11: lampy zatok migają przed wyrzutem): kapsuła w kadłubie związana z KOMÓRKĄ
+    // kadłuba (HullBodies.bindCell — najbliższy żywy węzeł miejsca wyrzutu na burcie) jedzie z nią przez śmierć, wrak
+    // (convertToWreck przenosi ciało) i rozpad (odłam rodu — HullBodies.rebindCell po liście wraków); impuls wyrzutu
+    // obraca się z kadłubem. Komórka zniszczona — zatoka przepada (lampa gaśnie), kapsuła jedzie ostatnim ruchem.
+    const _podCell = { entity: null, x: 0, y: 0, dx: 0, dy: 0, vx: 0, vy: 0, angle: 0 };
+    // `out` — Float64Array(5) puli kapsuł: x, y, vx, vy, obrót kadłuba od wiązania.
+    function podBayPose(bind, out) {
+      const c = _podCell;
+      if (!HullBodies.boundCell(bind, c) && !(HullBodies.rebindCell(bind, wrecks) && HullBodies.boundCell(bind, c))) return false;
+      out[0] = c.x; out[1] = c.y; out[2] = c.vx; out[3] = c.vy;
+      out[4] = c.angle - bind.angle0;
+      return true;
+    }
+    /** Zatoka w pozie RENDERU kadłuba (ta sama co skóra: `bridgeRenderPose` — interpolowana w trybach z migawką); out = [x, y]. */
+    function podBayRenderAt(bind, out) {
+      const c = _podCell;
+      if (!HullBodies.boundCell(bind, c)) return false;
+      const rp = bridgeRenderPose(c.entity);
+      if (!rp) { out[0] = c.x; out[1] = c.y; return true; }
+      const da = (Number(rp.angle) || 0) - c.angle;
+      const cs = Math.cos(da), sn = Math.sin(da);
+      out[0] = rp.x + c.dx * cs - c.dy * sn;
+      out[1] = rp.y + c.dx * sn + c.dy * cs;
+      return true;
+    }
 
     function podStationTarget(stationIndex) {
       const st = stationIndex >= 0 ? stations[stationIndex] : null;
@@ -20114,11 +20140,14 @@
       const ferry = e.__trafficFerry === true && Number.isFinite(Number(e.trafficCourse));
       const course = ferry ? Number(e.trafficCourse) | 0 : -1;
       bindEscapePodBridge();
+      const uid0 = escapePods.nextUid;
       const n = launchEscapePods(escapePods, {
         x, y, vx: Number(e.vx) || 0, vy: Number(e.vy) || 0, angle: Number(e.angle) || 0,
         length: _podExtent.length, width: _podExtent.width, seed, target, people: 0,
         kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course
       }, _podEnv);
+      // Zatoki na kadłubie (belki): kapsuła stoi w najbliższej żywej komórce miejsca wyrzutu i jedzie z nią.
+      if (n > 0 && e.beamHull) bindEscapePodBays(escapePods, uid0, (bx, by) => HullBodies.bindCell(e, bx, by, Infinity, {}), _podEnv);
       if (ferry) applyEarlyFerryReply(course);
       return n;
     }
@@ -20172,7 +20201,8 @@
     function escapePodRenderFrame(alpha) {
       // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak paczki łupu).
       const lag = (PAUSED || StoryGame.worldFrozen) ? 0 : (1 - alpha) * PHYS_DT;
-      return fillEscapePodRenderFrame(escapePods, _podRender, lag, _podVisible, _lensDotsActive ? _podLensHidden : null);
+      // Zatoki kapsuł w kadłubie: miejsce w pozie renderu kadłuba (podBayRenderAt), mgła i maskowanie jak kapsuły.
+      return fillEscapePodRenderFrame(escapePods, _podRender, lag, _podVisible, _lensDotsActive ? _podLensHidden : null, podBayRenderAt);
     }
 
     window.EscapePods = {
@@ -34440,7 +34470,7 @@
       // odpięcie stoją w pauzie i scenach fabuły; każdy ring, także poza kadrem i w podzielonym ekranie), lampki
       // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
       if (haloWorld) {
-        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+        haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, frameDt, ship, sun: SUN });
         // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): pozy obsługi i zegar zaworów tej klatki — także w intro i odprawie.
         hallSoundFrame(frameDt);
       }
@@ -34544,8 +34574,6 @@
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
       lootRenderFrame(alpha);
-      // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off).
-      escapePodRenderFrame(alpha);
       // Górnicy i złomiarze NPC (E24): praca w chwili klatki — blok `trafficWork` (worker) albo rysunek tutaj (off).
       const trafficWorkFrame = trafficWorkRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
@@ -34568,6 +34596,9 @@
       // Pozy renderu NPC i wraków między krokami fizyki (renderPoses) — przed wieżami, wyglądem maskowania i migawką;
       // w pauzie i zamrożonym świecie poza bieżąca (α = 1).
       if (npcRenderLerpOn) renderPoses.frame(renderEntities, physicsTickId, (PAUSED || StoryGame.worldFrozen) ? 1 : alpha);
+      // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off); po pozach renderu
+      // (zatoki kapsuł w kadłubie jadą z wrakiem w jego pozie renderu — podBayRenderAt).
+      escapePodRenderFrame(alpha);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;

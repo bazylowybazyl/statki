@@ -111,6 +111,23 @@ export function k7BeaconLevel(kind, t, phase = 0, period = 0) {
   }
 }
 
+/**
+ * REFLEKTORY PODEJŚCIA (decyzja użytkownika 2026-11-11): reflektor stanowiska capital (ściana tylna, snop wzdłuż
+ * stanowiska ku bramie) świeci przygaszony, póki stanowisko jest wolne, i rozjaśnia się do pełnej mocy, gdy gracz
+ * podchodzi pasem (albo stanowisko jest zajęte / obsługiwane). Poziom podejścia 0…1 liczy automat obsługi
+ * stanowisk (src/game/k7BerthService.js → pole `approachLight` stanowiska w rejestrze hali); ten mnożnik czytają
+ * hala (uK7Spots — pokład) i siatka świateł pyłu hal (pył, para, kadłuby) — jedno źródło. `idle` — moc wolnego
+ * stanowiska. Poziom spoza liczb (brak automatu: dema, tło menu) — pełna moc, jak przed reflektorami podejścia.
+ */
+export const K7_APPROACH_SPOT = Object.freeze({ idle: 0.3 });
+
+/** Mnożnik mocy reflektora stanowiska z poziomu podejścia (0…1; NaN / brak — 1). */
+export function k7ApproachSpotGain(level) {
+  if (typeof level !== 'number' || !(level === level)) return 1;
+  const t = level <= 0 ? 0 : level >= 1 ? 1 : level;
+  return K7_APPROACH_SPOT.idle + (1 - K7_APPROACH_SPOT.idle) * t * t * (3 - 2 * t);
+}
+
 /** Zegar migania: czas ściany [s] zawinięty (float32 w shaderze trzyma ~0,5 ms). */
 export function k7BeaconClock(nowMs) {
   return ((Number(nowMs) || 0) * 0.001) % K7_BEACON_WRAP;
@@ -128,7 +145,7 @@ const VENT_PERIODS = [24, 30, 36, 40, 45, 48];
  * Oprzyrządowanie hali `layout` (createK7Layout). Wynik (wszystko w hubie hali, wysokości K-7):
  *   lamps   — lampy dookólne nad pokładem: { x, y, z, range, color, intensity, k7Type (1 ciepła / 2 chłodna) };
  *   spots   — reflektory: { x, y, z, dir (hub x, wysokość sceny, hub z — jednostkowy w układzie sceny), range,
- *             cosOuter, cosInner, color, intensity, housing: { yaw } };
+ *             cosOuter, cosInner, color, intensity, housing: { yaw }, berthId? (reflektor podejścia stanowiska) };
  *   beacons — soczewki: { x, y, z, kind, phase, period, set ('fg' nad płaszczyzną lotu / 'bg' na pokładzie), r,
  *             berthId (CLEAR ↔ HOLD), vent (indeks w vents) };
  *   vents   — zawory gazu: { id, kind ('reel' | 'wall'), x, z, dirX, dirZ, phase, period, berthId?, side? }.
@@ -154,16 +171,19 @@ export function k7LightRig(layout) {
   for (const bank of l.sideBanks) lamps.push({ x: bank.aisleX, y: 400, z: 3300, range: 2500, color: WARM, intensity: 0.85, k7Type: 1 });
 
   // --- reflektory (oprawy na ścianach, nad płaszczyzną lotu): snop w gazie z góry wygląda jak klin światła
-  const spot = (x, y, z, tx, ty, tz, range, outerDeg, innerDeg, color, intensity) => {
+  const spot = (x, y, z, tx, ty, tz, range, outerDeg, innerDeg, color, intensity, berthId = null) => {
     const sy = k7HeightToZ(y);
     const dir = norm3(tx - x, k7HeightToZ(ty) - sy, tz - z);
-    spots.push({
+    const s = {
       x, y, z, dir, range, cosOuter: Math.cos(outerDeg * Math.PI / 180), cosInner: Math.cos(innerDeg * Math.PI / 180),
       color, intensity, housing: { yaw: Math.atan2(dir[0], dir[2]) }
-    });
+    };
+    if (berthId) s.berthId = berthId;
+    spots.push(s);
   };
-  // ściana tylna: nad każdym stanowiskiem capital, snop wzdłuż stanowiska ku bramie
-  for (const b of capital) spot(b.x, 470, l.backZ + 70, b.x, 40, b.z + 500, 4300, 23, 9, WORK, 2.3);
+  // ściana tylna: nad każdym stanowiskiem capital, snop wzdłuż stanowiska ku bramie — REFLEKTOR PODEJŚCIA stanowiska
+  // (`berthId`: moc × k7ApproachSpotGain(poziom podejścia))
+  for (const b of capital) spot(b.x, 470, l.backZ + 70, b.x, 40, b.z + 500, 4300, 23, 9, WORK, 2.3, b.id);
   // brama G-01: od wewnętrznych ościeżnic w głąb hali, na pasy podejścia
   for (const side of [-1, 1]) {
     spot(side * (l.frontHalfWidth - 150), 540, l.frontZ - 90, side * 1300, 30, 4100, 4600, 27, 11, WORK, 2.0);

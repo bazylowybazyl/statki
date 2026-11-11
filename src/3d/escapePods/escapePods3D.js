@@ -1,7 +1,8 @@
 // src/3d/escapePods/escapePods3D.js
 //
 // KAPSUŁY RATUNKOWE — obraz (E22, reguła `kapsuly-ratunkowe`). Kadłubki kapsuł (partia `EscapePodBodies`, jeden
-// rysunek), migająca lampa (czerwony błysk ratunkowy, HDR — bloom) i płomień silnika (obłoki na billboardach
+// rysunek), migająca lampa (czerwony błysk ratunkowy, HDR — bloom), płomień silnika i lampy ZATOK kapsuł jeszcze
+// w kadłubie (żółte miganie przyspieszające do wyrzutu — `podBayBlink`; obłoki i lampy na billboardach
 // `CargoLights`, drugi rysunek) — dwa rysunki na wszystkie kapsuły.
 //
 // Wejście: ramka bloku `pods` (src/render/blocks/escapePodBlock.js — w workerze `applyEscapePodBlock`, w trybie off
@@ -35,11 +36,38 @@ export const POD_3D_TUNE = {
   /** Płomień: moc HDR (× 0,35 + 0,65 · ciąg), obłoki za dyszą (odległość w szerokościach, promień, waga). */
   flamePower: 2.4,
   flameMinPx: 1.6,
+  /**
+   * LAMPA ZATOKI (kapsuła w kadłubie przed wyrzutem — decyzja użytkownika 2026-11-11): żółte (ostrzegawcze) miganie na kadłubie
+   * nad zatoką, przyspieszające do wyrzutu — faza φ(τ) = bayRate · ln(1 / (τ + bayRamp)), τ — czas do wyrzutu [s],
+   * częstotliwość bayRate / (τ + bayRamp): ~0,9 Hz 2 s przed wyrzutem, ~3 Hz przy 0,5 s, bayRate / bayRamp w chwili
+   * wyrzutu. bayOn — długość błysku (ułamek cyklu), moc HDR, promień [j.] i najmniejszy [px], wysokość nad
+   * płaszczyzną gry (nad skórą kadłuba z −10,4…−5,3). Barwa żółta, jaśniejsza od pomarańczowego ognia wraku
+   * (bursztyn ginął w płomieniach wybuchu zbiornika — zrzut 2026-11-11).
+   */
+  bayRate: 2.0,
+  bayRamp: 0.16,
+  bayOn: 0.45,
+  bayPower: 8.0,
+  bayRadius: 5.0,
+  bayMinPx: 4.0,
+  bayZ: 1.5,
   /** Zapas kadru [j.] przy obcinaniu kapsuł. */
   cullPad: 400
 };
 
+/**
+ * Poziom lampy zatoki (0…1) przy czasie do wyrzutu `tau` [s]: błysk z wygaszaniem w obrębie cyklu, cykle coraz
+ * krótsze ku wyrzutowi (POD_3D_TUNE: bayRate, bayRamp, bayOn). Czysta funkcja (testy).
+ */
+export function podBayBlink(tau, T = POD_3D_TUNE) {
+  const t = tau > 0 ? tau : 0;
+  const ph = T.bayRate * Math.log(1 / (t + T.bayRamp));
+  const f = ph - Math.floor(ph);
+  return f < T.bayOn ? 1 - 0.45 * (f / T.bayOn) : 0;
+}
+
 const LAMP = [1.0, 0.18, 0.06];
+const BAY_LAMP = [1.0, 0.74, 0.2];
 const FLAME = [1.0, 0.62, 0.26];
 const FLAME_CORE = [1.0, 0.9, 0.7];
 // [odległość za rufą (× szerokość), promień (× szerokość), waga mocy, barwa: 0 płomień / 1 jądro]
@@ -51,7 +79,7 @@ export function createEscapePods3D(Core3D) {
   let bodies = null;
   let lights = null;
   const origin = { x: 0, y: 0 };
-  const stats = { pods: 0, lights: 0, ms: 0 };
+  const stats = { pods: 0, bays: 0, lights: 0, ms: 0 };
   const _rollHalf = { hw: 0, hh: 0 };
 
   function ensure() {
@@ -81,7 +109,7 @@ export function createEscapePods3D(Core3D) {
     update(frame, cam, sun, time, viewW, viewH) {
       const t0 = performance.now();
       const n = frame ? frame.count | 0 : 0;
-      stats.pods = 0; stats.lights = 0;
+      stats.pods = 0; stats.bays = 0; stats.lights = 0;
       if (!n || !api.warm) { idle(); stats.ms = performance.now() - t0; return; }
       if (!ensure()) return;
       sceneOriginNearCamera(origin, Core3D.activeCam1);
@@ -96,6 +124,7 @@ export function createEscapePods3D(Core3D) {
       const pxPerUnit = Core3D.viewZoom ? Core3D.viewZoom(Core3D.activeCam1) : zoom;
       const ppu = Math.max(1e-4, pxPerUnit);
       const lampR = Math.max(T.lampRadius, T.lampMinPx / ppu);
+      const bayR = Math.max(T.bayRadius, T.bayMinPx / ppu);
       const flameMin = T.flameMinPx / ppu;
       bodies.begin();
       lights.begin();
@@ -106,9 +135,16 @@ export function createEscapePods3D(Core3D) {
         const gx = frame.x[i];
         const gy = frame.y[i];
         if (Math.abs(gx - camX) >= rh.hw || Math.abs(gy - camY) >= rh.hh) continue;
-        stats.pods++;
         const sx = gx - ox;
         const sy = -gy - oy;
+        // Zatoka (kapsuła jeszcze w kadłubie): sama lampa na kadłubie, miganie przyspiesza do wyrzutu (wiek = −τ).
+        if ((frame.flags[i] & 2) !== 0) {
+          stats.bays++;
+          const k = T.bayPower * podBayBlink(-frame.age[i], T);
+          if (k > 0 && lights.push(sx, sy, T.bayZ, bayR, BAY_LAMP[0] * k, BAY_LAMP[1] * k, BAY_LAMP[2] * k, 0)) stats.lights++;
+          continue;
+        }
+        stats.pods++;
         const yaw = -frame.ang[i];
         const c = Math.cos(yaw);
         const s = Math.sin(yaw);

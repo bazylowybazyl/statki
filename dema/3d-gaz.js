@@ -529,7 +529,8 @@ let acc = 0;
 const shipList = [null];
 const cullInfo = { x: 0, y: 0, drawHalfW: 0, drawHalfH: 0, halfW: 0, halfH: 0 };
 const renderList = [];
-const hallOpts = { poses, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
+// berths — reflektory podejścia stanowisk (approachLight z automatu obsługi — ten sam rejestr co pył hali)
+const hallOpts = { poses, berths: layout.berths, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
 
 function simulate(dt) {
   state.T += dt;
