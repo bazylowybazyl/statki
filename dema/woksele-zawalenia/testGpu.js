@@ -174,7 +174,7 @@ function diagnoza(w, wzor, wynik, przed) {
 
 export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
   // Wzorce CPU liczą z tą samą flagą twardych limitów w gałęzi sprężenia co solver strony (?kawalki=1 albo ?limityF0=1).
-  const parWzorca = (w) => (solver.limityF0 ? { ...(w.par ?? PARAMETRY), limityF0: true } : (w.par ?? PARAMETRY));
+  const parWzorca = (w) => (solver.limityF0 || solver.falaPion ? { ...(w.par ?? PARAMETRY), limityF0: !!solver.limityF0, falaPion: !!solver.falaPion } : (w.par ?? PARAMETRY));
   /** Jeden przebieg kLista + kF z migawki Node. opcje.mutacja: nazwa z MUTACJE; opcje.diag: lista węzłów i zbiory kontaktów. */
   async function podkrok(nazwa, { mutacja = null, diag = false } = {}) {
     const m = await wczytajMigawke(nazwa);

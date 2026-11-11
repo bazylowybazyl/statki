@@ -34,6 +34,7 @@ export class WzorzecF32 extends WzorzecCpu {
     const mu = F(p.mu), muG = F(p.muGrunt), oslab = F(p.fala.oslab), aMax = F(p.fala.aMax), prog = F(p.fala.prog);
     const wagaProg = F(p.wagaProg), wagaS = F(p.wagaS), r15 = F(1 + p.rozcHard), r045 = F(p.sciskHard);
     const limityF0 = !!p.limityF0;
+    const falaPion = !!p.falaPion; // fala tylko z prędkości w dół (solver z `falaPion`, grawitacja −z)
     const kB2 = F(kB * 2);
     const gxS = F(F(zr.gx) * uSkG), gyS = F(F(zr.gy) * uSkG), gzS = F(F(zr.gz) * uSkG), zrPole = !!(zr.punkt || zr.obrot);
     const wG = this._wG;
@@ -181,7 +182,7 @@ export class WzorzecF32 extends WzorzecCpu {
       }
       let aN = aI;
       if (!bezG[i]) {
-        const v2 = F(F(F(vxi * vxi) + F(vyi * vyi)) + F(vzi * vzi));
+        const v2 = falaPion ? (vzi < 0 ? F(vzi * vzi) : 0) : F(F(F(vxi * vxi) + F(vyi * vyi)) + F(vzi * vzi));
         if (v2 > uFalaV2) {
           const cel = szI > prog ? 1 : F(aSas * oslab);
           if (cel > aN) aN = F(aN + F(F(cel - aN) * uFalaTempoH));

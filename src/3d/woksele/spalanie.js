@@ -106,7 +106,7 @@ export function createSpalanie({ solver, planeta }) {
   const v3 = (e) => { const v = vec3(0).toVar(); v.assign(e); return v; };
   const v4 = (e) => { const v = vec4(0).toVar(); v.assign(e); return v; };
 
-  /** Wysokość nad kulą planety (przybliżenie paraboliczne: przy 1500 km od osi błąd < 1 m). */
+  /** Wysokość nad kulą planety (przybliżenie paraboliczne: błąd r² · z' / (2R²), poniżej 1 m do ~27 km od osi, ~30 m przy 150 km; odłamki zostają w kilkudziesięciu km). */
   const wysokosc = (x) => x.z.sub(uPowZ).add(dot(x.xy, x.xy).mul(uInv2R));
   const gestoscW = (h) => uRho0.mul(exp(max(h, 0).mul(uInvH).negate()));
   /** Przepuszczalność powietrza nad punktem na wysokości h (kamera nad atmosferą, patrzy z góry). */
@@ -514,7 +514,7 @@ export function createSpalanie({ solver, planeta }) {
     let zMin = Infinity;
     for (let i = 0; i < w.n; i++) zMin = Math.min(zMin, w.pos[3 * i + 2]);
     uZKor.value = zMin - 300;
-    const g = Math.abs(w.g?.[2] ?? w.g ?? 400) || 400;
+    const g = w.zr?.gMod || 400; // wypiek nie ma pola g: grawitacja sceny jest w zr (zrodloSceny, budowa.js); dawne w.g dawało zawsze 400
     uDg.value = (1 - (planeta.gMnoz ?? 1)) * g;
     zerujBufory();
   }
@@ -528,10 +528,14 @@ export function createSpalanie({ solver, planeta }) {
   }
 
   /** Po kroku solvera, przed obrazem. Pierwszy krok po wczytaniu zeruje stan kernelem (bufory instancedArray nie mają tablicy CPU do wysłania). */
+  // AGENT: węzeł zabity w kSpal zeruje tylko WŁASNE maski. Bez kCzysc sąsiedzi liczą wiązania i linie zginania do jego zamrożonej pozycji (v = 0, bryła leci dalej):
+  // w teście Node (druga opinia Fable 2026-11-11) blok tracił 12–15 % zdrowych wiązań i dostawał kopa do ~200 j./s przy każdym wypaleniu warstwy czoła.
+  // Poza klatką zdarzeń S ≤ 1, więc kCzysc zdejmuje tylko bity do martwych sąsiadów (gałęzie rozerwań i zapis żaru nie działają). Oba kernele rozgrzewa solver.rozgrzej.
+  const listaSpal = [kSpal, solver.kernele.kCzysc, solver.kernele.kCzyscS];
   function krok(renderer) {
     uKlatka.value = solver.fKlatka;
     if (doZerowania) { renderer.compute(kZeruj); if (kZerujG) renderer.compute(kZerujG); doZerowania = false; }
-    renderer.compute(kSpal);
+    renderer.compute(listaSpal);
     if (kSpalG) renderer.compute(kSpalG);
   }
   const kZeruj = Fn(() => { wSpal.element(instanceIndex).assign(vec2(M.tOtoczenia, 0)); })().compute(MAX).setName('wokSpalZeruj');

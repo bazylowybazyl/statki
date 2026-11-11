@@ -611,8 +611,11 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
       Fc[ox] = Fc[oy] = fc;
       Ft[ox] = Ft[oy] = ft;
       // Długość mięknięcia stała w jednostkach gry: energia pękania na pole nie zależy od dx.
-      iT[ox] = iT[oy] = 1 / (c.dT * dx * skala);
-      iC[ox] = iC[oy] = 1 / (c.dC * dx * skala);
+      // par.ciagliwosc (demo, druga opinia Fable 2026-11-11): mnożnik drogi mięknięcia klas strop, kolumna, fasada, rdzeń. Beton niezbrojony rozpinał się od ostrza
+      // każdego karbu jak zamek (mięknięcie 1–3 j. przy zapasie 2,2–2,6 wobec spiętrzenia 6–8×), więc szyja z klinem siadała albo gubiła głowę. Bez pola 1: jak dotąd.
+      const cg = kl <= 3 ? (par.ciagliwosc ?? 1) : 1;
+      iT[ox] = iT[oy] = 1 / (c.dT * cg * dx * skala);
+      iC[ox] = iC[oy] = 1 / (c.dC * cg * dx * skala);
       f0[oy] = f0[ox];
       L[oy] = L[ox];
       F0[oy] = F0[ox];

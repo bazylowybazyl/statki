@@ -56,7 +56,10 @@ const KULA_PAS_TLUM = 12; // [1/s] tempo gaszenia w pasie: zabiera do 2400 j./s 
 // AGENT: `statek` (demo bazy, prośba użytkownika 2026-11-09: Atlas latający w płaszczyźnie gry do testu taranowania): kadłub jako bryła kinematyczna w osobnym kernelu po kI
 // w każdym podkroku (kStatekTakt + kStatek, wzór niżej). Bez flagi kerneli, buforów i list kroku nie ma: gra i reszta dema liczą jak dotąd.
 export const STATEK_SDF = Object.freeze({ szer: 256, wys: 128 });
-export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false, statek = false } = {}) {
+// AGENT: `falaPion` (demo, druga opinia Fable 2026-11-11, U4): w konstrukcji połączonej z kotwicami fala łamiąca liczy tylko składową prędkości wzdłuż grawitacji
+// stałej (w dół). Szczyt wieży 1400 j. nad zawiasem przekracza próg 60 j./s już przy obrocie 2,5°/s, więc sztywny przewrót sam kruszył głowę; zawalenie to ruch w dół
+// i dalej łamie (S1 miażdży się co do liczb tak samo). Bez flagi WGSL kF bez zmian (gra).
+export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false, statek = false, falaPion = false } = {}) {
   const MAX = maxNodes;
   const ILE_T = ciagliwe ? ILE_TAB + 6 : ILE_TAB;
   const N_KOM = par.nKom;
@@ -423,7 +426,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     If(nosny.equal(uint(0)), () => {
       // Względna tylko w bryle oderwanej od kotwic (etykieta = cap: wieża w locie, spadające części). Stojąca konstrukcja liczy ruch względem kotwic, czyli bezwzględny:
       // kikut szybu popchnięty przez przewracającą się wieżę łamie się wtedy, a nie kołysze jak galareta (uwaga użytkownika 2026-11-07).
-      const v2Fali = fv(select(uFalaWzgl.greaterThan(0.5).and(eI.greaterThanEqual(uCap)), dot(sv, sv).div(max(sn.mul(sn), 1)), dot(vi, vi)));
+      // falaPion (demo): połączona z kotwicami liczy tylko prędkość wzdłuż grawitacji stałej (w dół), opis przy fladze.
+      const vDol = falaPion ? fv(max(dot(vi, uGStala).div(max(length(uGStala), 1e-6)), 0)) : null;
+      const v2Fali = fv(select(uFalaWzgl.greaterThan(0.5).and(eI.greaterThanEqual(uCap)), dot(sv, sv).div(max(sn.mul(sn), 1)), falaPion ? vDol.mul(vDol) : dot(vi, vi)));
       If(v2Fali.greaterThan(uFalaV2), () => {
         const cel = fv(select(szI.greaterThan(par.fala.prog), float(1), aSas.mul(par.fala.oslab)));
         If(cel.greaterThan(aN), () => { aN.addAssign(cel.sub(aN).mul(uFalaTempoH)); });
@@ -1446,10 +1451,13 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     const tab = atrybuty.tab.array;
     for (let d = 0; d < ND; d++) { tab[4 * d] = N0X[d]; tab[4 * d + 1] = N0Y[d]; tab[4 * d + 2] = N0Z[d]; tab[4 * d + 3] = 0; }
     for (let k = 0; k < 12; k++) {
-      const c = par.klasy[KLASA_NAZWY[k % 6]];
+      // Klasy z parametrów WYPIEKU (jak zlomB w ustawUniformy): wzorzec CPU bierze iT, iC z wypieku, a tabela brała je z parametrów solvera,
+      // więc nakładka sceny na dT / dC działała tylko na CPU (druga opinia Fable 2026-11-11, U3). Ciągliwość jak w budowa.js.
+      const c = (w.par ?? par).klasy[KLASA_NAZWY[k % 6]];
+      const cg = k % 6 <= 3 ? (w.par?.ciagliwosc ?? 1) : 1;
       const b = 4 * (REK_KLASA + k);
-      tab[b] = 1 / (c.dT * w.dx * w.skala);
-      tab[b + 1] = 1 / (c.dC * w.dx * w.skala);
+      tab[b] = 1 / (c.dT * cg * w.dx * w.skala);
+      tab[b + 1] = 1 / (c.dC * cg * w.dx * w.skala);
       tab[b + 2] = w.kruszTab[k];
       tab[b + 3] = 0;
     }
@@ -1612,7 +1620,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
   }
 
   return {
-    maxNodes: MAX, ciagliwe, limityF0, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
+    maxNodes: MAX, ciagliwe, limityF0, falaPion, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, puscCzesc, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     gPole: gNaWezle, // pole grawitacji w punkcie, dla gruzu obrazu (wklejane, woła się tylko w Fn)
     statek: statek ? { ustaw: ustawStatek, ksztalt: ustawKsztaltStatku, ...odczytStatku } : null,

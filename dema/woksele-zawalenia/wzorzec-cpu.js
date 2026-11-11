@@ -353,6 +353,8 @@ export class WzorzecCpu {
     const twardyC = this.w.ciagl ? this.w.ciagl.twardy : 1 + rozcHard;
     // Twarde limity także w gałęzi sprężenia (solver z `limityF0`, par.limityF0 tutaj). Ta sama kolejność sprawdzeń co w kF.
     const limityF0 = !!p.limityF0;
+    // Fala tylko z prędkości w dół (solver z `falaPion`, par.falaPion tutaj; sceny dema mają grawitację −z). Wzorzec liczy falę bezwzględną, jak solver bez fali względnej.
+    const falaPion = !!p.falaPion;
     const mu = p.mu, muG = p.muGrunt;
     const iK = 1 / K;
     const zG = gruntZ + 0.5 * dx;
@@ -525,7 +527,7 @@ export class WzorzecCpu {
           }
         }
         if (!bezG[i]) { // dysk poza falą: fala + waga od szkody rozsypywały pokład
-          const v2 = vxi * vxi + vyi * vyi + vzi * vzi;
+          const v2 = falaPion ? (vzi < 0 ? vzi * vzi : 0) : vxi * vxi + vyi * vyi + vzi * vzi;
           let a = A[i];
           if (v2 > falaV2) {
             const cel = szI > fala.prog ? 1 : aSas * fala.oslab;
