@@ -295,6 +295,9 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
         // te same liczby co bryła: cień na gruncie liczy jej kłęby (planetGenSurfaceNear.tsl.js)
         const cs = cloudVol.material.uniforms.uCvShape.value;
         U.uGnCloudVol.value.set(cs.x - 1, cs.y - 1, cs.w, cloudVol.material.uniforms.uCvNoise.value.x);
+        const ck = cloudVol.material.uniforms.uCvKind.value;
+        U.uGnCloudVol3.value.y = ck.x;
+        U.uGnCloudVol3.value.z = ck.z;
       }
     },
     get cloudMode() { return cloudMode; },

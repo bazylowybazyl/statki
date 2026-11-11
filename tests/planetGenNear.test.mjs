@@ -28,7 +28,8 @@ import { buildCloudNoise } from '../src/3d/planetGen/planetGenNoise3D.js';
 import { PlanetGenWeather, WX_DEFAULT, windRate, bandLat, bandAngle, bandRateAt, cycloneAt } from '../src/3d/planetGen/planetGenWeather.js';
 import { WX_BANDS, WX_PHASE, WX_SEAM, CLOUD_CYCLONES } from '../src/3d/planetGen/planetGenBake.tsl.js';
 import {
-  createGenCloudVolumeMaterial, cloudVolumeUniforms, CLOUD_VOLUME_UNIFORM_KEYS, CLOUD_VOLUME_STEPS, CLOUD_VOLUME_STEPS_MIN
+  createGenCloudVolumeMaterial, cloudVolumeUniforms, CLOUD_VOLUME_UNIFORM_KEYS, CLOUD_VOLUME_STEPS, CLOUD_VOLUME_STEPS_MIN,
+  CLOUD_MODEL, CLOUD_LIGHT_FAR
 } from '../src/3d/planetGen/planetGenCloudVolume.tsl.js';
 import {
   createGenAtmosphereMaterial, atmosphereUniforms, ATMOSPHERE_UNIFORM_KEYS,
@@ -306,11 +307,25 @@ test('szum 3D: powtarzalny, kanały w zakresie, rozkład kanału kłębów obejm
   for (let i = 0; i < a.length; i += 4) r.push(a[i] / 255);
   r.sort((x, y) => x - y);
   const q = (p) => r[Math.floor(p * (r.length - 1))];
-  // próg kłębów: 0,71 − 0,43 · pokrycie (planetGenCloudVolume.tsl.js) — pełne pokrycie = prawie wszystko ponad
-  // progiem, zerowe = prawie nic
-  assert.ok(q(0.05) > 0.71 - 0.43, `kwantyl 5% kanału R = ${q(0.05)}`);
-  assert.ok(q(0.95) < 0.71, `kwantyl 95% kanału R = ${q(0.95)}`);
+  // model kształtu chmur (planetGenCloudVolume.tsl.js, CLOUD_MODEL) stoi na rozkładzie kanału R: mediana 0,52,
+  // kwantyle 5 / 95% ≈ 0,34 / 0,68
   assert.ok(q(0.5) > 0.45 && q(0.5) < 0.6, `mediana kanału R = ${q(0.5)}`);
+  assert.ok(Math.abs(q(0.05) - 0.34) < 0.05 && Math.abs(q(0.95) - 0.68) < 0.05, `kwantyle 5 / 95% kanału R = ${q(0.05)} / ${q(0.95)}`);
+  const M = CLOUD_MODEL;
+  // próg podstawy = t0 − s · masa: przy pokryciu 0,5 (bez skupisk) równy medianie — połowa powierzchni pod kłębami
+  assert.ok(Math.abs(M.t0 - M.s * 0.5 - q(0.5)) < 0.04, 'pokrycie 0,5 → próg = mediana szumu');
+  // skupiska: masa = pokrycie ± agg · (szum − mediana); przy pokryciu 0,5 najmocniejsze skupisko jest lite (próg
+  // poniżej całego szumu), najsłabsze puste (powyżej) — zbiorowiska z czystym niebem pomiędzy, nie równe pole kłębów
+  const thrAt = (cov, big) => M.t0 - M.s * (cov + (big - q(0.5)) * M.agg);
+  assert.ok(thrAt(0.5, q(0.95)) < q(0.1), `skupisko: próg ${thrAt(0.5, q(0.95))}`);
+  assert.ok(thrAt(0.5, q(0.05)) > q(0.9), `przejaśnienie: próg ${thrAt(0.5, q(0.05))}`);
+  // dno progu: wierzch masy (mediana szumu) na topDeck / topCum; ława niższa niż kłębiaste, wieże ponad nimi
+  assert.ok(M.topDeck < M.topCum && M.topCum < 0.86, 'ława < kłębiaste < strop (wieże wystają)');
+  assert.ok(q(0.5) - M.slopeDeck * M.topDeck > 0 && q(0.5) - M.slopeCum * M.topCum > 0, 'dno progu dodatnie');
+  // wieża: próg trzonu w ogonie rozkładu (kilka procent powierzchni), kowadło szersze niż trzon
+  assert.ok(M.towerThr > q(0.9) && M.towerThr < q(0.98), `próg wieży ${M.towerThr}`);
+  assert.ok(M.towerThr + M.towerTaper * 0.86 - M.anvil < M.towerThr, 'pod stropem próg niższy niż przy podstawie');
+  assert.ok(M.hMid < M.hHigh && M.hHigh < 1 && CLOUD_LIGHT_FAR >= 3);
   for (let c = 1; c < 4; c++) {
     let lo = 255; let hi = 0;
     for (let i = c; i < a.length; i += 4) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; }
@@ -324,6 +339,10 @@ test('powłoki z marszem promienia: komplet uniformów, WGSL bryły chmur, atmos
   for (const k of Object.keys(CLOUD_VOLUME_UNIFORM_KEYS)) assert.ok(cu[k], `bryła chmur: brak ${k}`);
   assert.ok('cloudTexture' in cu);
   assert.ok(cu.uCvShape.value.y > cu.uCvShape.value.x && cu.uCvShape.value.x > 1, 'powłoka nad powierzchnią');
+  // rodzaje chmur: ziemskie — wieże i warstwy cienkie; pył — sama masa
+  assert.deepEqual(cu.uCvKind.value.toArray().slice(0, 2), [1, 1]);
+  const dusty = cloudVolumeUniforms({ clouds: { style: 2, tint: [1, 0.9, 0.8] } }, { clouds: new THREE.Texture() });
+  assert.deepEqual(dusty.uCvKind.value.toArray().slice(0, 2), [0, 0]);
   assert.ok(CLOUD_VOLUME_STEPS_MIN < CLOUD_VOLUME_STEPS);
   const au = atmosphereUniforms(t);
   for (const k of Object.keys(ATMOSPHERE_UNIFORM_KEYS)) assert.ok(au[k], `atmosfera: brak ${k}`);
@@ -338,7 +357,8 @@ test('powłoki z marszem promienia: komplet uniformów, WGSL bryły chmur, atmos
     assert.match(cv, /texture_3d/, 'bryła chmur: tekstura szumu 3D');
     assert.doesNotMatch(cv, /textureSample\(/, 'bryła chmur: każda próbka z jawnym poziomem (pętla i gałęzie)');
     assert.doesNotMatch(cv, /NaN/);
-    assert.ok(cv.length < 30000, `bryła chmur: WGSL ${cv.length} znaków`);
+    // (kształt chmur wklejany w kilku miejscach: marsz, bliska próbka światła, dalekie próbki — stąd rozmiar)
+    assert.ok(cv.length < 90000, `bryła chmur: WGSL ${cv.length} znaków`);
     const am = createGenAtmosphereMaterial(au);
     const at = build(sphere(am), am, camera);
     assert.match(at, /for\s*\(/);
@@ -368,7 +388,12 @@ test('cień brył chmur na gruncie: materiał zbliżenia liczy te same kłęby (
   const near = build(sphere(m), m, new THREE.PerspectiveCamera());
   assert.match(near, /texture_3d/, 'cień kłębów czyta teksturę szumu bryły');
   const src = read('src/3d/planetGen/planetGenSurfaceNear.tsl.js');
-  assert.match(src, /puffShape\(xc, puffThreshold\(cov, float\(hN\)\)/, 'ten sam kształt i próg co bryła');
+  assert.match(src, /cloudShape\(xc, cP, cov, cloudRegime\(xc, noise3, U\.uGnCloudVol2\.x, U\.uGnCloudVol3\.z\)/, 'ten sam kształt i rodzaj co bryła');
+  assert.match(src, /\[\[0\.2, true\], \[0\.5, true\], \[0\.85, false\]\]/, 'trzy wysokości: ława, kopuły, wieże');
+  // wieże i przesunięcie rodzaju z bryły trafiają do cienia (setCloudMode)
+  const nearJs = read('src/3d/planetGen/planetGenNear.js');
+  assert.match(nearJs, /U\.uGnCloudVol3\.value\.y = ck\.x;/);
+  assert.match(nearJs, /U\.uGnCloudVol3\.value\.z = ck\.z;/);
 });
 
 test('wypiek przed pierwszym renderem: licznik renderów podbity przed kompilacją (three r183 — numer renderu kompilacji = numer pierwszego renderu)', () => {
@@ -516,7 +541,9 @@ test('pogoda w materiałach: kłęby bryły i cień na gruncie jadą z pasami wi
   const TU = nearSurfaceUniforms(t, { day: new THREE.Texture(), clouds: new THREE.Texture() }, { size: 2048 });
   assert.ok(TU.uGnCloudVol3);
   const vol = read('src/3d/planetGen/planetGenCloudVolume.tsl.js');
-  assert.match(vol, /export function puffNoise\(x, freq, time, noise, wxv\)/);
+  assert.match(vol, /function bandFrames\(x, wxv\)/);
+  assert.match(vol, /export function cloudShape\(x, P, cov, reg, opts = \{\}\)/);
+  assert.match(vol, /export function cloudRegime\(x, noise, time, bias\)/);
   assert.match(vol, /smoothstep\(WX_SEAM, 0\.5, abs\(fr\)\)/, 'ten sam podział na pasy co w grafie chmur');
   assert.match(vol, /export const wxGlideU/);
   const bake = read('src/3d/planetGen/planetGenBake.tsl.js');

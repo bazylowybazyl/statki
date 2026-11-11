@@ -105,13 +105,40 @@ paths:
   pióropusz 10 (`renderOrder`).
 - Tekstura szumu 3D (`planetGenNoise3D.js`, 64³, okres 1, z haszu na CPU) jest wspólna dla chmur, zorzy i cienia
   kłębów na gruncie. Próbki w pętli i gałęziach z jawnym poziomem (`texture3D(t, uvw, float(0))`, `.level()`).
-- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`): gęstość = (szum kształtu − próg) · K; próg z POKRYCIA mapy
-  chmur i WYSOKOŚCI w powłoce (`puffThreshold`: 0,71 − 0,43 · pokrycie + wysokość · 0,27…0,52 — liczby z kwantyli
-  kanału R szumu, pilnuje test). Szum kształtu w dwóch skalach (`puffNoise`), erozja brzegów tylko wewnątrz kłębu,
-  ława warstwowa przy dużym pokryciu (`sheetDensity`). Zmiana progu albo szumu = zmiana także cienia na gruncie —
-  materiał powierzchni woła te same funkcje (`puffShape`, `puffThreshold`, `cloudCover`, `sheetDensity`).
+- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`, opis i błędy po drodze: `docs/OPIS-generator-planet.md`
+  § 10.22): gęstość = (szum kłębów − próg) · K; próg z MASY i WYSOKOŚCI w powłoce (`cloudShape`, liczby
+  `CLOUD_MODEL` — stoją na kwantylach kanału R szumu, pilnuje test). MASA = pokrycie z mapy chmur + szum SKUPISK
+  (~3× większa skala niż kłąb, siła `agg`): w tym samym pokryciu są miejsca lite i puste — nieregularne zbiorowiska
+  z czystym niebem pomiędzy. Samo pokrycie w progu (kłęby równo po całym polu) wygląda z daleka jak piana.
+- RODZAJ chmur z pola niskiej częstości (`cloudRegime`, jedna próbka na piksel, stały w kolumnie): ława warstwowa
+  (niska, płaska, kopułki z kanału Worleya tej samej próbki co kłąb), kłębiaste (kopuły — próg rośnie z wysokością;
+  nachylenie = stosunek szerokości kłębu do wysokości: 0,8 dawało placki półprzezroczyste z bliska, jest 0,5),
+  WIEŻE (szum kłębów czytany w kolumnie — pion ściśnięty 5×; próg prawie stały z wysokością, pod stropem niższy =
+  kowadło). Próg podstawy ma dno zależne od rodzaju (`topDeck`, `topCum`) — najgęstsza masa nie wypełnia całej
+  powłoki, więc wieże wystają ponad nią. Rodzaje per styl chmur planety: `uCvKind` (wieże, warstwy cienkie,
+  przesunięcie rodzaju).
+- WARSTWY CIENKIE (wysoka — cirrus, średnia — altocumulus) liczone RAZ NA PIKSEL w punkcie przecięcia promienia
+  z kulą warstwy, bez marszu; wzór z szumu o ściśniętej osi y dziedziny (smugi wzdłuż równoleżników), miękki próg,
+  krycie z ILOŚCI, nie z progu (próg rosnący z ilością zostawia z rzadkich cirrusów cienkie „żyłki”). Warstwa
+  średnia tylko na obrzeżach układów chmur — nad litą masą biała płaska warstwa zasłania jej rzeźbę rozmytą plamą.
+  Średnia wchodzi do marszu w chwili zejścia promienia poniżej jej wysokości, wysoka leży nad wszystkim.
+- ŚWIATŁO: bliska próbka z kłębami w każdej gęstej próbce marszu + DALEKIE próbki do stropu powłoki (bez szumu
+  kłębów: masa i wieże — długi cień wieży na niższych chmurach) liczone raz na piksel, w pierwszej wyraźnie gęstej
+  próbce (w każdej próbce kosztowały ponad połowę czasu bryły); cień własny głębszych próbek z grubości optycznej
+  przebytej po promieniu widzenia (wysokość pierwszej trafionej próbki skacze między pikselami i rysuje obrysy).
+  Odstępy dalekich próbek STAŁE — przesunięcie szumem piksela daje ziarno w litej chmurze (zgłoszenie użytkownika).
+- Szczegół poniżej piksela wchodzi średnią (`lodW`: gęstość = udział pokrycia przy danym progu), drobny szczegół
+  3D drobniejszy niż krok marszu daje ZIARNO zamiast faktury (sąsiednie piksele trafiają w różne warstwy wzoru):
+  kopułki z próbki w skali kłębu, wzór erozji brzegów czytany w kolumnie. Próbki marszu gęstsze ku podstawie powłoki
+  (promień trafiający w planetę — tam leży większość chmur), z bliska brzeg kłębu ostrzejszy (`sharp`).
+- Zmiana modelu = zmiana także cienia na gruncie: materiał powierzchni woła te same funkcje (`cloudCover`,
+  `cloudRegime`, `cloudShape`) na trzech wysokościach (ława, kopuły, wieże); wieże i przesunięcie rodzaju
+  przechodzą z bryły do cienia w `setCloudMode` (`uGnCloudVol3.y / z`).
 - Gęstość „pokrycie × profil wysokości + szum” daje gładką masę (wygląd bitej śmietany); kłęby jednej skali —
   z daleka równy „popcorn” i widoczny okres kafla szumu. Kopuły wychodzą z progu rosnącego z wysokością.
+- NIE zrobione: chmury płaskie (widok z góry, dalsze planety) mają dawny wygląd; warstwy cienkie nie rzucają cienia
+  na grunt i nie są cieniowane przez wieże; z najbliższej odległości kłęby są miękkie (tekstura szumu 64³ = ~4 km
+  na teksel) i zostaje lekkie ziarno; rodzaj chmur nie wynika z klimatu mapy (poza tropikami).
 - Jasność chmur w jednostkach grafu gry: oświetlony wierzchołek ~0,9 (pod progiem bloomu), faza pod słońce
   przycięta (Henyey–Greenstein bez przycięcia to ×5 — prześwietlona cała ława), słońce bez mnożenia przez jasność
   ponad 1. Zorza i krawędź atmosfery to emitery HDR — jasność dobieraj na kadrze, w którym leżą na krawędzi tarczy
@@ -120,9 +147,10 @@ paths:
   droga słońca z funkcji Chapmana z gałęzią za terminatorem (przez punkt promienia najbliższy planecie) — droga
   „jak na horyzoncie” zostawia za terminatorem jasny, blady pas. Powłoka dokłada rozpraszanie nad tarczą, więc
   barwa mgiełki grafu gry idzie przy niej ×0,6 (`setAtmosphere`); ekstynkcja i barwy zachodu grafu gry zostają.
-- Oszczędności marszu: liczba kroków z długości odcinka w powłoce (16–44), pokrycie z mapy raz na krok (służy też
-  bliskiej próbce światła), nocna strona bez próbek światła, odcinek o zerowym średnim pokryciu (próbka z mipmapy
-  obejmującej odcinek) bez marszu. Dalsza dźwignia przy wpięciu: pół rozdzielczości.
+- Oszczędności marszu: liczba kroków z długości odcinka w powłoce (20–44), pokrycie z mapy raz na krok (służy też
+  bliskiej próbce światła), dalekie próbki światła raz na piksel, nocna strona bez próbek światła, odcinek o zerowym
+  średnim pokryciu (próbka z mipmapy obejmującej odcinek) bez marszu, punkt ponad najwyższym możliwym wierzchem
+  masy i poza strefą wież bez próbek szumu. Dalsza dźwignia przy wpięciu: pół rozdzielczości.
 - Kamera orbitalna dema stoi względem miejsca-bohatera (`orbitAt`), słońce w widoku orbitalnym wyżej (34° za
   terminatorem); `advance()` ustawia kamerę orbitalną przed krokami (kierunki kadru dla wycinka biorą jej macierz).
 
@@ -139,7 +167,7 @@ paths:
   („daszek”) sprawia, że wzory mijają się wszędzie i chmury zmieniają kształt w miejscu zamiast płynąć.
 - Mieszanie dwóch niezależnych szumów — z zachowaniem wariancji (`mixNoise`: średnia / √(w² + (1 − w)²)); zwykła
   średnia zostawia w strefie mieszania pas o niższym kontraście (mniej chmur wzdłuż równoleżnika).
-- Ten sam podział na pasy mają: pokrycie (graf chmur), kłęby bryły (`puffNoise`), cień kłębów na gruncie i ślizg mapy
+- Ten sam podział na pasy mają: pokrycie (graf chmur), kłęby bryły (`bandFrames`), cień kłębów na gruncie i ślizg mapy
   (`wxGlideU`). Kłęby dostają BIEŻĄCY czas pogody, mapa pokrycia jest z chwili `bakedTime` i ślizga się z wiatrem pasa
   do następnego przeliczenia — kłęby z czasem mapy skakałyby przy każdej zamianie, a pokrycie bez ślizgu pulsuje
   względem kłębów.

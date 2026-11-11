@@ -31,7 +31,7 @@ import { ruinsShade } from './planetGenRuins.tsl.js';
 import { GEN_SOLID_UNIFORM_KEYS, GEN_SOLID_DATA_KEYS } from './planetGenSurface.tsl.js';
 import { plumeShadowAt, PLUME_UNIFORM_KEYS } from './planetGenPlume.tsl.js';
 import { cloudNoiseTexture } from './planetGenNoise3D.js';
-import { cloudCover, puffThreshold, puffShape, sheetDensity, wxGlideU } from './planetGenCloudVolume.tsl.js';
+import { cloudCover, cloudRegime, cloudShape, wxGlideU } from './planetGenCloudVolume.tsl.js';
 
 const PI = Math.PI;
 
@@ -51,7 +51,7 @@ export const GEN_NEAR_UNIFORM_KEYS = Object.freeze({
   uGnCloud: 'vec4',     // cień chmur: kąt kuli chmur względem gruntu [rad], wysokość chmur [R], siła (0 — brak), 1 — chmury jako bryła
   uGnCloudVol: 'vec4',  // bryła chmur (jak uCvShape / uCvNoise materiału bryły): podstawa i strop powłoki [R nad gruntem], wzmocnienie pokrycia, częstość kłębów
   uGnCloudVol2: 'vec4', // czas szumu kłębów [s]; pogoda: bieżący czas [s], wiatr [rad / s], 1 — włączona
-  uGnCloudVol3: 'vec4', // pogoda: czas mapy pogody w użyciu [s], —, —, —
+  uGnCloudVol3: 'vec4', // pogoda: czas mapy pogody w użyciu [s]; rodzaje chmur bryły: wieże burzowe (0…1), przesunięcie rodzaju, —
   uGnCity: 'vec4',      // sieci świateł miast: siła (0 — brak), częstość pierwszej oktawy żyłek [1 / R], —, —
   ...PLUME_UNIFORM_KEYS
 });
@@ -378,11 +378,15 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
     const cuv = vec2(atan(qz.negate(), qx.add(step(abs(qx).add(abs(qz)), 1e-7).mul(1e-6))).div(2 * PI).add(0.5), asin(clamp(qc.y, -1.0, 1.0)).div(PI).add(0.5));
     const lodC = max(log2(max(pixL.div(stG), 1e-6)), 0.0).add(1.0);
     If(U.uGnCloud.w.greaterThan(0.5), () => {
-      // CHMURY JAKO BRYŁA: cień ma kształt kłębów — ten sam próg i szum co bryła (planetGenCloudVolume.tsl.js)
-      // w dwóch punktach promienia ku słońcu: nisko i wysoko w powłoce (wieże rzucają cień dalej niż podstawy)
+      // CHMURY JAKO BRYŁA: cień ma kształt chmur — ten sam model co bryła (`cloudShape`, planetGenCloudVolume.tsl.js)
+      // w trzech punktach promienia ku słońcu: ława i podstawy, kopuły, wieże z kowadłem (wysoka chmura rzuca cień
+      // dalej niż niska — przy niskim słońcu długi)
       const noise3 = cloudNoiseTexture();
       const sh = float(0.0).toVar();
-      for (const hN of [0.26, 0.6]) {
+      const cP = { r0: U.uGnCloudVol.x.add(1.0), thick: U.uGnCloudVol.y.sub(U.uGnCloudVol.x), freq: U.uGnCloudVol.w, time: U.uGnCloudVol2.x, noise: noise3, wxv: vec4(U.uGnCloudVol2.yzw, 0.0), towers: U.uGnCloudVol3.y };
+      // kłęby mniejsze od piksela wchodzą średnią (jak w bryle)
+      const cLod = float(1.0).sub(smoothstep(0.004, 0.012, pixL)).toVar();
+      for (const [hN, puffs] of [[0.2, true], [0.5, true], [0.85, false]]) {
         const rr = U.uGnCloudVol.x.add(U.uGnCloudVol.y.sub(U.uGnCloudVol.x).mul(hN)).add(1.0);
         // droga od gruntu do kuli o promieniu rr wzdłuż promienia słońca (nisko nad horyzontem — przycięta)
         const tv = min(sqrt(sinE.mul(sinE).add(rr.mul(rr)).sub(1.0)).sub(sinE), 0.12);
@@ -395,10 +399,10 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
           .add(wxGlideU(latC, vec4(U.uGnCloudVol2.yzw, 0.0), U.uGnCloudVol3.x)), latC.div(PI).add(0.5));
         const cov = cloudCover(dot(cloudShadowTex.sample(vuv).level(lodC.sub(1.0)).rgb, vec3(0.299, 0.587, 0.114)), U.uGnCloudVol.z).toVar();
         If(cov.greaterThan(0.02), () => {
-          sh.addAssign(puffShape(xc, puffThreshold(cov, float(hN)), U.uGnCloudVol.w, U.uGnCloudVol2.x, noise3, vec4(U.uGnCloudVol2.yzw, 0.0)).mul(smoothstep(0.02, 0.12, cov)));
+          const cS = cloudShape(xc, cP, cov, cloudRegime(xc, noise3, U.uGnCloudVol2.x, U.uGnCloudVol3.z), puffs ? { lodW: cLod } : { puffs: false });
+          // (cienka ława wokół mas — słaby, miękki cień)
+          sh.addAssign(max(cS.d, cS.sheet.mul(1.4)).mul(cS.fade));
         });
-        // ława warstwowa (półprzezroczysta) — słaby, miękki cień
-        if (hN < 0.4) sh.addAssign(sheetDensity(cov, float(0.3)).mul(1.4));
       }
       shadow.mulAssign(float(1.0).sub(clamp(sh.mul(0.8), 0.0, 1.0).mul(U.uGnCloud.z)));
     }).Else(() => {

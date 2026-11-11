@@ -1036,3 +1036,54 @@ Czego brakuje względem wzorców: kontrast i nasycenie są niższe niż na zdję
 solnisk ani śniegu na grzbietach w pustyni; rzeźba skalna jest rzadka — duże połacie pustyni poza morzami piasku
 są płaskie i puste; w części płytkich mórz gęste ławice przy wyspach wyglądają plamiście (istniały wcześniej,
 po rozjaśnieniu płycizny są bardziej widoczne — przyciemniona, nie usunięte).
+
+### 10.22. Chmury: zbiorowiska zamiast „piany”, rodzaje, wieże z długim cieniem (2026-11-11, demo)
+
+Uwagi użytkownika (trzy zdjęcia: chmury z dużej wysokości, plansza rodzajów chmur, wieże burzowe nad rzeką przy
+niskim słońcu): „widzę, że w realu tworzą nieregularne większe zbiorowiska, u nas dużo pojedynczych, przez co na
+oddaleniu wygląda jak piana”, „brakuje nam rodzajów”, „niektóre chmury są wysokie i rzucają duży cień”; w trakcie
+pracy: „widzę też jakiś szum w zbiorze chmur” (zrzut litej ławy z ziarnem i ciemnymi trójkątnymi plamami).
+
+Stan przed (bryła chmur, § 10.8): próg kłębów = 0,71 − 0,43 · pokrycie + wysokość · 0,27…0,52 — przy każdym
+pokryciu równy posiew kłębów jednej wielkości (z daleka pole białych kropek), jeden rodzaj chmury, światło z dwóch
+próbek ku słońcu (0,16 i 1,1 grubości powłoki) — bez długich cieni.
+
+Zrobione (`planetGenCloudVolume.tsl.js`; mapa chmur, pogoda i pliki planet bez zmian):
+
+- **Zbiorowiska.** Masa = pokrycie + (szum skupisk − mediana) · 2; próg podstawy = 1,12 − 1,2 · masa. Przy tym samym
+  pokryciu część pola jest lita, część pusta, osobne kłęby zostają tylko na obrzeżu masy.
+- **Rodzaje** z pola niskiej częstości (płaty ~1000 km, w tropikach przesunięte ku konwekcji): ława warstwowa
+  (stratus / stratocumulus — niska, z kopułkami komórek), chmury kłębiaste (kopuły do 60–90% powłoki), wieże burzowe
+  (cumulonimbus — trzon do stropu, kowadło). Dwie warstwy cienkie liczone raz na piksel: wysoka (cirrus — smugi
+  wzdłuż równoleżników, przy dużej ilości welon) i średnia (altocumulus — płaty drobnych komórek na obrzeżach
+  układów, przy dużej ilości gładsza ława).
+- **Światło i cień.** Cztery dalekie próbki ku słońcu aż do stropu powłoki (masa i wieże) — wieża cieniuje niższe
+  chmury; cień na gruncie z tego samego kształtu na trzech wysokościach (ława, kopuły, wieże).
+- **Szczegół poniżej piksela** wchodzi średnią gęstością (dla bardzo dalekich widoków), z bliska brzegi kłębów
+  ostrzejsze; próbki marszu gęstsze ku podstawie powłoki, najmniej 20 (było 16).
+
+Błędy po drodze (każdy widoczny na zrzutach serii `chm1…chm10` w `.tmp/planeta-zblizenie/`):
+
+- „szczeliny” ławy z kanału Worleya (odległość do najbliższego punktu) dały ciemne trójkątne plamy w WĘZŁACH komórek,
+  nie sieć szczelin — zastąpione kopułkami w progu;
+- dalekie próbki światła przesuwane szumem piksela → ziarno w litej chmurze (zgłoszenie użytkownika) — odstępy stałe;
+- warstwa średnia nad całym układem chmur zasłoniła rzeźbę masy rozmytą bielą; cirrus z progiem rosnącym z ilością —
+  cienkie „żyłki”; za mały wzór cirrusa — z daleka „rysy” po całym oceanie;
+- drobny szczegół 3D (osobna próbka o wyższej częstości w progu) — ziarno; ten sam szczegół czytany w kolumnie przy
+  cienkich chmurach — dziury na wylot; ostatecznie kopułki z próbki w skali kłębu, kolumnowa tylko erozja brzegów;
+- nachylenie progu 0,8 — pojedynczy kłąb grubości kilku km, z bliska rozmyty i półprzezroczysty (0,5);
+- cień własny głębszych próbek liczony od wysokości pierwszej trafionej próbki — cienkie obrysy wzdłuż brzegów
+  (wysokość skacze między pikselami); liczony z grubości optycznej przebytej po promieniu widzenia;
+- szum „przeplatanych gradientów” zamiast białego w przesunięciu startu marszu — widoczny raster w półprzezroczystych
+  miejscach (wrócił biały szum piksela).
+
+Koszt (czas GPU całej klatki, 1600 × 900, widok orbitalny, ten sam kadr przy brzegu układu chmur; stara wersja
+mierzona z kopii roboczej HEAD): 2,2 R — 1,27 → 1,65 ms; 1,3 R — 0,87 → 1,17 ms; 1,1 R — 0,96 → 1,17…1,20 ms.
+Pierwsza wersja (dalekie próbki światła w każdej gęstej próbce marszu) miała 3,08 ms przy 2,2 R. W 5120 × 1440 nie
+mierzone. WGSL bryły ~65 tys. znaków (było < 30 tys.).
+
+Czego brakuje: chmury płaskie (widok z góry dema, dalsze planety) mają dawny wygląd; warstwy cienkie nie rzucają
+cienia na grunt i nie są cieniowane przez wieże; przy bardzo niskim słońcu cień wieży jest próbkowany w czterech
+punktach (może się rwać); z najbliższej odległości (1,1 R) kłęby są miękkie — tekstura szumu 64³ to ~4 km na
+teksel — i zostaje lekkie ziarno; rodzaj chmur nie wynika z klimatu mapy (poza tropikami), nie ma osobnej chmury
+deszczowej; styl „pokład” (planeta toksyczna) nie był oglądany — demo nie pokazuje takiej planety w widoku orbitalnym.
