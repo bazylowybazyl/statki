@@ -24,7 +24,9 @@ paths:
   `K7_SERVICE_RELEASE` (awaryjne) + `k7ServiceConnectPose` / `k7ServiceDisconnectPose` / `k7ServiceStep`; używają ich
   fabuła (`STORY_UNDOCK`), automat stanowisk gry (`k7BerthService.js`), `K7Docking` i automat portu (`PortDocking`,
   `PORT_SEQUENCE.fuel`; flaga wpisu `fuel` także w ruchu v2: `portPaths.js`, `cargoTransferWindow({ fuel })`). Nowy krok
-  obsługi = okno w sekwencji, nie osobna animacja w rendererze.
+  obsługi = okno w sekwencji, nie osobna animacja w rendererze. DŹWIĘK obsługi (zaciski, buch pary, serwa ramion,
+  przepływ, upust, komunikaty spikera) liczy reżyser `src/game/k7HallSound.js` z tych samych póz i z harmonogramu
+  zaworów — nowy klucz pozy albo nowy rodzaj zdarzenia → też zdarzenie w reżyserze (reguła `dzwiek`, „Hala K-7”).
 
 - GEOMETRIA (`K7_FUEL_STATION` — jedno źródło brył, kolizji i fizyki): cokół z kolumną (kolizja `FUEL PEDESTAL`), bęben
   przewodu na licu ku stanowisku, obrotnica barku; człony 300 / 280 j. na wysokościach 330 / 300 K-7 (nad płaszczyzną lotu

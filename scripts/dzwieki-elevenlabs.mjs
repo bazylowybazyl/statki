@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Robocze dźwięki gry z ElevenLabs (efekty dźwiękowe z opisu, POST /v1/sound-generation).
+// Robocze dźwięki gry z ElevenLabs (efekty dźwiękowe z opisu, POST /v1/sound-generation; kwestie mowy — wpisy
+// listy z polem `teksty` — POST /v1/text-to-speech/{głos}, wymaga uprawnienia klucza „Text to Speech”).
 //
 //   node scripts/dzwieki-elevenlabs.mjs                         plan i szacunek kosztu — nic nie wysyła
 //   node scripts/dzwieki-elevenlabs.mjs --generuj --tylko dzialo,wybuch,klik
@@ -35,6 +36,9 @@ const API = 'https://api.elevenlabs.io/v1';
 // za sekundę zadanej długości; tu z zapasem. Dokumentacja API kosztu nie podaje, a cenniki osób
 // trzecich mówiły o 40 — po zmianie planu albo modelu sprawdź `--konto` przed i po przebiegu.
 const KREDYTY_NA_SEKUNDE = 12;
+// Mowa (POST /v1/text-to-speech/{głos}, model eleven_multilingual_v2): kredyt za znak tekstu (cennik ElevenLabs).
+const KREDYTY_NA_ZNAK = 1;
+const MODEL_MOWY = 'eleven_multilingual_v2';
 const LIMIT_OPISU = 450;          // ostrożnie: limit długości opisu nie jest w dokumentacji API
 const WARIANTY_KROTKIE = 3;
 const WARIANTY_DLUGIE = 2;        // dźwięki od 5 s
@@ -95,13 +99,14 @@ function plan(o) {
   for (const d of DZWIEKI) {
     if (o.tylko && !o.tylko.includes(d.id)) continue;
     if (o.grupa && d.grupa.toLowerCase() !== o.grupa) continue;
-    const ile = o.warianty ?? d.warianty ?? (d.s >= 5 ? WARIANTY_DLUGIE : WARIANTY_KROTKIE);
+    // mowa (`teksty`): wariant n = kwestia n; efekt: tyle wersji tego samego opisu
+    const ile = d.teksty ? d.teksty.length : (o.warianty ?? d.warianty ?? (d.s >= 5 ? WARIANTY_DLUGIE : WARIANTY_KROTKIE));
     const zadania = [];
     let gotowe = 0;
     for (let n = 1; n <= ile; n++) {
       const plik = `${d.id}_${n}.${ext}`;
       if (!o.nadpisz && existsSync(path.join(OUT_DIR, plik))) { gotowe++; continue; }
-      zadania.push({ d, n, plik });
+      zadania.push({ d, n, plik, tekst: d.teksty ? d.teksty[n - 1] : null });
     }
     wiersze.push({ d, ile, gotowe, zadania });
   }
@@ -110,12 +115,23 @@ function plan(o) {
 
 function wypiszPlan(wiersze) {
   let sekundy = 0;
+  let znaki = 0;
   let pliki = 0;
   console.log('id               grupa             s     pętla  do zrobienia  gotowe  ~kredyty');
   for (const w of wiersze) {
+    pliki += w.zadania.length;
+    if (w.d.teksty) {
+      // mowa: koszt ze znaków kwestii (model wielojęzyczny — kredyt za znak)
+      const z = w.zadania.reduce((a, t) => a + t.tekst.length, 0);
+      znaki += z;
+      console.log([
+        w.d.id.padEnd(16), w.d.grupa.padEnd(17), 'mowa'.padEnd(5), '—'.padEnd(6),
+        String(w.zadania.length).padEnd(13), String(w.gotowe).padEnd(7), String(Math.round(z * KREDYTY_NA_ZNAK)),
+      ].join(' '));
+      continue;
+    }
     const s = w.d.s * w.zadania.length;
     sekundy += s;
-    pliki += w.zadania.length;
     console.log([
       w.d.id.padEnd(16), w.d.grupa.padEnd(17), String(w.d.s).padEnd(5),
       (w.d.petla ? 'tak' : '—').padEnd(6), String(w.zadania.length).padEnd(13),
@@ -125,9 +141,9 @@ function wypiszPlan(wiersze) {
     if (dl > LIMIT_OPISU) console.log(`  UWAGA: opis ma ${dl} znaków (ostrożny limit ${LIMIT_OPISU}).`);
     if (w.d.s < 0.5 || w.d.s > 30) console.log('  UWAGA: długość poza zakresem API (0,5–30 s).');
   }
-  const kredyty = Math.round(sekundy * KREDYTY_NA_SEKUNDE);
-  console.log(`\nRazem: ${pliki} plików, ${sekundy.toFixed(1)} s dźwięku, szacunek ~${kredyty} kredytów`
-    + ` (${KREDYTY_NA_SEKUNDE} kredytów/s — z pomiaru, nie z cennika).`);
+  const kredyty = Math.round(sekundy * KREDYTY_NA_SEKUNDE + znaki * KREDYTY_NA_ZNAK);
+  console.log(`\nRazem: ${pliki} plików, ${sekundy.toFixed(1)} s efektów i ${znaki} znaków mowy, szacunek ~${kredyty} kredytów`
+    + ` (${KREDYTY_NA_SEKUNDE} kredytów/s efektu — z pomiaru, ${KREDYTY_NA_ZNAK} za znak mowy — z cennika).`);
   return { sekundy, pliki, kredyty };
 }
 
@@ -174,15 +190,27 @@ async function opisBledu(r) {
 
 const czekaj = (ms) => new Promise((res) => setTimeout(res, ms));
 
-async function generujJeden(klucz, o, d) {
-  const body = {
-    text: pelnyOpis(d),
-    duration_seconds: d.s,
-    prompt_influence: d.wplyw ?? o.wplyw,
-    loop: !!d.petla,
-    model_id: o.model,
-  };
-  const url = `${API}/sound-generation?output_format=${encodeURIComponent(o.format)}`;
+async function generujJeden(klucz, o, d, tekst = null) {
+  let body;
+  let url;
+  if (tekst) {
+    // mowa: głos z listy (`glos.id`), model wielojęzyczny (kwestie po polsku)
+    body = {
+      text: tekst,
+      model_id: MODEL_MOWY,
+      voice_settings: { stability: 0.6, similarity_boost: 0.8, style: 0, use_speaker_boost: true, ...(d.glos.ustawienia || {}) },
+    };
+    url = `${API}/text-to-speech/${encodeURIComponent(d.glos.id)}?output_format=${encodeURIComponent(o.format)}`;
+  } else {
+    body = {
+      text: pelnyOpis(d),
+      duration_seconds: d.s,
+      prompt_influence: d.wplyw ?? o.wplyw,
+      loop: !!d.petla,
+      model_id: o.model,
+    };
+    url = `${API}/sound-generation?output_format=${encodeURIComponent(o.format)}`;
+  }
   for (let proba = 1; ; proba++) {
     let r;
     try {
@@ -276,10 +304,14 @@ async function main() {
     for (const w of wiersze) {
       for (const z of w.zadania) {
         process.stdout.write(`${z.plik} … `);
-        const dane = await generujJeden(klucz, o, z.d);
+        const dane = await generujJeden(klucz, o, z.d, z.tekst);
         await writeFile(path.join(OUT_DIR, z.plik), dane);
         manifest.pliki = manifest.pliki.filter((p) => p.plik !== z.plik);
-        manifest.pliki.push({
+        manifest.pliki.push(z.tekst ? {
+          plik: z.plik, id: z.d.id, wariant: z.n, grupa: z.d.grupa, nazwa: z.d.nazwa, opis: z.d.opis,
+          tekst: z.tekst, glos: z.d.glos.nazwa, glosId: z.d.glos.id, petla: false,
+          model: MODEL_MOWY, format: o.format, data: new Date().toISOString(),
+        } : {
           plik: z.plik, id: z.d.id, wariant: z.n, grupa: z.d.grupa, nazwa: z.d.nazwa, opis: z.d.opis,
           prompt: pelnyOpis(z.d), sekundy: z.d.s, petla: !!z.d.petla,
           model: o.model, format: o.format, wplyw: z.d.wplyw ?? o.wplyw,

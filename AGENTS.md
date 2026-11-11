@@ -197,5 +197,5 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |
 | `swiatla-nawigacyjne` | Światła nawigacyjne: sześć lamp na każdym kadłubie, „blink blink” czerwono-zielone, oświetlanie tylko w błysku, style (żółte ostrzegawcze), migracja zapisu edytora |
 | `wejscie` | Warstwa wejścia, pad, skróty klawiszowe |
-| `dzwiek` | Dźwięk: scena `?scena=dzwieki` (Atlas, piraci, panel wyboru wariantów), warstwa dźwięku gry `src/audio/` (tylko w scenie; wyrównanie poziomów, limit głosów, pętle bez szwu), synteza silnika MAIN i CIWS, dźwięki robocze z generatora AI |
+| `dzwiek` | Dźwięk: scena `?scena=dzwieki` (Atlas, piraci, panel wyboru wariantów), warstwa dźwięku gry `src/audio/` (w scenie; wyrównanie poziomów, limit głosów, pętle bez szwu), dźwięki hali K-7 w zwykłej grze (reżyser `k7HallSound.js`: pozy obsługi, zawory, spiker z szyną megafonu), synteza silnika MAIN i CIWS, dźwięki robocze z generatora AI (efekty i mowa) |
 | `electron-wydanie` | Electron, paczka i wydanie |

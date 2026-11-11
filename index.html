@@ -1462,6 +1462,9 @@
     // Scena dźwięków (?scena=dzwieki, blok „SCENA DŹWIĘKI”): warstwa dźwięku gry i panel sceny — reguła `dzwiek`.
     import { utworzDzwiekiGry } from "./src/audio/dzwiekiGry.js";
     import { utworzPanelDzwiekow } from "./src/ui/dzwiekiPanel.js";
+    // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): reżyser z pozami obsługi stanowisk i zaworami, osobna warstwa dźwięku.
+    import { DZWIEKI_HALI } from "./src/audio/dzwiekiLogika.js";
+    import { createK7HallSound, stepK7HallSound, K7_HALL_SOUND_TUNE } from "./src/game/k7HallSound.js";
     import { LAUNCH_SPLIT } from "./src/game/rockets/rocketSim.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
     // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
@@ -2681,6 +2684,8 @@
       }
     }
     function applyAudioOptions() {
+      // Hala K-7: własna warstwa (blok „DŹWIĘKI HALI K-7”) — główna × efekty z opcji.
+      if (HALL_SND) HALL_SND.ustawGlosnosc(hallSoundVolume());
       // Scena dźwięków: stary AudioSys zostaje wyciszony, głośność opcji idzie do warstwy sceny.
       if (SND && SoundScene.active) { SND.ustawGlosnosc(soundSceneVolume()); return; }
       if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
@@ -18755,6 +18760,46 @@
       return kadr;
     }
 
+    // --- DŹWIĘKI HALI K-7 (2026-11-11, misja 1: start w doku C-01; reguła `dzwiek`, „Hala K-7”) ---
+    // Osobna warstwa dźwięku (tabela DZWIEKI_HALI: tło, pompy, przepływ, serwa ramion, syk zaworów, złączki, zaciski,
+    // gong i spiker) i czysty reżyser (src/game/k7HallSound.js), który co klatkę czyta stan gry hali przy kamerze —
+    // pozy obsługi stanowisk z rejestru kolidera i harmonogram zaworów. Gra w kampanii i w grze swobodnej, gdy kamera
+    // jest przy hali K-7; poza halą, w pauzie i w scenie dźwięków — cisza. Stary AudioSys bez zmian.
+    let HALL_SND = null;
+    const HallSound = createK7HallSound({ rand: () => fxRandomGame.next() });
+    window.K7HallSoundTune = K7_HALL_SOUND_TUNE;
+    window.__halaDzwieki = { stan: HallSound, warstwa: () => HALL_SND };
+    /** Głośność warstwy hali: główna × efekty z opcji; główna 0 (domyślna wartość opcji) — zastępcza jak scena dźwięków. */
+    function hallSoundVolume() {
+      const master = Number(OPTIONS?.audio?.master) || 0;
+      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
+      return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
+    }
+    /** Start gry (po AudioSys.init): warstwa hali i wczytanie plików w tle — pierwsze klatki bez dźwięków hali. */
+    function startHallSound() {
+      if (HALL_SND || !AudioSys.ctx) return;
+      HALL_SND = utworzDzwiekiGry({ ctx: AudioSys.ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: hallSoundVolume(), baza: './sounds/ai/', tabela: DZWIEKI_HALI });
+      HALL_SND.wczytaj().catch((err) => console.warn('[Dźwięki hali]', err));
+    }
+    /** Klatka (render(), po haloWorld.frame — pozy tej klatki): reżyser → warstwa, potem jej klatka (gaszenie pętli). */
+    function hallSoundFrame(frameDt) {
+      if (!HALL_SND || !haloWorld) return;
+      const kadr = soundSceneCamera();
+      HallSound.T = K7_HALL_SOUND_TUNE;
+      stepK7HallSound(HallSound, HALL_SND, {
+        rings: haloWorld.entries,
+        camX: kadr.x,
+        camY: kadr.y,
+        viewHalf: Math.sqrt(kadr.polW * kadr.polW + kadr.polH * kadr.polH),
+        clock: haloWorld.clock,
+        dt: PAUSED ? 0 : frameDt,
+        paused: PAUSED || SoundScene.active,
+        playerX: ship && !ship.dead && ship.pos ? ship.pos.x : NaN,
+        playerY: ship && !ship.dead && ship.pos ? ship.pos.y : NaN
+      });
+      HALL_SND.klatka();
+    }
+
     async function startSoundScene(opts = {}) {
       if (SoundScene.active || SoundScene.starting) return { blad: 'scena już działa' };
       if (!gameStarted || !ship || ship.dead) return { blad: 'gra nie wystartowała' };
@@ -33956,6 +34001,8 @@
       // stanowisk, poziom lamp hal — przed obrazem ringów i wejściem pyłu hal.
       if (haloWorld) {
         haloWorld.frame({ nowMs: performance.now(), gameDt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt, ship, sun: SUN });
+        // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): pozy obsługi i zegar zaworów tej klatki — także w intro i odprawie.
+        hallSoundFrame(frameDt);
       }
       if (haloRings && !RW_WORKER) {
         haloRings.update(frameDt, cam, {
@@ -37058,6 +37105,7 @@
 
       // --- AUDIO START ---
       AudioSys.init();
+      startHallSound();
       await Promise.all([
         AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav'),
         AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav'),

@@ -11,6 +11,11 @@
 
 export const STYL = 'Modern cinematic game sound design, high fidelity, no music, no voices.';
 
+// Głos spikera hali K-7: gotowy głos ElevenLabs. Decyzja użytkownika 2026-11-11 (po odsłuchu w grze): „głos męski,
+// nie damski”, „niech gada po angielsku” — Daniel (spokojny brytyjski głos lektora). Wpisy mowy (`teksty`, `glos`)
+// idą przez syntezę mowy, nie efektów.
+export const GLOS_SPIKERA = Object.freeze({ id: 'onwK4e9ZLuTAKqWW03F9', nazwa: 'Daniel' });
+
 export const DZWIEKI = [
   // ── Działa ──────────────────────────────────────────────────────────────────────────────
   {
@@ -274,5 +279,95 @@ export const DZWIEKI = [
     id: 'mostek', grupa: 'Tło', nazwa: 'Mostek — tło', s: 10, petla: true,
     opis: 'Buczenie zasilania, wentylacja, odgłosy komputerów, jęki kadłuba — pętla.',
     prompt: 'Ambience of a large warship bridge in space: steady low power hum, quiet ventilation airflow, occasional soft computer chirps and faint distant hull creaks, calm, seamless loop',
+  },
+
+  // ── Hala K-7 (misja 1: start w doku; warstwa src/audio/halaK7.js) ────────────────────────
+  {
+    id: 'halaTlo', grupa: 'Hala K-7', nazwa: 'Hala — tło', s: 22, petla: true,
+    opis: 'Ogromna hala dokowa: buczenie zasilania, nawiew, dalekie maszyny i stuki, pogłos — pętla.',
+    prompt: 'Ambience inside a gigantic enclosed docking hangar of an orbital space station: deep low electrical hum, steady ventilation air rush, distant muffled industrial machinery, faint far-away metallic clanks echoing in a vast reverberant metal hall, calm, steady, seamless loop',
+  },
+  {
+    // bez wody (jak `przeplyw` — uwaga użytkownika 2026-11-11 o dźwiękach wody w tle)
+    id: 'halaMaszyny', grupa: 'Hala K-7', nazwa: 'Hala — pompy i maszyny', s: 15, petla: true,
+    opis: 'Maszynownia przy ścianie tylnej: rytmiczne pompy, sprężarka, drżące rury, sucho (bez wody) — pętla.',
+    prompt: 'Heavy industrial machinery room inside a huge metal hangar: rhythmic deep mechanical pump thumping, droning electric compressor, vibrating steel pipes, dry and mechanical, absolutely no water, no liquid, no gurgling, heard from a short distance, reverberant, seamless loop',
+  },
+  {
+    // Użytkownik 2026-11-11: „słyszę jakieś dźwięki wody — słabe są na ambient” — bulgotanie cieczy wypadło: przepływ
+    // to buczenie linii i pompy, bez wody.
+    id: 'przeplyw', grupa: 'Hala K-7', nazwa: 'Przepływ paliwa', s: 8, petla: true,
+    opis: 'Linia paliwowa pod ciśnieniem przy wlewie statku: buczenie pompy i drżenie przewodu (bez wody) — pętla.',
+    prompt: 'Steady low hum of a high-pressure fuel transfer line on a spaceship docking clamp: deep electric pump drone, faint metallic pipe vibration and resonance, mechanical and dry, absolutely no water, no liquid, no gurgling, no splashing, seamless loop',
+  },
+  {
+    id: 'serwo', grupa: 'Hala K-7', nazwa: 'Ramię paliwowe w ruchu', s: 6, petla: true,
+    opis: 'Ramię SCARA: wycie serwomotoru, hydraulika, przekładnie — pętla.',
+    prompt: 'Large industrial robotic arm moving: smooth heavy electric servo motor whine with hydraulic hum and soft gear rumble, steady motion, seamless loop',
+  },
+  {
+    id: 'syk', grupa: 'Hala K-7', nazwa: 'Syk zaworu', s: 5, petla: true,
+    opis: 'Zawór bezpieczeństwa i upust: ciągły syk pary pod ciśnieniem — pętla (głośność z obwiedni zaworu).',
+    prompt: 'Steady pressurized steam venting from an industrial safety valve: loud continuous hiss of escaping gas, airy and powerful, steady, seamless loop',
+  },
+  {
+    id: 'buchPary', grupa: 'Hala K-7', nazwa: 'Odpięcie złączki', s: 2.5,
+    opis: 'Odryglowanie złączki paliwowej: trzask rygla i gwałtowny buch pary.',
+    prompt: 'Heavy fuel coupling unlatching from a spaceship: sharp mechanical latch clack followed immediately by a violent burst of pressurized steam hissing out in all directions, fading quickly',
+  },
+  {
+    id: 'zlaczeZapiecie', grupa: 'Hala K-7', nazwa: 'Zapięcie złączki', s: 1.5,
+    opis: 'Ryglowanie złączki na wlewie: pewne kliknięcie rygla i krótki puf gazu.',
+    prompt: 'Heavy fuel coupling locking onto a spaceship fuel port: solid mechanical latch clunk and a short soft puff of gas, close',
+  },
+  {
+    id: 'zaciskiZwolnienie', grupa: 'Hala K-7', nazwa: 'Zwolnienie zacisków', s: 3,
+    opis: 'Zamki magnetyczne puszczają statek: gaśnie buczenie, syk hydrauliki, ciężkie stuki.',
+    prompt: 'Giant magnetic docking clamps releasing a huge spaceship: deep electromagnetic hum powering down, heavy hydraulic release hiss and massive metal clunks echoing in a large hangar',
+  },
+  {
+    id: 'zaciskiZalaczenie', grupa: 'Hala K-7', nazwa: 'Załączenie zacisków', s: 2.5,
+    opis: 'Zamki magnetyczne łapią statek: narastające buczenie i ciężkie „tunk”.',
+    prompt: 'Giant magnetic docking clamps engaging a huge spaceship: rising electromagnetic hum, heavy magnetic thunk locking metal to metal, echoing in a large hangar',
+  },
+  {
+    id: 'gong', grupa: 'Hala K-7', nazwa: 'Gong komunikatu', s: 2.5,
+    opis: 'Sygnał przed komunikatem spikera hali (dwa tony z głośników, pogłos).',
+    prompt: 'Public address announcement chime in a huge industrial space station hangar: two soft clean descending electronic tones through loudspeakers with a long hall echo, no speech',
+  },
+
+  // ── Spiker hali K-7 (mowa; filtr głośnika i echo hali dokłada gra — szyna „megafon”) ─────────────
+  // Po angielsku (decyzja użytkownika 2026-11-11). Liczby i oznaczenia słownie, żeby synteza czytała je jak spiker.
+  // Wariant n = kwestia n (status — losowo).
+  {
+    id: 'spikerStatus', grupa: 'Spiker K-7', nazwa: 'Spiker — status ringu', glos: GLOS_SPIKERA,
+    opis: 'Komunikaty o stanie ringu co 40–75 s w hali (losowo, bez powtórzenia poprzedniego).',
+    teksty: [
+      'Ring control notice. Transit two is open to capital-class vessels. Transit four remains closed until further notice.',
+      'Ring stabilization nominal. Orbital correction complete. All sections report full pressure integrity.',
+      'Sector twelve. Welding operations in progress on the outer hull. Maintenance crews, please observe the safety perimeter.',
+      'Ring power grid at seventy-two percent load. Auxiliary reactors on standby.',
+      'Hall K seven fuel storage at eighty-four percent. Next deuterium delivery is on schedule.',
+      'Earth Port advisory. A freight convoy from Luna is inbound. Estimated arrival in twenty minutes.',
+      'Reminder: speed restrictions are in effect inside all docking halls. Maneuvering by traffic control clearance only.',
+      'Terra Nova patrol reports the space around the ring is clear. Defense readiness is green.',
+      'Ring debris shielding at ninety-eight percent. The low-orbit debris belt remains under observation.',
+      'Service bays in halls K three and K four are occupied. Waiting vessels, please remain in the holding area.',
+    ],
+  },
+  {
+    id: 'spikerOdcumowanie', grupa: 'Spiker K-7', nazwa: 'Spiker — odcumowanie', glos: GLOS_SPIKERA,
+    opis: 'Stanowisko gracza: początek odłączania obsługi (odcięcie przepływu).',
+    teksty: ['Undocking sequence initiated. Fuel flow cut off. Ground crew, stand clear of the couplings.'],
+  },
+  {
+    id: 'spikerMocowania', grupa: 'Spiker K-7', nazwa: 'Spiker — mocowania zwolnione', glos: GLOS_SPIKERA,
+    opis: 'Stanowisko gracza: zamki pola zwalniają statek.',
+    teksty: ['Magnetic clamps released. Drive unlocked. Gate G zero one is clear.'],
+  },
+  {
+    id: 'spikerDokowanie', grupa: 'Spiker K-7', nazwa: 'Spiker — zacumowano', glos: GLOS_SPIKERA,
+    opis: 'Stanowisko gracza: obsługa podpięta, przepływ otwarty.',
+    teksty: ['Vessel secured. Clamps engaged. Fuel flow open.'],
   },
 ];

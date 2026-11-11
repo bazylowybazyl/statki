@@ -20,6 +20,7 @@ import { SoundEngine, paramDefaults } from './synteza.js';
 import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
 
 const CZAS_PETLI_BEZ_ODSWIEZENIA = 0.25; // s — pętla nieodświeżona tyle czasu gaśnie (zdarzenie się skończyło)
+const CZAS_WYGASZENIA_BEZ_KLATKI = 0.4; // s — pętla gaśnie w wątku audio, gdy klatki gry przestaną ją odświeżać
 const CZAS_CIWS_BEZ_STRZALU = 0.16; // s — seria CIWS wygasa, gdy tyle nie było strzału
 // Podbicie cichego sygnału przez kompresor + limiter szyny [dB] — z pomiaru 2026-11-11 (szum −50 dBFS przez te same
 // nastawy w OfflineAudioContext: −50,0 → −42,8 dB; sam kompresor +6,1, sam limiter +1,1). Zmiana nastaw kompresora
@@ -33,10 +34,14 @@ const CZAS_SIDE_BEZ_CIAGU = 0.18; // s — silniki SIDE gasną, gdy tyle nie by�
 
 /**
  * @param {{ ctx: AudioContext, rand: () => number, kadr: () => ({x,y,polW,polH,zoom}), baza?: string,
- *           log?: Console, glosnosc?: number }} opts
+ *           log?: Console, glosnosc?: number, tabela?: object }} opts
+ * `tabela` — tabela dźwięków warstwy (domyślnie `DZWIEKI` sceny; hala K-7 — `DZWIEKI_HALI`); synteza (silnik,
+ * CIWS) tylko w warstwie z tabelą sceny.
  */
 export function utworzDzwiekiGry(opts) {
   const ctx = opts.ctx;
+  const TAB = opts.tabela || DZWIEKI;
+  const zSynteza = TAB === DZWIEKI;
   const rand = opts.rand;
   const log = opts.log || console;
   const baza = opts.baza || '/sounds/ai/';
@@ -85,23 +90,78 @@ export function utworzDzwiekiGry(opts) {
   const wycisz = Object.create(null); // id → bool
   const zagral = Object.create(null);
   const ostrzezone = new Set();
-  const limit = utworzLimitGlosow(DZWIEKI);
+  const limit = utworzLimitGlosow(TAB);
   const wynikLimitu = { aktywne: 0 };
   const poz = { glos: 1, pan: 0 };
   const stat = { szczytPrzed: 0, szczytPo: 0, przester: 0, glosyMax: 0, bledy: 0, zdarzenia: Object.create(null) };
   let glosyAktywne = 0;
   let wczytane = false;
+  let ostatniaDlugosc = 0;
   let wylaczony = false;
 
-  // --- pula węzłów głosu jednorazowego (głośność + panorama)
-  const pula = [];
-  function wezGlos() {
+  // --- szyna megafonu (spiker hali): pasmo głośnika, lekkie przesterowanie, echo wielkiej hali → wejście szyny
+  let megafon = null;
+  function wejscieMegafonu() {
+    if (megafon) return megafon;
+    const wej = ctx.createGain();
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 300;
+    hp.Q.value = 0.8;
+    const pik = ctx.createBiquadFilter();
+    pik.type = 'peaking';
+    pik.frequency.value = 2000;
+    pik.Q.value = 0.9;
+    pik.gain.value = 5;
+    const ksztalt = ctx.createWaveShaper();
+    const krzywa = new Float32Array(1024);
+    for (let i = 0; i < krzywa.length; i++) {
+      const x = (i / (krzywa.length - 1)) * 2 - 1;
+      krzywa[i] = Math.tanh(2.2 * x) / Math.tanh(2.2);
+    }
+    ksztalt.curve = krzywa;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 4200;
+    lp.Q.value = 0.7;
+    wej.connect(hp);
+    hp.connect(pik);
+    pik.connect(ksztalt);
+    ksztalt.connect(lp);
+    lp.connect(wejscie);
+    // echo hali: dwa odbicia z gasnącym sprzężeniem przez dolnoprzepustowy (dalsze ściany, głośniki w głębi hali)
+    for (const [czas, wet, fb] of [[0.21, 0.32, 0.3], [0.47, 0.2, 0.22]]) {
+      const d = ctx.createDelay(1);
+      d.delayTime.value = czas;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 2400;
+      const gw = ctx.createGain();
+      gw.gain.value = wet;
+      const gf = ctx.createGain();
+      gf.gain.value = fb;
+      lp.connect(d);
+      d.connect(f);
+      f.connect(gw);
+      gw.connect(wejscie);
+      f.connect(gf);
+      gf.connect(d);
+    }
+    megafon = wej;
+    return megafon;
+  }
+
+  // --- pula węzłów głosu jednorazowego (głośność + panorama), osobna na szynę (zwykła / megafon)
+  const pule = { zwykla: [], megafon: [] };
+  function wezGlos(szyna) {
+    const naMegafon = szyna === 'megafon';
+    const pula = naMegafon ? pule.megafon : pule.zwykla;
     let w = pula.pop();
     if (!w) {
       const g = ctx.createGain();
       const p = ctx.createStereoPanner();
       g.connect(p);
-      p.connect(wejscie);
+      p.connect(naMegafon ? wejscieMegafonu() : wejscie);
       w = { g, p, src: null, koniec: null };
       w.koniec = () => {
         if (w.src) {
@@ -123,7 +183,7 @@ export function utworzDzwiekiGry(opts) {
   }
 
   // --- wczytanie
-  async function wczytaj(ids = idPlikowSceny()) {
+  async function wczytaj(ids = TAB === DZWIEKI ? idPlikowSceny() : Object.keys(TAB)) {
     let manifest = null;
     try {
       const r = await fetch(`${baza}manifest.json`, { cache: 'no-store' });
@@ -147,7 +207,7 @@ export function utworzDzwiekiGry(opts) {
         ostrzez(`id:${id}`, `brak dźwięku "${id}" w manifest.json — cisza`);
         continue;
       }
-      const d = DZWIEKI[id] || {};
+      const d = TAB[id] || {};
       const wpis = { id, pliki: lista.map((f) => f.plik), bufory: new Array(lista.length).fill(null), wzm: new Array(lista.length).fill(1), pomiary: new Array(lista.length).fill(null), poprzedni: -1, petla: !!d.petla };
       dzwieki.set(id, wpis);
       lista.forEach((f, i) => {
@@ -192,10 +252,10 @@ export function utworzDzwiekiGry(opts) {
     if (wylaczony || wycisz[id]) return false;
     const wpis = dzwieki.get(id);
     if (!wpis) {
-      if (wczytane && !DZWIEKI[id]) ostrzez(`graj:${id}`, `dźwięk "${id}" spoza tabeli sceny — cisza`);
+      if (wczytane && !TAB[id]) ostrzez(`graj:${id}`, `dźwięk "${id}" spoza tabeli warstwy — cisza`);
       return false;
     }
-    const d = DZWIEKI[id];
+    const d = TAB[id];
     let g = glos;
     let pan = 0;
     if (!d.ui) {
@@ -214,7 +274,7 @@ export function utworzDzwiekiGry(opts) {
     wpis.poprzedni = wi;
     if (d.glos) g *= 1 + (rand() - 0.5) * 2 * d.glos;
     g *= sciszenieTloku(wynikLimitu.aktywne) * wpis.wzm[wi];
-    const w = wezGlos();
+    const w = wezGlos(d.szyna);
     const src = ctx.createBufferSource();
     src.buffer = buf;
     if (ton !== 1) src.playbackRate.value = ton;
@@ -227,6 +287,7 @@ export function utworzDzwiekiGry(opts) {
     glosyAktywne++;
     if (glosyAktywne > stat.glosyMax) stat.glosyMax = glosyAktywne;
     zagral[id] = (zagral[id] || 0) + 1;
+    ostatniaDlugosc = zwloka + buf.duration / ton;
     return true;
   }
 
@@ -249,7 +310,7 @@ export function utworzDzwiekiGry(opts) {
     const teraz = ctx.currentTime;
     let L = null;
     for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz) { L = petle[i]; break; }
-    const d = DZWIEKI[id] || {};
+    const d = TAB[id] || {};
     let g = wycisz[id] ? 0 : glos;
     let pan = 0;
     if (!d.ui) {
@@ -284,7 +345,11 @@ export function utworzDzwiekiGry(opts) {
       zagral[id] = (zagral[id] || 0) + 1;
     }
     L.ostatnio = teraz;
+    // Bezpiecznik w wątku audio: każde odświeżenie odkłada wygaszenie o CZAS_WYGASZENIA_BEZ_KLATKI — gdy klatki gry
+    // staną (karta w tle, wyjście do menu) i `klatka()` nie zatrzyma pętli, pętla gaśnie sama, nie gra w nieskończoność.
+    L.g.gain.cancelScheduledValues(teraz);
     L.g.gain.setTargetAtTime(g * L.wzm, teraz, 0.06);
+    L.g.gain.setTargetAtTime(0, teraz + CZAS_WYGASZENIA_BEZ_KLATKI, 0.1);
     L.p.pan.setTargetAtTime(pan, teraz, 0.05);
   }
 
@@ -432,7 +497,7 @@ export function utworzDzwiekiGry(opts) {
         ...(odrzucone[k] || {})
       };
     }
-    for (const k of Object.keys(DZWIEKI_SYNTEZY)) id[k] = { zagral: zagral[k] || 0, synteza: true };
+    if (zSynteza) for (const k of Object.keys(DZWIEKI_SYNTEZY)) id[k] = { zagral: zagral[k] || 0, synteza: true };
     return {
       wczytane, wylaczony, glosyAktywne, glosyMax: stat.glosyMax, petle: petle.length, ciws: ciws.length,
       silnik: !!silnik, szczytPrzed: round3(stat.szczytPrzed), szczytPo: round3(stat.szczytPo),
@@ -460,11 +525,11 @@ export function utworzDzwiekiGry(opts) {
   /** Lista dźwięków sceny dla panelu: id, warianty, wybór, wyciszenie. */
   function lista() {
     const out = [];
-    for (const id of Object.keys(DZWIEKI)) {
+    for (const id of Object.keys(TAB)) {
       const w = dzwieki.get(id);
-      out.push({ id, kat: DZWIEKI[id].kat, pliki: w ? w.pliki : [], wybor: wybor[id] | 0, wyciszony: !!wycisz[id], synteza: false });
+      out.push({ id, kat: TAB[id].kat, pliki: w ? w.pliki : [], wybor: wybor[id] | 0, wyciszony: !!wycisz[id], synteza: false });
     }
-    for (const id of Object.keys(DZWIEKI_SYNTEZY)) {
+    if (zSynteza) for (const id of Object.keys(DZWIEKI_SYNTEZY)) {
       out.push({ id, kat: DZWIEKI_SYNTEZY[id].kat, nazwa: DZWIEKI_SYNTEZY[id].nazwa, pliki: [], wybor: 0, wyciszony: !!wycisz[id], synteza: true });
     }
     // kolejność kategorii (od najgłośniejszej), w kategorii — kolejność tabeli
@@ -490,7 +555,9 @@ export function utworzDzwiekiGry(opts) {
     wylacz() { zatrzymajWszystko(); wylaczony = true; },
     wlacz() { wylaczony = false; },
     get wczytane() { return wczytane; },
-    get wylaczony() { return wylaczony; }
+    get wylaczony() { return wylaczony; },
+    /** Długość [s] ostatniego dźwięku, który zagrał `graj` (z przesunięciem startu) — kolejka spikera hali. */
+    get ostatniaDlugosc() { return ostatniaDlugosc; }
   };
 }
 
