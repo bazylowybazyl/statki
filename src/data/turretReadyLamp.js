@@ -34,14 +34,16 @@ export const TURRET_LAMP_TUNE = {
     3: Object.freeze([1.35, 0.09, 0.06])
   }),
   power: 2.4,
-  // Lampka (billboard CargoLights, kształt „punkt”: jasny rdzeń ≈ 0,34 promienia + halo do 2 promieni):
-  //   promień [px] = min(maxPx, max(minPx, promień wieży na ekranie × frac)) — rdzeń ≥ ~3 px średnicy (minPx 4,4),
-  //   najwyżej ~6 px (maxPx 9) przy dużych wieżach z bliska; lampka dopiero od wieży o promieniu ≥ minTurretPx (z daleka
-  //   wieża ma kilka px — lampka byłaby większa od niej).
-  minPx: 4.4,
-  maxPx: 9,
+  // Lampka (billboard CargoLights, kształt „punkt”: jasny rdzeń ≈ 0,34 promienia + halo do 2 promieni) rośnie i maleje
+  // RAZEM Z WIEŻĄ: promień [px] = promień wieży na ekranie × frac, w granicach [minPx, maxPx]; z daleka gaśnie (jasność
+  // od 0 przy wieży o promieniu minTurretPx do pełnej przy fullTurretPx), poniżej minTurretPx — bez lampki.
+  // Zgłoszenie użytkownika 2026-11-11: „zielone światła — jak oddalę kamerę, mocno się powiększają; są za duże” —
+  // dawne stałe minimum 4,4 px robiło z lampki przy oddaleniu plamę większą od wieży.
+  minPx: 1.2,
+  maxPx: 6,
   frac: 0.14,
-  minTurretPx: 4,
+  minTurretPx: 10,
+  fullTurretPx: 18,
   // Miejsce: za czopem, na tyle obudowy (ułamek promienia sylwetki wieży Turret2D wstecz od kursu lufy) i nad nią.
   back: 0.32,
   lift: 0.6,

@@ -952,8 +952,11 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
       const R2 = (Number(rec.spec?.r) || 10) * (Number(rec.scale) || 1);
       const back = LT.back * R2;
       const lz = _cfg.view3D ? T.zt + LT.lift : T.hi + LT.lift;
+      // rozmiar ∝ wieży (bez stałego minimum, które przy oddaleniu robiło z lampki plamę większą od wieży), z daleka gaśnie
       const lr = Math.min(LT.maxPx, Math.max(LT.minPx, rpx * LT.frac)) / Math.max(1e-4, z);
-      lamps.push(T.x - T.yawCos * back, T.y - T.yawSin * back, lz, lr, _lampRgb[0], _lampRgb[1], _lampRgb[2], 0);
+      const fadeIn = Math.min(1, (rpx - LT.minTurretPx) / Math.max(1e-3, (LT.fullTurretPx || LT.minTurretPx) - LT.minTurretPx));
+      const k = fadeIn > 0 ? fadeIn : 0;
+      lamps.push(T.x - T.yawCos * back, T.y - T.yawSin * back, lz, lr, _lampRgb[0] * k, _lampRgb[1] * k, _lampRgb[2] * k, 0);
     }
   }
   // Stan wież niewidzianych od 300 klatek (zdjęta broń, odcięta część) — przegląd co 64 klatki.
