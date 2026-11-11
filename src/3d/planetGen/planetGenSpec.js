@@ -12,6 +12,7 @@
 // gęstość i wiek kraterów, baseny, wulkany, kaniony, liczba pasów i burz. Barwy — z palet podrodzaju z rozrzutem.
 //
 // Barwy w opisie: LINIOWE rgb (albedo), autorowane w sRGB przez `srgb('#rrggbb')`.
+import { terrainLandscape } from './planetGenTerrainMap.js';
 import { PLANET_GEN_TYPE, isPlanetGenType } from './planetGenTypes.js';
 import { rngFor } from './planetGenRng.js';
 import { profileMinima } from '../gasGiantAtmosphere.js';
@@ -44,9 +45,15 @@ const plateFreq = (n) => Math.sqrt(n / 4.6);
 const SURFACE_DEFAULT = Object.freeze({ bright: 1.0, sunInt: 1.1, specular: 0.0, bloom: 0.2 });
 
 // ── Rodzaje ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Zestawy z JEDNĄ paletą mapy terenu (czerwona, purpurowa, złota): barwy lasu, stepu i tundry wprost z tej palety —
+// planeta z daleka i mapa miejsca mają te same barwy. [las równikowy, las umiarkowany, tajga, step / sawanna, tundra]
+const hex2 = (c) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+const vegFromTerrain = (name) => { const L = terrainLandscape(name); return [hex2(L.forestLight), hex2(L.forest), hex2(L.forestDark), hex2(L.grass), hex2(L.heath)]; };
 const VEGETATION = {
   // [las równikowy, las umiarkowany, tajga, step / sawanna, tundra]
-  zielona: ['#1d3a12', '#2b4a1c', '#1c2e1a', '#6f6a3a', '#5a5a48'],
+  // (zielona: las równikowy i tajga w barwach palet mapy terenu — tropik / tajga)
+  zielona: ['#27552c', '#2a4d36', '#2f4540', '#6f6a3a', '#5a5a48'],
+  czerwona: vegFromTerrain('czerwona'), purpurowa: vegFromTerrain('purpura'), zlota: vegFromTerrain('zlota'),
   morska: ['#123a34', '#1d4a40', '#183230', '#5d6a48', '#4f5a52'],
   oliwkowa: ['#3a4316', '#4d5222', '#2f3a1e', '#857a45', '#625e4a'],
   rdzawa: ['#4a2416', '#5a3420', '#3a2a22', '#8a6440', '#5e5248']
@@ -54,7 +61,9 @@ const VEGETATION = {
 
 function lookTerran(rng) {
   const water = rng.range(0.52, 0.8);
-  const veg = rng.weighted([['zielona', 0.7], ['morska', 0.1], ['oliwkowa', 0.12], ['rdzawa', 0.08]]);
+  // (nowe zestawy dzielą dawny udział rdzawej — progi wcześniejszych pozycji bez zmian, więc planety zielone,
+  // morskie i oliwkowe z ziarna zostają przy swojej roślinności)
+  const veg = rng.weighted([['zielona', 0.7], ['morska', 0.1], ['oliwkowa', 0.12], ['czerwona', 0.035], ['purpurowa', 0.022], ['zlota', 0.023]]);
   const v = VEGETATION[veg].map((h) => jitter(rng, srgb(h), 0.1, 0.05));
   const temp = rng.range(-0.28, 0.22);   // klimat planety: < 0 zimniej (czapy dalej od biegunów), > 0 cieplej
   return {
@@ -81,7 +90,8 @@ function lookTerran(rng) {
       rock: jitter(rng, srgb(rng.pick(['#5e5650', '#625a4e', '#56524e'])), 0.08),
       snow: srgb('#e8edf2'),
       ice: jitter(rng, srgb('#d6e2ea'), 0.04),
-      shallow: jitter(rng, srgb(rng.pick(['#1c5a6a', '#20606a', '#245a62'])), 0.1),
+      // (płycizna turkusowa — jak morze przy brzegu na mapach terenu)
+      shallow: jitter(rng, srgb(rng.pick(['#237f8c', '#27858e', '#2a7d88'])), 0.1),
       ocean: jitter(rng, srgb(rng.pick(['#0a1e3a', '#0b2240', '#0a1a34', '#0c2438'])), 0.08),
       deep: jitter(rng, srgb(rng.pick(['#050e22', '#06102a', '#040c1e'])), 0.08)
     }
@@ -630,6 +640,8 @@ const LOOKS = {
  * wyglądu), clouds?: null | {…}, night?: {…}, ruins?: false | liczba | [{ lat, lon, value, size? }] (ruinsFor) }.
  * Wynik zamrożony płytko (obiekty wewnątrz — dane, nie zmieniać).
  */
+/** Zestawy roślinności planet z powierzchnią (`desc.vegetation`). */
+export const PLANET_VEGETATION_SETS = Object.freeze(Object.keys(VEGETATION));
 export function describePlanet(desc) {
   const type = desc?.type;
   if (!isPlanetGenType(type)) throw new Error(`planetGen: nieznany rodzaj „${type}”`);
@@ -639,6 +651,13 @@ export function describePlanet(desc) {
   const rngAtm = rngFor(seed, `${type}:atmosfera`);
   const rngGeo = rngFor(seed, `${type}:domena`);
   const look = { ...LOOKS[type](rngLook), ...(desc.look || {}) };
+  // `vegetation` — roślinność wprost (planety przygotowane, demo): barwy lasu, stepu i tundry z zestawu, reszta
+  // palety (pustynie, skała, morze) z ziarna
+  if (desc.vegetation && VEGETATION[desc.vegetation] && look.palette && look.palette.forest) {
+    const v = VEGETATION[desc.vegetation].map((h) => srgb(h));
+    look.vegetation = desc.vegetation;
+    look.palette = { ...look.palette, rain: v[0], forest: v[1], taiga: v[2], steppe: v[3], tundra: v[4] };
+  }
   const rKm = Number(desc.rKm) || round(rngGeo.range(T.rKm[0], T.rKm[1]), 0);
   // AGENT: przesunięcie dziedziny MAŁE (|kierunek + przesunięcie| < 8): float32 ma tam krok ~5·10⁻⁷ rad. Przy
   // przesunięciu rzędu setek krok to ~3·10⁻⁵ rad — tyle, co teksel wycinka pod kamerą (planetGenPatch.js), i rzeźba
