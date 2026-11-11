@@ -104,6 +104,23 @@ try {
   await ev(PULAPKA);
   await screenshotPng(cdp, join(out, '01-start.png'));
 
+  // Odsłuch z panelu (▶): kliknięcia w przycisk wiersza — każde gra osobno, poza limitem głosów sceny
+  // (tarczaWl ma limit 1 głosu i odstęp 200 ms, a trzy szybkie kliknięcia mają dać trzy odtworzenia).
+  report.odsluch = await ev(`(async () => {
+    const klik = (id, n) => { const w = [...document.querySelectorAll('#dzwieki-panel .dp-wiersz')].find((e) => e.querySelector('.dp-nazwa')?.textContent.split(' ')[0] === id);
+      const b = w?.querySelector('button.dp-play'); for (let i = 0; i < n; i++) b?.click(); return !!b; };
+    const z = (id) => window.__dzwieki.statystyki().dzwieki[id]?.zagral || 0;
+    const out = {};
+    for (const [id, n] of [['tarczaWl', 3], ['tempestIon', 4], ['zgrzytPetla', 1], ['silnikMain', 1], ['gatling', 2]]) {
+      const przed = z(id); const jest = klik(id, n); out[id] = { przycisk: jest, klikniec: n, zagral: z(id) - przed };
+    }
+    out.przyciski = document.querySelectorAll('#dzwieki-panel button.dp-play').length;
+    out.wiersze = document.querySelectorAll('#dzwieki-panel .dp-wiersz').length;
+    return out; })()`);
+  console.log('odsłuch z panelu:', JSON.stringify(report.odsluch));
+  await step(60);
+  await ev('window.__dzwieki.wyzerujStatystyki()');
+
   await etap('tarcza wył. / wł.', async () => {
     await ev('window.DevScene.dzwiekiTarcza(false)');
     await step(60);

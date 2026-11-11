@@ -546,9 +546,49 @@ export function utworzDzwiekiGry(opts) {
     return linie.join('\n');
   }
 
+  /**
+   * Odsłuch z panelu sceny (przycisk ▶): dźwięk ze środka kadru, BEZ limitu głosów i odstępu startów — każde kliknięcie
+   * to osobny głos (kilka kliknięć = kilka nałożonych dźwięków); wybrany wariant albo losowo, poziom po wyrównaniu,
+   * ta sama szyna co w grze, także gdy dźwięk jest wyciszony w scenie. Pętla gra jeden obieg bufora; synteza — krótki
+   * pokaz (silniki na 80% ciągu, seria CIWS).
+   */
+  const ODSLUCH_SYNTEZY = { silnikMain: 2.5, silnikSide: 2, gatling: 1.2 };
+  function odsluch(id) {
+    if (wylaczony) return false;
+    if (zSynteza && Object.prototype.hasOwnProperty.call(ODSLUCH_SYNTEZY, id) && DZWIEKI_SYNTEZY[id]) {
+      const at = { dist: 0, pan: 0, gain: dbToGain(DZWIEKI_SYNTEZY[id].poziom), reverb: 0.3 };
+      const h = id === 'silnikMain' ? engineMain.play(E(), paramDefaults(engineMain, { throttle: 0.8, boost: 0 }), at)
+        : id === 'silnikSide' ? engineSide.play(E(), paramDefaults(engineSide, { throttle: 0.8 }), at)
+          : gatling.play(E(), paramDefaults(gatling, {}), at);
+      if (!h) return false;
+      setTimeout(() => h.release(), ODSLUCH_SYNTEZY[id] * 1000);
+      zagral[id] = (zagral[id] || 0) + 1;
+      return true;
+    }
+    const wpis = dzwieki.get(id);
+    if (!wpis) return false;
+    const wi = wybierzWariant(wpis.pliki.length, wybor[id], rand(), wpis.poprzedni);
+    const buf = wi >= 0 ? wpis.bufory[wi] : null;
+    if (!buf) return false;
+    wpis.poprzedni = wi;
+    const w = wezGlos(TAB[id]?.szyna);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    w.g.gain.value = wpis.wzm[wi];
+    w.p.pan.value = 0;
+    src.connect(w.g);
+    w.src = src;
+    src.onended = w.koniec;
+    src.start(ctx.currentTime + 0.01);
+    glosyAktywne++;
+    if (glosyAktywne > stat.glosyMax) stat.glosyMax = glosyAktywne;
+    zagral[id] = (zagral[id] || 0) + 1;
+    return true;
+  }
+
   return {
     ctx, wczytaj, graj, zdarzenie, petla, silnikMain, silnikSide, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
-    statystyki, wyzerujStatystyki, lista, tekstWyboru,
+    statystyki, wyzerujStatystyki, lista, tekstWyboru, odsluch,
     ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); },
     ustawWyciszenie(id, b) { wycisz[id] = !!b; },
     ustawGlosnosc(v) { glosnosc.gain.setTargetAtTime(Math.max(0, Number(v) || 0), ctx.currentTime, 0.05); },

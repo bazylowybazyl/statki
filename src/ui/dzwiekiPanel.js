@@ -7,7 +7,7 @@
 // z fokusem (spacja / Enter w grze nie klika ich ponownie).
 
 const STYL = `
-#dzwieki-panel { position: fixed; top: 64px; right: 12px; z-index: 60; width: 300px; max-height: calc(100vh - 140px);
+#dzwieki-panel { position: fixed; top: 64px; right: 12px; z-index: 60; width: 330px; max-height: calc(100vh - 140px);
   display: flex; flex-direction: column; font: 12px/1.35 system-ui, sans-serif; color: #d8e6f0;
   background: rgba(8, 14, 22, 0.86); border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 6px;
   box-shadow: 0 4px 18px rgba(0,0,0,0.45); pointer-events: auto; user-select: none; }
@@ -30,6 +30,8 @@ const STYL = `
 #dzwieki-panel .dp-licznik { color: #8fb1c8; font-variant-numeric: tabular-nums; min-width: 2.5em; text-align: right; }
 #dzwieki-panel .dp-warianty { display: flex; gap: 2px; }
 #dzwieki-panel .dp-warianty button { padding: 1px 5px; min-width: 20px; }
+#dzwieki-panel .dp-warianty button.dp-play { color: #9ff0c0; border-color: rgba(120, 220, 170, 0.55); margin-right: 3px; }
+#dzwieki-panel .dp-warianty button.dp-play:active { background: rgba(60, 150, 110, 0.7); }
 #dzwieki-panel .dp-warianty button.wybrany { background: rgba(70, 140, 200, 0.7); border-color: rgba(150, 200, 240, 0.8); }
 #dzwieki-panel .dp-stopka { padding: 6px 8px; display: flex; gap: 8px; align-items: center; border-top: 1px solid rgba(120,170,210,0.2); }
 #dzwieki-panel .dp-stan { color: #9fc4a8; font-size: 11px; }
@@ -102,6 +104,12 @@ export function utworzPanelDzwiekow({ dzwieki, akcje, stan }) {
     }
     const licznik = el('span', { class: 'dp-licznik', text: '0' });
     const warianty = el('div', { class: 'dp-warianty' });
+    // ▶ — odsłuch: każde kliknięcie gra osobno (wybrany wariant albo losowo), bez limitu głosów sceny.
+    if (typeof dzwieki.odsluch === 'function') {
+      const bP = przycisk('▶', () => dzwieki.odsluch(r.id), r.synteza ? 'Zagraj (krótki pokaz syntezy)' : 'Zagraj — każde kliknięcie osobno');
+      bP.className = 'dp-play';
+      warianty.appendChild(bP);
+    }
     const bWar = [];
     if (!r.synteza) {
       const n = Math.max(1, r.pliki.length);
