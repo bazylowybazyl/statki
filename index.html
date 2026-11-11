@@ -18872,9 +18872,9 @@
           main: ['beam_continuous', 'beam_pulse'], aux: ['laser_pd_mk1'] } },
         { id: 'flak', nazwa: 'Flak i torpedy', bron: {
           aux: ['flak_s', 'flak_m', 'flak_l', 'flak_capital'],
-          missile: ['siege_torpedo', 'torpedo_salvo', 'siege_torpedo_mk2'] } },
-        { id: 'rakiety', nazwa: 'Rakiety (Osa, Rój, Fast, Grad, Hydra)', bron: {
-          missile: ['osa_micro_missile', 'roj_pod', 'fast_missile_rack', 'grad_launcher', 'hydra_mirv'] } },
+          missile: ['missile_rack', 'siege_torpedo', 'torpedo_salvo', 'siege_torpedo_mk2'] } },
+        { id: 'rakiety', nazwa: 'Rakiety (Grad, Osa — Atlas ma dwie wyrzutnie)', bron: {
+          missile: ['grad_launcher', 'osa_micro_missile', 'roj_pod', 'fast_missile_rack', 'hydra_mirv'] } },
         { id: 'superbronie', nazwa: 'Superbronie (Mjolnir — 2 na postoju, Hexlance — 4 dwa razy)', bron: {
           special: ['siege_railgun'], builtin: ['hexlance_siege'] } }
       ],
@@ -19228,8 +19228,10 @@
     function soundSceneShot(d) {
       if (!SND) return;
       const def = MASTER_WEAPONS[d.weaponId] || null;
-      // Rakiety: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny.
-      if (def && (def.category === 'rocket' || def.category === 'torpedo')) return;
+      // Rakiety 3D: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny. Rakieta kanwy
+      // (`forceCanvas` — Osa) i torpedy (pociski w `bullets`: wachlarz gracza — jeden strzał szyny na wyrzutnię, NPC)
+      // nie mają adaptera — grają ze strzału szyny (mapa uzbrojenia).
+      if (def && def.category === 'rocket' && !def.forceCanvas && window.rocketSystem3D) return;
       const shooter = d.shooter;
       SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous');
     }
@@ -31707,7 +31709,7 @@
         renderCtx.lineWidth = 2.5;
         renderCtx.strokeStyle = `rgba(${col},0.9)`;
         if (st === 'reload') {
-          const cdMax = Math.max(0.01, (weapon.cooldown || 10) * (mods.fireRate || 1.0));
+          const cdMax = Math.max(0.01, (weapon.cooldown || 10) * (ship.modifiers?.fireRate || 1.0)); // dawniej `mods` spoza zakresu — wyjątek w render() po pierwszej torpedzie
           const u = typeof hp.ammo === 'number' && hp.ammo <= 0 ? 0 : 1 - cd / cdMax;
           renderCtx.beginPath(); renderCtx.arc(_torpS0.x, _torpS0.y, r0, -Math.PI / 2, -Math.PI / 2 + u * Math.PI * 2); renderCtx.stroke();
           renderCtx.fillText(typeof hp.ammo === 'number' && hp.ammo <= 0 ? 'BRAK TORPED' : `${cd.toFixed(1).replace('.', ',')} s`, _torpS0.x, _torpS0.y + r0 + 14);

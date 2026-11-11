@@ -99,6 +99,17 @@ async function etapyBroni() {
       await mouse('mouseMoved', p.x, p.y);
       await step(4);
       await tap('t');
+      if (id === 'superbronie') {
+        // odmowa: Mjolnir w ruchu (LPM grupy 2 przy prędkości) — przed strzałem z postoju (broń gotowa)
+        await tap('2');
+        p = await ev(celPanc);
+        await mouse('mouseMoved', p.x, p.y);
+        await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
+        for (let i = 0; i < 6; i++) { await ev('(() => { const s = window.ship; s.vel.x = 240; s.vel.y = 0; return true; })()'); await step(10); }
+        await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
+        await ev(stop);
+        await step(30);
+      }
       for (const g of ['1', '2']) {
         await tap(g);
         p = await ev(celPanc);
@@ -109,9 +120,15 @@ async function etapyBroni() {
       await lpm(p, 30);
       for (let i = 0; i < 3; i++) await step(60);
       if (id === 'flak') {
-        // obrona punktowa (flak) strzela do rakiet piratów; torpedy — tryb 8 + LPM
+        // torpedy — tryb 8 + LPM (po flaku)
+        // flak piratów (niszczyciele) strzela do rakiet Atlasa (grupa 3), flak Atlasa — do rakiet piratów
         await ev('window.DevScene.dzwiekiPiraciStrzelaja(true)');
-        for (let i = 0; i < 8; i++) await step(60);
+        for (let r = 0; r < 2; r++) {
+          await tap('3');
+          p = await ev(celPanc);
+          await lpm(p, 30);
+          for (let i = 0; i < 9; i++) await step(60);
+        }
         await ev('window.DevScene.dzwiekiPiraciStrzelaja(false)');
         await tap('8');
         p = await ev(celPanc);
@@ -126,14 +143,6 @@ async function etapyBroni() {
         for (let i = 0; i < 2; i++) await step(60);
         await tap('4');
         for (let i = 0; i < 2; i++) await step(60);
-        // odmowa: Mjolnir w ruchu (LPM grupy 2 przy prędkości)
-        await tap('2');
-        p = await ev(celPanc);
-        await mouse('mouseMoved', p.x, p.y);
-        await mouse('mousePressed', p.x, p.y, { button: 'left', clickCount: 1 });
-        for (let i = 0; i < 6; i++) { await ev('(() => { const s = window.ship; s.vel.x = 240; s.vel.y = 0; return true; })()'); await step(10); }
-        await mouse('mouseReleased', p.x, p.y, { button: 'left', clickCount: 1 });
-        await ev(stop);
       }
       await step(60);
     });

@@ -143,3 +143,29 @@ dobrze) — atak 5 ms, bas 79–88%. Ładowanie (`*Ladowanie`) narasta celowo �
 
 Uwagi: `flakRozprysk_1` — atak 185 ms po trzech próbach (dwa pozostałe warianty 20–30 ms); flak L / Capital
 (`flakL_2`, `flakC_2`) — szczyt wysoko nad RMS, wyrównanie dociąga je 1–2 dB pod kategorię (sufit szczytu −3 dBFS).
+
+## Haki w grze i harness (`node scripts/webgpu/dzwieki-gra.mjs --tryb bronie`, tryb `off`)
+
+Przebieg wszystkich zestawów (`.tmp/dzwieki/bronie4`) + poprawka Osy i torped (`bronie5`, flak i rakiety):
+
+| zestaw | dźwięki uzbrojenia, które zagrały |
+|---|---|
+| scena | tempestIon 26, yamato 8, rakieta 12 |
+| działka i armaty | dzialkoM 31, dzialkoL 21, dzialkoC 16, armataL 9, seria CIWS (Vulcan, Gatling S) |
+| plazma | heliosS 30, heliosM 24, heliosL 15, plazmaGatling 20, yamatoL 8 (+ trafieniePlazma) |
+| railguny snajperskie | snajperS 8, snajperM 12, snajperL 8, snajperC 5 |
+| wiązki | wiazkaStart 1 + pętla wiazka, wiazkaPuls 20, wiazkaKadlub 3, wiazkaTarcza 2 |
+| flak i torpedy | flakM 4 (piraci), flakRozprysk 9, torpeda 1 (jeden strzał szyny na wachlarz) |
+| rakiety | rakietaL 5 (Grad), rakietaS 5 (Osa — po poprawce: rakieta kanwy gra ze strzału szyny) |
+| superbronie | mjolnirLadowanie 8, mjolnirStrzal 4, hexlanceLadowanie 1, hexlanceGotowy 1, hexlanceStrzal 1, odmowa (`blad`) 1 — Mjolnir w ruchu |
+
+Zagrało 27 z 34 dźwięków uzbrojenia. Nie zagrały (powód): `dzialkoS` — tylko kanonierki myśliwców; `promienLadowanie`,
+`promienStrzal` — promień śmierci ma tylko Colossus Terran (NPC); `flakS`, `flakL`, `flakC` — flak Atlasa strzela do
+rakiet dopiero w paśmie obrony punktowej, a rakiety piratów zestrzeliwuje wcześniej laser PD; `torpedaC` — Siege Torpedo
+Mk II (Capital) nie mieści się w wyrzutni Atlasa. Wszystkie są w panelu sceny z ▶.
+
+Szczyt po limiterze −11,1 … −11,4 dB, przester 0, najwięcej 59 głosów naraz; konsola bez błędów (poza brakiem
+`favicon.ico`). Zwykła gra (`--tryb zwykla`): warstwa gra, ostrzeżeń brak, błędów brak.
+
+Po drodze: nakładka trybu torped (`drawTorpedoOverlay`) rzucała `mods is not defined` po pierwszej torpedzie
+(wyjątek w `render()` zatrzymywał pętlę gry) — poprawione na `ship.modifiers?.fireRate`.
