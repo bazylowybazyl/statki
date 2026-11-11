@@ -29,6 +29,8 @@ import { sceneOriginNearCamera } from './sceneOrigin.js';
 // Dysze MAIN tej klatki per okręt — dla poświaty dysz na pyle kosmicznym (src/3d/dust/).
 import { EngineFrame } from './engineFrame.js';
 import { enginePlumeScale, engineIgnitionKick } from '../game/engineIgnition.js';
+// Stan zasilania okrętu (2026-11-11): wyłączony okręt — dysze SIDE bez płomyka dyżurnego i żaru gardzieli (jak hulk).
+import { powerAllowsEngines } from '../game/shipPower.js';
 // Dysze SIDE tej klatki — modele 3D dysz bocznych (sideNozzleFrame.js → shipModels3DGame.js); płomień z wylotu dzwonu.
 import { SideNozzleFrame, SIDE_NOZZLE_RADIUS, SIDE_NOZZLE_MOUTH } from './sideNozzleFrame.js';
 // Dysze SIDE na WebGPU (2026-10-07): struga TSL, gaz w pulach GPU, światło na blasze — zamiast engineExhaustBatch.
@@ -793,6 +795,8 @@ function updateEffects(entity, fxData, dt) {
   const mainBoost = resolveMainBoost(entity) && plumeK >= 1;
   const isPlayerEntity = entity === frameCtx.playerShip || entity.isPlayer === true;
   const isHulk = entity.isBridgeHulk === true;
+  // dysze bez zasilania (src/game/shipPower.js): jak hulk — bez płomyka dyżurnego, żar dzwonów stygnie sam
+  const powerDead = entity.shipPower ? !powerAllowsEngines(entity) : false;
   const jetGainRaw = isPlayerEntity ? Number(RenderWorld.options?.vfx?.bloomGain) : NaN;
   const jetGain = Number.isFinite(jetGainRaw) && jetGainRaw >= 0 ? jetGainRaw : 1;
   const sparkMul = isPlayerEntity ? 1 : NPC_SPARK_MUL;
@@ -868,7 +872,7 @@ function updateEffects(entity, fxData, dt) {
       slotThrottle = Math.max(sideDrive, torque * 0.8, moveGlow * 0.55);
       sideFire = Math.max(sideDrive, torque * 0.8);
       sideIdle = moveGlow * 0.55;
-    } else if (!isHulk) {
+    } else if (!isHulk && !powerDead) {
       slotThrottle = Math.max(slotThrottle, MAIN_IDLE_THROTTLE);
     }
     // __throttle: ciąg dyszy z modelu dysz (thrusterModel.js — gracz i NPC) albo wymuszony (narzędzia).
@@ -1016,7 +1020,7 @@ function updateEffects(entity, fxData, dt) {
       jp.radius = sideNozzleR;
       jp.fire = Math.max(0, Math.min(1, sideFire)) * (slotScale < 1 ? slotScale : 1);
       jp.idle = sideIdle;
-      jp.dead = isHulk;
+      jp.dead = isHulk || powerDead;
       jp.palette = engineFx.mainPaletteIndex | 0;
       jp.gain = cloakVis * jetGain;
       jp.entity = entity;
@@ -1062,7 +1066,7 @@ function updateEffects(entity, fxData, dt) {
     }
     // wiatr manewrowy w polach gazu (hala K-7, gaz przestrzeni): wylot dzwonu, moc strugi × maskowanie (ukryty okręt
     // nie zdradza się gazem — jak poświata MAIN), hulk bez ciągu
-    if (!isHulk) EngineFrame.side(flameX, flameY, dirX, dirY, sideNozzleR, jetPower * cloakVis, shipSceneVX, shipSceneVY, sideGasFrom);
+    if (!isHulk && !powerDead) EngineFrame.side(flameX, flameY, dirX, dirY, sideNozzleR, jetPower * cloakVis, shipSceneVX, shipSceneVY, sideGasFrom);
     if (cloakVis <= 0.01) continue;
 
     // Model dyszy na listę klatki (rysuje shipModels3DGame.js). Maskowanie: znika z komórką kadłuba pod sobą

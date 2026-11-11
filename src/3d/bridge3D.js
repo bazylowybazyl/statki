@@ -87,6 +87,8 @@ import {
   resolveBridgeModelKind
 } from './bridge3DShapes.js';
 import { bridgeHullFxScale, spawnBridgeRoomFlash } from './bridgeFx3D.js';
+// Stan zasilania okrętu (2026-11-11): okna gasną / zapalają się z kanałem `bridge`, czerwone lampy awaryjne.
+import { shipPowerLook, floodFlicker, POWER_ON } from '../game/shipPower.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { RoofCover } from './roofCover.js';
 import {
@@ -629,6 +631,7 @@ export function bridgeEmitterLight(rec, i, now, hpFrac) {
     if (ownDead) I *= sampleNavLight(now - bridge.deadAt, 0, seed) > 0.5 ? 1 : 0;
     else if (age >= 0) I *= sampleNavLight(age, 0, seed) > 0.5 ? 1 : 0;
     else if (powerAge >= 0) I *= powerAge < T.navDelay ? 1 : 0;
+    else if (rec.pwrLook) I *= rec.pwrLook.nav;
     return I;
   }
   let I;
@@ -638,6 +641,15 @@ export function bridgeEmitterLight(rec, i, now, hpFrac) {
     I = sampleWindowLight(age, rec.emDelayCmd[i], seed);
   } else if (powerAge >= 0) {
     I = sampleWindowLight(powerAge, rec.emDelayPower[i], seed);
+  } else if (rec.pwrLook !== null && rec.pwrLook !== undefined) {
+    // Stan zasilania okrętu (src/game/shipPower.js): okno świeci, gdy kanał `bridge` przekroczył jego próg (ziarno —
+    // okna gasną i zapalają się po kolei, nie razem); przy zapalaniu migocze. Lampa awaryjna (bridgeEmergencyWindow)
+    // świeci słabo na czerwono, gdy okna gasną (kolor — _emit).
+    const L = rec.pwrLook;
+    const thr = 0.08 + 0.84 * seed;
+    I = L.bridge > thr ? (type === BRIDGE3D_EMIT.STRIP ? 1 : 0.82 + 0.18 * Math.sin(now * (0.7 + seed * 1.3) + seed * 40)) : 0;
+    if (I > 0 && L.bridge < 1 && L.flicker !== 0) I *= floodFlicker(now, seed * 13 + i, Math.min(1, (L.bridge - thr) * 4));
+    if (type === BRIDGE3D_EMIT.WINDOW && bridgeEmergencyWindow(rec, i)) I = Math.max(I, L.emergency * 1.6);
   } else {
     I = type === BRIDGE3D_EMIT.STRIP ? 1 : 0.82 + 0.18 * Math.sin(now * (0.7 + seed * 1.3) + seed * 40);
     if (hpFrac < 0.55) {
@@ -648,7 +660,19 @@ export function bridgeEmitterLight(rec, i, now, hpFrac) {
   return I * E.level[i];
 }
 
+/** Okno z lampą awaryjną (czerwoną) przy wyłączonym okręcie: ~co ósme okno mostka (z ziarna — stałe). */
+export function bridgeEmergencyWindow(rec, i) {
+  return rec.kind.emit.seed[i] < 0.12;
+}
+
 // Opóźnienia fal gaśnięcia (liczone raz, gdy pojawi się ich źródło).
+// Kanały zasilania gospodarza mostka (null — praca, bez stanu: okna jak dawniej).
+function bridgePowerLook(rec, host) {
+  const pw = host?.shipPower;
+  if (!pw || pw.state === POWER_ON) return null;
+  if (!rec.__pwrLook) rec.__pwrLook = {};
+  return shipPowerLook(pw.state, Number(pw.t) || 0, rec.__pwrLook);
+}
 function prepareEmitterDelays(rec) {
   const E = rec.kind.emit;
   const speed = BRIDGE_KILL_TIMELINE.windowWaveSpeed;
@@ -1502,6 +1526,8 @@ export const Bridge3D = {
     const st = rec.st;
     const zMode = ctx.free ? 1 : 0;
     const beforeLoss = !st.commandLost && rec.powerLostAt < 0;
+    rec.pwrLook = beforeLoss ? bridgePowerLook(rec, host) : null;
+    const battle = beforeLoss && host?.__battleLights === true;
     prepareEmitterDelays(rec);
     const pristine = rec.pristine === true;
     const beamHull = pristine ? null : bridgeBeamHull(host);
@@ -1535,6 +1561,8 @@ export const Bridge3D = {
       let halo;
       if (type === BRIDGE3D_EMIT.WINDOW) {
         col = E.colorKey[i] === 'window' ? rec.winColor : (this._emitColors[E.colorKey[i]] || rec.winColor);
+        // Lampa awaryjna wyłączonego okrętu i światło bojowe floty (__battleLights): czerwień.
+        if ((rec.pwrLook && rec.pwrLook.bridge < 0.5 && bridgeEmergencyWindow(rec, i)) || battle) col = this._emitColors.beacon_red || col;
         halo = T.winHaloScale * Math.min(E.halfW[i], E.halfH[i]) * 2;
       } else if (type === BRIDGE3D_EMIT.BEACON) {
         col = this._emitColors[E.colorKey[i]] || this._emitColors.beacon_white;

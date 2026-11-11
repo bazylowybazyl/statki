@@ -116,6 +116,9 @@ try {
   check(s.pwr && s.pwr.state === 0, `po 2,3 s WYŁ. (stan ${s.pwr?.state})`);
   check(s.eng === 0, `silniki MAIN WYŁ. (stan ${s.eng})`);
   await shot('3-wylaczony');
+  await ev(`window.__harness.scene.cam(${DEEP.x} - 300, ${DEEP.y}, 1.1)`);
+  await shot('3b-wylaczony-blisko');
+  await ev(`window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42)`);
 
   // Dryf: prędkość nadana ręcznie zostaje (bez tłumika, stabilizatora i regulatora; opór liniowy świata — mały).
   await ev(`(() => { ship.vel.x = 120; ship.vel.y = 0; return true; })()`);
@@ -141,14 +144,21 @@ try {
   await press('Minus');
   s = await st();
   check(s.pwr && s.pwr.state === 1, `− → ROZRUCH (stan ${s.pwr?.state})`);
+  await ev(`window.__harness.scene.cam(${DEEP.x} - 300, ${DEEP.y}, 1.1)`);
   await stepSec(1.0); await shot('4-rozruch-1s');
   await stepSec(1.5); await shot('5-rozruch-2-5s');
   await stepSec(1.5); await shot('6-rozruch-4s');
+  await ev(`window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42)`);
   await stepSec(1.3);
   s = await st();
   check(s.pwr && s.pwr.state === 2, `po 5,3 s PRACA (stan ${s.pwr?.state})`);
   check(!s.shOff && !s.shOwn, 'tarcza zwolniona po rozruchu');
   await shot('7-praca');
+  await ev(`window.__harness.scene.cam(${DEEP.x} - 300, ${DEEP.y}, 1.1)`);
+  await shot('7b-praca-blisko');
+  await ev(`(async () => { ship.__battleLights = true; await window.__harness.step(120); return true; })()`);
+  await shot('7c-praca-bojowe-blisko');
+  await ev(`(async () => { ship.__battleLights = false; window.__harness.scene.cam(${DEEP.x}, ${DEEP.y}, 0.42); await window.__harness.step(90); return true; })()`);
   const fa2 = await ev(`(async () => { const fa = await import('/src/ai/fleetAwareness.js'); fa.updateFleetAwareness(npcs, ship, 0, true); return { sig: ship.__sigMul, piratWidzi: fa.isVisibleToSide('pirate', ship) }; })()`);
   check(fa2.sig === 1, `po rozruchu sygnatura 1 (${JSON.stringify(fa2)})`);
 

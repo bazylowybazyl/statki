@@ -48,7 +48,7 @@ import {
   floor, max, abs, length, smoothstep, dot, normalize,
   positionView, positionWorld, cameraViewMatrix, cameraWorldMatrix, renderGroup
 } from 'three/tsl';
-import { buildNavLightClusters, buildRoadLightWorldEmitters, entityOwnRoadLightCount } from '../../game/shipLightRuntime.js';
+import { buildNavLightClusters, buildRoadLightWorldEmitters, entityOwnRoadLightCount, entityPowerLightGain } from '../../game/shipLightRuntime.js';
 import { cloakLightGain } from '../../game/cloakLook.js';
 import {
   beginHullMountBind, bindHullMount, createHullMountSet, mountHullOf, refreshHullMountSet
@@ -784,7 +784,9 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
   const omRange = Math.min(om.maxRange, Math.max(om.minRange, L * om.rangeMul));
   // Światło dookoła oświetla też własny kadłub (bez niego w mroku pola kadłub gasł
   // całkiem) — dlatego bez właściciela; lampy i reflektory własnego kadłuba już nie.
-  grid.add(ex - ox, -(ey - oy), om.z, omRange, om.color[0] * om.intensity * k, om.color[1] * om.intensity * k, om.color[2] * om.intensity * k, om.scatter);
+  // światło dookoła okrętu gaśnie z zasilaniem (src/game/shipPower.js — kanał lamp)
+  const kOm = k * entityPowerLightGain(entity, false);
+  if (kOm > 0.002) grid.add(ex - ox, -(ey - oy), om.z, omRange, om.color[0] * om.intensity * kOm, om.color[1] * om.intensity * kOm, om.color[2] * om.intensity * kOm, om.scatter);
   if (opts.nav !== false) {
     _navOptions.time = opts.time || 0;
     buildNavLightClusters(_one, _navOptions);

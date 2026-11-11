@@ -3,7 +3,26 @@ import {
   LIGHT_KINDS,
   normalizeLightsBlock
 } from '../ui/shipLightEditorModel.js';
-import { navBlinkCode, navBlinkValue, navPhaseOf } from '../data/shipNavLights.js';
+import { navBlinkCode, navBlinkValue, navPhaseOf, navLightHullKeyOf } from '../data/shipNavLights.js';
+// Lampy pokładowe (2026-11-11, stan zasilania okrętu): miejsca z tabeli kadłuba, klucz kadłuba z bloku lamp nawigacyjnych.
+import { SHIP_DECK_LIGHTS } from '../data/shipDeckLights.js';
+import { shipPowerLook } from './shipPower.js';
+
+// Stan zasilania okrętu (src/game/shipPower.js): mnożnik świateł zewnętrznych (billboardy, rozlew lamp na sąsiadów,
+// reflektory, siatka świateł) — `nav` dla lamp nawigacyjnych, inaczej kanał lamp i reflektorów; migotanie po trafieniu
+// dużego kalibru (`__powerFlick` 0..1) przygasza. Encja bez stanu i bez migotania — 1.
+const _pwrCh = {};
+export function entityPowerLightGain(entity, nav = false) {
+  const pw = entity?.shipPower;
+  const f = Number(entity?.__powerFlick) || 0;
+  if (!pw && !(f > 0)) return 1;
+  let g = 1;
+  if (pw) {
+    shipPowerLook(pw.state, Number(pw.t) || 0, _pwrCh);
+    g = nav ? _pwrCh.nav : _pwrCh.flood;
+  }
+  return f > 0 ? g * (1 - 0.75 * Math.min(1, f)) : g;
+}
 // Maskowanie (2026-10-04): lampy gasną z komórką kadłuba pod sobą, reflektory i rozlew lamp z resztą okrętu.
 import { cloakLightGain, entityCloakVisAt } from './cloakLook.js';
 // Rozpad kadłuba belkowego (2026-10-05): lampa gaśnie, gdy komórka pod nią nie jest już żywym węzłem ciała
@@ -202,10 +221,37 @@ function getEntityLightSource(entity) {
 // nigdy edytowane w miejscu, więc nowe źródło = nowy klucz = nowa normalizacja.
 // Wynik jest tylko do odczytu (wspólny dla wszystkich wywołań).
 const normalizedLightsCache = new WeakMap();
+// LAMPY POKŁADOWE (2026-11-11, prośba użytkownika: „mini lampy oświetlające kadłub, np. z mostka i innych
+// elementów”): rodzaj `deck` bloku lamp — tylko w payloadzie shadera własnego kadłuba (typ 4: świeci w dół na blachę,
+// jasność i barwa z kanałów zasilania — hexShips3D.js syncEntityPowerUniforms); bez billboardów, grup i siatki
+// świateł. Miejsca: SHIP_DECK_LIGHTS (klucz edytora z lamp nawigacyjnych bloku), mocowania jak inne lampy.
+export const DECK_KIND = 'deck';
+export const DECK_LIGHT_LOOK = {
+  color: '#ffe2b4',  // rejs: ciepła biel (tryb bojowy — czerwień w shaderze)
+  power: 1.25,
+  spread: 15         // zasięg plamy na blasze × promień lampy [px sprite'a]
+};
+const _deckMarkers = new Map();
+function deckMarkersFor(key) {
+  if (!key) return EMPTY_DECK;
+  let list = _deckMarkers.get(key);
+  if (list) return list;
+  const row = SHIP_DECK_LIGHTS[key];
+  list = Object.freeze(row ? row.p.map(([x, y, d, kind], i) => Object.freeze({
+    id: `deck_${i}`, x, y, radius: row.r, d: Math.max(0, Math.min(1, Number(d) || 0)), deckKind: kind,
+    // ziarno migotania 0..1 (deterministyczne — złoty podział)
+    seed: (i * 0.6180339887) % 1
+  })) : []);
+  _deckMarkers.set(key, list);
+  return list;
+}
+const EMPTY_DECK = Object.freeze([]);
+
 const EMPTY_LIGHTS_BLOCK = Object.freeze({
   [LIGHT_KINDS.POSITION]: Object.freeze([]),
   [LIGHT_KINDS.ROAD]: Object.freeze([]),
   [LIGHT_KINDS.FLOOD]: Object.freeze([]),
+  [DECK_KIND]: EMPTY_DECK,
   hullLenPx: 0
 });
 
@@ -219,6 +265,8 @@ export function getEntityLights(entity) {
     block = normalizeLightsBlock(source);
     // Reflektory otoczenia mają kadłuby w danych (SHIP_FLOOD_LIGHTS); generator z obrysu lamp tylko na życzenie źródła.
     addAutoFloodMarkers(block, source.autoFlood === true);
+    // Lampy pokładowe kadłuba (po obrysie — nie zmieniają długości kadłuba i progów reflektorów).
+    block[DECK_KIND] = deckMarkersFor(navLightHullKeyOf(source.position));
     normalizedLightsCache.set(source, block);
   }
   // Kadłub belkowy: bez lamp, których komórka nie jest już żywym węzłem ciała encji (liveLightsBlock).
@@ -232,6 +280,8 @@ export function getEntityLights(entity) {
         [LIGHT_KINDS.POSITION]: block[LIGHT_KINDS.POSITION],
         [LIGHT_KINDS.ROAD]: EMPTY_LIGHTS_BLOCK[LIGHT_KINDS.ROAD],
         [LIGHT_KINDS.FLOOD]: EMPTY_LIGHTS_BLOCK[LIGHT_KINDS.FLOOD],
+        // lampy pokładowe to nie reflektory — L ich nie gasi
+        [DECK_KIND]: block[DECK_KIND] || EMPTY_DECK,
         hullLenPx: block.hullLenPx
       };
       darkLightsCache.set(block, dark);
@@ -250,7 +300,7 @@ const darkLightsCache = new WeakMap();
 // lampa nie wraca), żywotność tylko przy zmianie ciała; ten sam stan = ten sam obiekt bloku (cache payloadu
 // kadłuba i grup lamp trzymają się tożsamości). Długość obrysu (`hullLenPx`, progi reflektorów) zostaje z bloku.
 const liveLightsCache = new WeakMap();
-const LIGHT_KIND_ORDER = [LIGHT_KINDS.POSITION, LIGHT_KINDS.ROAD, LIGHT_KINDS.FLOOD];
+const LIGHT_KIND_ORDER = [LIGHT_KINDS.POSITION, LIGHT_KINDS.ROAD, LIGHT_KINDS.FLOOD, DECK_KIND];
 
 // Skale hardpointów jak getEntityLightScale, bez obiektu (getEntityLights idzie kilka razy na encję na klatkę).
 function lightScaleX(entity) {
@@ -279,11 +329,11 @@ function liveLightsBlock(entity, block) {
   const hsx = lightScaleX(entity), hsy = lightScaleY(entity);
   if (rec.block !== block || set.lineage !== hull.dmgKey || rec.hsx !== hsx || rec.hsy !== hsy) {
     let n = 0;
-    for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) n += block[LIGHT_KIND_ORDER[k]].length;
+    for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) n += (block[LIGHT_KIND_ORDER[k]] || EMPTY_DECK).length;
     const rest = beginHullMountBind(set, hull, n);
     let at = 0;
     for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) {
-      const list = block[LIGHT_KIND_ORDER[k]];
+      const list = block[LIGHT_KIND_ORDER[k]] || EMPTY_DECK;
       for (let i = 0; i < list.length; i++) {
         set.cells[at++] = bindHullMount(hull, (Number(list[i].x) || 0) * hsx, (Number(list[i].y) || 0) * hsy, rest);
       }
@@ -306,7 +356,7 @@ function filterLightsBlock(block, alive) {
   let at = 0;
   for (let k = 0; k < LIGHT_KIND_ORDER.length; k++) {
     const kind = LIGHT_KIND_ORDER[k];
-    const list = block[kind];
+    const list = block[kind] || EMPTY_DECK;
     const kept = [];
     for (let i = 0; i < list.length; i++) if (alive[at++]) kept.push(list[i]);
     out[kind] = kept;
@@ -660,8 +710,37 @@ export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER
   }
   return {
     count: cached.lights.length,
+    // Własne lampy kadłuba (pierwsze w payloadzie; cudze dopisuje buildCombinedShipLightShaderPayload) — kanały
+    // zasilania w shaderze mnożą tylko własne.
+    ownCount: cached.lights.length,
     lights: cached.lights.slice(),
     signature: cached.signature
+  };
+}
+
+// Lampa pokładowa w przestrzeni siatki kadłuba (jak packLight): pozycja, promień, moc, barwa rejsu, zasięg plamy,
+// odległość od reaktora (fala rozruchu) i ziarno migotania.
+function packDeckLight(marker, grid, scale) {
+  const width = Math.max(1, Number(grid?.srcWidth) || 1);
+  const height = Math.max(1, Number(grid?.srcHeight) || 1);
+  const pivotX = Number(grid?.pivot?.x) || 0;
+  const pivotY = Number(grid?.pivot?.y) || 0;
+  const scaleUniform = Number(scale?.uniform) || 1;
+  const local = getScaledLightLocal(marker, scale);
+  const radiusPx = round2(Math.max(1, Number(marker.radius) || 4) * scaleUniform);
+  return {
+    id: marker.id,
+    kind: DECK_KIND,
+    pos: { x: round2(local.x + width * 0.5 + pivotX), y: round2(local.y + height * 0.5 + pivotY) },
+    color: hexToRgb01(DECK_LIGHT_LOOK.color, DECK_LIGHT_LOOK.color),
+    radiusPx,
+    power: DECK_LIGHT_LOOK.power,
+    dir: { x: 0, y: -1 },
+    rangePx: round2(radiusPx * DECK_LIGHT_LOOK.spread),
+    coneDeg: 0,
+    d: marker.d,
+    seed: marker.seed,
+    blink: -1
   };
 }
 
@@ -679,6 +758,9 @@ function packOwnShipLights(lights, scale, limit, hullLen, grid, navPhase) {
   pushKind(LIGHT_KINDS.ROAD);
   pushKind(LIGHT_KINDS.FLOOD);
   pushKind(LIGHT_KINDS.POSITION);
+  // Lampy pokładowe na końcu: przy nadmiarze lamp wypadają pierwsze.
+  const decks = lights?.[DECK_KIND] || EMPTY_DECK;
+  for (let i = 0; i < decks.length && out.length < limit; i++) out.push(packDeckLight(decks[i], grid, scale));
 
   // Te same składniki co dawny podpis tekstowy, w tej samej kolejności.
   let hash = FNV_OFFSET_BASIS;
@@ -776,7 +858,7 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
     const roads = Array.isArray(lights?.road) ? lights.road : [];
     const floods = withFloods && Array.isArray(lights?.flood) ? lights.flood : EMPTY_LIGHTS_BLOCK.flood;
     if (!roads.length && !floods.length) continue;
-    const cloakGain = cloakLightGain(entity);
+    const cloakGain = cloakLightGain(entity) * entityPowerLightGain(entity, false);
     if (cloakGain <= 0.01) continue;
 
     const hardpointScale = getEntityLightScale(entity, _hpScaleB);
@@ -893,7 +975,7 @@ export function buildNavLightClusters(entities, options = {}) {
     if (!entity || entity.dead) continue;
     const lights = getEntityLights(entity);
     if (!lights?.[LIGHT_KINDS.POSITION]?.length) continue;
-    const cloakGain = cloakLightGain(entity);
+    const cloakGain = cloakLightGain(entity) * entityPowerLightGain(entity, true);
     if (cloakGain <= 0.01) continue;
     const groups = getNavGroups(lights);
     const hardpointScale = getEntityLightScale(entity, _hpScaleB);
@@ -1004,7 +1086,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
       rec.color = cachedRgb01(marker?.color, '#ff2b2b');
       rec.coreWorld = round2(coreWorld);
       rec.haloWorld = round2(haloWorld);
-      rec.intensity = round2(clamp(marker?.power, 0.05, 20, 0.8) * fade * cloakVis);
+      rec.intensity = round2(clamp(marker?.power, 0.05, 20, 0.8) * fade * cloakVis * entityPowerLightGain(entity, true));
       out.push(rec);
     }
   }

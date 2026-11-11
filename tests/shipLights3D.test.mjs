@@ -83,7 +83,8 @@ test('hull shader and billboard shader share one blink function', () => {
   assert.match(hullTslSource, /navBlinkNode\(uTime, lightExtra\.x, P\.uNavPhase\)/);
   // Oba rodzaje lamp w pętli kadłuba gasną między błyskami; reflektor (typ ≠ 0) nie miga.
   assert.match(hullTslSource, /lampColor\.mul\(power\)\.mul\(blink\)\.mul\(fo\.att\)/);
-  assert.match(hullTslSource, /select\(lightType\.greaterThan\(0\.5\), float\(1\.0\), blink\.mul\(NAV_LIGHT_LOOK\.hullGain\)\)/);
+  // Reflektor (typ ≠ 0) stale × kanał zasilania lamp, lampa pozycyjna błyskiem × kanał nawigacyjnych (src/game/shipPower.js).
+  assert.match(hullTslSource, /select\(lightType\.greaterThan\(0\.5\), mix\(float\(1\.0\), P\.uPowerA\.y, ownLamp\),\s*blink\.mul\(NAV_LIGHT_LOOK\.hullGain\)\.mul\(mix\(float\(1\.0\), P\.uPowerA\.z, ownLamp\)\)\)/);
   // Stałe wzorów trafiają do WGSL billboardów (bez tekstu GLSL).
   const L = nodeLights();
   try {
