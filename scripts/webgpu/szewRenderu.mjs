@@ -98,6 +98,7 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/reactorCore.js': 'A',
   'src/game/repairRig.js': 'A',
   'src/game/shipBridge.js': 'A',
+  'src/game/shipPower.js': 'A',
   'src/game/shipBridgeBeams.js': 'A',
   'src/game/shipBridgeRuntime.js': 'A',
   'src/game/shipLightRuntime.js': 'A',

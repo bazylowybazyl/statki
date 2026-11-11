@@ -348,11 +348,24 @@ export const TERRAIN_VEGETATION = Object.freeze(Object.keys(VEG));
  */
 export const terrainLandscape = (veg) => {
   const P = VEG[veg];
-  return { forest: [...P.forestB], fen: mix3(P.fen, P.fenLight, 0.5), fenWet: [...P.fenWet], grass: [...P.grass], meadow: [...P.meadow], fenAmount: VEG_FEN[veg] };
+  return {
+    forest: [...P.forestB], forestDark: [...P.forestA], forestLight: [...P.forestC], fen: mix3(P.fen, P.fenLight, 0.5), fenWet: [...P.fenWet],
+    grass: [...P.grass], meadow: [...P.meadow], heath: [...P.heath], accent: P.accent ? [...P.accent] : null, fenAmount: VEG_FEN[veg]
+  };
 };
+/**
+ * ROŚLINNOŚĆ PLANETY → palety mapy terenu [klimat chłodny, klimat ciepły]. Jedno źródło dla planety widzianej z daleka
+ * (barwy lasu, pól, doliny — planetGenSolid.tsl.js, planetGenSpec.js) i dla mapy miejsca (planetGenPlace.js).
+ * Zielone planety mają tajgę na chłodzie i las równikowy w cieple; pozostałe — jedną paletę (decyzja użytkownika:
+ * „drzewa są nie tylko zielone” — czerwień, purpura, złoto).
+ */
+export const PLANET_VEGETATION = Object.freeze({
+  zielona: ['tajga', 'tropik'], morska: ['tajga', 'tropik'], oliwkowa: ['tajga', 'tropik'],
+  rdzawa: ['czerwona', 'czerwona'], czerwona: ['czerwona', 'czerwona'], purpurowa: ['purpura', 'purpura'], zlota: ['zlota', 'zlota']
+});
 /** Barwy wody i osadu (sRGB 0–255): ciemna woda leśna, muł wielkiej rzeki, mleczny błękit z lodowca, osad w morzu, piasek. */
 export const TERRAIN_WATER = Object.freeze({
-  dark: [27, 40, 48], mud: [150, 134, 88], ice: [...WATER.lodowa.edge], silt: [226, 190, 138], sand: [...GROUND.sand]
+  dark: [27, 40, 48], mud: [150, 134, 88], ice: [...WATER.lodowa.edge], silt: [218, 226, 196], sand: [...GROUND.sand]
 });
 /** Barwa lasu palety (sRGB 0–255) — odniesienie dla odcienia z palety planety (`vegTint`, planetGenPlace.js). */
 export const terrainForestColor = (veg) => [...VEG[veg].forestB];

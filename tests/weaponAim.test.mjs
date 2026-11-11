@@ -151,6 +151,8 @@ test('P1 index firing paths use the same simulated mount state as the shared con
     settle(f.controller);
     const shots = [];
     const ctx = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
       ...CARRIER_SCOPE, _fireCarrier: CARRIER_SCOPE.createCarrier(),
       ship: f.ship, p1WeaponCtrl: f.controller, getMountedWeaponAim,
       Game: { player: { weapons: f.ship.weapons } }, HP: { MAIN: 'main' },

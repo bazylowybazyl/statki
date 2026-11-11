@@ -100,7 +100,8 @@ test('warpNurt czyta z obiektu warpa te pola, które kopiuje gameView testu (str
 });
 
 test('układ migawki 4: WORLD bez dawnego WARP_DIR (obiekt → zawsze NaN), z kursem x / y, rampą, ślizgiem, ciałami, zegarami, kotwicą, osią β soczewki, planem trasy', () => {
-  assert.equal(SNAPSHOT_LAYOUT_VERSION, 4);
+  // 5 (2026-11-11): ENT — stan zasilania, migotanie, reflektor, alarm (WORLD bez zmian).
+  assert.ok(SNAPSHOT_LAYOUT_VERSION >= 4);
   // plan trasy (DECYZJE-2 T2 — warp.route z index.html): każde pole liczbowe ma słowo migawki; rodzaj, przylot i ciało osobno
   const routeKeys = new Set(WARP_ROUTE_FIELDS.map((p) => p[1]));
   for (const k of Object.keys(createWarpWorldMirror().route)) {

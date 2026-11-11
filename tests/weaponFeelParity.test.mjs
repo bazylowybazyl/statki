@@ -26,6 +26,8 @@ test('smuga jest wyborem receptury jak w demie; lekka broń nie dostaje trwałeg
 test('pierwszy krok pocisku 3D nie emituje smugi 2D; wymuszona kanwa zachowuje ślad', () => {
   let particles = 0;
   const scope = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
     RenderCommands: { ready: true },
     CanvasVFX: { spawnParticleXY() { particles++; } },
     fxRandomGame: { next: () => 0.5 }

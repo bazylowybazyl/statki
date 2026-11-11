@@ -21,7 +21,7 @@ import {
 import { bakeUniforms, bakeCoords, fieldAt, bakeMaterial, drainNode, COMMON_DEFS } from './planetGenBake.tsl.js';
 import { rngFor } from './planetGenRng.js';
 import { DRAIN_JITTER, DRAIN_CODE_STEP, DRAIN_FLOW_K, DRAIN_SEA_K } from './planetGenDrainage.js';
-import { terrainLandscape, TERRAIN_WATER } from './planetGenTerrainMap.js';
+import { terrainLandscape, TERRAIN_WATER, PLANET_VEGETATION } from './planetGenTerrainMap.js';
 
 const PI = Math.PI;
 export const CRATER_OCTAVES = 7;
@@ -133,6 +133,9 @@ function curvatureAt(F, U, C, hC) {
   return axis.mul(2.0).add(diag).div(12.0).sub(hC);
 }
 
+/** Ogon szeregu detalu wybrzeża i granic pokrycia: oktawy ≥ `from` gasną z `gain` (gain · 2,03 < 1). */
+export const COAST_TAIL = Object.freeze({ from: 5, gain: 0.45 });
+export const COVER_TAIL = Object.freeze({ from: 3, gain: 0.42 });
 // Kontynenty: kształt z fbm na PODWÓJNIE odkształconej dziedzinie (wybrzeża fraktalne, zatoki, półwyspy), płyty —
 // gładkie tło (średnia wartości komórek ważona odległością — bez skoku na krawędziach) i granice F2 − F1 (ciągłe)
 // pod pasma gór; „zbieżność” granicy z ciągłego szumu, nie z pary haszy (para skacze na węzłach potrójnych).
@@ -146,7 +149,9 @@ function plates(ps, plateFreq, contFreq, warp, coast, landProb, octX, full = fal
   const plateC = inv(landProb.sub(0.3), landProb.add(0.3), pc.z).mul(2.0).sub(1.0).toVar();
   const big = pgFbm(q.mul(contFreq.mul(0.85)), 4).toVar();
   // detal wybrzeży: fbm od średniej skali w dół z wolniej gasnącymi oktawami (wybrzeże fraktalne, wyspy przybrzeżne)
-  const det = pgFbm(q.mul(contFreq.mul(2.2)).add(vec3(7.3, 1.1, -3.9)), octX, 2.03, 0.62, full).toVar();
+  // (ogon od 5. oktawy: z gain 0,62 brzeg był z bliska strzępiony w konfetti i zmieniał kształt przy zbliżaniu —
+  // każdy głębszy poziom otwierał albo zamykał przesmyki widoczne poziom wyżej)
+  const det = pgFbm(q.mul(contFreq.mul(2.2)).add(vec3(7.3, 1.1, -3.9)), octX, 2.03, 0.62, full, COAST_TAIL).toVar();
   // zatoki i półwyspy: grzbiety szumu średniej skali wcinają się w ląd (ryfty, fiordy)
   const rift = pgRidged(q.mul(contFreq.mul(4.2)).add(vec3(-5.1, 2.2, 8.3)), 4, 2.05, 0.5, 1.0, 2.0).toVar();
   const c = plateC.mul(0.22).add(big.mul(0.5)).add(det.mul(coast).mul(0.95)).sub(rift.mul(coast).mul(0.2)).toVar();
@@ -614,7 +619,7 @@ const EARTH_COLOR_DEFS = {
   ...COMMON_DEFS, uK: 'vec4', uK2: 'vec4', uK3: 'vec4',
   // barwy krajobrazu wspólne z mapą terenu (planetGenTerrainMap.js): A — klimat chłodny, B — ciepły
   uFenA: 'vec3', uFenB: 'vec3', uFenWetA: 'vec3', uFenWetB: 'vec3', uGrassA: 'vec3', uGrassB: 'vec3', uMeadowA: 'vec3', uMeadowB: 'vec3',
-  uWDark: 'vec3', uWMud: 'vec3', uWIce: 'vec3', uSilt: 'vec3', uSandB: 'vec3',
+  uWDark: 'vec3', uWMud: 'vec3', uWIce: 'vec3', uSilt: 'vec3', uSandB: 'vec3', uAccentA: 'vec3', uAccentB: 'vec3',
   uRain: 'vec3', uForest: 'vec3', uTaiga: 'vec3', uSteppe: 'vec3', uTundra: 'vec3', uDesert: 'vec3', uDesertRed: 'vec3',
   uRock: 'vec3', uSnow: 'vec3', uIce: 'vec3', uShallow: 'vec3', uOcean: 'vec3', uDeep: 'vec3'
 };
@@ -691,8 +696,9 @@ function earthColor(type) {
       // dawał tu z daleka „robaczki” na całym lądzie). Granica klasy =
       // próg z szerokością z pochodnej ekranu celu (`edge`): ostra, ale bez schodków tekseli przy powiększeniu.
       const edge = (v, pad = 0.0015) => { const fw = fwidth(v).mul(0.8).add(pad); return smoothstep(fw.negate(), fw, v); };
-      const nD = pgFbm(ps.mul(110.0).add(wq.mul(3.0)), U.uK.w, 2.03, 0.6, true).toVar();
-      const nMo = pgFbm(ps.mul(46.0).add(vec3(3.7, -8.1, 5.3)).add(wq.mul(2.0)), U.uK2.x, 2.03, 0.6, true).toVar();
+      // (oba z ogonem: granice lasu i pól nie zmieniają kształtu przy zbliżaniu — zbliżenie dokłada tylko strzępienie)
+      const nD = pgFbm(ps.mul(110.0).add(wq.mul(3.0)), U.uK.w, 2.03, 0.6, true, COVER_TAIL).toVar();
+      const nMo = pgFbm(ps.mul(46.0).add(vec3(3.7, -8.1, 5.3)).add(wq.mul(2.0)), U.uK2.x, 2.03, 0.6, true, COVER_TAIL).toVar();
       // nFen — płaty torfowisk i polan: szereg o wolno gasnących oktawach (wielkie płaty z rojem mniejszych wokół —
       // z daleka widać mozaikę jasnych i ciemnych pól, zbliżenie dokłada coraz mniejsze płaty w tym samym układzie)
       const nFen = pgFbm(ps.mul(30.0).add(vec3(5.1, -3.3, 7.7)).add(wq.mul(2.5)), U.uK2.z, 2.03, 0.62, true).toVar();
@@ -831,10 +837,21 @@ function earthColor(type) {
       const crB = crown(52000.0, vec3(0.41, 0.83, 0.17), 0.93, 0.28).toVar();
       const crC = crown(105000.0, vec3(0.77, 0.21, 0.43), 0.9, 0.4).toVar();
       const crowns = crA.x.mul(crB.x).mul(crC.x).toVar();
+      // KĘPY DRUGIEGO GATUNKU (palety z `accent`: czerwone korony w lesie równikowym, złote w czerwonym…): płaty
+      // w dwóch skalach (~21 km i ~3,7 km), po kilka procent lasu; skala nierozdzielona wchodzi średnią
+      const accLayer = (freq, off) => {
+        const pp = ps.mul(freq).add(off).toVar();
+        const n = pgFbm(pp.add(pgWarp(pp.mul(1.7).add(vec3(-2.1, 3.9, 0.7)), 2, 0.6)), 3).toVar();
+        const on = float(1.0).sub(smoothstep(1 / (freq * 12), 1 / (freq * 6), st)).toVar();
+        return mix(float(0.045), edge(n.add(nD.mul(0.2)).sub(0.3), 0.003), on);
+      };
+      const accent = float(1.0).sub(float(1.0).sub(accLayer(260.0, vec3(6.6, -2.4, 3.1))).mul(float(1.0).sub(accLayer(1500.0, vec3(-4.2, 7.7, 1.5)))))
+        .mul(mix(U.uK3.z, U.uK3.w, warmK)).toVar();
+      const accentC = vec3(mix(U.uAccentA, U.uAccentB, warmK)).toVar();
       const crownsH = crA.y.mul(crB.y).mul(crC.y).toVar();
       const canopy = mix(vec3(0.95, 1.0, 1.02), vec3(1.4, 1.3, 0.95), stand).mul(float(1.0).add(nD.mul(0.6)).add(nMo.mul(0.9)))
         .mul(mix(float(1.0), float(0.8).add(float(0.6).sub(cB.x).mul(0.5)).mul(float(0.9).add(cB.z.mul(0.2))), onB)).mul(crowns);
-      land.assign(mix(land, forestC.mul(canopy), forest));
+      land.assign(mix(land, mix(forestC, accentC, accent.mul(0.8)).mul(canopy), forest));
       // tarasy: jasne płaty na zewnętrznym brzegu doliny; łachy: jasny piasek po wewnętrznej stronie zakoli
       // (tylko gdy teksel celu rozdziela płaty — z daleka wychodziły jasnymi kropkami wzdłuż rzek)
       const terrace = smoothstep(0.4, 0.54, wetV).mul(inv(0.58, 0.72, wetV)).mul(smoothstep(0.06, 0.2, nF.add(nMo.mul(0.6)))).mul(flat)
@@ -917,10 +934,9 @@ export const EARTH_CANOPY_KM = 0.12;
 // o nachyleniu kilkudziesięciu procent — skała na ścianach, śnieg na grzbietach.
 const EARTH_RIDGE_FREQ = 12;
 // Barwy krajobrazu z palet mapy terenu (sRGB 0–255 → liniowe) dla roślinności planety: [klimat chłodny, ciepły].
-const PLANET_TERRAIN_VEG = { rdzawa: ['czerwona', 'czerwona'] };
 const lin255 = (c) => c.map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); });
 function landscapeUniforms(L) {
-  const [a, b] = (PLANET_TERRAIN_VEG[L.vegetation] || ['tajga', 'tropik']).map(terrainLandscape);
+  const [a, b] = (PLANET_VEGETATION[L.vegetation] || PLANET_VEGETATION.zielona).map(terrainLandscape);
   const W = TERRAIN_WATER;
   // odcień: barwy palety mapy terenu przesunięte lekko (stosunek^0,25, w granicach 0,8–1,25) ku barwie lasu TEJ planety —
   // torfowiska i łęgi zostają w rodzinie barw planety (tak samo mapa terenu dostaje odcień planety, planetGenPlace.js)
@@ -932,7 +948,9 @@ function landscapeUniforms(L) {
   const ta = tint(a, L.palette.taiga);
   const tb = tint(b, L.palette.rain);
   return {
-    uK3: [a.fenAmount, b.fenAmount, 0, 0],
+    // z, w — udział kęp drugiego gatunku (0 — paleta bez kęp); barwa kęp bez odcienia planety (ma odstawać od lasu)
+    uK3: [a.fenAmount, b.fenAmount, a.accent ? 1 : 0, b.accent ? 1 : 0],
+    uAccentA: lin255(a.accent || a.forest), uAccentB: lin255(b.accent || b.forest),
     uFenA: ta(a.fen), uFenB: tb(b.fen), uFenWetA: ta(a.fenWet), uFenWetB: tb(b.fenWet),
     uGrassA: ta(a.grass), uGrassB: tb(b.grass), uMeadowA: ta(a.meadow), uMeadowB: tb(b.meadow),
     uWDark: lin255(W.dark), uWMud: lin255(W.mud), uWIce: lin255(W.ice), uSilt: lin255(W.silt), uSandB: lin255(W.sand)

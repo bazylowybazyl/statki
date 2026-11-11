@@ -947,7 +947,7 @@
       npcCollidesWithWorld,
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
-    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange, unitSensorProfile } from "./src/ai/fleetAwareness.js";
+    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange, unitSensorProfile, setAwarenessSignatureHook, isVisibleToSide } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
     import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
@@ -1023,6 +1023,12 @@
     // Odpalanie i gaszenie silników MAIN (etap E2 2026-10-09): automat WYŁ. → ZAPŁON (dym, błysk) → PRACA → GASZENIE;
     // klawisz 0 (akcja 'ship.engines'), autozapłon ciągiem, kampania: Atlas w doku z wyłączonymi silnikami.
     import { engineIgnitionOf, engineThrustScale, engineBlocksDrive, engineHudLabel, engineStateOf, igniteEngine, shutdownEngine, toggleEngine, stepEngineIgnition, ENGINE_OFF, ENGINE_SHUTDOWN, ENGINE_IGNITION_TUNE } from "./src/game/engineIgnition.js";
+    // Stan zasilania okrętu (2026-11-11, src/game/shipPower.js): wyłączony okręt gasi naraz silniki, tarczę, broń, F, skan,
+    // hangary i drony; sygnatura spada z gaszeniem. Osłona gazu dla czujników — src/game/gasCover.js. Blok „ZASILANIE OKRĘTU”.
+    import { shipPowerOf, powerStateOf, shipPowerOn, shipPowerDown, powerAllowsEngines, powerSignatureMul, powerSensorMul, powerDownShip, powerUpShip, toggleShipPower, setShipPowerState, stepShipPower, powerHudLabel, powerStartupLeft, powerSequenceProgress, POWER_OFF, POWER_STARTUP, POWER_ON, POWER_SHUTDOWN, SHIP_POWER_TUNE } from "./src/game/shipPower.js";
+    import { gasCoverAt, gasSignatureMul } from "./src/game/gasCover.js";
+    // Alarmy okrętu gracza (2026-11-11, src/game/shipAlarms.js): szyna stanu i zdarzeń — blok „ALARMY OKRĘTU”.
+    import { ShipAlarm, SHIP_ALARM, SHIP_ALARM_TUNE } from "./src/game/shipAlarms.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
@@ -1463,7 +1469,10 @@
     import { utworzDzwiekiGry } from "./src/audio/dzwiekiGry.js";
     import { utworzPanelDzwiekow } from "./src/ui/dzwiekiPanel.js";
     // Dźwięki hali K-7 (blok „DŹWIĘKI HALI K-7”): reżyser z pozami obsługi stanowisk i zaworami, osobna warstwa dźwięku.
-    import { DZWIEKI_HALI } from "./src/audio/dzwiekiLogika.js";
+    import {
+      DZWIEKI_HALI, DZWIEKI, DZWIEKI_SYNTEZY, KLUCZ_WYBORU, parsujWybor, tekstZapisuWyboru, slyszalne,
+      migrujGlosnoscGlowna, GLOSNOSC_GLOWNA_DOMYSLNA
+    } from "./src/audio/dzwiekiLogika.js";
     import { createK7HallSound, stepK7HallSound, K7_HALL_SOUND_TUNE } from "./src/game/k7HallSound.js";
     import { LAUNCH_SPLIT } from "./src/game/rockets/rocketSim.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
@@ -2172,8 +2181,9 @@
 
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
-      // Demo (decyzja użytkownika 2026-10-05): dźwięk domyślnie wyłączony — master 0, suwak w Opcjach go włącza.
-      audio: { master: 0, sfx: 1.0, music: 0.7 },
+      // Głośność główna: domyślnie GLOSNOSC_GLOWNA_DOMYSLNA = 0,7 — decyzja użytkownika 2026-11-11 („domyślna głośność
+      // 70%”), zastępuje decyzję z 2026-10-05 o dźwięku domyślnie wyłączonym; migracja zapisanego zera niżej.
+      audio: { master: GLOSNOSC_GLOWNA_DOMYSLNA, sfx: 1.0, music: 0.7 },
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
       // Kamera za kursorem: 'auto' (tylko w walce) | 'always' | 'never' — src/game/cameraRig.js.
       cameraLook: 'auto',
@@ -2686,8 +2696,9 @@
     function applyAudioOptions() {
       // Hala K-7: własna warstwa (blok „DŹWIĘKI HALI K-7”) — główna × efekty z opcji.
       if (HALL_SND) HALL_SND.ustawGlosnosc(hallSoundVolume());
-      // Scena dźwięków: stary AudioSys zostaje wyciszony, głośność opcji idzie do warstwy sceny.
-      if (SND && SoundScene.active) { SND.ustawGlosnosc(soundSceneVolume()); return; }
+      // Warstwa dźwięku (zwykła gra i scena); w scenie stary AudioSys zostaje wyciszony.
+      if (SND) SND.ustawGlosnosc(SoundScene.active ? soundSceneVolume() : soundGameVolume());
+      if (SoundScene.active) return;
       if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
     }
     try {
@@ -2695,6 +2706,15 @@
       for (const key of ['master', 'music', 'sfx']) {
         const v = Number(savedAudio?.[key]);
         if (Number.isFinite(v)) OPTIONS.audio[key] = Math.max(0, Math.min(1, v));
+      }
+      // Jednorazowa migracja (2026-11-11, warstwa dźwięku w zwykłej grze): zapisane 0 było DOMYŚLNĄ głośnością główną,
+      // nie wyborem gracza — bez znacznika `sc_audio_glowna_v2` takie 0 staje się wartością domyślną; po migracji 0
+      // ustawione suwakiem zostaje zerem (reguła `dzwiek`, „Głośność”).
+      const mig = migrujGlosnoscGlowna(savedAudio ? savedAudio.master : undefined, localStorage.getItem('sc_audio_glowna_v2'));
+      OPTIONS.audio.master = mig.master;
+      if (mig.oznacz) {
+        localStorage.setItem('sc_audio_glowna_v2', '1');
+        if (savedAudio) localStorage.setItem('sc_audio', JSON.stringify(OPTIONS.audio));
       }
     } catch { }
     for (const input of menuAudioSliders) {
@@ -4698,7 +4718,7 @@
     let railTimer = 0;
 
     function triggerEnergyShot() {
-      if (!ship?.shield) return;
+      if (!ship?.shield || playerPowerRefuse('STRZAŁ ENERGII')) return;
       applyEnergyShot(ship);
       const gained = Math.max(1, (Number(ship.shield.max) || 0) * 0.5);
       if (typeof toast === 'function') toast(`Energy Shot: +${Math.round(gained)} shield`);
@@ -10215,6 +10235,7 @@
     function autoIgnitePlayerEngines(reason = '') {
       if (!ENGINE_IGNITION_TUNE.autoIgnite || ship.destroyed || ship.__carriedBy || playerDriveDown()) return false;
       if (StoryGame.blocksInput) return false;
+      if (!powerAllowsEngines(ship)) return false;
       if (engineStateOf(ship) !== ENGINE_OFF) return false;
       if (!igniteEngine(ship)) return false;
       pushZoneMessage(reason ? `ZAPŁON SILNIKÓW — ${reason}` : 'ZAPŁON SILNIKÓW', 1.6, { label: 'SILNIKI' });
@@ -10224,6 +10245,7 @@
     function playerEnginesBlockDrive(what) {
       if (!playerEnginesNotRunning()) return false;
       if (autoIgnitePlayerEngines(`${what} PO ROZRUCHU`)) return true;
+      if (!powerAllowsEngines(ship)) { playerPowerRefuse(what); return true; }
       if (engineStateOf(ship) === ENGINE_OFF) pushZoneMessage(`${what}: SILNIKI WYŁĄCZONE — ODPAL (0)`, 1.6, { label: 'SILNIKI', tone: 'warn' });
       else pushZoneMessage(`${what}: SILNIKI W ROZRUCHU`, 1.2, { label: 'SILNIKI', tone: 'warn' });
       return true;
@@ -10234,6 +10256,7 @@
       if (ship.__carriedBy) { pushZoneMessage('SILNIKI: STATEK NA POKŁADZIE HOLOWNIKA', 1.4, { label: 'SILNIKI', tone: 'warn' }); return; }
       if (warp.state !== 'idle' || warp.exitRamp?.active) { pushZoneMessage('SILNIKI: NIE W SKOKU', 1.4, { label: 'SILNIKI', tone: 'warn' }); return; }
       const st = engineStateOf(ship);
+      if ((st === ENGINE_OFF || st === ENGINE_SHUTDOWN) && !powerAllowsEngines(ship)) { playerPowerRefuse('SILNIKI'); return; }
       if ((st === ENGINE_OFF) && playerDriveDown()) { pushZoneMessage('SILNIKI: NAPĘD GŁÓWNY ZNISZCZONY', 1.6, { label: 'SILNIKI', tone: 'warn' }); return; }
       engineIgnitionOf(ship);
       if (!toggleEngine(ship)) return;
@@ -10252,6 +10275,187 @@
       shutdown: () => shutdownEngine(ship),
       state: () => ship?.engineIgn ? { ...ship.engineIgn } : null,
       tune: ENGINE_IGNITION_TUNE
+    };
+
+    // ZASILANIE OKRĘTU (2026-11-11, src/game/shipPower.js; prośba użytkownika: „możliwość włączenia / wyłączenia statku
+    // oraz wizualnie pokazać i rozróżniać włączony statek od wyłączonego; wyłączony będzie miał mniejszą sygnaturę”).
+    // Decyzje użytkownika: wyłączenie gasi WSZYSTKO NARAZ, sygnatura spada razem z gaszeniem, NPC — opcja bez zachowań AI.
+    // Wyłączony okręt: silniki MAIN gasną (engineIgnition — autozapłon zablokowany), dysze SIDE, stabilizator, tłumik
+    // i regulator bez mocy (okręt dryfuje), tarcza wymuszona wył. (własność zasilania — `__powerShieldOff`; wymuszenia
+    // z konsoli i sceny dźwięków zasilanie nie zdejmuje), broń, PD, F, skan X, hangary, drony, maskowanie, wydobycie
+    // i zbiórka stoją. ROZRUCH 5 s: silniki od `enginesAt`, broń i tarcza na końcu. Bramka gracza: playerPowered().
+    // NPC: shipPowerOn (processAutonomousWeapons), powerAllowsEngines (npcStep, stepShipFlight). Klawisz − (ship.power).
+    function playerPowered() { return shipPowerOn(ship); }
+    // Rozkaz dysz wyłączonego okrętu (physicsStep): zero na wszystkich dyszach.
+    const _UNPOWERED_THRUST_CMD = Object.freeze({ main: 0, torque: 0, leftSide: 0, rightSide: 0, mainTorque: 0, suppressManualTorque: true });
+    /** Skutki WYŁĄCZENIA (wejście w GASZENIE) — gracz i NPC. */
+    function entityPowerDownEffects(e) {
+      if (!e) return;
+      const isPlayerShip = e === ship;
+      engineIgnitionOf(e);
+      shutdownEngine(e);
+      if (e.shield && !e._shieldForcedOff) { setEntityShieldForcedOff(e, true); e.__powerShieldOff = true; }
+      if (isPlayerShip) {
+        cancelTravel(null);
+        ship.command = null;
+        clearPlayerAttackState();
+        if (warp.state === 'charging') { warp.state = 'idle'; warp.charge = 0; }
+        stopBoost();
+        if (scannerState.active) setScannerActive(false);
+        if (ship.cloak && isPlayerCloakOn()) { toggleCloak(ship.cloak); syncShipMode(); }
+        if (miningInput.active) leaveShipMode('mining');
+        if (torpedoAim.active) setTorpedoMode(false, true);
+        __fighterLaunchQueue.length = 0;
+        if (playerRepairRig.launched) playerRepairRig.recall?.();
+        const sw = Superweapon?.superweaponState;
+        if (sw) { sw.charging = false; sw.armed = false; if (Array.isArray(sw.queue)) sw.queue.length = 0; }
+      }
+    }
+    /** Skutki końca ROZRUCHU (PRACA). */
+    function entityPowerUpDone(e) {
+      if (!e) return;
+      if (e.__powerShieldOff) { setEntityShieldForcedOff(e, false); e.__powerShieldOff = false; }
+    }
+    /** Krok stanu zasilania bytu (czas gry). NPC po `enginesAt` rozruchu odpala silniki sam (NPC nie ma autozapłonu). */
+    function stepEntityPower(e, dt) {
+      const s = e?.shipPower;
+      if (!s) return;
+      const before = s.state;
+      const enginesBefore = powerAllowsEngines(e);
+      const now = stepShipPower(e, dt);
+      if (now === POWER_ON) entityPowerUpDone(e);
+      if (e !== ship && !enginesBefore && powerAllowsEngines(e) && before === POWER_STARTUP) igniteEngine(e);
+    }
+    /** Włącz / wyłącz byt (gracz, NPC). Zwraca true, gdy sekwencja ruszyła. */
+    function setEntityPower(e, on) {
+      if (!e || e.dead || e.destroyed) return false;
+      shipPowerOf(e);
+      if (on) return powerUpShip(e);
+      if (!powerDownShip(e)) return false;
+      entityPowerDownEffects(e);
+      return true;
+    }
+    /** Przełącznik zasilania gracza (klawisz −). */
+    function togglePlayerPower() {
+      if (!ship || ship.destroyed) return;
+      if (ship.__carriedBy) { pushZoneMessage('ZASILANIE: STATEK NA POKŁADZIE HOLOWNIKA', 1.4, { label: 'ZASILANIE', tone: 'warn' }); return; }
+      if (warp.state !== 'idle' || warp.exitRamp?.active || hypercruiseBusy(hypercruise)) {
+        pushZoneMessage('ZASILANIE: NIE W SKOKU', 1.4, { label: 'ZASILANIE', tone: 'warn' }); return;
+      }
+      const st = powerStateOf(ship);
+      const on = st === POWER_OFF || st === POWER_SHUTDOWN;
+      if (!setEntityPower(ship, on)) return;
+      pushZoneMessage(on ? `ROZRUCH REAKTORA — ${Math.round(SHIP_POWER_TUNE.startupTime)} s` : 'OKRĘT WYŁĄCZONY — CISZA', 1.8, { label: 'ZASILANIE' });
+    }
+    /** Krok zasilania gracza (physicsStep, przed silnikami). */
+    function stepPlayerPower(dt) {
+      if (!ship || ship.destroyed) return;
+      const was = powerStateOf(ship);
+      stepEntityPower(ship, dt);
+      if (was === POWER_STARTUP && powerStateOf(ship) === POWER_ON) pushZoneMessage('ZASILANIE: PRACA — SYSTEMY GOTOWE', 1.6, { label: 'ZASILANIE' });
+    }
+    // ALARMY OKRĘTU (2026-11-11, prośba użytkownika: „syreny alarmowe — np. low-hp”; src/game/shipAlarms.js — szyna
+    // ShipAlarm). Warunki co krok fizyki: kadłub < 25%, rdzeń reaktora krytyczny / stopienie, zapadnięcie tarczy,
+    // rakieta lub torpeda z namiarem na gracza, trafiony mostek, świeże wykrycie przez piratów. Jeden alarm naraz
+    // (priorytet), po 4 s ciszej. Obraz: koguty na kadłubie (hexShips3D — kod alarmu w migawce: ENT.ALARM) i czerwona
+    // ramka HUD (drawShipAlarmFrame); dźwięk podpina sesja dźwięków przez ShipAlarm.on / ShipAlarm.state.
+    const _alarmIncoming = new Map();
+    const _alarmPrev = { shield: '', bridgeLoss: -1, detected: false };
+    function stepShipAlarmConditions(dt) {
+      if (!ship || ship.destroyed || !gameStarted) {
+        ShipAlarm.clear();
+        ShipAlarm.step(dt);
+        if (ship) ship.__alarmCode = 0;
+        _alarmPrev.bridgeLoss = -1; _alarmPrev.detected = false; _alarmPrev.shield = '';
+        return;
+      }
+      const A = SHIP_ALARM;
+      const hv = Number(ship.hull?.val), hm = Number(ship.hull?.max);
+      if (hm > 0 && hv / hm < SHIP_ALARM_TUNE.hullFrac) ShipAlarm.set(A.HULL, true);
+      const cores = Array.isArray(ship.reactorCores) ? ship.reactorCores : null;
+      if (cores) {
+        for (let i = 0; i < cores.length; i++) {
+          const c = cores[i];
+          if (c && c.host === ship && (c.state === REACTOR_CORE_STATE.CRITICAL || c.state === REACTOR_CORE_STATE.MELTDOWN)) { ShipAlarm.set(A.REACTOR, true); break; }
+        }
+      }
+      const shs = ship.shield?.state || '';
+      if (shs === 'breaking' && _alarmPrev.shield !== 'breaking') ShipAlarm.set(A.SHIELD, true, 3);
+      _alarmPrev.shield = shs;
+      let incoming = false;
+      for (let i = 0; i < _pdEnemyRocketBuffer.length && !incoming; i++) {
+        const rb = _pdEnemyRocketBuffer[i];
+        if (rb && (rb.target === ship || rb.slot?.target === ship)) incoming = true;
+      }
+      if (!incoming && typeof window.rocketSystem3D?.collectIncoming === 'function') {
+        _alarmIncoming.clear();
+        try { window.rocketSystem3D.collectIncoming(_alarmIncoming, true); } catch (err) { /* bez alarmu rakiet */ }
+        incoming = (_alarmIncoming.get(ship) || 0) > 0;
+      }
+      if (incoming) ShipAlarm.set(A.MISSILE, true, 1.5);
+      let loss = 0;
+      const brs = ship.bridgeState?.bridges;
+      if (Array.isArray(brs)) for (let i = 0; i < brs.length; i++) { const t = Number(brs[i]?.lastLossAt); if (t > loss) loss = t; }
+      if (_alarmPrev.bridgeLoss >= 0 && loss > _alarmPrev.bridgeLoss) ShipAlarm.set(A.BRIDGE, true, SHIP_ALARM_TUNE.bridgeHold);
+      _alarmPrev.bridgeLoss = loss;
+      const det = isVisibleToSide('pirate', ship);
+      if (det && !_alarmPrev.detected) ShipAlarm.set(A.DETECTED, true, 3);
+      _alarmPrev.detected = det;
+      ShipAlarm.step(dt);
+      ship.__alarmCode = ShipAlarm.state.id;
+    }
+    ShipAlarm.on((ev) => {
+      if (ev.active) pushZoneMessage(ev.label, 2.6, { label: 'ALARM', tone: 'alert' });
+    });
+    // Czerwona ramka ekranu przy alarmie (HUD 2D, pod celownikiem i panelami): barwa alarmu, puls ~1,6 Hz, jasność
+    // × głośność szyny (po 4 s ciszej). Bez CIC, stacji, ukrytego HUD i letterboxu.
+    function drawShipAlarmFrame(c) {
+      const st = ShipAlarm.state;
+      if (!st.active || !ship || ship.destroyed || !gameStarted) return;
+      if (CICDisplay.active || stationUI.open || StoryGame.hudHidden || StoryGame.letterbox) return;
+      const pulse = 0.5 + 0.5 * Math.sin(st.age * Math.PI * 2 * 1.6);
+      const a = st.volume * (0.10 + 0.16 * pulse);
+      if (!(a > 0.004)) return;
+      const w = c.canvas.width, h = c.canvas.height;
+      const edge = Math.max(24, Math.min(w, h) * 0.09);
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      const col = st.color || '#ff3a26';
+      const sides = [[0, 0, w, edge, 0, 0, 0, edge], [0, h - edge, w, edge, 0, h, 0, h - edge], [0, 0, edge, h, 0, 0, edge, 0], [w - edge, 0, edge, h, w, 0, w - edge, 0]];
+      for (const [x, y, sw, sh, gx0, gy0, gx1, gy1] of sides) {
+        const g = c.createLinearGradient(gx0, gy0, gx1, gy1);
+        g.addColorStop(0, col);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.globalAlpha = a;
+        c.fillStyle = g;
+        c.fillRect(x, y, sw, sh);
+      }
+      c.restore();
+    }
+    window.ShipAlarmDev = { set: (id, sec = 5) => ShipAlarm.set(id, true, sec), state: () => ({ ...ShipAlarm.state }) };
+
+    /** Komunikat odmowy systemu przy braku zasilania (zwraca true = zablokowane). */
+    function playerPowerRefuse(what) {
+      if (playerPowered()) return false;
+      const st = powerStateOf(ship);
+      pushZoneMessage(st === POWER_STARTUP
+        ? `${what}: ROZRUCH — ${Math.ceil(powerStartupLeft(ship))} s`
+        : `${what}: OKRĘT WYŁĄCZONY — WŁĄCZ (−)`, 1.3, { label: 'ZASILANIE', tone: 'warn' });
+      return true;
+    }
+    window.PlayerPower = {
+      toggle: () => togglePlayerPower(),
+      on: () => setEntityPower(ship, true),
+      off: () => setEntityPower(ship, false),
+      state: () => ship?.shipPower ? { ...ship.shipPower } : null,
+      tune: SHIP_POWER_TUNE
+    };
+    // Opcja dla NPC (decyzja użytkownika: „daj taką opcję NPC” — żaden mózg jej dziś nie używa): ShipPower.off(npc).
+    window.ShipPower = {
+      on: (e) => setEntityPower(e, true),
+      off: (e) => setEntityPower(e, false),
+      toggle: (e) => setEntityPower(e, !(powerStateOf(e) === POWER_ON || powerStateOf(e) === POWER_STARTUP)),
+      state: (e) => powerStateOf(e)
     };
 
     // Skok gracza z ładunkiem (holownik pod nim): automat skoku gracza (rulon, soczewka, ośrodek „Nurtu”) z wyjściem
@@ -10805,6 +11009,9 @@
 
     /** Powód, dla którego trybu nie da się teraz włączyć (tekst komunikatu), albo ''. */
     function shipModeBlockReason(id) {
+      if ((id === 'cloak' || id === 'mining' || id === 'torpedo' || id === 'hypercruise') && !playerPowered()) {
+        return powerStateOf(ship) === POWER_STARTUP ? `ROZRUCH — ${Math.ceil(powerStartupLeft(ship))} s` : 'OKRĘT WYŁĄCZONY — WŁĄCZ (−)';
+      }
       if (id === 'cloak') {
         const why = cloakBlockReason(ship?.cloak);
         if (why) return `MASKOWANIE: ${why.toUpperCase()}`;
@@ -11498,6 +11705,8 @@
     window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {
       const weapon = MASTER_WEAPONS[weaponId];
       if (!weapon) return null;
+      // Zabezpieczenie: wyłączony okręt nie strzela (src/game/shipPower.js; bramki właściwe są wcześniej — tu ostatnia).
+      if (shooter && shooter.shipPower && !shipPowerOn(shooter)) return null;
       // Promień śmierci (pole `deathRay` broni — isDeathRayWeapon): czoło promienia w systemie promieni
       // (src/game/deathRay.js), nie pocisk ani wiązka. Bez wywołań dla innych broni (wycinki fireWeaponCore w testach).
       if (weapon.deathRay) return fireDeathRayCore(shooter, target, weapon, muzzleData);
@@ -11890,7 +12099,7 @@
       const weapon = loadout.weapon;
       const aim = getMountedWeaponAim(ship, loadout);
       const st = mountChargeState(aim);
-      if (!p1WeaponCtrl || !ship || ship.dead || ship.destroyed || hp.destroyed || warp.isBusy()) {
+      if (!p1WeaponCtrl || !ship || ship.dead || ship.destroyed || hp.destroyed || warp.isBusy() || !playerPowered()) {
         if (st.charge >= 0 || st.want > 0) cancelMountCharge(st);
         return '';
       }
@@ -11974,6 +12183,7 @@
     // manual — naciśnięcie klawisza (komunikaty ładowania); auto-fire i spust pada — bez.
     function _fireSpecialGroup(loadouts, manual = false) {
       if (!loadouts.length) return false;
+      if (!playerPowered()) { if (manual) playerPowerRefuse('BROŃ'); return false; }
       let fired = false;
       let emptyMag = null;
       if (!p1WeaponCtrl) return false;
@@ -12025,6 +12235,7 @@
     // kadłubie i przeładowanie wyglądały identycznie: jak nic. Każde wyjście ma
     // teraz komunikat, tak jak klawisze 1/2/3/5.
     function tryFireMountedBuiltInWeapons() {
+      if (playerPowerRefuse('HEXLANCE')) return false;
       const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
       const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege' && loadout?.hp);
       if (!hasHexlance) {
@@ -18685,9 +18896,9 @@
     // `DevScene.dzwieki()` (z `?dev`). Próba dźwięków W GRZE (reguła `dzwiek`): Atlas z bronią sceny (Tempest Ion, Yamato,
     // Cruise Missile Rack, Supernova, CIWS Mk II — tylko w pamięci), piraci tuż obok (taran, tarcie, zgniot) i w zasięgu
     // broni, panel (`src/ui/dzwiekiPanel.js`): tarcza Atlasa, cele niezniszczalne, piraci strzelają, odnowienie celów,
-    // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) działa TYLKO w scenie:
-    // poza nią `SND` = null, a każdy hak w grze to jedno `if (SND)`. Stary AudioSys poza sceną bez zmian; w scenie jego
-    // szyna jest wyciszona (słychać tylko nowe dźwięki). ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
+    // wybór wariantu i wyciszenie każdego dźwięku. Warstwa dźwięku (`src/audio/dzwiekiGry.js`) gra w ZWYKŁEJ grze i w
+    // scenie (2026-11-11, decyzja użytkownika): `SND` = warstwa włączona albo null (`?dzwiek=stary` poza sceną — stary
+    // AudioSys jak dawniej), a każdy hak w grze to jedno `if (SND)`; z warstwą stary AudioSys nie wczytuje efektów. ZAPIS: `?scena=dzwieki` zamyka zapis gry od startu strony
     // (`__SAVE_LOCKED` w bloku resetu zapisu), scena z konsoli — od swojego startu; do przeładowania strony (wyposażenie
     // sceny zostaje w pamięci, więc odblokowanie po końcu sceny zapisałoby je jako wyposażenie gracza). Atlas w scenie
     // nie ginie (kadłub nie spada poniżej 1 — alarm kadłuba krytycznego da się usłyszeć bez końca gry).
@@ -18728,6 +18939,44 @@
       masterFallback: 0.7
     };
     let SND = null;
+    // Warstwa dźwięku gry: jedna na stronę (zwykła gra i scena), `SND` wskazuje ją, gdy jest włączona.
+    const SOUND_LAYER_OLD = new URLSearchParams(location.search).get('dzwiek') === 'stary';
+    let SND_LAYER = null;
+    let SND_LOADING = null;
+    // Znane id do zapisu wyboru (pliki i synteza) i klucz serii CIWS / pętli wiązki strzelca bez obiektu.
+    const SOUND_KNOWN_IDS = Object.freeze({ ...DZWIEKI, ...DZWIEKI_SYNTEZY });
+    const SOUND_NO_SHOOTER = {};
+    /** Głośność zwykłej gry: główna × efekty z opcji (zero = cisza; zastępcze 70% tylko w scenie). */
+    function soundGameVolume() {
+      const master = Number(OPTIONS?.audio?.master) || 0;
+      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
+      return master * (Number.isFinite(sfx) ? sfx : 1);
+    }
+    /** Wybór wariantów i wyciszeń z panelu → zapis przeglądarki (osobny klucz, nie zapis gracza — działa też w scenie). */
+    function soundSaveChoice() {
+      if (!SND_LAYER) return;
+      const st = SND_LAYER.stanWyboru();
+      try { localStorage.setItem(KLUCZ_WYBORU, tekstZapisuWyboru(st.wybor, st.wycisz)); } catch { /* bez zapisu */ }
+    }
+    /** Warstwa (raz na stronę): wybór z zapisu, haki strzałów, wczytanie plików w tle (`SND_LOADING`). */
+    function soundLayerCreate(volume) {
+      if (SND_LAYER || !AudioSys.ctx) return SND_LAYER;
+      SND_LAYER = utworzDzwiekiGry({
+        ctx: AudioSys.ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: volume, baza: './sounds/ai/',
+        przyZmianieWyboru: soundSaveChoice
+      });
+      try { SND_LAYER.wczytajWybor(parsujWybor(localStorage.getItem(KLUCZ_WYBORU), SOUND_KNOWN_IDS)); } catch { /* bez zapisu */ }
+      window.__dzwieki = SND_LAYER;
+      WeaponShotBus.on(soundSceneShot);
+      SND_LOADING = SND_LAYER.wczytaj().catch((err) => console.warn('[Dźwięki]', err));
+      return SND_LAYER;
+    }
+    /** Start gry (po AudioSys.init): warstwa w zwykłej grze — pliki w tle, pierwsze klatki bez dźwięków z plików. */
+    function startSoundLayer() {
+      if (SOUND_LAYER_OLD || !AudioSys.ctx) return;
+      soundLayerCreate(soundGameVolume());
+      SND = SND_LAYER;
+    }
     const SoundScene = {
       active: false, starting: false, t: 0, spot: null, opts: null, pirates: [], panel: null,
       shieldOn: true, undying: true, pirFire: false,
@@ -18745,9 +18994,6 @@
       const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
       SoundScene.masterFallback = !(master > 0);
       return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
-    }
-    function soundSceneActiveFor(e) {
-      return !!(e && (e === ship || e.__soundScene));
     }
     function soundSceneCamera() {
       const z = Number(camera.zoom) || 0.3;
@@ -18769,11 +19015,9 @@
     const HallSound = createK7HallSound({ rand: () => fxRandomGame.next() });
     window.K7HallSoundTune = K7_HALL_SOUND_TUNE;
     window.__halaDzwieki = { stan: HallSound, warstwa: () => HALL_SND };
-    /** Głośność warstwy hali: główna × efekty z opcji; główna 0 (domyślna wartość opcji) — zastępcza jak scena dźwięków. */
+    /** Głośność warstwy hali: jak warstwa zwykłej gry — główna × efekty z opcji (domyślna główna 0,7; zero = cisza). */
     function hallSoundVolume() {
-      const master = Number(OPTIONS?.audio?.master) || 0;
-      const sfx = Number(OPTIONS?.audio?.sfx ?? 1);
-      return (master > 0 ? master : SOUND_SCENE.masterFallback) * (Number.isFinite(sfx) ? sfx : 1);
+      return soundGameVolume();
     }
     /** Start gry (po AudioSys.init): warstwa hali i wczytanie plików w tle — pierwsze klatki bez dźwięków hali. */
     function startHallSound() {
@@ -18811,15 +19055,12 @@
       if (TowScene.active) stopTowScene();
       if (RadarRangeScene.active) stopRadarScene();
       AudioSys.init();
-      const ctx = AudioSys.ctx;
-      if (!SND) {
-        SND = utworzDzwiekiGry({ ctx, rand: () => fxRandomGame.next(), kadr: soundSceneCamera, glosnosc: soundSceneVolume(), baza: './sounds/ai/' });
-        window.__dzwieki = SND;
-        WeaponShotBus.on(soundSceneShot);
-        await SND.wczytaj();
-      } else {
-        SND.wlacz();
-      }
+      // Ta sama warstwa co w zwykłej grze (z `?dzwiek=stary` powstaje dopiero tu); scena czeka na pliki.
+      soundLayerCreate(soundSceneVolume());
+      await SND_LOADING;
+      SND = SND_LAYER;
+      SND.wlacz();
+      SND.ustawGlosnosc(soundSceneVolume());
       // Stary AudioSys wyciszony na czas sceny (silnik z pliku, shieldHit, railgun) — słychać tylko nowe dźwięki.
       if (AudioSys.masterGain) {
         SoundScene.oldMasterGain = AudioSys.masterGain.gain.value;
@@ -18846,7 +19087,9 @@
       const S = SoundScene;
       if (!S.active) return false;
       S.active = false;
-      if (SND) SND.wylacz();
+      // Zwykła gra gra dalej na tej samej warstwie (głośność z opcji); `?dzwiek=stary` — warstwa gaśnie.
+      if (SND && SOUND_LAYER_OLD) { SND.wylacz(); SND = null; }
+      else if (SND) SND.ustawGlosnosc(soundGameVolume());
       if (S.panel) { S.panel.usun(); S.panel = null; }
       if (AudioSys.masterGain && S.oldMasterGain != null) AudioSys.masterGain.gain.value = S.oldMasterGain;
       SensorSystem.clearArea('scena-dzwieki');
@@ -19000,24 +19243,28 @@
       soundSceneSpawnPirates();
     }
 
-    // --- haki zdarzeń (wołane tylko przy SND ≠ null)
+    // --- haki zdarzeń (wołane tylko przy SND ≠ null: zwykła gra albo scena). Zdarzenie poza słyszalnością odpada na
+    // wejściu (`slyszalne` — ten sam zasięg, w którym `polozenie` daje zero), zanim warstwa zrobi cokolwiek innego.
+    function soundHere(x, y) {
+      return slyszalne(x, y, soundSceneCamera());
+    }
     function soundSceneShot(d) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND) return;
       const def = MASTER_WEAPONS[d.weaponId] || null;
       // Rakiety: dźwięk startu każdej rakiety z wyrzutu (adapter efektów rakiet), nie salwy z szyny.
       if (def && (def.category === 'rocket' || def.category === 'torpedo')) return;
       const shooter = d.shooter;
-      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter === ship ? 'p' : (shooter?.id ?? 'npc'), d.isBeam && d.beamMode === 'continuous');
+      SND.strzal(d.weaponId, def, d.x, d.y, shooter === ship, shooter || SOUND_NO_SHOOTER, d.isBeam && d.beamMode === 'continuous');
     }
     /** Obrona punktowa gracza (poza szyną strzałów): CIWS — seria z syntezy, laser PD, flak. */
     function soundScenePdShot(kind, x, y) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND) return;
       if (kind === 'ciws') SND.ciwsStrzal('p:ciws', x, y);
       else SND.graj(kind === 'flak' ? 'flak' : 'laserPD', x, y, 0.8);
     }
     /** Trafienie pocisku w kadłub (po efekcie trafienia w pętli pocisków). */
     function soundSceneBulletHit(b, hitNPC, x, y, ricochet) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(x, y)) return;
       if (ricochet) { SND.zdarzenie('rykoszet', x, y); return; }
       if (hitNPC?._isPlayerShip) { SND.zdarzenie('trafienieGracza', x, y); return; }
       if (b.type === 'ciws') { SND.zdarzenie('trafienie', x, y, 0.5); return; }
@@ -19025,10 +19272,10 @@
       SND.zdarzenie(id === 'special_yamato_cannon' || id === 'special_yamato_l' ? 'trafieniePlazma' : 'trafienie', x, y);
     }
     function soundSceneShieldHit(x, y) {
-      if (SND && SoundScene.active) SND.zdarzenie('tarczaTrafiona', x, y);
+      if (SND && soundHere(x, y)) SND.zdarzenie('tarczaTrafiona', x, y);
     }
     function soundSceneDeath(npc) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(npc.x, npc.y)) return;
       SoundScene.lastDeath.t = SimClock.sim;
       SoundScene.lastDeath.x = npc.x;
       SoundScene.lastDeath.y = npc.y;
@@ -19036,7 +19283,7 @@
     }
     /** Wybuch z gry (GameBlasts.blast): śmierć okrętu ma już swój dźwięk — wybuchy w jej pobliżu przez 0,6 s pomija. */
     function soundSceneBlast(o) {
-      if (!SND || !SoundScene.active || !o) return;
+      if (!SND || !o || !soundHere(o.x, o.y)) return;
       const L = SoundScene.lastDeath;
       const dx = (o.x || 0) - L.x, dy = (o.y || 0) - L.y;
       if (SimClock.sim - L.t < 0.6 && dx * dx + dy * dy < 4000 * 4000) return;
@@ -19044,21 +19291,24 @@
       SND.zdarzenie('wybuchWtorny', o.x, o.y, o.profile === 'fighter' ? 0.6 : 1);
     }
     function soundSceneRocketLaunch(r) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(r.position.x, r.position.z)) return;
       const id = r?.weaponDef?.id;
       SND.graj(id === 'supernova_missile' ? 'supernovaStart' : 'rakieta', r.position.x, r.position.z, r.mode === LAUNCH_SPLIT ? 0.4 : 1);
     }
     function soundSceneRocketDetonate(r, x, y) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND || !soundHere(x, y)) return;
       SND.zdarzenie(r?.weaponDef?.id === 'supernova_missile' ? 'supernovaDetonacja' : 'rakietaTrafila', x, y);
     }
     function soundSceneRocketKilled(x, y) {
-      if (SND && SoundScene.active) SND.zdarzenie('rakietaZestrzelona', x, y);
+      if (SND && soundHere(x, y)) SND.zdarzenie('rakietaZestrzelona', x, y);
+    }
+    /** Kontakt kadłubów słychać zawsze z udziałem gracza, inny — tylko w zasięgu słyszalności. */
+    function soundContactAudible(ev) {
+      return ev.A === ship || ev.B === ship || soundHere(ev.x, ev.y);
     }
     /** Pierwszy kontakt kadłubów (CollisionFX 'impact'): uderzenie z prędkości, ciężki taran z Atlasem — `taran`. */
     function soundSceneImpact(ev) {
-      if (!SND || !SoundScene.active || !ev) return;
-      if (!soundSceneActiveFor(ev.A) && !soundSceneActiveFor(ev.B)) return;
+      if (!SND || !ev || !soundContactAudible(ev)) return;
       const v = Math.abs(Number(ev.impactSpeed ?? ev.approachSpeed) || 0);
       const g = Math.min(1, 0.25 + v / SOUND_SCENE.impactFull);
       SND.zdarzenie('kontaktKadlubow', ev.x, ev.y, g);
@@ -19066,8 +19316,7 @@
     }
     /** Tarcie (CollisionFX 'grind', co krok kontaktu): najsilniejsze w klatce → pętla `zgrzytPetla` w soundSceneFrame. */
     function soundSceneGrind(ev) {
-      if (!SND || !SoundScene.active || !ev) return;
-      if (!soundSceneActiveFor(ev.A) && !soundSceneActiveFor(ev.B)) return;
+      if (!SND || !ev || !soundContactAudible(ev)) return;
       const k = Math.abs(Number(ev.slideSpeed) || 0) * Math.max(1, Math.sqrt(Math.abs(Number(ev.bounceForce) || 0)));
       if (k > SoundScene.grind) {
         SoundScene.grind = k;
@@ -19075,17 +19324,18 @@
         SoundScene.grindY = ev.y;
       }
     }
-    /** Węzeł kadłuba stracony poza bronią (zgniot przy zderzeniu). */
+    /** Węzeł kadłuba stracony poza bronią (zgniot przy zderzeniu): kadłub gracza zawsze, inny — w zasięgu słyszalności. */
     function soundSceneNodeLost(entity, x, y) {
-      if (!SND || !SoundScene.active || !soundSceneActiveFor(entity?.owner || entity)) return;
+      if (!SND) return;
+      if ((entity?.owner || entity) !== ship && !soundHere(x, y)) return;
       SND.zdarzenie('zgniotKadluba', x, y);
     }
     function soundSceneUi(name) {
-      if (SND && SoundScene.active) SND.zdarzenie(name, NaN, NaN);
+      if (SND) SND.zdarzenie(name, NaN, NaN);
     }
     /** Silniki SIDE gracza: ciąg burt co krok fizyki → ciągły dźwięk silnika (warstwa sama gasi po zaniku ciągu). */
     function soundSceneRcs(left, right) {
-      if (!SND || !SoundScene.active) return;
+      if (!SND) return;
       // Silniki SIDE to silniki rakietowe o pracy ciągłej (decyzja użytkownika 2026-11-11: „sam syk nic nie robi”) —
       // ciągły dźwięk z syntezy sterowany ciągiem mocniejszej burty, nie pojedynczy syk przy zapłonie.
       SND.silnikSide(ship.destroyed ? 0 : Math.max(left, right));
@@ -19121,10 +19371,10 @@
       }
     }
 
-    /** Klatka sceny (loop, raz na klatkę): silnik, tarcie, alarm, stany tarcz, namiar, pomiar szyny. */
+    /** Klatka warstwy (loop, raz na klatkę; zwykła gra i scena): silnik, tarcie, alarm, stany tarcz, namiar, pomiar szyny. */
     function soundSceneFrame() {
       const S = SoundScene;
-      if (!S.active || !SND) return;
+      if (!SND) return;
       // silnik MAIN z ciągu (jak dawny dźwięk silnika: input.main + dopalacz)
       const boosting = (typeof boost !== 'undefined' && boost.state === 'active') || driveState.shiftBoostTimer > 0;
       SND.silnikMain(ship.destroyed ? 0 : input.main, boosting);
@@ -19142,14 +19392,14 @@
         if (st === 'breaking') SND.zdarzenie('tarczaZapadnieta', ship.pos.x, ship.pos.y);
         S.lastShield = st;
       }
-      // tarcze piratów: zapadnięcie
-      for (const p of S.pirates) {
-        const n = p.npc;
-        if (!n || n.dead) continue;
-        const s = n.shield?.state || null;
-        if (s !== p.lastShield) {
-          if (s === 'breaking') SND.zdarzenie('tarczaZapadnieta', n.x, n.y);
-          p.lastShield = s;
+      // tarcze okrętów NPC (piraci sceny też): zapadnięcie w zasięgu słyszalności — stan z poprzedniej klatki na encji
+      for (let i = 0; i < npcs.length; i++) {
+        const n = npcs[i];
+        if (!n || n.dead || !n.shield) continue;
+        const s = n.shield.state || null;
+        if (s !== n.__sndShield) {
+          if (s === 'breaking' && n.__sndShield !== undefined && soundHere(n.x, n.y)) SND.zdarzenie('tarczaZapadnieta', n.x, n.y);
+          n.__sndShield = s;
         }
       }
       // namiar / malowanie: nowy cel priorytetowy
@@ -19509,7 +19759,7 @@
       env.shipSpeed = Math.sqrt(env.pvx * env.pvx + env.pvy * env.pvy);
       env.cx = env.px;
       env.cy = env.py;
-      env.gear = alive ? playerLootGear() : null;
+      env.gear = alive && playerPowered() ? playerLootGear() : null;
       stepLootContainers(lootContainers, dt, env);
       if (!alive) return;
       flushLootMessage();
@@ -20257,7 +20507,7 @@
     }
 
     function playerShipSystemBlocked() {
-      return ship.destroyed || PAUSED || warp.state !== 'idle' || warp.isBusy() || StoryGame.blocksInput || stationUI.open;
+      return ship.destroyed || !playerPowered() || PAUSED || warp.state !== 'idle' || warp.isBusy() || StoryGame.blocksInput || stationUI.open;
     }
     const fmtSysMul = (v) => String(Math.round((Number(v) || 1) * 10) / 10).replace('.', ',');
     function tryStartPlayerShipSystem(silent = false) {
@@ -20454,7 +20704,7 @@
         if (playerRamBurnActive()) {
           braking = !isRtsModeActive() && ((keyboardOwnsP1() && Input.keyHeld('fly.back')) || p1PadAxis('fly.thrust') < -0.15);
         }
-        if (ship.destroyed || warp.state !== 'idle' || warp.isBusy() || braking) {
+        if (ship.destroyed || warp.state !== 'idle' || warp.isBusy() || braking || !playerPowered()) {
           stopShipSystem(ramBurn);
           if (braking) pushZoneMessage(`${def.label}: PRZERWANA`, 1.1, { tone: 'warn' });
         }
@@ -21447,6 +21697,7 @@
     }
 
     function setTravelTarget(worldX, worldY, label = '') {
+      if (playerPowerRefuse('TRAVEL')) return false;
       if (!ship || ship.destroyed) return false;
       travelNav.target = {
         x: clamp(Number(worldX) || 0, 0, WORLD.w),
@@ -21927,6 +22178,7 @@
     // w PRZELOCIE 3000 j/s).
     function activateBoostIfAllowed() {
       if (warp.state !== 'idle' || warp.exitRamp?.active || hypercruiseDriving(hypercruise)) return false;
+      if (!powerAllowsEngines(ship)) return false;
       if (boost.fuel > 0) {
         boost.state = 'active';
         return true;
@@ -22044,6 +22296,7 @@
       if (ship.destroyed) return;
       const cmd = ship.command;
       if (!cmd) return;
+      if (!powerAllowsEngines(ship)) { ship.command = null; return; }
       if (PAUSED || warp.state !== 'idle') return;
       if (playerHasManualInput()) { ship.command = null; return; }
 
@@ -22264,6 +22517,11 @@
         gate: () => !!ship && gaNotRts(),
         run() { togglePlayerEngines(); }
       },
+      // Zasilanie okrętu (src/game/shipPower.js): wyłącz — wszystko naraz, cisza; włącz — rozruch 5 s.
+      'ship.power': {
+        gate: () => !!ship && gaNotRts() && !stationUI.open && !StoryGame.blocksInput,
+        run() { togglePlayerPower(); return GA_STOP; }
+      },
       // Hipercruise (E5): rozruch / wyjście; odcinki 'drive' TRAVEL TO włączają go same.
       'nav.hypercruise': {
         gate: () => !!ship && gaNotRts(),
@@ -22407,6 +22665,7 @@
         run(ev) {
           ev.preventDefault();
           if (stationUI.open || ship.destroyed || !HullBodies.hasHull(ship)) return;
+          if (!playerRepairRig.launched && playerPowerRefuse('DRONY')) return;
           playerRepairRig.cargo = PLAYER.cargo;
           playerRepairRig.toggle();
         }
@@ -23162,6 +23421,7 @@
       scanOverlay.ping(wave.x, wave.y, waveSpeed, activeRange, scanOverlayClock);
     }
     function setScannerActive(nextActive) {
+      if (nextActive && playerPowerRefuse('SKANER')) return;
       scannerState.active = !!nextActive;
       if (scannerState.active) {
         scannerState.burstSerial += 1;
@@ -25462,6 +25722,7 @@
     }
 
     function fireRocket(side) {
+      if (!playerPowered()) return false;
       if (p1WeaponCtrl && typeof p1WeaponCtrl.fireRocket === 'function') {
         const fired = !!p1WeaponCtrl.fireRocket(side);
         if (fired) {
@@ -25760,6 +26021,7 @@
     // Kolejka startów — opróżniana w update'cie klatki, nie w jednym rzucie.
     function updateFighterLaunchQueue(dt) {
       if (!__fighterLaunchQueue.length) return;
+      if (!playerPowered()) { __fighterLaunchQueue.length = 0; return; }
       let ready = 0;
       for (let i = 0; i < __fighterLaunchQueue.length; i++) {
         const req = __fighterLaunchQueue[i];
@@ -25781,6 +26043,7 @@
     window.isFighterLaunchInProgress = () => __fighterLaunchQueue.length > 0;
 
     function launchMountedFighterSquadrons() {
+      if (playerPowerRefuse('HANGARY')) return [];
       const tubes = getPlayerHangarTubes();
       if (!tubes.length) {
         if (typeof toast === 'function') toast('Brak modułu hangaru!');
@@ -26265,7 +26528,7 @@
       env.trigger = (fcTrigger.mouse || fcTrigger.pad) && !blockedUi && !torpedoAim.active && !miningInput.active;
       // Hipercruise (i postawa z weaponsCold): broń zimna — nie strzela ani grupa w ręku, ani auto.
       env.canFire = !ship.destroyed && !warp.isBusy() && !stationUI.open && !StoryGame.blocksInput
-        && !stanceTune(shipModes).weaponsCold && !hypercruiseBusy(hypercruise);
+        && !stanceTune(shipModes).weaponsCold && !hypercruiseBusy(hypercruise) && playerPowered();
       // Maskowanie: wieże na auto milczą (strzał zrywa maskowanie); grupa w ręku strzela na rozkaz gracza.
       // To samo na rozkaz misji (podejście po cichu — StoryGame: api.fire.hold); rozkaz gaśnie z misją.
       if (fireControl.storyHold && !StoryGame.active) fireControl.storyHold = false;
@@ -26514,6 +26777,8 @@
       // Rakiety 3D (salwy gracza i NPC, src/game/rockets/rocketSim.js) — zastępniki w kształcie pocisku,
       // pozycja w czasie tego kroku; wroga rakieta we mgle wojny nie jest celem strony gracza.
       window.rocketSystem3D?.syncThreats(_pdPlayerRocketBuffer, _pdEnemyRocketBuffer, SimClock.sim, _pdHostileRocketVisible);
+      // Wyłączony okręt (stan zasilania): obrona punktowa milczy — bufory rakiet wyżej czytają też NPC i pociski.
+      if (!playerPowered()) return;
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
       // Bez PD CHIP-a obrona punktowa gracza strzela tylko do rakiet i myśliwców.
       const pdHullsAllowed = hasShipChip(ship, PD_CHIP_ID);
@@ -28434,7 +28699,7 @@
         if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
         updateShieldFx(npc, dt);
 
-        if (npc.shield && npc.shield.max > 0) {
+        if (npc.shield && npc.shield.max > 0 && !npc.__powerShieldOff) {
           if (npc.shield.regenTimer > 0) {
             npc.shield.regenTimer = Math.max(0, npc.shield.regenTimer - dt);
           } else if (npc.shield.val < npc.shield.max) {
@@ -28467,6 +28732,21 @@
         if (isBridgeHulk(npc)) {
           if (!npc.dead && stepBridgeHulk(npc, dt, bridgeSimTime)) finishBridgeKill(npc);
           continue;
+        }
+
+        // Zasilanie (src/game/shipPower.js — opcja NPC: ShipPower.off(npc); żaden mózg jej dziś nie używa): wyłączony
+        // okręt (i rozruch przed `enginesAt`) bez AI, broni i ciągu — dryf jak hulk; tarcza gaśnie (wymuszona wył.).
+        if (npc.shipPower) {
+          stepEntityPower(npc, dt);
+          if (!npc.dead && !powerAllowsEngines(npc)) {
+            npc.x += (Number(npc.vx) || 0) * dt;
+            npc.y += (Number(npc.vy) || 0) * dt;
+            npc.angle = (Number(npc.angle) || 0) + (Number(npc.angVel) || 0) * dt;
+            // automat silników krokuje model lotu — tu go nie ma: gaszenie dysz musi dobiec końca
+            stepEngineIgnition(npc, dt);
+            if (npc.shield) updateShieldFx(npc, dt);
+            continue;
+          }
         }
 
         // --- LOGIKA MISJI I WALKI ---
@@ -29840,7 +30120,8 @@
 
       ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
       updateSpecialWeaponCooldowns(dt);
-      if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
+      if (ship.__powerShieldOff) { /* zasilanie wył.: tarcza się nie ładuje */ }
+      else if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
       else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * stanceTune(shipModes).shieldRegen * solarExposureFactor * dt, 0, ship.shield.max);
       updateShieldFx(ship, dt);
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
@@ -29871,6 +30152,8 @@
 
       // Napęd warp z kadłuba / wyposażenia (Mk I / II / III) — przed automatem podróży i ładowaniem skoku.
       syncPlayerWarpDrive();
+      // Zasilanie okrętu (src/game/shipPower.js): rozruch / gaszenie — przed autopilotem i silnikami.
+      stepPlayerPower(dt);
       stepTravelNav();
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
@@ -29898,6 +30181,9 @@
         lastDriveShiftSerial = driveState.shiftSerial;
       }
       const manualTorqueInput = clamp(Number(ship?.thrusterInput?.torque) || 0, -1, 1);
+      // ZASILANIE: okręt wyłączony (albo w rozruchu przed `enginesAt`) — dysze MAIN i SIDE, stabilizator, tłumik
+      // i regulator bez mocy: okręt dryfuje (opór liniowy zostaje — fizyka świata). Na pokładzie holownika — bez zmian.
+      const _unpowered = !powerAllowsEngines(ship) && !ship.__carriedBy;
       const stabilizerState = getShipStabilizerState(ship);
       const commandHeadingActive = !!ship.command && !playerHasManualInput();
       let stabilizerAssistTorque = 0;
@@ -29906,7 +30192,7 @@
       let stabilizerMainTurning = false;
       // Akcja manewru (system F) prowadzi kurs i prędkość boczną sama — stabilizator czeka, potem trzyma nowy kurs.
       const maneuverAction = ramBurn.action;
-      const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive && !maneuverAction;
+      const stabilizerActive = warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive && !maneuverAction && !_unpowered;
       if (stabilizerActive) {
         // Ręczny skręt przesuwa strzałkę kursu: A / D albo lewa gałka (B3 — dawniej tylko klawisze, a ręczny
         // moment był tłumiony, więc z włączonym stabilizatorem gałka nie skręcała).
@@ -29985,7 +30271,11 @@
         input.leftSide = 0;
         input.rightSide = 0;
       }
-      const thrusterCommand = composeShipThrusterCommand(ship, {
+      if (_unpowered) {
+        input.main = 0; input.retro = 0; input.leftSide = 0; input.rightSide = 0; input.torque = 0;
+        if (ship.input) { ship.input.thrustX = 0; ship.input.thrustY = 0; }
+      }
+      const thrusterCommand = composeShipThrusterCommand(ship, _unpowered ? _UNPOWERED_THRUST_CMD : {
         // Szarża: silniki główne na pełnym ciągu przez cały zryw.
         main: playerRamBurnActive() ? 1 : 0,
         torque: maneuverAction === 'turn' ? _manTorque : stabilizerAssistTorque,
@@ -30160,7 +30450,7 @@
         const manualBrakeHeld = !!((!isRtsModeActive() && keyboardOwnsP1() && Input.keyHeld('fly.back')) || gamepadReverse);
         const reverseEngaged = !!(reverseInput > 0.05 && retroState?.reverseEngaged);
         const manualReverseHeld = manualBrakeHeld && reverseEngaged;
-        const damperActive = !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));
+        const damperActive = !_unpowered && !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));
         const reverseThrustInput = reverseEngaged ? reverseInput : 0;
         const massSafe = Math.max(1, Number(ship.mass) || SHIP_PHYSICS.PLAYER_MASS || 1);
         const invMass = 1 / massSafe;
@@ -30232,7 +30522,7 @@
         // (jak okręty NPC), zamiast kręcić się do skontrowania. Regulatory kursu (stabilizator,
         // autopilot) hamują obrót same.
         const specTurnBrake = Number(driveState.brakeTurnAccel) || 0;
-        if (specTurnBrake > 0 && Math.abs(activeTurnCommand) < 0.03 && !commandHeadingActive && !stabilizerActive) {
+        if (specTurnBrake > 0 && Math.abs(activeTurnCommand) < 0.03 && !commandHeadingActive && !stabilizerActive && !_unpowered) {
           ship.angVel = approachValue(ship.angVel, 0, (specTurnBrake / 1.5) * dt);
         }
 
@@ -30306,12 +30596,12 @@
           }
         }
 
-        applyDriveSpeedGovernor(driveState, ship.vel, dt);
+        if (!_unpowered) applyDriveSpeedGovernor(driveState, ship.vel, dt);
         const driveMaxTurnSpeed = SHIP_PHYSICS.MAX_TURN_SPEED * driveState.maxTurnSpeedScale * burnTurnScale
           * stanceTune(shipModes).turnRate;
         ship.angVel = clamp(ship.angVel, -driveMaxTurnSpeed, driveMaxTurnSpeed);
         if (shouldZeroStabilizedAngularVelocity({
-          stabilizerEnabled: flightAssist.stabilizer,
+          stabilizerEnabled: flightAssist.stabilizer && !_unpowered,
           activeTurnCommand,
           angVel: ship.angVel
         })) {
@@ -30635,6 +30925,8 @@
       tPhysSection0 = performance.now();
       const tProjectilesTotal0 = tPhysSection0;
       ciwsStep(dt);
+      // Alarmy okrętu (src/game/shipAlarms.js) — po obronie punktowej: bufory rakiet tego kroku gotowe.
+      stepShipAlarmConditions(dt);
       PerfHUD.addTiming('ciwsTime', performance.now() - tPhysSection0);
       tPhysSection0 = performance.now();
       bulletsAndCollisionsStep(dt, runFrameLogic, frameLogicDt);
@@ -30958,7 +31250,7 @@
 
     /** Salwa: każda gotowa (naładowana i wycelowana) wyrzutnia odpala swój wachlarz. */
     function fireTorpedoSalvos() {
-      if (warp.isBusy() || ship.destroyed) return 0;
+      if (warp.isBusy() || ship.destroyed || !playerPowered()) return 0;
       const list = playerTorpedoLoadouts(_torpLoadouts);
       let fired = 0;
       let turning = 0;
@@ -31958,7 +32250,7 @@
         && !(npc.state === 'warping_in' && npc.warpData)
         && (count === 1 || (sepUid(npc) % count) === phase)
         && (npc.fighter || usesShipFlightModel(npc))
-        && !isBridgeHulk(npc));
+        && !isBridgeHulk(npc) && powerAllowsEngines(npc));
     }
     // Praca decyzyjna dla kroku `tick` (następnego) do chwili `deadline` (performance.now()).
     function runAiOffStep(tick, deadline) {
@@ -33225,6 +33517,24 @@
       for (const f of _ringGasFields) if (f.rectTouchesBelt(cx - r, cy - r, cx + r, cy + r)) return f;
       return null;
     }
+    // OSŁONA GAZU DLA CZUJNIKÓW (2026-11-11, src/game/gasCover.js — scenariusz użytkownika: „ktoś cię goni, wchodzisz
+    // w chmurę gazową, wyłączasz i jest cisza”): ta sama obwiednia co obraz gazu (pas, ring w budowie), bez kamery i opcji.
+    function gasCoverAtGame(x, y) {
+      const belt = beltWorld ? beltWorld.field : null;
+      if (belt && belt.rectTouchesBelt(x, y, x, y)) return gasCoverAt(belt, x, y);
+      const ring = ringGasFieldNear(x, y, 1);
+      return ring ? gasCoverAt(ring, x, y) : 0;
+    }
+    // Sygnatura stanu bytu dla wykrywania AI i mgły gracza (src/ai/fleetAwareness.js — `__sigMul`): zasilanie × gaz
+    // × reflektor dziobowy. Liczone raz na odświeżenie obrazu AI.
+    setAwarenessSignatureHook((e, x, y) => {
+      let m = powerSignatureMul(e);
+      const cover = gasCoverAtGame(x, y);
+      if (cover > 0) m *= gasSignatureMul(cover);
+      if (e.__spotSigMul > 1) m *= e.__spotSigMul;
+      return m;
+    });
+    window.gasCoverAt = gasCoverAtGame;
     function packSpaceGas(cam, camNs, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
@@ -34844,6 +35154,8 @@
 
       // --- Flash rendering (handled by CanvasVFX) ---
       CanvasVFX.drawFlashes?.(ctx, cam);
+      // Alarm okrętu: czerwona ramka ekranu (blok „ALARMY OKRĘTU”).
+      drawShipAlarmFrame(ctx);
 
       // --- Linie celowania broni (weapon aim lines, Starsector-style) ---
       function _drawWeaponAimLines(camRef) {
@@ -35424,6 +35736,12 @@
         if (engLabel) {
           _panelArgs.sub = deadEng > 0 ? `SILNIKI ${nEng - deadEng}/${nEng} ${engLabel}` : `SILNIKI: ${engLabel}`;
           _panelArgs.subColor = engLabel === 'ZAPŁON' ? '#ffd27a' : (engLabel === 'GASZENIE' ? '#ffb86b' : '#ff8a94');
+        }
+        // Zasilanie okrętu (src/game/shipPower.js) — ma pierwszeństwo przed napisem silników.
+        const pwrLabel = powerHudLabel(ship);
+        if (pwrLabel) {
+          _panelArgs.sub = pwrLabel === 'ROZRUCH' ? `ROZRUCH ${Math.ceil(powerStartupLeft(ship))} s` : `ZASILANIE: ${pwrLabel}`;
+          _panelArgs.subColor = pwrLabel === 'ROZRUCH' ? '#ffd27a' : (pwrLabel === 'GASZENIE' ? '#ffb86b' : '#8fb0ff');
         }
         drawTurretPanel(tp.ctx, _panelArgs);
       }
@@ -37106,19 +37424,24 @@
       // --- AUDIO START ---
       AudioSys.init();
       startHallSound();
+      // Warstwa dźwięku gry (blok „SCENA DŹWIĘKI”, reguła `dzwiek`): z nią stary AudioSys nie wczytuje efektów — jego
+      // strzały, tarcza, wybuch i pętla silnika z WAV nie grają podwójnie (bez bufora wychodzą od razu). `?dzwiek=stary` —
+      // warstwa nie powstaje, gra brzmi jak dawniej.
+      startSoundLayer();
+      const oldSfx = !SND;
       await Promise.all([
-        AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav'),
-        AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav'),
-        AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav'),
+        oldSfx ? AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav') : null,
+        oldSfx ? AudioSys.loadSound('shieldHit', './sounds/shield/shield.wav') : null,
+        oldSfx ? AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav') : null,
+        oldSfx ? AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav') : null,
+        oldSfx ? AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav') : null,
         // modele broni z Blendera (GLB) — przed pierwszym użyciem rodziny broni 3D (shipModels3DGame.js)
         // tryb worker (RW-41): modele broni ładuje i rysuje worker — strona ich nie potrzebuje
         RW_WORKER ? null : prepareShipModels3D()
       ]);
 
       if (typeof ship !== 'undefined') {
-        ship.engineSound = AudioSys.createEngineLoop('engine');
+        ship.engineSound = oldSfx ? AudioSys.createEngineLoop('engine') : null;
       }
       // --- AUDIO END ---
 

@@ -290,3 +290,44 @@ test('głębokie zbliżenie: rzeka o ostrym brzegu i gładkich łączeniach, dro
   // planeta z plików: wysokość w pliku ma już korony — bez drugiego dodatku
   assert.match(baker, /uRel: this\._reliefU\(spec, out\.rt\.day\.texture, false\)/);
 });
+
+test('brzeg nie zmienia kształtu przy zbliżaniu: ogon szeregu szumu; roślinność planety z palet mapy terenu', async () => {
+  const fs = await import('node:fs');
+  const read = (f) => fs.readFileSync(new URL(`../src/3d/planetGen/${f}`, import.meta.url), 'utf8');
+  const { COAST_TAIL, COVER_TAIL } = await import('../src/3d/planetGen/planetGenSolid.tsl.js');
+  // ogon: oktawy dokładane przez głębsze poziomy gasną szybciej niż rośnie ich częstość (gain · lakunarność < 1) —
+  // dokładają szczegół, a nie otwierają i zamykają cieśnin widocznych poziom wyżej
+  for (const t of [COAST_TAIL, COVER_TAIL]) {
+    assert.ok(t.gain * 2.03 < 1, `gain ogona ${t.gain}`);
+    assert.ok(t.from >= 3, 'pierwsze oktawy (kształt z daleka) bez zmian');
+  }
+  const noise = read('planetGenNoise.tsl.js');
+  assert.match(noise, /export function pgFbm\(p0, octaves, lac = 2\.03, gain = 0\.5, full = false, tail = null\)/);
+  assert.match(noise, /amp\.mulAssign\(tail \? mix\(float\(tail\.gain\), float\(gain\), step\(float\(i\)\.add\(1\.5\), float\(tail\.from\)\)\) : gain\)/);
+  const solid = read('planetGenSolid.tsl.js');
+  assert.match(solid, /octX, 2\.03, 0\.62, full, COAST_TAIL\)/);
+  assert.equal((solid.match(/2\.03, 0\.6, true, COVER_TAIL\)/g) || []).length, 2, 'granice lasu i pól (nMo, nD)');
+  // roślinność: jedno mapowanie planeta → palety mapy terenu dla barw planety i dla mapy miejsca
+  const { PLANET_VEGETATION, TERRAIN_VEGETATION, terrainLandscape } = await import('../src/3d/planetGen/planetGenTerrainMap.js');
+  const { describePlanet, PLANET_VEGETATION_SETS } = await import('../src/3d/planetGen/planetGenSpec.js');
+  for (const set of PLANET_VEGETATION_SETS) {
+    assert.ok(PLANET_VEGETATION[set], `zestaw ${set} ma palety mapy terenu`);
+    for (const p of PLANET_VEGETATION[set]) assert.ok(TERRAIN_VEGETATION.includes(p));
+  }
+  for (const set of ['czerwona', 'purpurowa', 'zlota']) assert.ok(PLANET_VEGETATION_SETS.includes(set));
+  // nadpisanie roślinności: barwy lasu z zestawu, reszta planety (kształt, morze) bez zmian
+  const a = describePlanet({ type: 'terran', seed: 21 });
+  const b = describePlanet({ type: 'terran', seed: 21, vegetation: 'czerwona' });
+  assert.equal(b.look.vegetation, 'czerwona');
+  assert.notDeepEqual(b.look.palette.forest, a.look.palette.forest);
+  assert.ok(b.look.palette.forest[0] > b.look.palette.forest[1] * 2, 'czerwony las: czerwień ponad zielenią');
+  assert.deepEqual(b.look.palette.ocean, a.look.palette.ocean);
+  assert.equal(b.look.water, a.look.water);
+  assert.deepEqual(b.seedOffset, a.seedOffset);
+  // zestaw nieznany — bez zmian
+  assert.equal(describePlanet({ type: 'terran', seed: 21, vegetation: 'nie-ma' }).look.vegetation, a.look.vegetation);
+  // kępy drugiego gatunku: tajga bez, pozostałe palety mają barwę odstającą od lasu
+  assert.equal(terrainLandscape('tajga').accent, null);
+  for (const p of ['tropik', 'czerwona', 'purpura', 'zlota']) assert.equal(terrainLandscape(p).accent.length, 3);
+  assert.match(solid, /mix\(forestC, accentC, accent\.mul\(0\.8\)\)\.mul\(canopy\)/);
+});

@@ -12,9 +12,9 @@
 // Web Audio jest jednorazowe z natury — ogranicza je limit głosów, węzły głośności i panoramy są w puli.
 
 import {
-  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, STRZAL_GRACZA, jestCiws, kategoriaBroniNpc, idPlikowSceny,
+  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, jestCiws, idPlikowSceny,
   zmierzPoziom, wzmocnienieWyrownania, buforPetliBezSzwu, wybierzWariant, utworzLimitGlosow, sciszenieTloku,
-  polozenie, liniaWyboru, dbToGain, gainToDb
+  polozenie, liniaWyboru, dbToGain, gainToDb, dzwiekStrzalu, slyszalne
 } from './dzwiekiLogika.js';
 import { SoundEngine, paramDefaults } from './synteza.js';
 import { engineMain, engineSide, gatling } from './przepisySyntezy.js';
@@ -90,6 +90,8 @@ export function utworzDzwiekiGry(opts) {
   const wybor = Object.create(null); // id → 0 (losowo) | 1…n
   const wycisz = Object.create(null); // id → bool
   const zagral = Object.create(null);
+  // Zmiana wyboru wariantu / wyciszenia z panelu → wołający zapisuje go (klucz `KLUCZ_WYBORU`, nie zapis gracza).
+  const zmianaWyboru = () => { if (typeof opts.przyZmianieWyboru === 'function') opts.przyZmianieWyboru(); };
   const ostrzezone = new Set();
   const limit = utworzLimitGlosow(TAB);
   const wynikLimitu = { aktywne: 0 };
@@ -446,15 +448,27 @@ export function utworzDzwiekiGry(opts) {
     zagral.gatling = (zagral.gatling || 0) + 1;
   }
 
-  /** Strzał z szyny broni → dźwięk (gracz: tabela `STRZAL_GRACZA`; NPC: kategoria broni). */
+  /**
+   * Strzał z szyny broni → dźwięk (gracz: tabela `STRZAL_GRACZA`, reszta broni — kategoria jak u NPC). Poza
+   * słyszalnością — nic (przed klasyfikacją broni); id dźwięku
+   * z pamięci na broń (bez napisów na strzał). `kluczStrzelca` — obiekt strzelca (klucz serii CIWS i pętli wiązki).
+   */
+  const dzwiekBroniGracza = new Map();
+  const dzwiekBroniNpc = new Map();
   function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false) {
     stat.zdarzenia.strzal = (stat.zdarzenia.strzal || 0) + 1;
-    if (jestCiws(weaponId)) { ciwsStrzal(`${kluczStrzelca}:${weaponId}`, x, y); return; }
-    let id = gracza ? STRZAL_GRACZA[weaponId] : null;
-    if (!id) id = kategoriaBroniNpc(weaponId, def);
-    if (id === 'wiazka' || isBeam) { petla(`wiazka:${kluczStrzelca}`, 'wiazka', 1, x, y); return; }
+    if (wylaczony || !slyszalne(x, y, kadrFn ? kadrFn() : null)) return;
+    const pamiec = gracza ? dzwiekBroniGracza : dzwiekBroniNpc;
+    let id = pamiec.get(weaponId);
+    if (id === undefined) {
+      id = jestCiws(weaponId) ? 'ciws' : dzwiekStrzalu(weaponId, def, gracza);
+      pamiec.set(weaponId, id);
+    }
+    if (id === 'ciws') { ciwsStrzal(kluczStrzelca, x, y); return; }
+    if (id === 'wiazka' || isBeam) { petla(kluczStrzelca, 'wiazka', 1, x, y); return; }
     graj(id, x, y, 1);
   }
+
 
   // --- klatka
   function klatka() {
@@ -601,8 +615,15 @@ export function utworzDzwiekiGry(opts) {
     ctx, wczytaj, graj, zdarzenie, petla, silnikMain, silnikSide, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
     silnikObcy: (klucz, ciag, dopalacz, x, y) => { if (obce && !wylaczony) obce.silnik(klucz, ciag, dopalacz, x, y); },
     statystyki, wyzerujStatystyki, lista, tekstWyboru, odsluch,
-    ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); },
-    ustawWyciszenie(id, b) { wycisz[id] = !!b; },
+    ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); zmianaWyboru(); },
+    ustawWyciszenie(id, b) { wycisz[id] = !!b; zmianaWyboru(); },
+    /** Wybór wariantów i wyciszeń (z zapisu przeglądarki — `parsujWybor`), bez wywołania `przyZmianieWyboru`. */
+    wczytajWybor(z) {
+      for (const [id, w] of Object.entries(z?.wybor || {})) wybor[id] = Math.max(0, Number(w) | 0);
+      for (const [id, b] of Object.entries(z?.wycisz || {})) wycisz[id] = b === true;
+    },
+    /** Bieżący wybór do zapisu (`tekstZapisuWyboru`). */
+    stanWyboru() { return { wybor: { ...wybor }, wycisz: { ...wycisz } }; },
     ustawGlosnosc(v) { glosnosc.gain.setTargetAtTime(Math.max(0, Number(v) || 0), ctx.currentTime, 0.05); },
     wylacz() { zatrzymajWszystko(); wylaczony = true; },
     wlacz() { wylaczony = false; },

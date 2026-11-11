@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { isCanvasSource } from './canvas2d.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
+// Stan zasilania okrętu (2026-11-11): kanały świateł z samego stanu i czasu fazy — ta sama funkcja co w grze.
+import { shipPowerLook, SHIP_POWER_TUNE } from '../game/shipPower.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { WeaponFx } from './weapons/weaponFx.js';
 import { Fx3D } from './fxParticles3D.js';
@@ -583,6 +585,7 @@ function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, 
       uniforms.uShipLightCount.value = 0;
       releaseHullLightSlotIfUnused(data);
       data.lightSignature = SHIP_LIGHTS_OFF_SIGNATURE;
+      data.lightOwnCount = 0;
     }
     return;
   }
@@ -604,6 +607,7 @@ function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, 
   }
   if (count > 0) writeShipLightSlot(data.lightSlot, payload.lights, count);
   uniforms.uShipLightCount.value = count;
+  data.lightOwnCount = Math.min(count, Number.isFinite(payload.ownCount) ? payload.ownCount : count);
   if (count === 0) releaseHullLightSlotIfUnused(data);
 
   data.lightSignature = payload.signature;
@@ -611,6 +615,82 @@ function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, 
 
 // Lampy payloadu w slocie HullLightStore: 3 vec4 na lampę, `count` pierwszych (pętla w shaderze kończy się na
 // liczniku lamp kadłuba) — wysyłka zakresu slotu.
+// ── Koguty alarmu (2026-11-11, prośba użytkownika: „syreny alarmowe — np. low-hp”; src/game/shipAlarms.js) ──────────
+// Dwa obracające się reflektory nad osią kadłuba gracza (± ALARM_BEACON_TUNE.along promienia od środka) przesuwają
+// plamę w barwie alarmu po blasze — światła siatki (Core3D.fx.grid: kadłub, skały, pył, gaz). Moc / zasięg poniżej
+// progu „błysku” oświetlenia kadłubów v2 (~0,002 — inaczej zanik skupiony). Bez kroku efektów, gdy alarmu nie ma.
+export const ALARM_BEACON_TUNE = { along: 0.32, z: 70, rangeMul: 1.25, minRange: 450, gain: 0.0017, spin: 3.4, coneDeg: 26 };
+const ALARM_BEACON_RGB = [null, [1, 0.17, 0.11], [1, 0.2, 0.13], [1, 0.5, 0.1], [1, 0.32, 0.14], [1, 0.66, 0.14], [1, 0.74, 0.27]];
+const _alarmBeacon = { on: false, x: 0, y: 0, ang: 0, r: 0, code: 0 };
+let _alarmStep = null;
+function noteAlarmBeacon(entity) {
+  const pose = entity.isPlayer === true ? RenderWorld.playerPose : null;
+  const b = _alarmBeacon;
+  b.on = true;
+  b.code = entity.__alarmCode | 0;
+  b.x = pose ? pose.x : (Number(entity.pos?.x ?? entity.x) || 0);
+  b.y = pose ? pose.y : (Number(entity.pos?.y ?? entity.y) || 0);
+  b.ang = pose ? (Number(pose.angle) || 0) : (Number(entity.angle) || 0);
+  b.r = Math.max(60, Number(entity.radius) || Number(entity.r) || 300);
+  if (_alarmStep === null && Core3D.fx && typeof Core3D.addFxStep === 'function') {
+    _alarmStep = Core3D.addFxStep({ name: 'koguty alarmu', lights: alarmBeaconLights });
+  }
+}
+function alarmBeaconLights(ctx) {
+  const b = _alarmBeacon;
+  if (!b.on || !ctx?.grid) return;
+  const T = ALARM_BEACON_TUNE;
+  const t = Core3D.frameNowMs() * 0.001;
+  const col = ALARM_BEACON_RGB[b.code] || ALARM_BEACON_RGB[2];
+  const ca = Math.cos(b.ang), sa = Math.sin(b.ang);
+  const range = Math.max(T.minRange, b.r * T.rangeMul);
+  const I = range * T.gain;
+  const cosOuter = Math.cos(T.coneDeg * Math.PI / 180), cosInner = Math.cos(T.coneDeg * 0.6 * Math.PI / 180);
+  for (let k = 0; k < 2; k++) {
+    const off = (k === 0 ? T.along : -T.along) * b.r;
+    const a = t * T.spin + k * Math.PI;
+    // kierunek w układzie sceny (y sceny = −y gry), w dół na blachę pod kątem
+    ctx.grid.addWorld(b.x + ca * off, b.y + sa * off, T.z, range, col[0] * I, col[1] * I, col[2] * I, 0.35,
+      Math.cos(a) * 0.86, -Math.sin(a) * 0.86, -0.51, cosOuter, cosInner, 0, 0, 0);
+  }
+}
+
+// ── Stan zasilania okrętu (2026-11-11, src/game/shipPower.js) ──────────────────────────────────────────────────────
+// Kanały świateł kadłuba z SAMEGO stanu i czasu fazy (encja gry albo lustro — `shipPower { state, t }`), światło
+// bojowe floty (`__battleLights` — przejście 1,2 s), migotanie (rozruch: faza reflektorów; trafienie dużego kalibru:
+// `__powerFlick`). Wartości do slotu HullObjectStore (uPowerA / uPowerB). Kadłub bez stanu — praca, rejs.
+const _powerLook = {};
+const _powerMode = new WeakMap();
+const POWER_BATTLE_FADE_S = 1.2;
+export function entityPowerChannels(entity, out = _powerLook) {
+  const pw = entity?.shipPower;
+  return shipPowerLook(pw ? pw.state : -1, pw ? (Number(pw.t) || 0) : 0, out);
+}
+function syncEntityPowerUniforms(entity, data) {
+  const u = data?.mesh?.material?.uniforms;
+  if (!u?.uPowerA) return;
+  const look = entityPowerChannels(entity);
+  // Tryb bojowy: płynne przejście (czas klatki efektów).
+  let m = _powerMode.get(entity);
+  if (m === undefined) { m = { v: entity.__battleLights === true ? 1 : 0, at: state.lastTime }; _powerMode.set(entity, m); }
+  const dt = Math.max(0, Math.min(0.25, (state.lastTime - m.at) * 0.001));
+  m.at = state.lastTime;
+  const goal = entity.__battleLights === true || entity.__alarmCode > 0 ? 1 : 0;
+  m.v += Math.max(-dt / POWER_BATTLE_FADE_S, Math.min(dt / POWER_BATTLE_FADE_S, goal - m.v));
+  // Migotanie: faza reflektorów rozruchu (słabnie ku końcowi fazy) albo trafienie (gra: `__powerFlick` 0..1).
+  let flick = 0;
+  if (look.flicker > 0) {
+    const pw = entity.shipPower;
+    const u0 = SHIP_POWER_TUNE.floodAt[0], u1 = SHIP_POWER_TUNE.floodAt[1];
+    const uu = ((Number(pw?.t) || 0) / SHIP_POWER_TUNE.startupTime - u0) / Math.max(1e-3, u1 - u0);
+    flick = 1 - Math.max(0, Math.min(1, uu));
+  }
+  const hit = Number(entity.__powerFlick) || 0;
+  if (hit > flick) flick = hit;
+  u.uPowerA.value.set(look.front, look.flood, look.nav, m.v);
+  u.uPowerB.value.set(flick, Number.isFinite(data.lightOwnCount) ? data.lightOwnCount : 1e6, 0, 0);
+}
+
 function writeShipLightSlot(slot, lights, count) {
   const arr = HullLightStore.array();
   const base = HullLightStore.slotFloatOffset(slot);
@@ -632,7 +712,13 @@ function writeShipLightSlot(slot, lights, count) {
     arr[o + 4] = light.color.r;
     arr[o + 5] = light.color.g;
     arr[o + 6] = light.color.b;
-    arr[o + 7] = light.kind === 'omni' ? 2 : light.kind === 'flood' ? 3 : light.kind === 'road' ? 1 : 0;
+    arr[o + 7] = light.kind === 'omni' ? 2 : light.kind === 'flood' ? 3 : light.kind === 'road' ? 1 : light.kind === 'deck' ? 4 : 0;
+    if (light.kind === 'deck') {
+      // Lampa pokładowa: (odległość od reaktora 0..1, ziarno migotania, zasięg plamy px, —).
+      arr[o + 8] = Number(light.d) || 0; arr[o + 9] = Number(light.seed) || 0;
+      arr[o + 10] = Number(light.rangePx) || 0; arr[o + 11] = 0;
+      continue;
+    }
     // Własny reflektor otoczenia świeci NA ZEWNĄTRZ: stożek na własnym
     // pancerzu malował białe kliny na płetwach (zostaje lampa: rdzeń + poświata).
     const ownFlood = light.kind === 'flood' && !light.external;
@@ -864,6 +950,11 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       // Otwarty luk ładowni (2026-10-11, fregata zwiadu Atlasa — src/3d/cargo/scoutBay3D.js): prostokąt w uv sprite'a
       // (u0, v0, u1, v1), w którym skóra znika, póki wrota nie są zamknięte; entity.__bayCut — bez niego wyłączone.
       uBayCut: { get value() { return (entity && entity.__bayCut) || HULL_BAY_CUT_OFF; } },
+      // Stan zasilania okrętu (src/game/shipPower.js — syncEntityPowerUniforms): A = (czoło fali od reaktora, lampy
+      // pokładowe i reflektory, nawigacyjne, tryb bojowy), B = (migotanie, liczba własnych lamp payloadu). Wektory od
+      // jawnych wartości (pułapka 46: w = 1 z domyślnego Vector4).
+      uPowerA: { value: new THREE.Vector4(2, 1, 1, 0) },
+      uPowerB: { value: new THREE.Vector4(0, 1e6, 0, 0) },
       // Skóra belek (zadanie 23): slot w HullObjectStore — wartości wyżej i macierze kadłuba trafiają
       // do bufora storage przed passem ortho; w grupie „object” materiału zostaje tylko ten numer.
       uHullSlot: { value: 0 }
@@ -1216,6 +1307,7 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   const bodyRadiusPx = Math.max(hull.srcWidth, hull.srcHeight) * 0.5 * entityScale * zoomPx;
   syncEntityLightUniforms(entity, data, hull, state.roadLightEmitters, bodyRadiusPx);
+  syncEntityPowerUniforms(entity, data);
   syncEntityLacquer(entity, data, hull, entityScale, zoomPx);
   // Mapa ran rodu (kadłub, wrak, odłamy — wspólny klucz): slot do materiału, widoczność dla LRU.
   HullDamageMap.bind(hull.dmgKey, uniforms);
@@ -1464,10 +1556,13 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   drawVfx.length = 0;
   stale.length = 0;
   validSet.clear();
+  _alarmBeacon.on = false;
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
     lodFrameStats.entitiesIn++;
     valid.push(entity);
+    // Koguty alarmu (src/game/shipAlarms.js — kod w ENT.ALARM): okręt gracza, poza renderu (ta sama co kadłub).
+    if (entity.__alarmCode > 0 && entity.isPlayer === true && !entity.fogHidden) noteAlarmBeacon(entity);
     const hideHexVisual = entity.hideHexVisual === true || entity.visual?.hideHexMesh === true;
     if (hideHexVisual) {
       const data = state.entityMeshes.get(entity);

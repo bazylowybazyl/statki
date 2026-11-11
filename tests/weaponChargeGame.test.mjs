@@ -46,6 +46,8 @@ function p1Game(f) {
   const messages = [];
   const fx = { charges: 0, available: true };
   const scope = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
     Game: { player: { weapons: f.ship.weapons } }, HP: { SPECIAL: 'special', SPECIAL_MISSILE: 'special_missile' },
     ship: f.ship, p1WeaponCtrl: f.controller, getMountedWeaponAim,
     getCombinedSpecialLoadouts: () => f.ship.weapons.special,

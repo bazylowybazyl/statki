@@ -172,6 +172,7 @@ export const STRZAL_GRACZA = Object.freeze({
   tempest_ion_s: 'tempestIon',
   tempest_ion_l: 'tempestIon',
   special_yamato_cannon: 'yamato',
+  special_yamato_l: 'yamato',
   missile_rack: 'rakieta',
   supernova_missile: 'supernovaStart'
 });
@@ -210,6 +211,80 @@ export function kategoriaBroniNpc(weaponId, def = null) {
   if (/missile|rocket|torped|rack/.test(id)) return 'rakieta';
   const szybkostrzelna = Number(def?.fireRate) > 3 || (Number(def?.cooldown) > 0 && Number(def.cooldown) < 0.35);
   return szybkostrzelna ? 'autocannon' : 'dzialo';
+}
+
+/**
+ * Strzał z szyny broni → id dźwięku (bez CIWS — seria z syntezy). Broń gracza spoza `STRZAL_GRACZA` gra dźwiękiem
+ * swojej kategorii jak broń NPC.
+ */
+export function dzwiekStrzalu(weaponId, def, gracza) {
+  if (gracza) {
+    const id = STRZAL_GRACZA[weaponId];
+    if (id) return id;
+  }
+  return kategoriaBroniNpc(weaponId, def);
+}
+
+/**
+ * Słyszalność bez pracy: punkt dalej od środka kadru niż `zasieg` półprzekątnych (jak w `polozenie`) odpada,
+ * zanim warstwa zrobi cokolwiek innego. Bez pozycji (NaN) — słyszalne (interfejs, zdarzenia gracza).
+ */
+export function slyszalne(x, y, kadr, zasieg = 3.2) {
+  if (!kadr || !(x === x) || !(y === y)) return true;
+  const ex = (x - kadr.x) / Math.max(1, kadr.polW);
+  const ey = (y - kadr.y) / Math.max(1, kadr.polH);
+  return ex * ex + ey * ey < 2 * zasieg * zasieg;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Wybór wariantów i głośność w zapisie przeglądarki
+
+/** Klucz `localStorage` wyboru wariantów i wyciszeń z panelu sceny (nie zapis gracza). */
+export const KLUCZ_WYBORU = 'sc_dzwieki_wybor';
+
+/**
+ * Zapisany wybór → `{ wybor: { id: 1…9 }, wycisz: { id: true } }` tylko dla znanych id (`znane` — obiekt z id jako
+ * kluczami); śmieci, nieznane id i złe wartości odpadają (stary zapis po zmianie tabeli nie psuje warstwy).
+ */
+export function parsujWybor(tekst, znane) {
+  const out = { wybor: {}, wycisz: {} };
+  let z = null;
+  try { z = typeof tekst === 'string' ? JSON.parse(tekst) : tekst; } catch { return out; }
+  if (!z || typeof z !== 'object') return out;
+  const ok = (id) => typeof id === 'string' && (!znane || Object.prototype.hasOwnProperty.call(znane, id));
+  if (z.wybor && typeof z.wybor === 'object') {
+    for (const [id, w] of Object.entries(z.wybor)) {
+      const n = Number(w);
+      if (ok(id) && Number.isInteger(n) && n >= 1 && n <= 9) out.wybor[id] = n;
+    }
+  }
+  if (z.wycisz && typeof z.wycisz === 'object') {
+    for (const [id, b] of Object.entries(z.wycisz)) if (ok(id) && b === true) out.wycisz[id] = true;
+  }
+  return out;
+}
+
+/** Wybór do zapisu: tylko warianty stałe (≥ 1) i wyciszenia — losowo i „słychać” to brak wpisu. */
+export function tekstZapisuWyboru(wybor, wycisz) {
+  const out = { wybor: {}, wycisz: {} };
+  for (const [id, w] of Object.entries(wybor || {})) if ((Number(w) | 0) >= 1) out.wybor[id] = Number(w) | 0;
+  for (const [id, b] of Object.entries(wycisz || {})) if (b === true) out.wycisz[id] = true;
+  return JSON.stringify(out);
+}
+
+/** Domyślna głośność główna gry (dawniej 0 — gra startowała niema). */
+export const GLOSNOSC_GLOWNA_DOMYSLNA = 0.7;
+
+/**
+ * Jednorazowa migracja zapisanej głośności głównej: 0 było wartością DOMYŚLNĄ opcji, nie wyborem gracza — zapisane
+ * dokładnie 0 bez znacznika migracji → `GLOSNOSC_GLOWNA_DOMYSLNA`. Znacznik stawia się zawsze (po migracji 0 ustawione
+ * przez gracza zostaje zerem). Zwraca `{ master, oznacz }` (`oznacz` — zapisz znacznik).
+ */
+export function migrujGlosnoscGlowna(zapisanaGlowna, znacznik) {
+  const v = Number(zapisanaGlowna);
+  if (znacznik) return { master: Number.isFinite(v) ? clamp(v, 0, 1) : GLOSNOSC_GLOWNA_DOMYSLNA, oznacz: false };
+  if (!Number.isFinite(v) || v === 0) return { master: GLOSNOSC_GLOWNA_DOMYSLNA, oznacz: true };
+  return { master: clamp(v, 0, 1), oznacz: true };
 }
 
 /** Wszystkie id plików potrzebne w scenie (dekodujemy tylko je). */

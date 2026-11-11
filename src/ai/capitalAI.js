@@ -9,6 +9,7 @@ import {
 import { getBattleSlot } from './fleetCoordinator.js';
 import { AWARENESS_CONFIG, SIDE_FRIENDLY, fleetStanceOverride } from './fleetAwareness.js';
 import { isCloakHidden } from '../game/cloak.js';
+import { shipPowerOn } from '../game/shipPower.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
 import { MOUNT_ARCS, mountFireArc } from '../game/weaponAim.js';
@@ -1720,6 +1721,8 @@ function stepNpcWeaponCharge(npc, weapon, aimErr, dt) {
 // Eksport dla testów (tests/pointDefenseTargeting.test.mjs); gra woła przez mózgi.
 export function processAutonomousWeapons(npc, dt) {
   if (!npc) return;
+  // Stan zasilania (src/game/shipPower.js — opcja NPC): broń, PD, hangary i system F tylko w PRACY.
+  if (!shipPowerOn(npc)) return;
   // Carrier: wypuszczanie eskadr z hangarów (early-return wewnątrz dla nie-carrierów).
   if (window.updateNpcHangars) window.updateNpcHangars(npc, dt);
   initAutonomousWeapons(npc);

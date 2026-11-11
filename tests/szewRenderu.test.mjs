@@ -52,6 +52,7 @@ const SUFITY = {
   'import:src/game/shipBridgeBeams.js': 2,
   'import:src/game/shipBridgeRuntime.js': 1,
   'import:src/game/shipLightRuntime.js': 5,
+  'import:src/game/shipPower.js': 3, // 2026-11-11 stan zasilania okrętu: bridge3D.js (okna mostka i lampy awaryjne), engineVfxSystem.js (płomyk dyżurny i żar dysz wyłączonego okrętu), hexShips3D.js liczy kanały świateł kadłuba (fala od reaktora, lampy pokładowe, nawigacyjne, migotanie) z SAMEGO stanu i czasu fazy z lustra — czysta funkcja shipPowerLook, ta sama co w grze, klasa A
   'import:src/game/simClock.js': 15, // 2026-10-19: +1 — src/3d/pirateBaseVents3D.js (nośnik cząstek wyrw: czas pozy SimClock.sim jak Fx3D i wybuchy), klasa A
   'import:src/game/skyRegion.js': 1,
   'import:src/game/swarm/berthTransfer.js': 2, // 2026-10-22 E12: geometria placu i czasy postoju przy stanowisku (czyste funkcje: stoły, taśma, okno, wrota) czytane przez obraz portCargo3D i pulę roju swarmBerthPool, klasa A

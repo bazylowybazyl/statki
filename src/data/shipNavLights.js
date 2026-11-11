@@ -126,6 +126,37 @@ export const SHIP_FLOOD_LIGHTS = Object.freeze({
 });
 
 const _markers = new Map();
+// Marker lampy z tabeli → klucz kadłuba (navLightHullKeyOf — lampy pokładowe czytają klucz edytora z bloku lamp).
+const _markerHull = new WeakMap();
+let _navPointHull = null;
+
+/**
+ * Klucz kadłuba (klucz edytora z NAV_LIGHT_POINTS) bloku lamp nawigacyjnych: marker z tabeli pamięta klucz; kopia
+ * markera (zapis edytora gracza, `{ ...marker }`) — po miejscu lampy `nav_*` (pierwsze trafienie na liście). Brak — null.
+ */
+export function navLightHullKeyOf(position) {
+  if (!Array.isArray(position) || position.length === 0) return null;
+  for (let i = 0; i < position.length; i++) {
+    const k = position[i] && _markerHull.get(position[i]);
+    if (k) return k;
+  }
+  if (_navPointHull === null) {
+    _navPointHull = new Map();
+    for (const [key, row] of Object.entries(NAV_LIGHT_POINTS)) {
+      for (const [x, y] of row.p) {
+        const id = `${Math.round(x)}|${Math.round(y)}`;
+        if (!_navPointHull.has(id)) _navPointHull.set(id, key);
+      }
+    }
+  }
+  for (let i = 0; i < position.length; i++) {
+    const m = position[i];
+    if (!m || typeof m.id !== 'string' || !m.id.startsWith('nav_')) continue;
+    const k = _navPointHull.get(`${Math.round(Number(m.x) || 0)}|${Math.round(Number(m.y) || 0)}`);
+    if (k) return k;
+  }
+  return null;
+}
 
 /** Sześć lamp kadłuba w stylu (domyślnie: styl kadłuba) — markery jak z edytora, jeden zamrożony zestaw; brak w tabeli — []. */
 export function shipNavLightMarkers(hullKey, styleName = NAV_LIGHT_HULL_STYLE[hullKey] || NAV_LIGHT_DEFAULT_STYLE) {
@@ -135,6 +166,7 @@ export function shipNavLightMarkers(hullKey, styleName = NAV_LIGHT_HULL_STYLE[hu
   const row = NAV_LIGHT_POINTS[hullKey];
   const style = NAV_LIGHT_STYLES[styleName] || NAV_LIGHT_STYLES[NAV_LIGHT_DEFAULT_STYLE];
   list = Object.freeze(row ? row.p.map(([x, y], i) => navMarker(`nav_${LAMP_NAMES[i]}`, x, y, row.r, style, i % 2 === 1)) : []);
+  for (let i = 0; i < list.length; i++) _markerHull.set(list[i], hullKey);
   _markers.set(cacheKey, list);
   return list;
 }
