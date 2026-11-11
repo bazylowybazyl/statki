@@ -1,6 +1,7 @@
-// Przepisy syntezy używane przez grę (src/audio/dzwiekiGry.js) i demo dema/dzwieki.html — jedyne dwa
-// dźwięki z syntezy, które użytkownik przyjął (2026-11-11): silnik MAIN i seria Vulcan / CIWS. Reszta dema
-// zostaje w dema/dzwieki/ (gra jej nie importuje). Przepis = { id, params, play(E, p, at) → uchwyt }.
+// Przepisy syntezy używane przez grę (src/audio/dzwiekiGry.js) i demo dema/dzwieki.html: seria Vulcan / CIWS
+// (przyjęta z dema 2026-11-11), silnik MAIN (druga wersja — rakietowa; pierwszą, z tonem turbiny, użytkownik
+// wyrzucił: „wyje jak suszarka”) i silniki SIDE. Reszta dema zostaje w dema/dzwieki/ (gra jej nie importuje).
+// Przepis = { id, params, play(E, p, at) → uchwyt }.
 import { lerp } from './synteza.js';
 
 function gatlingShot(E, V, t, s) {
@@ -62,11 +63,18 @@ export const gatling = {
   },
 };
 
+// Silnik MAIN — silnik rakietowy. Pierwsza wersja („dudnienie, ryk, ton i turbina”) miała dwa czyste tony turbiny
+// (sinusy 900 i 1350 Hz jadące z ciągiem do 2,6 i 3,9 kHz, 30–35 dB ponad szum) i piły w kwincie — użytkownik
+// 2026-11-11: „wyje jak suszarka, do kosza go”. Tu nie ma żadnego tonu powyżej basu: dudnienie i ryk to szerokie
+// pasma szumu, ciężar daje jeden niski sinus, fakturę — trzask płomienia. Ta sama rodzina co silniki SIDE (niżej),
+// większa dysza: pasma niżej, wolniejsze narastanie. Nie dodawaj oscylatorów powyżej ~100 Hz.
+/** Niski sinus silnika MAIN [Hz] — jedyny oscylator dźwięku w przepisie. */
+const SUB_MAIN = 32;
 export const engineMain = {
   id: 'silnik',
   group: 'Okręt',
   name: 'Silnik MAIN',
-  desc: 'Dudnienie, ryk, ton i turbina. Suwaki działają na żywo.',
+  desc: 'Silnik rakietowy: dudnienie, ryk i trzask płomienia, bez tonu turbiny. Suwaki działają na żywo.',
   hold: true,
   params: [
     { id: 'throttle', name: 'Ciąg', min: 0, max: 1, step: 0.01, value: 0.5 },
@@ -78,59 +86,44 @@ export const engineMain = {
     const h = E.handle(V);
     const t = V.t;
     const master = V.gain(0);
-    V.env(master.gain, t, [[0, 0, 's'], [0.7, 1, 'l']]);
+    V.env(master.gain, t, [[0, 0, 's'], [0.5, 1, 'l']]);
     // dudnienie, ryk
-    const ruf = V.lp(90, 0.8, t);
+    const ruf = V.lp(80, 0.8, t);
     const rug = V.gain(0);
     V.chain(V.noise('brown', 1, t), ruf, rug, master);
-    const rof = V.bp(220, 0.7, t);
+    const rof = V.bp(200, 0.6, t);
     const rog = V.gain(0);
     V.chain(V.noise('pink', 1, t), rof, rog, master);
-    // ton: piły w kwincie + sub, powolne pływanie stroju
-    const DR = [36, 54, 18];
-    const dr = [V.osc('sawtooth', DR[0], t), V.osc('sawtooth', DR[1], t), V.osc('sine', DR[2], t)];
-    const drf = V.lp(160, 2, t);
-    const drift = V.osc('sine', 0.13, t);
-    const dg = V.gain(6);
+    // ciężar: jeden niski sinus z powolnym pływaniem stroju
+    const sub = V.osc('sine', SUB_MAIN, t);
+    const drift = V.osc('sine', 0.11, t);
+    const dg = V.gain(5);
     V.chain(drift, dg);
-    dr.forEach((o, i) => {
-      dg.connect(o.detune);
-      V.chain(o, V.gain(i === 2 ? 0.9 : 0.5), drf);
-    });
-    V.chain(drf, V.gain(0.22), master);
-    // turbina
-    const TU = [900, 1350];
-    const tu = TU.map((f) => V.osc('sine', f, t));
-    const tug = V.gain(0);
-    const vib = V.osc('sine', 5, t);
-    const vibg = V.gain(4);
-    V.chain(vib, vibg);
-    tu.forEach((o) => {
-      vibg.connect(o.frequency);
-      V.chain(o, tug);
-    });
-    V.chain(tug, master);
-    // dopalacz: trzaski i syk
+    dg.connect(sub.detune);
+    const subg = V.gain(0);
+    V.chain(sub, subg, master);
+    // trzask płomienia — dochodzi z ciągiem
+    const crg = V.gain(0);
+    V.chain(V.noise('crackle', 1.1, t), V.bp(700, 0.7, t), crg, master);
+    // dopalacz: gęstszy trzask i szum wylotu (pasmo środka, nie syk)
     const bog = V.gain(0);
-    V.chain(V.noise('crackle', 1.3, t), V.bp(1400, 0.6, t), bog, master);
+    V.chain(V.noise('crackle', 1.3, t), V.bp(1200, 0.6, t), bog, master);
     const bhg = V.gain(0);
-    V.chain(V.noise('white', 1, t), V.hp(2600, 0.7, t), bhg, master);
+    V.chain(V.noise('pink', 1, t), V.bp(1700, 0.5, t), bhg, master);
     V.chain(master, V.in);
     const st = { thr: p.throttle, boost: p.boost ? 1 : 0 };
     const apply = (tt, tau) => {
       const x = st.thr;
       const b = st.boost;
-      ruf.frequency.setTargetAtTime(90 + 420 * x + 200 * b, tt, tau);
-      rug.gain.setTargetAtTime(0.4 + 0.5 * x + 0.3 * b, tt, tau);
-      rof.frequency.setTargetAtTime(220 + 900 * x + 500 * b, tt, tau);
-      rog.gain.setTargetAtTime(0.06 + 0.5 * x + 0.35 * b, tt, tau);
-      const pm = 1 + 0.35 * x + 0.15 * b;
-      dr.forEach((o, i) => o.frequency.setTargetAtTime(DR[i] * pm, tt, tau * 1.5));
-      drf.frequency.setTargetAtTime(160 + 380 * x + 200 * b, tt, tau);
-      tu.forEach((o, i) => o.frequency.setTargetAtTime((TU[i] + 1700 * x * (i ? 1.5 : 1)) * (1 + 0.1 * b), tt, tau * 2));
-      tug.gain.setTargetAtTime(0.01 + 0.03 * x, tt, tau);
-      bog.gain.setTargetAtTime(0.7 * b, tt, tau * 0.5);
-      bhg.gain.setTargetAtTime(0.1 * b, tt, tau * 0.5);
+      ruf.frequency.setTargetAtTime(80 + 300 * x + 140 * b, tt, tau);
+      rug.gain.setTargetAtTime(0.42 + 0.58 * x + 0.3 * b, tt, tau);
+      rof.frequency.setTargetAtTime(200 + 620 * x + 350 * b, tt, tau);
+      rog.gain.setTargetAtTime(0.07 + 0.55 * x + 0.35 * b, tt, tau);
+      sub.frequency.setTargetAtTime(SUB_MAIN * (1 + 0.25 * x + 0.1 * b), tt, tau * 1.5);
+      subg.gain.setTargetAtTime(0.1 + 0.12 * x, tt, tau);
+      crg.gain.setTargetAtTime(0.3 * x * x, tt, tau);
+      bog.gain.setTargetAtTime(0.6 * b, tt, tau * 0.5);
+      bhg.gain.setTargetAtTime(0.14 * b, tt, tau * 0.5);
     };
     apply(t, 0.01);
     h.params.throttle = (v, tt) => {
@@ -144,20 +137,14 @@ export const engineMain = {
       apply(tt, 0.25);
       if (kick) {
         V.thump(tt, 78, 34, 0.12, 0.6, 0.7, { drive: 2.5 });
-        V.burst(tt, 'pink', { type: 'bandpass', f: 300, f1: 2400, sweep: 0.35, Q: 1.2, attack: 0.05, decay: 0.5, peak: 0.6 });
+        V.burst(tt, 'pink', { type: 'bandpass', f: 300, f1: 1800, sweep: 0.35, Q: 1.0, attack: 0.05, decay: 0.5, peak: 0.6 });
       }
     };
     h.onRelease((tr) => {
       E.hold(master.gain, tr);
       master.gain.setTargetAtTime(0, tr, 0.35);
-      for (const o of dr) {
-        o.detune.setValueAtTime(0, tr);
-        o.detune.linearRampToValueAtTime(-900, tr + 1.2);
-      }
-      for (const o of tu) {
-        o.detune.setValueAtTime(0, tr);
-        o.detune.linearRampToValueAtTime(-1500, tr + 1.2);
-      }
+      sub.detune.setValueAtTime(0, tr);
+      sub.detune.linearRampToValueAtTime(-900, tr + 1.2);
       V.stop(tr + 1.5);
     });
     V.start();
