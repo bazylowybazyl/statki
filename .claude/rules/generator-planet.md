@@ -10,6 +10,11 @@ paths:
   - "tests/planetGen.test.mjs"
   - "tests/planetGenNear.test.mjs"
   - "tests/planetGenDrainage.test.mjs"
+  - "tests/planetGenTerrainMap.test.mjs"
+  - "dema/mapa-terenu.html"
+  - "dema/mapa-terenu.js"
+  - "dema/mapa-terenu.worker.js"
+  - "scripts/mapa-terenu-png.mjs"
 ---
 
 # Generator planet z ziarna (wypiek map na GPU)
@@ -158,10 +163,15 @@ paths:
   `uDr: baker._bindDrain(rodzaj, baked.drainage)` (podstawia `graph.drain.value`). Bez spływu `uDr = [1, 1, 0, 0]` —
   gałąź rzek wyłączona, uniformy skończone (próba, wejście spływu).
 - Kanały pola terran / ocean: y > 0 — woda słodka, y < 0 — minus wilgotność doliny (pas przy rzece); z > 0 — pasma
-  gór, z < 0 — minus pas starorzecza. Odbiorcy czytają `max(·, 0)` (maski, połysk); nowy odbiorca pola też.
+  gór, z < 0 — dno doliny zalewowej: −0,49 · łuki dawnych koryt (0…−0,49) albo −(0,5 + 0,5 · łacha piasku). Odbiorcy czytają `max(·, 0)` (maski, połysk); nowy odbiorca pola też.
+- Tekstura spływu (RGBA8): R — kierunek do odbiorcy, G — przepływ (log), B — odległość od morza [komórki ×
+  `DRAIN_SEA_K`], A — głębokość wypełnionego zagłębienia.
 - Geometria rzeki (`riverNet`): węzeł = środek komórki + przesunięcie z haszu (≤ `DRAIN_JITTER` = 0,22 — przy
   większym odcinki drzewa mogą się skrzyżować), bieg = łuk Béziera przez węzeł odbiorcy (`bezierNear`), meander =
-  sinusoida w poprzek łuku z zerem w węzłach. Szerokość z przepływu WŁASNEJ komórki (interpolacja do przepływu
+  sinusoida w poprzek łuku z zerem w węzłach; liczba półfal Z SZEROKOŚCI koryta (długość fali ≈ 12 szerokości —
+  stała liczba daje wielkiej rzece zęby zamka), amplituda do ~⅓ fali. Wzorzec wyglądu rzeki nizinnej (zdjęcie od
+  użytkownika): ciemne koryto, jasne łachy po wewnętrznej stronie zakoli, soczyście zielona dolina z łukami
+  dawnych koryt, jasne tarasy na brzegu doliny, beżowe rozgałęzione polany w ciemnym lesie — § 10.12 opisu. Szerokość z przepływu WŁASNEJ komórki (interpolacja do przepływu
   odbiorcy pogrubia dopływy — gwiazdy w zbiegach). Dolina i pas zalewowy idą wzdłuż łuku bez meandra.
 - Sąsiedztwo 5 × 5 komórek daje pewne odległości do ~0,75 komórki — zasięgi doliny i pasa wilgotności są do tego
   przycięte; szersze pasy wymagają większego sąsiedztwa.
@@ -177,6 +187,55 @@ paths:
   drzew) gasną z tekselem celu (`st`). Klimat (`earthClimate`) jest wspólny dla barw i opadu spływu.
 - Dane dla gry: `riverMouths(baked.drainage)` — ujścia rzek od największej (miejsca pod miasta i porty; użytkownik
   planuje desant na powierzchnię i proceduralne miasta), `drainReceiver` — bieg rzeki komórka po komórce.
+
+## Spójność między poziomami zbliżenia i góry (terran / ocean; opis i przyczyny: `docs/OPIS-generator-planet.md` § 10.11)
+
+- Zasada: ten sam obszar ma wyglądać tak samo na każdym poziomie zbliżenia — zbliżenie DOKŁADA szczegół, nie zmienia
+  układu (brzeg, rzeki, płaty lasu, śnieg). Sprawdzanie: seria zrzutów jednego miejsca w kilku odległościach kamery,
+  nie pojedyncze kadry.
+- Próg, który decyduje o KLASIE piksela (morze / ląd, las / łąka, śnieg), nie zależy od rzeczy liczonych inaczej na
+  każdym poziomie: detalu dokładanego co klatkę, krzywizny i nachylenia w skali teksela, wzorów włączanych dopiero
+  z bliska. Człon włączany z bliska ma średnią ZERO (skupiska drzew: stała 0,516 = średnia odległość komórek).
+- Brzeg morza w materiałach: wysokość mapy + detal × `coastK` (nachylenie mapy) — sam detal na płaskiej nizinie
+  wybija kałuże z pianą, inne na każdym poziomie.
+- Rzeka ma z daleka być tą samą niebieską linią co z bliska: pas zalewowy tylko gdy cel go rozdziela, pokrycie wody
+  węższej niż teksel (w / wt)^0,5, połysk wody słodkiej słaby. Odkształcenie biegu rzek na każdym poziomie to samo
+  (długie fale), przy morzu gaśnie z kanału B siatki spływu (odległość od morza).
+- Krzywa z końcem o zerowej stycznej (łuk Béziera z B = C — ujście do morza): odległość ze stycznej daje 0 w całym
+  obszarze za końcem; styczną zastępuje cięciwa (`bezierNear`). Objaw: prostokąt o bokach sąsiedztwa komórek.
+- GÓRY: pasma = granice zbieżne płyt + łańcuchy śródlądowe (`rangeN`); grzbiety o częstości `mountainFreq` ×
+  `EARTH_RIDGE_FREQ` — przy niskiej częstości „pasmo” jest kopułą-płaskowyżem i cała leży nad linią śniegu (biała
+  plama). Profil: przedgórze + grzbiet² (wąskie szczyty). Rozkład wysokości sprawdzaj odczytem mapy rzeźby
+  (udział lądu w pasach co 1 km), nie na oko.
+- Śnieg: próg temperatury (spadek 0,16 / km), ostra linia w górach, bez śniegu na ścianach ponad ~30% nachylenia,
+  albedo poniżej progu bloomu. Materiały planet z wodą: normalne z nasyceniem dopiero powyżej ~10% nachylenia
+  (nasycenie od zera spłaszcza doliny niziny), cień terenu × 3,6 (`RELIEF`), światło nieba (`skyFill`) tylko tam,
+  gdzie jest ciemniej niż na płaskim gruncie — bez niego ściany gór są czarne, z dopłatą dla płaskiego cały ląd
+  blednie przy niskim słońcu.
+- Szum w progu pasa przy rzece: nie DODAWAĆ do wilgotności doliny (kropki pasa wzdłuż każdego strumyka) — działa
+  tylko na część ponad smugę strumyka (`wetBig`). Wzory dna doliny (łachy, pasy, tarasy) gasną, gdy teksel celu ich
+  nie rozdziela („koraliki”). Plaża tylko w promieniu 3 tekseli od punktu poniżej poziomu morza.
+
+## Mapa terenu — trzeci poziom (prototyp; opis, wzorzec i różnice: `docs/OPIS-generator-planet.md` § 10.13)
+
+- CEL użytkownika: ostrzał miast z orbity i desant (minigra RTS o miasta) — wokół miasta ma być krajobraz jak na
+  zdjęciu satelitarnym, a biom miejsca wyznacza resztę. Planeta i zbliżenie tego nie pokażą (komórka sieci rzecznej
+  planety ~17 km, zdjęcie wzorca ~30 km): krajobraz w skali miejsca robi MAPA TERENU, nie dalsze strojenie planety.
+- `planetGenTerrainMap.js` (czysty JS — przeglądarka, worker, Node): `generateTerrainMap({ seed, size, extentKm,
+  biome, riverWidthM })` → warstwy: `albedo` (RGBA8 sRGB, wiersz 0 = północ), `height` [m], `cover`
+  (`TERRAIN_COVER`: woda, piasek, łąka, zarośla, las, torfowisko — także pod rozgrywkę), `river` (oś [m]). Biomy:
+  `TERRAIN_MAP_BIOMES` (dziś `tajga`). Niepołączone z planetą — miejsce = ziarno.
+- Rzeka to SYMULACJA wędrówki koryta (`simulateMeanders`), nie wzór: zakola, odcięcia i starorzecza wynikają z modelu,
+  a łachy, łuki dawnych koryt, zasięg doliny i sukcesja roślin — z rastra „kiedy ostatnio płynęła tu rzeka”.
+  Zaburzenie startowe osi rzędu szerokości koryta i na całej długości (mniejsze zostawia górny odcinek prosty).
+- Cieki: `computeDrainage` w trybie mapy lokalnej (`wrapX: false`, `rowWeight: false`, `keep: true`). Rastry
+  pochodne ze spływu (wysokość nad ciekiem, wielkość cieku) WYGŁADZAĆ przed użyciem w progach — surowe skaczą na
+  granicach zlewni (schodkowe brzegi torfowisk i łęgów).
+- Wygląd oceniać OBOK zdjęcia wzorca w tej samej skali i z kwantyzacją palety (liczby w opisie), nie na oko.
+- Wzory regularne zdradzają generator także tu: równe kółka wysp drzew, kreska przy każdym strumyku, pasmo o stałej
+  szerokości — losować obecność, kształt i szerokość.
+- Narzędzia: demo `dema/mapa-terenu.html`, PNG `node scripts/mapa-terenu-png.mjs`, testy
+  `tests/planetGenTerrainMap.test.mjs`.
 
 ## Zasady i pułapki
 

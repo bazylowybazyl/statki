@@ -138,7 +138,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
 | `uklady-gwiezdne` | Układy gwiezdne: rejestr `starSystems.js`, jeden układ na stronę (inny = przeładowanie), dom gracza, treść ręczna tylko w Sol, założenia Sol do zdjęcia |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
-| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), planeta z bliska (wycinek mapy pod kamerą, lawa, erupcja, chmury z cieniem), widok orbitalny (chmury jako bryła, atmosfera po promieniu, zorza), pogoda (ruchome chmury: wiatr w pasach, cyklony, mapa pogody), rzeki ze spływu wody i mozaika biomów (terran / ocean), dema (niewpięty) |
+| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), planeta z bliska (wycinek mapy pod kamerą, lawa, erupcja, chmury z cieniem), widok orbitalny (chmury jako bryła, atmosfera po promieniu, zorza), pogoda (ruchome chmury: wiatr w pasach, cyklony, mapa pogody), rzeki ze spływu wody i mozaika biomów (terran / ocean), spójność między poziomami zbliżenia, pasma gór ze śniegiem, mapa terenu — trzeci poziom dla ostrzału z orbity i desantu (prototyp), dema (niewpięty) |
 | `niebo` | Wypiekacz nieba, tło kosmosu |
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |
 | `doki-portow` | Doki portów bez ringu (krzyż, okrąg, koło z wlotem): geometria, ścieżki bańki, kolizje, model |
@@ -181,6 +181,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
+| `zlomowanie` | Złomowanie jako proces: komputer złomiarski (plan cięć z komórek kadłuba), podawanie wraku do dziobu, wysięgniki z laserami tnącymi, sekcje jako ciała belek, paszcza; decyzje użytkownika i etapy do zrobienia |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `kapsuly-ratunkowe` | Kapsuły ratunkowe: wyrzut po śmierci statku (bez pirackich), lot do stacji (objazd ringu i doków), obraz, radar, rozliczenie bez obrazu w workerze ruchu |
 | `mgla-wojny` | Mgła wojny |

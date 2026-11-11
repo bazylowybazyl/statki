@@ -1673,6 +1673,25 @@ export const HullBodies = {
     return out;
   },
 
+  /**
+   * Żywe komórki kadłuba jako pary (ix, iy) siatki — plan cięcia wraku (`src/game/scrapPlan.js`). Komórka to
+   * tożsamość węzła: ta sama we wraku i w każdym odłamie, niezmienna przy przebudowie ciała; jej środek w świecie
+   * daje `cellWorld`. `out` — tablica wielokrotnego użytku [ix, iy, ix, iy, …]. Zwraca liczbę par. Tylko odczyt.
+   */
+  activeCells(entity, out) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || hull.solid3D || !hull.body || hull.body.dead) return 0;
+    const s = hull.body.nodeStore, active = s.active, ix = s.ix, iy = s.iy;
+    let n = 0;
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i]) continue;
+      out[n * 2] = ix[i];
+      out[n * 2 + 1] = iy[i];
+      n++;
+    }
+    return n;
+  },
+
   // --------------------------- NAPRAWA LOKALNA ---------------------------
   // Rój dronów naprawczych (src/game/repairRig.js): dron prostuje kadłub wokół komórki, przy której pracuje — zamiast
   // dawnej naprawy całego kadłuba naraz (repair(), zostaje dla testów i dem). Komórka (ix, iy) jak w odroście.

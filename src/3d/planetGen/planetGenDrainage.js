@@ -28,16 +28,17 @@
 // WYNIK dla grafu pola — tekstura RGBA8 (odczyt textureLoad, bez filtrowania):
 //   R — kierunek do odbiorcy: kod · DRAIN_CODE_STEP, kod = 1 + (dx + 1) + 3 · (dy + 1); 0 = morze / brak,
 //   G — przepływ komórki: log2(1 + przepływ) · DRAIN_FLOW_K (przepływ w komórkach równikowych o opadzie 1),
-//   B — przepływ odbiorcy (to samo kodowanie; szerokość rzeki rośnie wzdłuż odcinka bez drugiego odczytu),
+//   B — odległość od morza [komórki] · DRAIN_SEA_K (do 255; morze 0) — graf pola gasi przy brzegu odkształcenie biegu,
 //   A — głębokość wypełnionego zagłębienia [m / 2] (0 = komórka spływa bez wypełniania).
 
 /** Największe przesunięcie węzła drzewa od środka komórki [komórki] — przy większym odcinki mogłyby się skrzyżować. */
 export const DRAIN_JITTER = 0.22;
 export const DRAIN_CODE_STEP = 25;
 export const DRAIN_FLOW_K = 12;
+export const DRAIN_SEA_K = 32;
 
 // koszt wejścia do komórki poniżej poziomu zalania [poziomy]: 1 + FILL_COST / (1 + głębokość / FILL_DEPTH) + hasz 0…7
-const DRAIN_RHO = 0.5;       // waga „ulubionego kierunku” w wyborze spływu (0 — zawsze najstromszy z ośmiu)
+const DRAIN_RHO = 0.6;       // waga „ulubionego kierunku” w wyborze spływu (0 — zawsze najstromszy z ośmiu)
 const FILL_COST = 24;
 const FILL_DEPTH = 16;
 const DX = [1, 0, -1, 0, 1, -1, -1, 1];     // najpierw boki (0–3), potem przekątne (4–7)
@@ -51,9 +52,13 @@ export const drainFlowDecode = (g) => Math.pow(2, g / DRAIN_FLOW_K) - 1;
  * @param {Float32Array|null} rain  opad 0…~1,5 na komórkę (null = 1)
  * @param {number} W
  * @param {number} H
+ * Opcje mapy LOKALNEJ (płaski wycinek, nie cała kula): `wrapX: false` — bez zawijania w osi x, `rowWeight: false` —
+ * komórki równej wagi (bez cos φ), `keep: true` — w wyniku także `receiver`, `order`, `flow`.
  * @returns {{ width, height, data: Uint8Array, stats: { land, seeds, maxFlow, filled, ms } }}
  */
-export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0.06, seed = 1, now = () => performance.now() } = {}) {
+export function computeDrainage(height, rain, W, H, {
+  levels = 65536, wander = 0.06, seed = 1, wrapX = true, rowWeight = true, keep = false, now = () => performance.now()
+} = {}) {
   const t0 = now();
   const N = W * H;
   // poziomy całkowite z wysokości lądu (+ szum błądzenia)
@@ -95,7 +100,7 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
         const ny = y + DY[k];
         if (ny < 0 || ny >= H) continue;
         let nx = x + DX[k];
-        if (nx < 0) nx += W; else if (nx >= W) nx -= W;
+        if (nx < 0) { if (!wrapX) continue; nx += W; } else if (nx >= W) { if (!wrapX) continue; nx -= W; }
         const n = ny * W + nx;
         if (!isLand(n)) { rcv[c] = n; push(c, lvl[c]); seeds++; break; }
       }
@@ -124,7 +129,7 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
         const ny = y + DY[k];
         if (ny < 0 || ny >= H) continue;
         let nx = x + DX[k];
-        if (nx < 0) nx += W; else if (nx >= W) nx -= W;
+        if (nx < 0) { if (!wrapX) continue; nx += W; } else if (nx >= W) { if (!wrapX) continue; nx -= W; }
         const n = ny * W + nx;
         if (state[n] !== 0 || !isLand(n)) continue;
         if (k >= 4) {
@@ -154,7 +159,7 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
   // sąsiad z boku zalany wcześniej.
   const rank = new Int32Array(N).fill(-1);
   for (let i = 0; i < nOrder; i++) rank[order[i]] = i;
-  const TH = 8;                                   // oczko kraty pola kierunku [komórki]
+  const TH = 5;                                   // oczko kraty pola kierunku [komórki]
   const tw = Math.max(1, Math.round(W / TH));
   const th = Math.ceil(H / TH) + 1;
   const theta = new Float32Array(tw * th);
@@ -188,7 +193,7 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
       const ny = y + DY[k];
       if (ny < 0 || ny >= H) continue;
       let nx = x + DX[k];
-      if (nx < 0) nx += W; else if (nx >= W) nx -= W;
+      if (nx < 0) { if (!wrapX) continue; nx += W; } else if (nx >= W) { if (!wrapX) continue; nx -= W; }
       const n = ny * W + nx;
       let drop;
       if (isLand(n)) {
@@ -210,7 +215,7 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
   // przepływ: opad × pole komórki, sumowany w dół drzewa (od ostatnio zalanych)
   const flow = new Float32Array(N);
   const cosRow = new Float32Array(H);
-  for (let y = 0; y < H; y++) cosRow[y] = Math.cos(((y + 0.5) / H - 0.5) * Math.PI);
+  for (let y = 0; y < H; y++) cosRow[y] = rowWeight ? Math.cos(((y + 0.5) / H - 0.5) * Math.PI) : 1;
   for (let i = 0; i < nOrder; i++) { const c = order[i]; flow[c] = (rain ? Math.max(0, rain[c]) : 1) * cosRow[(c / W) | 0]; }
   let maxFlow = 0;
   for (let i = nOrder - 1; i >= 0; i--) {
@@ -218,6 +223,32 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
     const r = rcv[c];
     if (flow[c] > maxFlow) maxFlow = flow[c];
     if (r >= 0 && isLand(r)) flow[r] += flow[c];
+  }
+  // odległość od morza [komórki, metryka ośmiu sąsiadów] — wszerz od komórek lądu przy morzu, do 255 / DRAIN_SEA_K
+  const seaDist = new Uint8Array(N);
+  {
+    const cap = Math.floor(255 / DRAIN_SEA_K);
+    let front = [];
+    for (let i = 0; i < nOrder; i++) { const c = order[i]; const r = rcv[c]; if (r >= 0 && !isLand(r)) { seaDist[c] = 1; front.push(c); } }
+    for (let dd = 2; dd <= cap && front.length; dd++) {
+      const nextFront = [];
+      for (const c of front) {
+        const y = (c / W) | 0;
+        const x = c - y * W;
+        for (let k = 0; k < 8; k++) {
+          const ny = y + DY[k];
+          if (ny < 0 || ny >= H) continue;
+          let nx = x + DX[k];
+          if (nx < 0) { if (!wrapX) continue; nx += W; } else if (nx >= W) { if (!wrapX) continue; nx -= W; }
+          const n = ny * W + nx;
+          if (seaDist[n] || !isLand(n)) continue;
+          seaDist[n] = dd;
+          nextFront.push(n);
+        }
+      }
+      front = nextFront;
+    }
+    for (let i = 0; i < nOrder; i++) { const c = order[i]; if (!seaDist[c]) seaDist[c] = cap; }
   }
   const mPerLvl = hMax * 1000 / (levels - 1);
   for (let i = 0; i < nOrder; i++) {
@@ -234,10 +265,14 @@ export function computeDrainage(height, rain, W, H, { levels = 65536, wander = 0
     }
     const g = drainFlowEncode(flow[c]);
     data[o + 1] = g;
-    data[o + 2] = r >= 0 && isLand(r) ? drainFlowEncode(flow[r]) : g;
+    data[o + 2] = Math.min(255, seaDist[c] * DRAIN_SEA_K);
     data[o + 3] = Math.min(255, Math.round((popLvl[c] - lvl[c]) * mPerLvl / 2));
   }
-  return { width: W, height: H, data, stats: { land, seeds, maxFlow, filled, ms: now() - t0 } };
+  const out = { width: W, height: H, data, stats: { land, seeds, maxFlow, filled, ms: now() - t0 } };
+  // `keep` (mapa terenu — planetGenTerrainMap.js): odbiorcy, kolejność zalewania (odbiorca zawsze wcześniej niż
+  // dawca) i przepływ jako tablice — do wysokości nad ciekiem, wilgotności dolin i tras rzek
+  if (keep) { out.receiver = rcv; out.order = order.subarray(0, nOrder); out.flow = flow; }
+  return out;
 }
 
 // Szum błądzenia −1…1 na lądzie: biały z haszu komórki + trzy kraty wartości (4, 16 i 64 komórki, okresowe w długości).

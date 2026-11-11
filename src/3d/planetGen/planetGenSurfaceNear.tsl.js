@@ -190,11 +190,18 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
   }
   const gDet = dG.sub(p.mul(dot(dG, p))).div(R);                // [km/km] w płaszczyźnie stycznej
   const grad = gMap.add(gDet).toVar();
-  const nLand = normalize(p.sub(grad.mul(U.uGsShade.x))).toVar();
+  // Przesadzenie rzeźby z NASYCENIEM na planetach z wodą (terran / ocean — pasma gór o prawdziwych stokach
+  // kilkudziesięciu procent): stoki do ~10% w pełni × uGsShade.x (doliny niziny mają być czytelne), strome nasycają się.
+  // Bez nasycenia ściany gór przy × 5 odwracały się od słońca i wychodziły czarnymi plamami.
+  const gExg = grad.mul(U.uGsShade.x).toVar();
+  const nLand = normalize(p.sub(gExg.div(max(length(gExg).sub(0.5), 0.0).mul(step(0.5, U.uGsSea.x)).add(1.0)))).toVar();
 
   // ── morze (planety z wodą) ──
   const hasSea = step(0.5, U.uGsSea.x);
-  const hC = hMap.add(dH).toVar();
+  // AGENT: detal wysokości przesuwa linię brzegu tylko na STROMYM brzegu (jak w planetGenSurface.tsl.js): na
+  // płaskiej nizinie wybijał w lądzie kałuże z pianą, inne na każdym poziomie zbliżenia („konfetti”).
+  const coastK = smoothstep(0.006, 0.04, length(gMap));
+  const hC = hMap.add(dH.mul(coastK)).toVar();
   const wAA = max(hW.mul(0.75), 1e-4);
   const land = mix(float(1.0), smoothstep(wAA.negate(), wAA, hC.sub(U.uGsSea.y)), hasSea).toVar();
   const depth = max(U.uGsSea.y.sub(hC), 0.0).toVar();
@@ -222,7 +229,7 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
         gWave.addAssign(nd.yzw.mul(w.mul(Math.pow(0.75, k))));
       });
     }
-    const shal = float(1.0).sub(smoothstep(0.0, 0.085, depth)).mul(float(1.0).sub(land)).toVar();
+    const shal = float(1.0).sub(smoothstep(0.0, 0.03, depth)).mul(float(1.0).sub(land)).toVar();
     // (szum piany tylko w pasie płycizny — każdy szum na cały kadr 5120 × 1440 to ~0,1 ms GPU)
     If(shal.greaterThan(0.01), () => {
       const fn = pgNoise(p.mul(5200.0).add(vec3(0.0, t.mul(0.5), 0.0))).mul(0.5).add(0.5);
@@ -295,7 +302,7 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
   // połysk tafli: z daleka szeroki odblask grafu gry (fale drobniejsze niż piksel = szorstka tafla); z bliska słabszy,
   // a w jego miejsce iskrzenie na falach (niżej — wąski odblask na normalnej fal)
   // (z rozmiaru piksela na kuli: cała tarcza — pełny odblask, od ~1 px = 1,5 j. gry w dół — słaby)
-  const seaGloss = max(float(1.0).sub(land).mul(float(1.0).sub(day.a.mul(0.9))), fresh).mul(mix(float(0.12), float(1.0), smoothstep(1.5e-4, 1.3e-3, pixL)));
+  const seaGloss = max(float(1.0).sub(land).mul(float(1.0).sub(day.a.mul(0.9))), fresh.mul(0.3)).mul(mix(float(0.12), float(1.0), smoothstep(1.5e-4, 1.3e-3, pixL)));
   const waterMask = max(max(seaGloss, smoothstep(0.08, 0.82, specR).mul(wG)), gloss);
   const gWt = gWave.sub(p.mul(dot(gWave, p)));
   const nWater = normalize(p.sub(gWt.mul(0.028))).toVar();
@@ -445,12 +452,18 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
   const ruins = ruinsShade({ p, pixL, U, time: U.uGsMisc.x, gain: U.uGsMisc.y, land });
   dayOut.mulAssign(ruins.albedo);
 
+  // ŚWIATŁO NIEBA (planety z wodą = z atmosferą): graf gry nie ma światła otoczenia (kosmos), więc stoki odwrócone
+  // od słońca i cienie terenu po dziennej stronie były czarne — w śniegu pasm gór wyglądały jak dziury albo tafle
+  // wody. Dostają niebieskawe światło rozproszone (do ~0,3 albedo), gasnące ku terminatorowi — tylko miejsca
+  // ciemniejsze niż płaski grunt (płaski grunt bez dopłaty: inaczej cały ląd przy niskim słońcu bladł).
+  const skyFill = dayOut.mul(vec3(0.55, 0.72, 1.0)).mul(hasSea.mul(0.3)).mul(smoothstep(-0.05, 0.3, sinE))
+    .mul(float(1.0).sub(smoothstep(sinE.mul(0.25), sinE.mul(0.75), dot(nObj, sunObj).mul(shadow))));
   return {
     normal: normalize(transformNormalToView(nObj)),
     shadow,
     day: dayOut,
     water: waterMask,
-    emit: emit.add(ruins.emit)
+    emit: emit.add(ruins.emit).add(skyFill)
   };
 }
 
