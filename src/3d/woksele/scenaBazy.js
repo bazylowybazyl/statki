@@ -14,7 +14,7 @@ import { STRONA, ND } from './budowa.js';
 export const DX_BAZY = 40;
 /** Pojemność solvera na dx: ?maxWez i ?nKom strony. Węzły z testu tests/wokseleBaza.test.mjs. */
 export const POJEMNOSC_BAZY = Object.freeze({
-  40: { maxWez: 90000, nKom: 131072 },
+  40: { maxWez: 140000, nKom: 262144 },
   80: { maxWez: 26000, nKom: 65536 },
 });
 
@@ -24,7 +24,7 @@ const G = 400; // PIRATE_BASE_SOLID.gravity, src/game/story/pirateBaseBodies.js
 
 /** Mnożniki barwy części w obrazie, sam wygląd. */
 const TON = Object.freeze({
-  wiezowiec: [0.92, 0.96, 1.05], tech: [1.05, 1.0, 0.92], beben: [0.95, 0.92, 0.9], trzon: [0.85, 0.85, 0.88], dysk: [1.02, 1.0, 0.97],
+  wiezowiec: [0.92, 0.96, 1.05], reaktor: [0.9, 0.98, 1.06], tech: [1.05, 1.0, 0.92], trzon: [0.85, 0.85, 0.88], dysk: [1.02, 1.0, 0.97],
   pomost: [0.72, 0.72, 0.76], zbiornik: [1.0, 0.86, 0.62], magazyn: [0.82, 0.78, 0.7],
 });
 
@@ -60,17 +60,59 @@ const rura = (cx, cy, R, sc, z0, z1, plyta, kSc, kPl) => (x, y, z) => {
   return plyta && (z < z0 + plyta || z > z1 - plyta) ? kPl : -1;
 };
 
-function budujWiezowce(b, l) {
+/**
+ * Wieżowce miasta habitatu (układ: l.habitat.buildings, 2026-11-11): każdy osobną częścią, wieza() na siatce świata. Boki są równoległe do osi układu, a środek z układu leży na siatce (pirateBaseLayout, city.grid), więc ściany schodzą się z bryłą starej bazy, z której piecze się skóra.
+ * Podstawa nad wierzchem tarasu dysku (dysk powstaje po wieżowcach i nie dzieli z nimi komórek). Kotwice w dolnej warstwie: przy uderzeniu wieży puszcza je wGrze (voxBreak z flagą), inaczej resztki stałyby w powietrzu nad wyciętym sektorem dysku.
+ */
+function budujMiasto(b, l) {
   const dx = b.dx;
-  for (const h of l.highrises) {
+  for (const h of l.habitat.buildings) {
     const zB = k7HeightToZ(h.baseY), zD = k7HeightToZ(h.roofY);
-    const g = wieza({ dx, w: h.w, d: h.d, h: zD - zB });
+    const g = wieza({ dx, w: h.ux ? h.w : h.d, d: h.ux ? h.d : h.w, h: zD - zB });
     const c = b.nowa(h.id, TON.wiezowiec);
-    const a0 = Math.round(h.x / dx - (g.meta.nx - 1) / 2), b0 = Math.round(-h.z / dx - (g.meta.ny - 1) / 2), k0 = Math.floor(zB / dx);
+    const a0 = Math.round(h.x / dx - (g.meta.nx - 1) / 2), b0 = Math.round(-h.z / dx - (g.meta.ny - 1) / 2), k0 = Math.ceil(zB / dx);
     for (let q = 0; q < g.n; q++) b.dodaj(c, a0 + g.ijk[3 * q], b0 + g.ijk[3 * q + 1], k0 + g.ijk[3 * q + 2], g.kind[q]);
-    c.wiezowiec = { x: a0 * dx + 0.5 * (g.meta.nx - 1) * dx, y: b0 * dx + 0.5 * (g.meta.ny - 1) * dx, w: g.meta.nx * dx, d: g.meta.ny * dx, zB, zD };
-    // Podest: pomost rozszerzony do rzutu wieżowca (bez komórek zajętych przez budynek), na nim składa się góra. Bez tego gruz przelatuje ramę na wylot aż na planetoidę (pierwszy bieg: W-1 przy t = 10 ma średnio 3000 j. niżej).
-    c.podest = { x: c.wiezowiec.x, y: c.wiezowiec.y, pw: 0.5 * c.wiezowiec.w + dx, pd: 0.5 * c.wiezowiec.d + dx };
+    c.wiezowiec = { x: a0 * dx + 0.5 * (g.meta.nx - 1) * dx, y: b0 * dx + 0.5 * (g.meta.ny - 1) * dx, w: g.meta.nx * dx, d: g.meta.ny * dx, zB, zD, cwiartka: h.chunk };
+  }
+}
+
+/**
+ * Reaktory antygrawitacyjne na pomostach (układ: l.antigravs): dzwon emitera pod pokładem (rura rozszerzana ku dołowi, dno z gardzielą), obudowa (ściany, stropy, komora rdzenia), nad nią kolumna rdzenia i pierścień pola na ramionach po przekątnych.
+ * Kotwice: dno dzwonu (dolna warstwa części). Podest: pomost rozszerzony do rzutu obudowy, na nim składa się góra. Bez niego gruz przelatuje ramę na wylot aż na planetoidę (tak było z wieżowcem W-1 w pierwszym biegu B1).
+ */
+function budujReaktory(b, l) {
+  const dx = b.dx, P = l.spec.pier;
+  const mod3 = (z) => ((Math.floor(z / dx) % 3) + 3) % 3;
+  for (const h of l.antigravs) {
+    const cx = h.x, cy = -h.z;
+    const zB = k7HeightToZ(h.baseY), zBell = k7HeightToZ(P.deckY0 - 120), zFg = k7HeightToZ(h.fgY), zRing = k7HeightToZ(h.ringY), zTop = k7HeightToZ(h.topY);
+    const wzdluzX = Math.abs(h.ux) > 0.5;
+    const hw = 0.5 * (wzdluzX ? h.w : h.d), hd = 0.5 * (wzdluzX ? h.d : h.w);
+    const sc = 2 * dx, R = Math.max(hw, hd, h.ringR + dx, h.bellR) + dx;
+    const c = b.nowa(h.id, TON.reaktor);
+    b.wypelnij(c, cx - R, cx + R, cy - R, cy + R, zB, zTop, (x, y, z) => {
+      const ax = Math.abs(x - cx), ay = Math.abs(y - cy), r = Math.sqrt(ax * ax + ay * ay);
+      if (z < zBell) {
+        const rb = h.bellR * (0.62 + 0.38 * ((zBell - z) / Math.max(1, zBell - zB)));
+        if (r > rb) return -1;
+        if (z < zB + dx) return r > 0.4 * h.bellR ? KIND.STROP : -1;
+        return r > rb - sc ? KIND.RDZEN : -1;
+      }
+      if (z < zFg) {
+        if (ax > hw || ay > hd) return -1;
+        if (ax > hw - sc || ay > hd - sc) return KIND.KOLUMNA;
+        if (r <= h.coreR && r > h.coreR - sc) return KIND.RDZEN;
+        return z < zBell + dx || z > zFg - dx || mod3(z) === 0 ? KIND.STROP : -1;
+      }
+      if (r <= 0.62 * h.coreR) return KIND.RDZEN;
+      if (Math.abs(z - zRing) <= dx) {
+        if (Math.abs(r - h.ringR) <= 0.75 * dx) return KIND.KOLUMNA;
+        if (r < h.ringR && Math.abs(ax - ay) < 0.75 * dx) return KIND.KOLUMNA;
+      }
+      return -1;
+    });
+    c.reaktor = { x: cx, y: cy, w: 2 * hw, d: 2 * hd, zB, zD: zTop };
+    c.podest = { x: cx, y: cy, pw: hw + dx, pd: hd + dx, pomost: h.pier };
   }
 }
 
@@ -117,33 +159,7 @@ function budujWieze(b, Hs, wnetrzeTyp = 0) {
   return c;
 }
 
-/** Bęben: ściana zewnętrzna, pierścień wewnętrzny, grodzie. Bez dna: to kilka tysięcy węzłów, których z góry prawie nie widać. */
-function budujBeben(b, l) {
-  const Hs = l.habitat, dx = b.dx;
-  const zF = k7HeightToZ(Hs.floorY), zRim = k7HeightToZ(Hs.rimTop);
-  const sc = Math.max(Hs.wall, 2 * dx), scW = Math.max(Hs.innerW, 2 * dx), polG = 0.5 * Math.max(Hs.spokeW, 1.42 * dx);
-  const R = Hs.drumR;
-  const c = b.nowa('H-E, S, W, N', TON.beben);
-  const blisko = (x, y, r0, r1, katy) => {
-    const r = Math.sqrt(x * x + y * y);
-    if (r < r0 || r > r1) return false;
-    for (const a of katy) {
-      const ux = Math.cos(a), uy = -Math.sin(a); // kąt bazy (x, z), a Y = −z
-      if (x * ux + y * uy > 0 && Math.abs(-x * uy + y * ux) < polG) return true;
-    }
-    return false;
-  };
-  b.wypelnij(c, -R, R, -R, R, zF, zRim, (x, y) => {
-    const r = Math.sqrt(x * x + y * y);
-    if (r > R || r < Hs.coreR) return -1;
-    if (r > R - sc) return KIND.KOLUMNA;
-    if (r <= Hs.innerR && r > Hs.innerR - scW) return KIND.KOLUMNA;
-    return blisko(x, y, Hs.innerR, R - sc, Hs.spokes) || blisko(x, y, Hs.coreR, Hs.innerR - scW, Hs.innerSpokes) ? KIND.RDZEN : -1;
-  });
-  return c;
-}
-
-/** Trzon pod bębnem: rura od dysku do podłogi bębna. zamkniety: z pokrywą i dnem (baza bez bębna: szyb stoi na pokrywie, a nie nad pustą rurą). */
+/** Trzon (cokół wieży): rura od dysku do placu pod wieżą. zamkniety: z pokrywą i dnem (podstawa wieży stoi na pokrywie, a nie nad pustą rurą). */
 function budujTrzon(b, Hs, zamkniety = false) {
   const dx = b.dx, sc = Math.max(80, 2 * dx);
   const zD = k7HeightToZ(Hs.tier2Y), zF = k7HeightToZ(Hs.floorY);
@@ -164,7 +180,7 @@ function budujPomosty(b, l, podesty) {
       const s = ex * p.ux + ez * p.uz, q = Math.abs(ex * p.nx + ez * p.nz);
       if (x * x + y * y < Hs.drumR * Hs.drumR) return -1;
       if (s >= 0 && s <= p.len && q <= p.halfW) return KIND.STROP;
-      if (p.id === 'N-P' || p.id === 'F-P') for (const d of podesty) if (s >= 0 && s <= p.len && Math.abs(x - d.x) <= d.pw && Math.abs(y - d.y) <= d.pd) return KIND.STROP;
+      for (const d of podesty) if (d.pomost === p.id && s >= 0 && s <= p.len && Math.abs(x - d.x) <= d.pw && Math.abs(y - d.y) <= d.pd) return KIND.STROP;
       return -1;
     });
   }
@@ -247,7 +263,10 @@ function budujDysk(b, Hs, o) {
 }
 
 /** Części habitatu zbudowane z kół wokół jego osi: bloki przy tych kołach dociąga obraz (uKola w obraz.js). */
-const CZESCI_KOL = new Set(['H-C + H-T', 'H-E, S, W, N', 'trzon', 'dysk D-1…8']);
+const CZESCI_KOL = new Set(['H-C + H-T', 'trzon', 'dysk D-1…8']);
+
+/** Promienie kół habitatu dla obrazu (ustawKola, najwyżej 12): rogi bloków części z bitem koła trafiają w te okręgi. */
+export const kolaHabitatu = (Hs) => [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.ringR1, Hs.stemR, Hs.tier2R, Hs.tier1R, Hs.discR];
 
 /**
  * Składa części w scenę: pola ijk na półce, grupa „wieza” z meta.budynki i grupa „dysk”.
@@ -377,22 +396,16 @@ function planSekwencji(sc, cz, l, o, los) {
     const R = 0.5 * Math.sqrt(w.w * w.w + w.d * w.d) + 20;
     for (const [dt, dz] of [[0, 120], [0.12, 300]]) kr.push(krater({ f: F(tB - 0.25 + dt), nos: nosiciel(sc, c, w.x, w.y, zNad + dz), r: R, rdzen: 0.08, rS: 0.3, J: 80, rP: 320, rodz: 'wieza' }));
   };
+  // Ćwiartka H-S miasta: najpierw wieżowiec zewnętrzny i wewnętrzny na osi, potem reszta (wyłom), tak jak ostrzał z jednej strony w misji.
   const zPokladu = k7HeightToZ(l.spec.pier.deckY1);
-  salwy(cz.get('W-1'), T.w1, zPokladu);
-  salwy(cz.get('W-2'), T.w2, zPokladu);
-
-  // Wyłom w ćwiartce H-S: kula obejmuje wysokość ściany, łańcuch po łuku.
-  const beb = cz.get('H-E, S, W, N');
-  const zBS = k7HeightToZ(Hs.floorY), zBG = k7HeightToZ(Hs.rimTop), zBM = 0.5 * (zBS + zBG);
-  const ok = l.habitat.quadrants.find((q) => q.id === 'H-S');
-  const naLuku = 9;
-  for (let s = 0; s < naLuku; s++) {
-    const a = ok.a0 + ((ok.a1 - ok.a0) * (s + 0.5)) / naLuku;
-    const Rs = Hs.drumR - 0.5 * Hs.wall;
-    const t = T.wylom[0] + ((T.wylom[1] - T.wylom[0]) * (s + 0.3 * los())) / naLuku;
-    kr.push(krater({ f: F(t), nos: nosiciel(sc, beb, Rs * Math.cos(a), -Rs * Math.sin(a), zBM), r: 0.5 * (zBG - zBS) + 40, rdzen: 0.6, J: 150, rP: 300, rodz: s % 2 ? 'mala' : 'glowna' }));
-    if (s % 2 === 0) kr.push(krater({ f: F(t + 0.3), nos: nosiciel(sc, beb, Hs.innerR * Math.cos(a), -Hs.innerR * Math.sin(a), zBM), r: 0.5 * (zBG - zBS) + 20, rdzen: 0.6, J: 100, rP: 240, rodz: 'mala' }));
-  }
+  const hs = l.habitat.buildings.filter((q) => q.chunk === 'H-S');
+  const zewn = hs.filter((q) => q.ring === 1), wewn = hs.filter((q) => q.ring === 0);
+  const pierwsze = [zewn[zewn.length >> 1], wewn[wewn.length >> 1]];
+  salwy(cz.get(pierwsze[0].id), T.w1, zPokladu);
+  salwy(cz.get(pierwsze[1].id), T.w2, zPokladu);
+  const reszta = hs.filter((q) => !pierwsze.includes(q));
+  const krokW = (T.wylom[1] - T.wylom[0]) / Math.max(1, reszta.length);
+  reszta.forEach((q, e) => salwy(cz.get(q.id), [T.wylom[0] + e * krokW, T.wylom[0] + (e + 1) * krokW + 0.4], zPokladu));
 
   // Nasada szyi: najpierw strona −y (ku wyłomowi), zawias po stronie +y trzyma, a przy uderzeniu głowy pada, razem z szybem.
   const wz = cz.get('H-C + H-T');
@@ -476,12 +489,11 @@ const OPCJE_B1 = Object.freeze({
   // Mnożnik granicy gięcia szyi i szybu (rdzeń w promieniu pierścienia). Domyślnie jak siła (8): szyja nie pęka od zginania nigdy i gnie się jak guma
   // (zgłoszenie użytkownika 2026-11-08). Demo B1R ma 1: siła zostaje, zgięta szyja pęka. Gra (wGrze) bez zmian, dopóki użytkownik nie zdecyduje.
   giecieSzyi: 8,
-  // Demo B1R (prośba użytkownika 2026-11-09: „usuń dysk, w którym gracz musiał zrobić wyłom”, „szyja trochę grubsza”): bez bębna (ćwiartki,
-  // pierścień wewnętrzny, grodzie) i promień szyi szyjaR zamiast neckR z układu (0: z układu). W grze wyłom w ćwiartce bębna to etap misji, więc gra ma bęben.
-  // Bez bębna trzon dostaje pokrywę i dno: szyb stał nad pustą rurą trzonu i wisiał w powietrzu (zgłoszenie użytkownika 2026-11-09).
-  bezBebna: false,
+  // Od 2026-11-11 habitat to miasto wieżowców wokół wieży (prośba użytkownika), dawnego bębna nie ma. bezMiasta: sama wieża na dysku. szyjaR: promień trzonu wieży zamiast neckR z układu (0: z układu).
+  // Trzon pod wieżą ma zawsze pokrywę i dno: bez nich podstawa wieży stała nad pustą rurą i wisiała w powietrzu (zgłoszenie użytkownika 2026-11-09).
+  bezMiasta: false, // true: bez wieżowców miasta (sama wieża na dysku, jak dawne demo „bez bębna”)
   szyjaR: 0,
-  szyjaWnetrze: 0, // 0 pusta rura (gra), 1 stropy jak w wieżowcu, 2 pełna (budujWieze)
+  szyjaWnetrze: 1, // 0 pusta rura, 1 stropy jak w wieżowcu (gra od 2026-11-11: duża wieża), 2 pełna (budujWieze)
   mocPodestu: 30,
   T: 30,
 });
@@ -495,18 +507,18 @@ export function scenaB1(oo = {}) {
   const dx = o.dx ?? DX_BAZY;
   // W grze (wGrze.js): bez planu krater po kraterze (kratery zleca misja) i z gruntem na poziomie skały pod bazą.
   if (o.wGrze) o.stoi = true;
-  // Skrypt zniszczeń (planSekwencji) robi wyłom w ćwiartce bębna: baza bez bębna ma tylko tryb bez skryptu.
-  if (o.bezBebna) o.stoi = true;
+  // Skrypt zniszczeń (planSekwencji) robi wyłom w ćwiartce miasta: baza bez miasta ma tylko tryb bez skryptu.
+  if (o.bezMiasta) o.stoi = true;
   const l0 = createPirateBaseLayout({ id: 'B1' });
   const l = o.szyjaR > 0 ? { ...l0, habitat: { ...l0.habitat, neckR: o.szyjaR } } : l0;
   const Hs = l.habitat;
   const b = createBudowa(dx);
   const los = prng((o.ziarno >>> 0) * 6151 + 29);
-  budujWiezowce(b, l);
+  budujReaktory(b, l);
   const podesty = b.czesci.map((c) => c.podest);
   budujWieze(b, Hs, o.szyjaWnetrze);
-  if (!o.bezBebna) budujBeben(b, l);
-  budujTrzon(b, Hs, !!o.bezBebna);
+  if (!o.bezMiasta) budujMiasto(b, l);
+  budujTrzon(b, Hs, true);
   budujPomosty(b, l, podesty);
   budujPaliwo(b, l);
   budujMagazyn(b, l);
@@ -525,7 +537,7 @@ export function scenaB1(oo = {}) {
   const wz = cz.get('H-C + H-T');
   let wSzyb = 0;
   for (let q = 0; q < wz.K.length; q++) if ((wz.K[q] + 0.5) * dx <= wz.zSzyb[1]) wSzyb++;
-  const w1 = cz.get('W-1').wiezowiec;
+  const w1 = o.bezMiasta ? cz.get(l.antigravs[0].id).reaktor : cz.get(l.habitat.buildings[0].id).wiezowiec;
   // AGENT: szyja to drąg: wytrzymałość liczona z ciężaru głowy kruszy ją po nacięciu i głowa spada pionowo (pierwszy bieg). W grze zawias jest jawny (engine.addJoint, pirateBaseNeck.js), a tu szyja i szyb dostają zapas, a krater dalej usuwa węzły, więc nacięcie i przecięcie działają. Głowa zostaje zwykła i rozbija się przy uderzeniu.
   const mocS = o.mocSzyi, nzH = wz.start + wz.n, rP2 = Hs.ringR0 * Hs.ringR0;
   // Rdzeń szyi jako wnętrze ziarna (klasa + 6: fala go nie łamie, gięcie do zlomWewn) tylko przy wzmocnionej szyi. Szyja bez wzmocnienia (demo B1R) pęka
@@ -535,7 +547,7 @@ export function scenaB1(oo = {}) {
   const mocny = (w, i) => w.pos[3 * i] ** 2 + w.pos[3 * i + 1] ** 2 < rP2;
   const poWypieku = (w) => {
     // Podest wieżowca: pomost liczy się tylko na własny ciężar, a ma przyjąć gruz. Bez tego góra przebija go i spada na planetoidę zamiast składać się na pomost.
-    for (const c of [cz.get('N-P'), cz.get('F-P')]) for (let i = c.start; i < c.start + c.n; i++) {
+    for (const c of [...new Set(podesty.map((d) => d.pomost))].map((id) => cz.get(id))) for (let i = c.start; i < c.start + c.n; i++) {
       const naPodescie = (q) => podesty.some((d) => Math.abs(w.pos[3 * q] - d.x) <= d.pw && Math.abs(w.pos[3 * q + 1] - d.y) <= d.pd);
       if (!naPodescie(i)) continue;
       for (let d = 0; d < ND; d++) {
@@ -574,7 +586,7 @@ export function scenaB1(oo = {}) {
     gpu: { zerujL: false, kratery: pl.kratery, puscKotwiceF: pl.puscKotwiceF },
     czesci,
     // Promienie kół habitatu jak ustawKola w wGrze.js: obraz kawałków dociąga do nich narożniki części z bitem koła (kawalki.js, opcje.kola).
-    kola: [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.innerR - Hs.innerW, Hs.innerR, Hs.ringR1, Hs.drumR - Hs.wall, Hs.drumR, Hs.tier2R, Hs.tier1R, Hs.discR],
+    kola: kolaHabitatu(Hs),
     wezlySzybu: wSzyb,
     // Pola jak plan miasta: pokaz.js bierze stąd tony części, kamerę z bliska i statBazy.
     miasto: {
@@ -584,9 +596,9 @@ export function scenaB1(oo = {}) {
       celBliska: [w1.x, w1.y, 0.5 * (w1.zB + w1.zD)],
       trafien: pl.kratery.length,
       budynkow: b.czesci.length,
-      // Skóra w demie (dema/woksele-zawalenia/skoraDema.js): wypiek starej bryły bez ćwiartek bębna, gdy woksele nie mają bębna; koła habitatu dla obrazu brył.
-      bezBebna: !!o.bezBebna,
-      kola: [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.innerR - Hs.innerW, Hs.innerR, Hs.ringR1, Hs.drumR - Hs.wall, Hs.drumR, Hs.tier2R, Hs.tier1R, Hs.discR],
+      // Skóra w demie (dema/woksele-zawalenia/skoraDema.js): wypiek starej bryły bez ćwiartek miasta, gdy woksele nie mają wieżowców; koła habitatu dla obrazu brył.
+      bezMiasta: !!o.bezMiasta,
+      kola: kolaHabitatu(Hs),
     },
     czasy: { indeksy: new Int32Array(0), t: new Float64Array(0), rozerwij: new Uint8Array(0), zostawZiarna: false },
   };

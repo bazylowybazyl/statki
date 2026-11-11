@@ -802,7 +802,7 @@ export const StoryGame = {
       defendersAlive() { return site.defenderList.filter((n) => !n.dead && n.hp > 0).length; },
       defendersKilled() { return site.defenderCount() - site.defendersAlive(); },
       buildingHpFrac() { const s = site.station; return s ? clamp01((s.hp || 0) / Math.max(1, s.maxHp || 1)) : 0; },
-      // Etapy finału habitatu (gra — pirateBaseIntegrity.habitatStages: wyłom, wieża, wieżowce); null — gra ich nie liczy
+      // Etapy finału habitatu (gra — pirateBaseIntegrity.habitatStages: wyłom, wieża, reaktory); null — gra ich nie liczy
       // (atrapa testów): habitat ginie od punktów.
       habitatStages() { return self.deps.baseStages ? self.deps.baseStages() : null; },
       buildingDestroyed() { const s = site.station; return !s || !!s._destroyed3D || s.hp <= 0; },
@@ -825,7 +825,7 @@ export const StoryGame = {
     const hp = { ...T.hp };
     if (Number(opts.dockHp) > 0) hp.habitat = { ...hp.habitat, hp: opts.dockHp, shield: Number(opts.dockShield) >= 0 ? opts.dockShield : hp.habitat.shield };
     const names = { habitat: 'Habitat piratów', fuel: 'Zbiorniki paliwa', warehouse: 'Magazyn piratów', piers: 'Pomosty bazy' };
-    for (const h of l.highrises || []) names[h.structure] = h.label.charAt(0).toUpperCase() + h.label.slice(1);
+    for (const h of l.antigravs || []) names[h.structure] = h.label.charAt(0).toUpperCase() + h.label.slice(1);
     const specs = {};
     for (const k of PIRATE_BASE_STRUCTURES) {
       // środek budowli: średnia środków pudeł jej kawałków (bez duchów)

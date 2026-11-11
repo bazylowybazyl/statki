@@ -8,8 +8,8 @@
 // ramion Y → TARAN rzędu okrętów przy ramieniu A → alarm: DRONY z hangarów habitatu (gracz odpala swoje — Z),
 // ZEGAR STARTÓW (kilkanaście okrętów z załogą odchodzi od pomostów po kolei, w połowie rozgrzewania strzela ze
 // stanowiska; reszta stoi w remoncie, bez załogi) i SUPERCAPITAL HERSZTA z zatoki przy zbiornikach (66% — przyspiesza
-// starty, 33% — ucieka i ładuje skok; mostek = słaby punkt) → HABITAT (finał: bęben pęka, dysk mieszkalny i część
-// techniczna implodują, ogień idzie rurami) → podsumowanie w polu. Bez podpowiedzi: ZBIORNIKI PALIWA (P) wysadzone
+// starty, 33% — ucieka i ładuje skok; mostek = słaby punkt) → HABITAT (finał z etapów: wyłom w mieście, wieża pada na
+// wieżowce i przebija dysk, reaktory antygrawitacyjne — baza spada na planetoidę) → podsumowanie w polu. Bez podpowiedzi: ZBIORNIKI PALIWA (P) wysadzone
 // w dowolnej chwili zapalają rurociąg — reakcja łańcuchowa niszczy okręty w stanowiskach (decyzja użytkownika).
 // Dalej misja 2 „Odwet” (mission02.js) — kampania: src/game/story/campaign.js.
 //
@@ -60,7 +60,7 @@ export const MISSION01_HINTS = Object.freeze({
   drones: { keys: ['Z'], title: 'Drony piratów', text: 'Z habitatu wystartowały drony. Z — wypuść myśliwce z hangarów Atlasa: same wybierają drony i okręty wroga; drugie Z — atak, trzecie — powrót. Obrona punktowa (CIWS) też je zestrzeliwuje.' },
   weapons: { keys: ['LPM', 'T', '1', '2', '3'], title: 'Broń', text: 'Działa burtowe strzelają same do wszystkiego w zasięgu. LPM — salwa baterii głównej w kursor (komputer wyprzedza cel przy kursorze), T — cel priorytetowy dla całego okrętu (trzymaj T i przeciągnij kursor po wrogach — kilka naraz; rakiety same biorą to, co strzela do ciebie), 1–3 — która grupa jest w ręku.' },
   bridge: { keys: ['LPM', '2'], title: 'Słaby punkt', text: 'MOSTEK supercapitala jest oznaczony. Zniszczony mostek = okręt bez dowodzenia: dryfuje i nie walczy. Bateria główna w ręku (2) i salwy LPM prosto w mostek — gdy pole tarczy zgaśnie albo pęknie.' },
-  builtin: { keys: ['4', 'F'], title: 'Habitat', text: 'Habitat to otwarty bęben — ściana, grodzie i szyb. 4 — Hexlance przebija go na wylot; szarża F wgniata ścianę. Zniszczony bęben pociągnie za sobą dysk mieszkalny pod spodem.' }
+  builtin: { keys: ['4', 'F'], title: 'Habitat', text: 'Habitat to miasto wieżowców wokół wieży. 4 — Hexlance przebija wieżowce na wylot; szarża F toruje drogę do podstawy wieży. Trafiona wieża runie na miasto i przebije dysk pod nim. Bazę nad planetoidą trzymają dwa reaktory antygrawitacyjne na pomostach.' }
 });
 
 // Fazy misji 1 w kolejności (część kampanii — src/game/story/campaign.js).
@@ -278,23 +278,24 @@ export async function mission01(ctx) {
     await sub.until(() => site.structureDestroyed('piers'));
     api.site.collapse?.(site, 'piers');
   });
-  // wieżowce na pomostach (2026-11-03): etap finału habitatu — padły, kawałek pęka z wybuchem
-  const highrises = site.dock?.layout?.highrises || [];
-  for (const [i, h] of highrises.entries()) {
+  // reaktory antygrawitacyjne na pomostach (2026-11-11, w miejscu dawnych wieżowców): etap finału habitatu — padły,
+  // kawałek pęka z wybuchem
+  const reactors = site.dock?.layout?.antigravs || [];
+  for (const [i, h] of reactors.entries()) {
     ctx.spawn(async (sub) => {
       await sub.until(() => site.structureDestroyed(h.structure));
       if (site.chain.habitat) return;
       api.site.collapse?.(site, h.structure);
-      api.ui.target(`highrise-${i}`, null);
-      const left = highrises.filter((q) => !site.structureDestroyed(q.structure)).length;
-      api.ui.banner(left > 0 ? `WIEŻOWIEC ZNISZCZONY · ZOSTAŁO ${left}` : 'WIEŻOWCE ZNISZCZONE', 2.4);
+      api.ui.target(`antigrav-${i}`, null);
+      const left = reactors.filter((q) => !site.structureDestroyed(q.structure)).length;
+      api.ui.banner(left > 0 ? `REAKTOR ANTYGRAWITACYJNY ZNISZCZONY · ZOSTAŁ ${left}` : 'REAKTORY ANTYGRAWITACYJNE ZNISZCZONE', 2.4);
     });
   }
   let chainDone = false;
   ctx.spawn(async (sub) => {
     await sub.until(() => site.buildingDestroyed());
     api.ui.target('yard', null);
-    highrises.forEach((h, i) => api.ui.target(`highrise-${i}`, null));
+    reactors.forEach((h, i) => api.ui.target(`antigrav-${i}`, null));
     // podsumowanie po upadku i ogniu w rurach, jeśli biegnie od zbiorników; misja pominięta — bez czekania
     await api.site.chainExplosion(site, { waitFuel: run('aftermath') });
     api.say(D.shipyardDown, 'radio');
@@ -543,17 +544,17 @@ export async function mission01(ctx) {
   if (run('shipyard')) {
     if (!site.buildingDestroyed()) {
       api.ui.target('yard', site.station, 'Habitat piratów', { radius: site.buildingRadius, primary: true });
-      // etapy finału (gra): wyłom w bębnie, zwalona wieża, wieżowce — w dowolnej kolejności; bez etapów (atrapa) — punkty
+      // etapy finału (gra): wyłom w mieście, zwalona wieża, reaktory — w dowolnej kolejności; bez etapów (atrapa) — punkty
       const stages = site.habitatStages();
       if (stages) {
-        highrises.forEach((h, i) => {
-          if (!site.structureDestroyed(h.structure)) api.ui.target(`highrise-${i}`, site.structures[h.structure], h.label.charAt(0).toUpperCase() + h.label.slice(1), { group: 'Wieżowce' });
+        reactors.forEach((h, i) => {
+          if (!site.structureDestroyed(h.structure)) api.ui.target(`antigrav-${i}`, site.structures[h.structure], h.label.charAt(0).toUpperCase() + h.label.slice(1), { group: 'Reaktory' });
         });
         const mark = (done) => (done ? '✓' : '—');
-        api.ui.objective('yard', 'Zniszcz habitat: wyłom w bębnie, szyb pod wieżą (zwal ją), wieżowce na pomostach — broń wbudowana (4) albo taran', () => {
+        api.ui.objective('yard', 'Zniszcz habitat: wyłom w mieście, podstawa wieży (zwal ją na wieżowce), reaktory antygrawitacyjne na pomostach — broń wbudowana (4) albo taran', () => {
           const s = site.habitatStages();
           if (!s) return '';
-          return `wyłom ${s.breach}/${s.breachNeed} · wieża ${mark(s.tower)} · wieżowce ${s.highrises}/${s.highrisesTotal}`;
+          return `wyłom ${s.breach}/${s.breachNeed} · wieża ${mark(s.tower)} · reaktory ${s.reactors}/${s.reactorsTotal}`;
         });
         hint('builtin', () => (site.habitatStages()?.done || 0) > 0 || site.buildingDestroyed());
       } else {

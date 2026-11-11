@@ -443,7 +443,7 @@ test('wejście gry: kawałki budowli — bryły trafień (bez odpadłych), ruszo
   assert.equal(out[GAS_OBST_IN.boxes], n - dock.hitShapes.filter((h) => h.chunk === touchedChunk).length);
 });
 
-test('wejście gry: bryły bazy piratów — wycinki pierścienia bębna i koła (szyb, zbiorniki) pokryte pudłami bez szpar, nadmiar ≤ 5% bryły', async () => {
+test('wejście gry: bryły bazy piratów — koła (podstawa wieży, zbiorniki) pokryte pudłami bez szpar, nadmiar ≤ 5% bryły; wieżowce miasta po jednym pudle', async () => {
   const { placePirateBase } = await import('../src/game/story/pirateBaseSite.js');
   const place = placePirateBase({ x: 6.1e6, y: 2.2e6 }, 0.7);
   const adapter = { shapes: place.hitShapes, status: () => 1, feet: () => {} };
@@ -470,11 +470,11 @@ test('wejście gry: bryły bazy piratów — wycinki pierścienia bębna i koła
     }
     return d;
   };
-  const kinds = { bęben: 0, koło: 0 };
+  const kinds = { miasto: 0, koło: 0 };
   const r = rng(11);
   for (const hs of place.hitShapes) {
-    if (hs.pts.length === 4) continue;
-    kinds[/^H-[ESWN]$/.test(hs.chunk) ? 'bęben' : 'koło']++;
+    if (hs.pts.length === 4) { if (/^H-[ESWN]$/.test(hs.chunk)) kinds.miasto++; continue; }
+    kinds.koło++;
     const size = Math.max(hs.x1 - hs.x0, hs.y1 - hs.y0);
     for (let t = 0; t < 1500; t++) {
       const x = hs.x0 + (r.next() * 1.3 - 0.15) * (hs.x1 - hs.x0), y = hs.y0 + (r.next() * 1.3 - 0.15) * (hs.y1 - hs.y0);
@@ -487,7 +487,7 @@ test('wejście gry: bryły bazy piratów — wycinki pierścienia bębna i koła
       }
     }
   }
-  assert.deepEqual(kinds, { bęben: 4, koło: 4 }, 'cztery ćwiartki bębna, szyb i trzy zbiorniki');
+  assert.deepEqual(kinds, { miasto: 24, koło: 4 }, '24 wieżowce miasta (prostokąty), podstawa wieży i trzy zbiorniki (koła)');
 });
 
 test('wejście gry: kadłuby tylko przy domenach gazu (bez domen nic), klucz rodu, uid i wersja maski, prędkości i ω', () => {

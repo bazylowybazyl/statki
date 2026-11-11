@@ -46,7 +46,7 @@ function vertexBuffers(geometry) {
 // bloki 10 × 10 komórek) dawał 1–6 odłamów i warunki „odłamy ≥ 3” padały w ~15% rozbić — niezależnie od obciążenia.
 // Ziarno TYLKO na czas rozpadu: ten sam strumień zużywają uuid obiektów three.js, a ich liczba zależy od budżetów ms
 // renderu w poprzednich testach. LCG jak withSeededRandom w tests/helpers/beamShotHarness.mjs (tamten moduł ciągnie
-// index.html); ziarno 1: pomost YA-1 — 6 odłamów, wieżowiec W-1 — 7.
+// index.html); ziarno 1: pomost YA-1 — 6 odłamów, reaktor AG-1 (do 2026-11-11 wieżowiec W-1 — 7).
 function withSeededRandom(seed, fn) {
   const saved = Math.random;
   let s = seed >>> 0;
@@ -75,15 +75,15 @@ test('wariant „skin”: graf budowli buduje się w BG i FG, w limitach WebGPU,
 });
 
 test('wypiek: wszystkie bryły grupy kawałka (pudła, walce, stożki, lampy), komórki właściciela w kratownicy, podział wg rodzaju', () => {
-  const r = pirateBaseChunkRaster(layout, base.scene, 'W-1');
-  assert.ok(r, 'raster wieżowca');
+  const r = pirateBaseChunkRaster(layout, base.scene, 'AG-1');
+  assert.ok(r, 'raster reaktora');
   // ciało jak w worldBodies._buildPiece (kotwica środka obrazu — z prawdziwego kadłuba)
   const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } };
   const hull = HullBodies.createHull(e, r.image, { cellPx: WORLD_BODY_TUNE.cellSize / r.upp, anchored: true });
   const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
   const lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
   HullBodies.release(e);
-  const group = layout.chunkById.get('W-1').group;
+  const group = layout.chunkById.get('AG-1').group;
   // bryły grupy w scenie: stożki (kolce) i lampy (materiał świecący) też mają być w skórze
   let cones = 0, lamps = 0;
   for (const set of ['bg', 'fg']) {
@@ -381,7 +381,7 @@ test('partia skór w klatce: odłamy w partii, rysunki i macierz model-widok z h
   const { Core3D } = await import('../src/3d/core3d.js');
   const { WorldSkinStore, WORLD_SKIN_SLOT_VEC4, WS, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { skin, frags } = lostPieceSource(W3, 'W-1');
+  const { skin, frags } = lostPieceSource(W3, 'AG-1');
   requireFrags(W3, frags, 2);
   const sets = ['bg', 'fg'].filter((s) => skin[s]);
   try {
@@ -461,7 +461,7 @@ test('partia skór w workerze: odłam bez stanu węzłów lustra czeka na węzł
   const { Core3D } = await import('../src/3d/core3d.js');
   const { SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { frags } = lostPieceSource(W3, 'W-1');
+  const { frags } = lostPieceSource(W3, 'AG-1');
   requireFrags(W3, frags, 3);
   // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia i
   // `activeNodes`, `active` puste); frags[1] — ciało gry bez komórek w kratownicy (bez flagi lustra): własne siatki jak dotąd
@@ -510,7 +510,7 @@ test('worker: odłam bez stanu węzłów lustra jest schowany i czeka na węzły
   const W3 = await import('../src/3d/worldBodies3D.js');
   const { Core3D } = await import('../src/3d/core3d.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { skin, frags } = lostPieceSource(W3, 'W-1');
+  const { skin, frags } = lostPieceSource(W3, 'AG-1');
   requireFrags(W3, frags, 3);
   const sets = ['bg', 'fg'].filter((s) => skin[s]);
   // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia
@@ -562,7 +562,7 @@ test('ukryty dostawca (soczewka skoku, mgła) utrzymuje egzemplarze dłużej ni�
   const { Core3D } = await import('../src/3d/core3d.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
   const state = { hidden: false };
-  const { frags } = lostPieceSource(W3, 'W-1', state);
+  const { frags } = lostPieceSource(W3, 'AG-1', state);
   const S = W3.WORLD_SKIN_STATS, O = W3.WORLD_SKIN_OPTIONS;
   try {
     // wszystkie rysowane, kolejka podzbiorów do końca (stan, nie stała liczba klatek — budżet SUBSET_MS na klatkę)

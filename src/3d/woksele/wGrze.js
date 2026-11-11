@@ -13,7 +13,7 @@ import { WYS_BOK, createWokseleSolver, GINIE_BOK } from './solver.js';
 import { createWokseleObraz } from './obraz.js';
 import { OPCJE_PYLU } from './pyl.js';
 import { PARAMETRY } from './budowa.js';
-import { POJEMNOSC_BAZY } from './scenaBazy.js';
+import { POJEMNOSC_BAZY, kolaHabitatu } from './scenaBazy.js';
 import { createGrupyGry } from './grupyGry.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { sunShadowUniforms } from '../sunShadowMask.js';
@@ -74,7 +74,7 @@ export function createWokseleGry({ Core3D }) {
     proba: 0, gotowe: false, aktywny: false, ukryty: false, soczewka: false, slonce: false,
     px: 0, py: 0, os: 0, cOs: 1, sOs: 0, krok: 0, akum: 0, przepadlo: 0, klatek: 0, klatekZn: 0, trafien: 0, kraterow: 0, kadr: true, obrazWKadrze: false,
     srodekX: 0, srodekY: 0, zasieg: 0, skoraCzeka: null, cullingWypieku: null, szyjaCieta: false, upadekT: -1, zgaszony: false,
-    skalaOk: false, skalaC: [0, 0, 0], skalaR: 0, odczytT: 0, czytam: false, uderzen: 0, krateryN: 0, kubX0: 0, kubY0: 0, glebRuin: 0, zegarKrok: 0, wysX0: 0, wysY0: 0,
+    puscCzesci: [], skalaOk: false, skalaC: [0, 0, 0], skalaR: 0, odczytT: 0, czytam: false, uderzen: 0, krateryN: 0, kubX0: 0, kubY0: 0, glebRuin: 0, zegarKrok: 0, wysX0: 0, wysY0: 0,
   };
   const hity = [];
   const slabe = new Map();
@@ -188,8 +188,7 @@ export function createWokseleGry({ Core3D }) {
       const uU = solver.uniformy;
       if (uU.uFalaV2.value < 1e29) uU.uLepV2.value = Math.max(uU.uLepV2.value, uU.uFalaV2.value);
       obraz.wczytaj(w, { rDysk, poklad, pyl: OPCJE_PYLU.B1, lod: LOD, budynki: miasto?.budynki ?? null });
-      const Hk = l.habitat;
-      obraz.ustawKola([Hk.neckR, Hk.coreR, Hk.headR, Hk.ringR0, Hk.innerR - Hk.innerW, Hk.innerR, Hk.ringR1, Hk.drumR - Hk.wall, Hk.drumR, Hk.tier2R, Hk.tier1R, Hk.discR]);
+      obraz.ustawKola(kolaHabitatu(l.habitat));
       solver.ustawPlan({ ...g, kratery: [], puscKotwiceF: -1 });
       obraz.uAoMoc.value = 0;
       ginieStare.fill(0);
@@ -440,6 +439,8 @@ export function createWokseleGry({ Core3D }) {
       s.solver.puscCzesc(renderer, stan.wiezaPusc);
       stan.wiezaPusc = null;
     }
+    // Wieżowce ćwiartki, na którą padła wieża (voxBreak z flagą zgniotu): tracą kotwice całe, jak części w fali upadku.
+    while (stan.puscCzesci.length) s.solver.puscCzesc(renderer, stan.puscCzesci.shift());
     // Fala puszczania kotwic od habitatu: środek uderza pierwszy, końce pomostów kilka sekund później, każda część w całości.
     if (stan.upadekT >= FALA_START_S && !stan.falaKoniec) {
       const cz = s.czesci;
@@ -515,6 +516,7 @@ export function createWokseleGry({ Core3D }) {
       stan.aktywny = false;
       stan.slonce = false;
       stan.szyjaCieta = false;
+      stan.puscCzesci.length = 0;
       stan.upadekT = -1;
       stan.zgaszony = false;
       stan.odczytT = 0;
@@ -614,7 +616,7 @@ export function createWokseleGry({ Core3D }) {
       }
     },
 
-    /** Zdarzenia z gry: voxHit (x, y, obrażenia), voxBreak (id kawałka), voxNeck (kierunek upadku), voxFall (kierunek upadku albo nic). */
+    /** Zdarzenia z gry: voxHit (x, y, obrażenia), voxBreak (id kawałka, 1 = zgniot pod wieżą), voxNeck (kierunek upadku), voxFall (kierunek upadku albo nic). */
     zdarzenie(typ, a, b, c) {
       if (!stan.gotowe) return;
       if (stan.zgaszony) return;
@@ -639,11 +641,21 @@ export function createWokseleGry({ Core3D }) {
       if (typ === 'voxBreak') {
         // W locie nic się nie tnie (uwaga użytkownika 2026-11-07: „sam fakt, że leci, nie powinien sprawiać, że się rozczłonkowuje”): bryła rozbija się dopiero, gdy w coś uderzy. Kratery ćwiartek bębna przy HP 0 rozbijały go, zanim ruszył.
         if (stan.upadekT >= 0) return;
-        const lista = s.grupy.kawalek(String(a));
-        if (!lista.length) return;
+        // b > 0: zgniot. Wieża położyła się na ćwiartce miasta (index.html, _neckCtx.onImpact): jej wieżowce tracą kotwice i lecą z wieżą przez wycięte sektory dysku.
+        // Bez tego ich dolne warstwy zostają w powietrzu jako nieruchome płyty i wieża na nich leży (prośba użytkownika 2026-11-11: „przebije dolną warstwę”).
+        const zgniot = Number(b) > 0;
+        const lista = s.grupy.kawalek(String(a), zgniot);
+        const nazwy = zgniot ? s.grupy.czesciZgniotu(String(a)) : [];
+        if (!lista.length && !nazwy.length) return;
         aktywuj();
-        stan.kraterow += lista.length;
-        s.solver.dodajKratery(lista);
+        for (const nazwa of nazwy) {
+          const cz = s.czesci.find((c) => c.nazwa === nazwa);
+          if (cz) stan.puscCzesci.push(cz);
+        }
+        if (lista.length) {
+          stan.kraterow += lista.length;
+          s.solver.dodajKratery(lista);
+        }
         return;
       }
       if (typ === 'voxNeck' || typ === 'voxFall') {

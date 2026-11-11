@@ -37,7 +37,7 @@ test('moduły z układu: bęben, szyb, wieża, dysk, magazyn — objętości dod
   assert.ok(mods.find((m) => m.id === 'H-T').z > 1000);
 });
 
-test('pęknięcie ćwiartki bębna: gwałtownie, potem słabnie, koniec po kilku–kilkunastu s; nie wieje drugi raz', () => {
+test('pęknięcie ćwiartki miasta: gwałtownie, potem słabnie, koniec po kilku–kilkunastu s; nie wieje drugi raz', () => {
   fresh();
   const id = noteBaseChunkBreak('H-E', null, {});
   assert.ok(id > 0);

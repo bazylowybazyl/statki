@@ -11,7 +11,7 @@
 //   kawałków bębna i rdzenia przed / po.
 // magazyn — jak ostrzał, ale magazyn (2 kawałki, 4 progi).
 // etapy — finał habitatu z etapów (2026-11-03): ostrzał habitatu do wyłomu i zwalonej wieży, potem obu wieżowców
-//   (highrise1, highrise2); czy habitat padł sam, etapy i punkty po każdym kroku, pipeline'y synchroniczne.
+//   (antigrav1, antigrav2); czy habitat padł sam, etapy i punkty po każdym kroku, pipeline'y synchroniczne.
 // szyja — scenariusz szyi habitatu (src/game/story/pirateBaseNeck.js, audyt destruktora 2026-10-14 R8): Atlas z prawej
 //   strony ekranu (kurs w lewo) w szarży F + W w szyb habitatu → zerwanie szyi, głowa spada w prawo na dysk mieszkalny;
 //   kadry zerwania / spadku / lądowania, położenie głowy, punkty habitatu, pipeline'y synchroniczne w klatkach gry.
@@ -151,7 +151,7 @@ async function etapy() {
   await ev(GUARD);
   const t0 = await ev('performance.now()');
   const stages = () => ev(`(() => { const s = window.StoryGame.site.habitatStages(); const h = window.StoryGame.site.station;
-    return s ? { wylom: s.breach, wieza: s.tower, wiezowce: s.highrises, zostalo: +(s.left * 100).toFixed(0), hp: Math.round(h.hp), zniszczony: !!h._destroyed3D } : null; })()`);
+    return s ? { wylom: s.breach, wieza: s.tower, reaktory: s.reactors, zostalo: +(s.left * 100).toFixed(0), hp: Math.round(h.hp), zniszczony: !!h._destroyed3D } : null; })()`);
   const wynik = { start: await stages() };
   console.log('etapy start', JSON.stringify(wynik.start));
   wynik.habitat = await ogien('habitat', { stop: '(window.StoryGame.site.habitatStages()?.done || 0) >= 2' });
@@ -159,7 +159,7 @@ async function etapy() {
   console.log('etapy po habitacie', JSON.stringify(wynik.poHabitacie));
   await sleep(6000);   // wieża się przewraca
   await shot('etapy-wieza');
-  for (const k of ['highrise1', 'highrise2']) {
+  for (const k of ['antigrav1', 'antigrav2']) {
     wynik[k] = await ogien(k);
     wynik[`po-${k}`] = await stages();
     console.log('etapy po', k, JSON.stringify(wynik[`po-${k}`]));

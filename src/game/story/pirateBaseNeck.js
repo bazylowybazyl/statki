@@ -127,6 +127,35 @@ export function piecePinCount(piece) {
 
 const pieceOf = (site, id) => site?.pieces?.find((p) => p.id === id) || null;
 
+/**
+ * Wieża pada na STOJĄCE wieżowce (prośba użytkownika 2026-11-11: „gracz przestrzeli wieżowce z jakiejś strony i walnie
+ * w wieżę — wieża upadnie na wieżowce i przebije dolną warstwę”): znak kierunku upadku (hx, hz — kierunek w układzie
+ * bazy). −1 = odwróć: ćwiartka miasta po stronie upadku już leży (wyłom), a przeciwna stoi; inaczej 1 (kierunek z taranu
+ * albo strzałów zostaje — także gdy obie stoją albo obie leżą). isDown(id) → ćwiartka pęknięta / schowana.
+ */
+export function towerFallSign(layout, hx, hz, isDown) {
+  const H = layout?.habitat;
+  if (!H?.quadrantAt || typeof isDown !== 'function') return 1;
+  const a = Math.atan2(hz, hx);
+  return isDown(H.quadrantAt(a)) && !isDown(H.quadrantAt(a + Math.PI)) ? -1 : 1;
+}
+
+/**
+ * Co wieża miażdży przy uderzeniu: ćwiartka miasta po stronie upadku i sektory dysku mieszkalnego pod torem wieży
+ * (sektor pod kierunkiem upadku i sąsiad od strony, na którą kierunek się odchyla). dir — { x, z } kierunek upadku
+ * w układzie bazy. Zwraca { quadrant, sectors: ['D-k', …] }.
+ */
+export function towerCrushChunks(layout, dir) {
+  const H = layout.habitat;
+  const a = Math.atan2(dir.z, dir.x);
+  const n = H.discSectors;
+  const step = (Math.PI * 2) / n;
+  const k = Math.round(a / step);
+  const side = a - k * step >= 0 ? 1 : -1;
+  const id = (i) => `D-${((i % n) + n) % n + 1}`;
+  return { quadrant: H.quadrantAt(a), sectors: [id(k), id(k + side)] };
+}
+
 // Najniższa wysokość żywych węzłów ciała 3D (świat silnika) — nasada wieży.
 function bodyBottomZ(body) {
   const s = body.nodeStore, q = body.quat;
@@ -145,7 +174,8 @@ function bodyBottomZ(body) {
  * Zerwanie szyi: kotwice wieży puszczają, przegub w nasadzie, przechył startowy ku stronie upadku. Wołane przez
  * stepNeck albo wprost (dev, próg punktów). dirX, dirY — kierunek taranu w grze (wieża pada przeciwnie), speed —
  * prędkość taranującego. ctx: { worldBodies, engine (silnik belek — addJoint), layout, habitat: { x, y } (środek
- * w grze), simTime, onSnap(st) }. Zwraca true = zerwana.
+ * w grze), simTime, onSnap(st), pickFall(fx, fy) → { x, y } | null — klej gry może odwrócić kierunek upadku (wieża
+ * pada na stojące wieżowce — towerFallSign) }. Zwraca true = zerwana.
  */
 export function snapNeck(st, site, ctx, dirX, dirY, speed) {
   if (!st || st.phase !== 'attached' || !site) return false;
@@ -161,6 +191,11 @@ export function snapNeck(st, site, ctx, dirX, dirY, speed) {
   st.dirX = ux; st.dirY = uy; st.speed = v;
   // podcięta u dołu wieża przewraca się ku stronie, z której przyszedł taran
   st.fallX = -ux; st.fallY = -uy;
+  const pick = typeof ctx.pickFall === 'function' ? ctx.pickFall(st.fallX, st.fallY) : null;
+  if (pick && Number.isFinite(pick.x) && Number.isFinite(pick.y) && (pick.x !== 0 || pick.y !== 0)) {
+    const pl = Math.sqrt(pick.x * pick.x + pick.y * pick.y);
+    st.fallX = pick.x / pl; st.fallY = pick.y / pl;
+  }
   const wrecks = wb.detachPiece(head, {});
   if (!wrecks.length) return false;
   let tower = wrecks[0];

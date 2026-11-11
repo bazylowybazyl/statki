@@ -45,37 +45,73 @@ test('dryDockSegmentHit: najbliższa bryła mimo kolejności, skip, punkt na lic
   assert.equal(dryDockSegmentHit([near], 0, 0, 500, 0, out), out);
 });
 
-test('dryDockSegmentHit: wycinek pierścienia bazy trafia wielokąt, nie obwiednię', () => {
+test('miasto habitatu (2026-11-11): wieżowce na siatce wokseli, bryły trafień to ich prostokąty, ulica między nimi wolna', () => {
   const place = placePirateBase({ x: 0, y: 0 }, 0);
-  for (const qd of L.habitat.quadrants) {
-    const sh = place.hitShapes.find((h) => h.chunk === qd.id);
-    assert.ok(sh && sh.pts.length > 4, `${qd.id}: wielokąt`);
-    const hub = (x, z) => place.toGame(x, z, {});
-    const c = hub(0, 0);
-    let rMin = Infinity;
-    for (const p of sh.pts) rMin = Math.min(rMin, Math.hypot(p.x - c.x, p.y - c.y));
-    // we wcięciu: na osi wycinka, tuż przed wewnętrznym łukiem. W obwiedni, poza wielokątem.
-    const a = (qd.a0 + qd.a1) / 2;
-    const r = rMin * 0.9;
-    const ca = Math.cos(a), sa = Math.sin(a);
-    const m = hub(r * ca, r * sa);
-    assert.ok(m.x > sh.x0 && m.x < sh.x1 && m.y > sh.y0 && m.y < sh.y1, `${qd.id}: punkt w obwiedni`);
-    const p0 = hub(r * ca - sa * 30, r * sa + ca * 30);
-    const p1 = hub(r * ca + sa * 30, r * sa - ca * 30);
-    assert.equal(dryDockSegmentHit([sh], p0.x, p0.y, p1.x, p1.y), null, `${qd.id}: odcinek we wcięciu`);
-    // kontrola: ten sam punkt, odcinek na zewnątrz, wchodzi w wycinek na wewnętrznym łuku
-    const o = hub(rMin * 1.5 * ca, rMin * 1.5 * sa);
-    const hit = dryDockSegmentHit([sh], m.x, m.y, o.x, o.y);
-    assert.equal(hit?.chunk, qd.id, `${qd.id}: odcinek na zewnątrz`);
-    assert.ok(Math.abs(Math.hypot(hit.x - c.x, hit.y - c.y) - rMin) < rMin * 0.02, `${qd.id}: wejście na łuku`);
+  const H = L.habitat;
+  const G = L.spec.city.grid;
+  assert.equal(H.buildings.length, 24);
+  const boxOf = (b) => { const hx = (b.ux ? b.w : b.d) / 2, hz = (b.ux ? b.d : b.w) / 2; return { x0: b.x - hx, x1: b.x + hx, z0: b.z - hz, z1: b.z + hz }; };
+  for (const qd of H.quadrants) {
+    const mine = H.buildings.filter((b) => b.chunk === qd.id);
+    assert.equal(mine.length, 6, `${qd.id}: sześć wieżowców`);
+    assert.equal(mine.filter((b) => b.ring === 0).length, 3, `${qd.id}: trzy w pierścieniu wewnętrznym`);
+    const shapes = place.hitShapes.filter((h) => h.chunk === qd.id);
+    assert.equal(shapes.length, 6, `${qd.id}: bryła trafień na wieżowiec`);
+    for (const sh of shapes) assert.equal(sh.pts.length, 4);
+    assert.equal(L.chunkById.get(qd.id).kind, 'city');
   }
+  for (const b of H.buildings) {
+    const q = boxOf(b);
+    // boki na siatce komórek wokseli (ściana komórki = wielokrotność G przesunięta o pół komórki)
+    for (const v of [q.x0, q.x1, q.z0, q.z1]) assert.ok(Math.abs((v / G - 0.5) - Math.round(v / G - 0.5)) < 1e-9, `${b.id}: bok ${v} na siatce`);
+    // poza podstawą wieży i cokołem, w obrębie miasta
+    const near = Math.hypot(Math.max(q.x0, Math.min(0, q.x1)), Math.max(q.z0, Math.min(0, q.z1)));
+    assert.ok(near > H.stemR + 40, `${b.id}: ${near} od osi`);
+    for (const [x, z] of [[q.x0, q.z0], [q.x1, q.z0], [q.x1, q.z1], [q.x0, q.z1]]) assert.ok(Math.hypot(x, z) <= H.drumR, `${b.id}: róg w mieście`);
+    assert.ok(b.baseY < -500 && b.roofY > b.fgY + 200, `${b.id}: od tarasu dysku ponad granicę FG`);
+  }
+  for (let i = 0; i < H.buildings.length; i++) for (let j = i + 1; j < H.buildings.length; j++) {
+    const a = boxOf(H.buildings[i]), b = boxOf(H.buildings[j]);
+    const gap = Math.max(Math.max(a.x0 - b.x1, b.x0 - a.x1), Math.max(a.z0 - b.z1, b.z0 - a.z1));
+    assert.ok(gap >= G, `${H.buildings[i].id} × ${H.buildings[j].id}: odstęp ${gap}`);
+  }
+  // odcinek z zewnątrz do środka wieżowca trafia jego ćwiartkę na ścianie; krótki odcinek na placu przy wieży — nic
+  const habShapes = place.hitShapes.filter((h) => h.structure === 'habitat');
+  for (const b of H.buildings) {
+    const g = place.toGame(b.x, b.z, {});
+    const o = place.toGame(b.x * 2.2, b.z * 2.2, {});
+    const hit = dryDockSegmentHit(habShapes, o.x, o.y, g.x, g.y);
+    assert.ok(hit && hit.chunk.startsWith('H-') && hit.chunk !== 'H-C', `${b.id}: trafienie w miasto`);
+  }
+  const r = (H.coreR + H.stemR) / 2;
+  const p0 = place.toGame(r, -60, {}), p1 = place.toGame(r, 60, {});
+  assert.equal(dryDockSegmentHit(habShapes, p0.x, p0.y, p1.x, p1.y), null, 'plac przy wieży wolny');
+});
+
+test('wieża zasłonięta z każdej strony: strzał z zewnątrz w podstawę wieży zawsze przechodzi przez wieżowiec', () => {
+  const place = placePirateBase({ x: 0, y: 0 }, 0);
+  const H = L.habitat;
+  const city = place.hitShapes.filter((h) => h.structure === 'habitat' && h.chunk !== 'H-C');
+  let open = 0;
+  for (let ai = 0; ai < 720; ai++) {
+    const a = (ai / 720) * Math.PI * 2;
+    const dx = Math.cos(a), dz = Math.sin(a);
+    for (let oi = -12; oi <= 12; oi++) {
+      const off = (oi / 12) * H.coreR * 0.98;
+      const t = Math.sqrt(H.coreR * H.coreR - off * off);
+      const s = place.toGame(-dz * off - dx * 4000, dx * off - dz * 4000, {});
+      const e = place.toGame(-dz * off - dx * t, dx * off - dz * t, {});
+      if (!dryDockSegmentHit(city, s.x, s.y, e.x, e.y)) open++;
+    }
+  }
+  assert.equal(open, 0, `${open} torów do wieży bez wieżowca po drodze`);
 });
 
 test('układ bazy: kawałki w limicie grup, budowle, stanowiska z załogą i herszt', () => {
   assert.ok(L.chunks.length + 1 <= PB_MAX_GROUPS, `${L.chunks.length} kawałków`);
   const all = Object.values(L.structures).flat();
   assert.equal(all.length, L.chunks.length, 'każdy kawałek należy do jednej budowli');
-  assert.deepEqual(Object.keys(L.structures).sort(), ['fuel', 'habitat', 'highrise1', 'highrise2', 'piers', 'warehouse']);
+  assert.deepEqual(Object.keys(L.structures).sort(), ['antigrav1', 'antigrav2', 'fuel', 'habitat', 'piers', 'warehouse']);
   assert.equal(L.berths.length, 48);
   assert.ok(L.berths.length <= 2 * PBASE_BERTH_BITS, 'lampki stanowisk mieszczą się w dwóch kanałach');
   assert.equal(L.berths.filter((b) => b.crew && !b.boss).length, PIRATE_BASE_CREWED.length);
@@ -98,7 +134,7 @@ test('okręty w stanowiskach nie nachodzą na siebie ani na bryły bazy', () => 
   for (const s of ships) {
     for (const h of L.hitSolids) {
       if (h.chunk.startsWith('H-')) {
-        assert.ok(s.poly.every((v) => Math.hypot(v.x, v.z) > L.habitat.drumR + 40), `${s.b.id} × bęben`);
+        assert.ok(s.poly.every((v) => Math.hypot(v.x, v.z) > L.habitat.drumR + 40), `${s.b.id} × miasto`);
         continue;
       }
       assert.ok(!overlap(s.poly, h.poly, 15), `${s.b.id} × ${h.chunk}`);
@@ -141,18 +177,18 @@ test('kotwice: każdy kawałek-ciało ma węzły przypięte w rastrze', () => {
   }
 });
 
-test('wieżowce (2026-11-03): osobne budowle okrakiem nad pomostem, poza torem taranu i trasami wyjazdu ze stanowisk', () => {
-  assert.equal(L.highrises.length, 2);
+test('reaktory antygrawitacyjne (2026-11-11, w miejscu wieżowców): osobne budowle okrakiem nad pomostem, poza torem taranu i trasami wyjazdu ze stanowisk', () => {
+  assert.equal(L.antigravs.length, 2);
   const rect = (ax, az, bx, bz, half) => {
     const l = Math.hypot(bx - ax, bz - az) || 1;
     const nx = -(bz - az) / l * half, nz = (bx - ax) / l * half;
     return [{ x: ax + nx, z: az + nz }, { x: bx + nx, z: bz + nz }, { x: bx - nx, z: bz - nz }, { x: ax - nx, z: az - nz }];
   };
   const ram = rect(L.ram.start.x, L.ram.start.z, L.ram.end.x, L.ram.end.z, 403 + 100);   // Atlas (szer. 806) + zapas
-  for (const h of L.highrises) {
+  for (const h of L.antigravs) {
     assert.deepEqual(L.structures[h.structure], [h.chunk], `${h.structure}: jeden kawałek`);
     const c = L.chunkById.get(h.chunk);
-    assert.equal(c.kind, 'highrise');
+    assert.equal(c.kind, 'antigrav');
     assert.ok(!c.ghost);
     const poly = L.hitSolids.find((s) => s.chunk === h.chunk)?.poly;
     assert.ok(poly, `${h.chunk}: bryła trafień`);
@@ -166,6 +202,10 @@ test('wieżowce (2026-11-03): osobne budowle okrakiem nad pomostem, poza torem t
       const a = { x: b.x, z: b.z };
       const e = { x: b.x + b.out.x * (b.length + 2600), z: b.z + b.out.z * (b.length + 2600) };
       assert.ok(!overlap(poly, rect(a.x, a.z, e.x, e.z, b.beam / 2), 10), `${h.chunk} × wyjazd ${b.id}`);
+    }
+    // pierścień pola i dzwon emitera mieszczą się nad / pod obudową z zapasem na pomost
+    assert.ok(h.ringR + 40 <= Math.max(h.w, h.d) / 2 + 80 && h.bellR <= h.d / 2, `${h.chunk}: pierścień i dzwon`);
+    {
     }
   }
 });

@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import { scenaB1, POJEMNOSC_BAZY } from '../src/3d/woksele/scenaBazy.js';
 import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
 import { KIND } from '../src/3d/woksele/scena.js';
+import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
+import { createGrupyGry } from '../src/3d/woksele/grupyGry.js';
+
+const L0 = createPirateBaseLayout({ id: 'B1' });
 
 const plany = { 40: scenaB1({ dx: 40 }), 80: scenaB1({ dx: 80 }) };
 
@@ -18,7 +22,7 @@ test('tabela węzłów: najwyżej 150 tys. przy dx = 40, wszystkie części z uk
     assert.equal(Math.log2(POJEMNOSC_BAZY[dx].nKom) % 1, 0);
   }
   assert.ok(plany[40].scena.n <= 150000);
-  for (const n of ['W-1', 'W-2', 'H-C + H-T', 'H-E, S, W, N', 'dysk D-1…8', 'Y-A', 'Y-B', 'N-P', 'F-P', 'D-G', 'M-P', 'P-S', 'P-P', 'P-1', 'P-2', 'P-3', 'P-M', 'M-1']) assert.ok(nazwy.includes(n), `brak części ${n}`);
+  for (const n of ['AG-1', 'AG-2', 'B-01', 'B-12', 'B-13', 'B-24', 'H-C + H-T', 'trzon', 'dysk D-1…8', 'Y-A', 'Y-B', 'N-P', 'F-P', 'D-G', 'M-P', 'P-S', 'P-P', 'P-1', 'P-2', 'P-3', 'P-M', 'M-1']) assert.ok(nazwy.includes(n), `brak części ${n}`);
 });
 
 test('budowa przy dx = 80: bez wiązań między częściami, bez wspólnych komórek, siatka ijk w 10 bitach, kotwice w dolnych warstwach i w dysku', () => {
@@ -71,33 +75,75 @@ test('szyja: wzmocniona (gra, mocSzyi 8) to wnętrze ziarna, bez wzmocnienia (de
   assert.ok(inne > 0, 'szyja bez wzmocnienia ma granice ziaren');
 });
 
-test('demo B1R: bez bębna i z grubszą szyją (prośba 2026-11-09), opcje domyślne (gra) z bębnem i szyją z układu', () => {
+test('miasto: 24 wieżowce jako osobne części na siatce układu; bezMiasta zostawia samą wieżę; szyjaR zmienia promień trzonu', () => {
   const nazwy = (p) => p.miasto.budynki.map((b) => b.nazwa);
-  const demo = scenaB1({ dx: 80, bezBebna: true, szyjaR: 200 });
-  assert.ok(nazwy(plany[80]).includes('H-E, S, W, N'));
-  assert.ok(!nazwy(demo).includes('H-E, S, W, N'));
-  // Szyja: węzły wieży w połowie jej wysokości (między szybem a talerzem), najdalszy od osi.
+  const gra = plany[80];
+  assert.equal(nazwy(gra).filter((n) => /^B-\d\d$/.test(n)).length, 24);
+  const bez = scenaB1({ dx: 80, bezMiasta: true });
+  assert.equal(nazwy(bez).filter((n) => /^B-/.test(n)).length, 0);
+  assert.equal(bez.miasto.bezMiasta, true);
+  assert.equal(gra.miasto.bezMiasta, false);
+  // Wieżowiec przy dx = 40 leży dokładnie w rzucie z układu (boki na ścianach komórek): skóra z wypieku starej bryły trafia w dachy.
+  const p40 = plany[40], pos = p40.scena.pos;
+  for (const h of L0.habitat.buildings) {
+    const c = p40.miasto.budynki.find((b) => b.nazwa === h.id);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let i = c.start; i < c.start + c.n; i++) { x0 = Math.min(x0, pos[3 * i]); x1 = Math.max(x1, pos[3 * i]); y0 = Math.min(y0, pos[3 * i + 1]); y1 = Math.max(y1, pos[3 * i + 1]); z1 = Math.max(z1, pos[3 * i + 2]); }
+    const hx = (h.ux ? h.w : h.d) / 2, hy = (h.ux ? h.d : h.w) / 2;
+    assert.deepEqual([x0 - 20, x1 + 20, y0 - 20, y1 + 20], [h.x - hx, h.x + hx, -h.z - hy, -h.z + hy], `${h.id}: rzut`);
+    assert.ok(z1 > 150, `${h.id}: sięga nad płaszczyznę gry`);
+  }
+  // Trzon wieży: węzły w połowie wysokości wieży, najdalszy od osi.
   const promienSzyi = (p) => {
-    const c = p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T'), pos = p.scena.pos;
-    let z0 = Infinity, z1 = -Infinity, rMax = 0;
-    for (let i = c.start; i < c.start + c.n; i++) { z0 = Math.min(z0, pos[3 * i + 2]); z1 = Math.max(z1, pos[3 * i + 2]); }
-    const zM = 0.5 * (z0 + z1);
-    for (let i = c.start; i < c.start + c.n; i++) if (Math.abs(pos[3 * i + 2] - zM) < 200) rMax = Math.max(rMax, Math.hypot(pos[3 * i], pos[3 * i + 1]));
+    const c = p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T'), q = p.scena.pos;
+    let z0 = Infinity, zG = -Infinity, rMax = 0;
+    for (let i = c.start; i < c.start + c.n; i++) { z0 = Math.min(z0, q[3 * i + 2]); zG = Math.max(zG, q[3 * i + 2]); }
+    const zM = 0.5 * (z0 + zG);
+    for (let i = c.start; i < c.start + c.n; i++) if (Math.abs(q[3 * i + 2] - zM) < 200) rMax = Math.max(rMax, Math.hypot(q[3 * i], q[3 * i + 1]));
     return rMax;
   };
-  assert.ok(promienSzyi(demo) > promienSzyi(plany[80]) + 40, `szyja: ${promienSzyi(demo)} wobec ${promienSzyi(plany[80])}`);
-  assert.equal(demo.kola[0], 200);
-  assert.equal(plany[80].kola[0], 150);
-  // Bez bębna trzon ma pokrywę i dno (szyb nie wisi nad pustą rurą), z bębnem jak dotąd.
-  const trzon = (p) => p.miasto.budynki.find((b) => b.nazwa === 'trzon').n;
-  assert.ok(trzon(demo) > 1.5 * trzon(plany[80]), `trzon: ${trzon(demo)} wobec ${trzon(plany[80])}`);
+  const gruba = scenaB1({ dx: 80, szyjaR: 320 });
+  assert.ok(promienSzyi(gruba) > promienSzyi(gra) + 40, `trzon: ${promienSzyi(gruba)} wobec ${promienSzyi(gra)}`);
+  assert.equal(gruba.kola[0], 320);
+  assert.equal(gra.kola[0], L0.habitat.neckR);
+  assert.ok(gra.kola.length <= 12, 'obraz mieści najwyżej 12 kół');
 });
 
-test('wnętrze szyi i szybu (szyjaWnetrze): 0 jak dotąd, 1 stropy, 2 pełne — więcej węzłów tylko w wieży', () => {
-  const ile = (w) => { const p = scenaB1({ dx: 80, bezBebna: true, szyjaR: 200, szyjaWnetrze: w }); return [p.scena.n, p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T').n]; };
+test('wnętrze szyi i szybu (szyjaWnetrze): 0 pusta rura, 1 stropy, 2 pełne — więcej węzłów tylko w wieży', () => {
+  const ile = (w) => { const p = scenaB1({ dx: 80, bezMiasta: true, szyjaWnetrze: w }); return [p.scena.n, p.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T').n]; };
   const [n0, w0] = ile(0), [n1, w1] = ile(1), [n2, w2] = ile(2);
   assert.equal(n1 - n0, w1 - w0);
   assert.equal(n2 - n0, w2 - w0);
   assert.ok(w0 < w1 && w1 < w2, `${w0} / ${w1} / ${w2}`);
-  assert.equal(scenaB1({ dx: 80 }).scena.n, scenaB1({ dx: 80, szyjaWnetrze: 0 }).scena.n);
+  // Gra od 2026-11-11: wieża ze stropami (1).
+  assert.equal(scenaB1({ dx: 80 }).scena.n, scenaB1({ dx: 80, szyjaWnetrze: 1 }).scena.n);
+});
+
+test('kratery misji (grupyGry): ćwiartka miasta składa swoje wieżowce, zgniot pod wieżą puszcza ich części bez kraterów, reaktor pęka jak budynek', () => {
+  const plan = plany[80];
+  const grupy = createGrupyGry({ w: plan.scena, l: L0, dx: 80 });
+  const nazwy = new Set(plan.miasto.budynki.map((b) => b.nazwa));
+  const czesc = (i) => plan.miasto.budynki.find((b) => i >= b.start && i < b.start + b.n)?.nazwa;
+  // ćwiartka z puli: kratery w jej sześciu wieżowcach (nosiciel = węzeł wieżowca tej ćwiartki), rozłożone w czasie
+  const lista = grupy.kawalek('H-S');
+  assert.ok(lista.length >= 36, `kraterów ${lista.length}`);
+  const moje = new Set(L0.habitat.buildings.filter((b) => b.chunk === 'H-S').map((b) => b.id));
+  const trafione = new Set();
+  for (const k of lista) { const n = czesc(k.nos); assert.ok(moje.has(n), `krater w ${n}`); trafione.add(n); }
+  assert.equal(trafione.size, 6, 'każdy wieżowiec ćwiartki dostaje kratery');
+  assert.ok(Math.max(...lista.map((k) => k.f)) - Math.min(...lista.map((k) => k.f)) > 60, 'wieżowce padają po kolei, nie w jednej klatce');
+  // zgniot pod wieżą: bez kraterów, za to lista części do puszczenia kotwic (istnieją w wypieku)
+  assert.deepEqual(grupy.kawalek('H-S', true), []);
+  const pusc = grupy.czesciZgniotu('H-S');
+  assert.equal(pusc.length, 6);
+  for (const n of pusc) assert.ok(nazwy.has(n) && moje.has(n), n);
+  assert.deepEqual(grupy.czesciZgniotu('H-C'), []);
+  assert.deepEqual(grupy.czesciZgniotu('AG-1'), []);
+  // reaktor: kratery w jego części; podstawę i wieżę prowadzi zerwanie (voxNeck), nie pęknięcie kawałka
+  const r = grupy.kawalek('AG-2');
+  assert.ok(r.length >= 10);
+  for (const k of r) assert.equal(czesc(k.nos), 'AG-2');
+  assert.deepEqual(grupy.kawalek('H-C'), []);
+  assert.ok(grupy.kawalek('D-3').length > 0, 'sektor dysku pod wieżą ma kratery');
+  assert.equal(grupy.szyjaR, L0.habitat.neckR);
 });

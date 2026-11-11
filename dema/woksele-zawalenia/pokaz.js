@@ -197,11 +197,11 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   /** Wypiek skóry do bazy z bębnem albo bez (skoraDema.js). Błąd wypieku zostawia barwy bez skóry. */
   // AGENT: import dynamiczny: bryła starej bazy ciągnie src/3d/core3d.js (hullDamageMap.tsl.js), a ten przy imporcie zakłada hak rulonu warpa we WSZYSTKICH materiałach węzłowych.
   // Strony dema bez skóry mają zostać bez niego (te same pipeline'y co dotąd).
-  async function wypieczSkore(w, bezBebna) {
-    stan.skoraBezBebna = bezBebna;
+  async function wypieczSkore(w, bezMiasta) {
+    stan.skoraBezMiasta = bezMiasta;
     try {
       const { wypalSkoreDema } = await import('./skoraDema.js');
-      await wypalSkoreDema({ renderer, obraz, w, bezBebna });
+      await wypalSkoreDema({ renderer, obraz, w, bezMiasta });
     } catch (e) { console.error('[woksele] wypiek skóry', e); }
   }
 
@@ -256,7 +256,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       obraz.ustawKola(opis.baza && miasto?.kola ? miasto.kola : []);
       if (!opis.baza) obraz.ustawSkore({ x0: 0, y0: 0, w: 1, h: 1, gora: 0, zakres: 1, wl: 0 });
       // Wypiek do tej bazy (z bębnem albo bez): pierwszy przy starcie przed rozgrzewką, kolejne w tle (pipeline'y już są), do tego czasu zostaje poprzednia skóra.
-      else if (stan.rozgrzane && stan.skoraBezBebna !== !!miasto?.bezBebna) wypieczSkore(w, !!miasto?.bezBebna);
+      else if (stan.rozgrzane && stan.skoraBezMiasta !== !!miasto?.bezMiasta) wypieczSkore(w, !!miasto?.bezMiasta);
     }
     if (obraz.kawalki) {
       if (kaw && stan.kawScena !== `${id}:${trybSceny === 2}`) { obraz.kawalki.wczytaj(kaw, trybSceny === 2 ? zbr : null, w.n, w.dx); stan.kawScena = `${id}:${trybSceny === 2}`; } else if (kaw) obraz.kawalki.reset();
@@ -515,7 +515,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   ustawScene(scenaStartu, { pomin: false });
   zmienRozmiar();
   // Skóra przed rozgrzewką: wypiek kompiluje bryłę na celu skóry i rysuje ją raz, a rozgrzewka obrazu idzie już na grafie ze skórą.
-  if (SKORA && SCENY[scenaStartu]?.baza) await wypieczSkore(wypieki.get(scenaStartu).w, !!wypieki.get(scenaStartu).miasto?.bezBebna);
+  if (SKORA && SCENY[scenaStartu]?.baza) await wypieczSkore(wypieki.get(scenaStartu).w, !!wypieki.get(scenaStartu).miasto?.bezMiasta);
   await spalanie?.rozgrzej(renderer); // AGENT: hak spalania: kernele przed pierwszym krokiem
   await obraz.rozgrzej(renderer);
   // Rozgrzewka szła z widocznymi wszystkimi siatkami (bryły, kawałki, druty, narzędzia), dopiero teraz tryb obrazu.

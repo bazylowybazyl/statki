@@ -65,6 +65,11 @@ const DTS = String(arg('dt', '60,120')).split(',').map((h) => 1 / Number(h));
 const SPEEDS = String(arg('v', '900,1500,3000')).split(',').map(Number);
 const CZAS = Number(arg('czas', 3));
 const CIAG = Number(arg('ciag', 1100));   // szyja: ciąg szarży [j/s²] przez 4 s (0 — sam rozpęd)
+// szyja: masa Atlasa w stykach przy szarży F jak w grze (BASE_INTEGRITY_TUNE.chargeRamMass, od 2026-11-08) — tylko przy ciągu
+// szarży (≥ 600 j/s²; W + Shift to 150 j/s² bez mnożnika). --taranMasa 1: bez mnożnika (stan sprzed 11-08).
+const TARAN_MASA = Number(arg('taranMasa', 2));
+const SZARZA = CIAG >= 600;
+let atlasRef = null, t0Sim = 0;
 
 // --hb k=v,k2=v2 — strojenie HULL_BODY_CONFIG (np. solidNodeDamping=0.4) przed HullBodies.init (A/B)
 {
@@ -215,12 +220,17 @@ const hz = (dt) => Math.round(1 / dt);
 const wrecksOf = () => window.wrecks.filter((w) => w.worldDebris).length;
 
 const ATLAS_MASS = 800000;
-const wallY = HAB.y + H.drumR;           // zewnętrzne lico ściany ćwiartki S (gra: y w dół → +y = +z hubu)
+// Zewnętrzne lico wieżowca ćwiartki S na osi x habitatu (gra: y w dół → +y = +z hubu). Do 2026-11-11 tu stała ściana bębna (r 1000);
+// od miasta tor czołowy trafia zewnętrzny wieżowiec, za nim wewnętrzny (RING — głębokość jego lica od lica zewnętrznego).
+const boxB = (b) => { const hx = (b.ux ? b.w : b.d) / 2, hz = (b.ux ? b.d : b.w) / 2; return { x0: b.x - hx, x1: b.x + hx, z0: b.z - hz, z1: b.z + hz, ring: b.ring }; };
+const S_BOXES = H.buildings.filter((b) => b.chunk === 'H-S').map(boxB);
+const FACE = S_BOXES.filter((q) => q.ring === 1 && q.x0 <= 0 && q.x1 >= 0).sort((a, b) => b.z1 - a.z1)[0];
+const wallY = HAB.y + FACE.z1;
 const atlasImg = hullImage('atlas');
 const probeAtlas = ship('atlas', 0, 0, 0, ATLAS_MASS);
 const EXT = hullExtent(probeAtlas);
 HullBodies.release(probeAtlas);
-console.log(`Atlas ${atlasImg.width}x${atlasImg.height}: nos ${EXT.nose.toFixed(0)}, rufa ${EXT.tail.toFixed(0)}, pół-szerokość ${EXT.halfW.toFixed(0)}; ściana bębna S w y = ${wallY.toFixed(0)}`);
+console.log(`Atlas ${atlasImg.width}x${atlasImg.height}: nos ${EXT.nose.toFixed(0)}, rufa ${EXT.tail.toFixed(0)}, pół-szerokość ${EXT.halfW.toFixed(0)}; lico wieżowca S w y = ${wallY.toFixed(0)} (x ${FACE.x0}…${FACE.x1})`);
 function noseY(e) { return e.y + Math.sin(e.angle) * EXT.nose; }
 
 if (TRYBY.includes('kotwice')) {
@@ -330,8 +340,9 @@ if (TRYBY.includes('musniecie')) {
     const site = freshHabitat();
     const piece = site.pieces.find((p) => p.id === 'H-S');
     const n0 = liveNodes(bodiesOfPiece(piece));
-    // angle 0: burta od strony −y gry leży w y = e.y − halfW; ściana zajmuje y ∈ [wallY − 90, wallY] → e.y = wallY − 25 + halfW
-    const atlas = ship('atlas', HAB.x - 700, wallY - 25 + EXT.halfW, 0, ATLAS_MASS);
+    // angle 0: burta od strony −y gry leży w y = e.y − halfW; lico wieżowca w y = wallY → e.y = wallY − 25 + halfW. Start nosem 300 j.
+    // przed narożnikiem wieżowca (ściana bębna była łukiem — kadłub stykał się z nią dopiero przy osi; lico wieżowca jest płaskie).
+    const atlas = ship('atlas', HAB.x + FACE.x0 - 300 - EXT.nose, wallY - 25 + EXT.halfW, 0, ATLAS_MASS);
     const a0 = atlas.beamHull.body.activeNodes;
     atlas.vx = v;
     const ents = [atlas];
@@ -475,14 +486,17 @@ if (TRYBY.includes('szyja')) {
       if (!pa === !pb) return;
       const other = pa ? ev.B : ev.A;
       if (!other || other.isWreck || other.worldDebris) return;
-      noteNeckRam(st, pa || pb, other, HullBodies.simTime, ev.x, ev.y);
+      // szarża dociśnięta do podstawy wieży zrywa ją przy każdej prędkości styku (gra: playerRamBurnActive)
+      noteNeckRam(st, pa || pb, other, HullBodies.simTime, ev.x, ev.y, SZARZA && other === atlasRef && HullBodies.simTime - t0Sim < 4);
     };
     CollisionFX.on('impact', onFx); CollisionFX.on('grind', onFx);
     const piece = (id) => site.pieces.find((p) => p.id === id);
     const discs = site.pieces.filter((p) => p.kind === 'disc');
-    const drums = site.pieces.filter((p) => p.kind === 'drum');
+    const drums = site.pieces.filter((p) => p.kind === 'city');
     const atlas = ship('atlas', HAB.x + H.drumR + 300 + EXT.nose, HAB.y + 60, Math.PI, ATLAS_MASS);
     atlas.vx = -v;
+    atlasRef = atlas; t0Sim = HullBodies.simTime;
+    if (SZARZA && TARAN_MASA > 1 && atlas.beamHull?.body) atlas.beamHull.body.rammingMassMult = TARAN_MASA;
     const ents = [atlas];
     let tiltAtImpact = -1, towerNodes0 = 0, impactWith = '';
     const ctx = { worldBodies, engine: D, layout: L, habitat: HAB, simTime: 0,
@@ -502,7 +516,8 @@ if (TRYBY.includes('szyja')) {
       if (arg('odlot', '') && st.phase !== 'attached' && !atlas.__odlot) {
         atlas.__odlot = true; atlas.x = HAB.x - 20000; atlas.y = HAB.y; atlas.vx = 0; atlas.vy = 0;
       }
-      if (CIAG > 0 && k * dt < 4 && -atlas.vx < v) atlas.vx -= CIAG * dt;   // ciąg szarży (F) ku szybowi
+      if (CIAG > 0 && k * dt < 4 && -atlas.vx < v) atlas.vx -= CIAG * dt;   // ciąg szarży (F) ku wieży
+      if (SZARZA && k * dt >= 4 && atlas.beamHull?.body) atlas.beamHull.body.rammingMassMult = 1;
       stepAll(ents, dt);
       ctx.simTime = HullBodies.simTime;
       stepNeck(st, site, ctx, dt);

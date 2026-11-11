@@ -86,7 +86,7 @@ export const ATMO_TUNE = {
   // n · komórka² · tearArea (promień √(A/π)); bliżej niż `tearJoin` j. od wyrwy zgniotu w tym module — dokłada się do niej.
   tearWindow: 0.12, tearArea: 0.7, tearJoin: 260, tearMinNodes: 2,
   // Zwarcia przy rozszczelnieniu: szansa zapłonu przy pęknięciu wg rodzaju (× gwałtowność), opóźnienie zapłonu [s].
-  shortChance: { drum: 0.55, core: 0.6, tech: 0.75, disc: 0.6, warehouse: 0.45 },
+  shortChance: { city: 0.55, core: 0.6, tech: 0.75, disc: 0.6, warehouse: 0.45 },
   igniteDelay: [0.08, 0.7],
   blastIgnite: 0.85,          // szansa zapłonu modułu od wybuchu w nim (paliwo z rur, reaktor, wybuchy rozpadu)
   // Miganie świateł budowli (zasilanie w obrazie): głębokość przy świeżej wyrwie, zanik [s]; moduł wypalony gaśnie
@@ -100,7 +100,7 @@ export const ATMO_TUNE = {
 
 // Rodzaje modułów: palne wnętrze (0…1), zwarcia (iskry w wyrwie), zasilanie budowli w obrazie (pirateBaseBlock).
 export const ATMO_KINDS = Object.freeze({
-  drum: Object.freeze({ fuel: 0.6, spark: 0.7, power: 'drumQ', size: 240 }),
+  city: Object.freeze({ fuel: 0.6, spark: 0.7, power: 'drumQ', size: 240 }),
   core: Object.freeze({ fuel: 0.35, spark: 0.9, power: 'habitat', size: 170 }),
   tech: Object.freeze({ fuel: 0.7, spark: 1.0, power: 'tech', size: 210 }),
   disc: Object.freeze({ fuel: 1.0, spark: 0.8, power: 'disc', size: 280 }),
@@ -131,18 +131,26 @@ export function pirateBaseAtmoModules(layout) {
     if (!c) return;
     out.push({ id, kind, structure: c.structure, V: Math.max(1e5, V), hx, hz, z: zc, z0, z1, r, ...extra });
   };
-  // bęben: ćwiartki pierścienia innerR..drumR, od dna do korony ściany
-  const dz0 = z(H.floorY), dz1 = z(H.wallTop);
+  // miasto: ćwiartka = powietrze jej wieżowców (od tarasu dysku do dachów); w płaszczyźnie wycinek pierścienia stemR..drumR,
+  // wyrwy na wysokości płaszczyzny gry (tam trafia broń i taran)
   H.quadrants.forEach((q, qi) => {
     const a = (q.a0 + q.a1) / 2;
-    const rm = (H.innerR + H.drumR) / 2;
-    add(q.id, 'drum', (Math.PI / 4) * (H.drumR * H.drumR - H.innerR * H.innerR) * (dz1 - dz0),
-      Math.cos(a) * rm, Math.sin(a) * rm, (dz0 + dz1) / 2, dz0, dz1, H.drumR, { a0: q.a0, a1: q.a1, qi });
+    let V = 0, rs = 0, n = 0, top = 0;
+    for (const b of H.buildings) {
+      if (b.chunk !== q.id) continue;
+      // piąta część kubatury wieżowca to powietrze jednej dzielnicy (reszta: konstrukcja i przedziały za grodziami) — objętość
+      // jak dawna ćwiartka bębna, więc wypływ trwa tyle samo
+      V += 0.2 * b.w * b.d * (z(b.roofY) - z(b.baseY));
+      rs += b.r; n++;
+      top = Math.max(top, z(b.roofY));
+    }
+    const rm = n ? rs / n : (H.stemR + H.drumR) / 2;
+    add(q.id, 'city', V, Math.cos(a) * rm, Math.sin(a) * rm, 60, z(H.tier1Y), top, H.drumR, { a0: q.a0, a1: q.a1, qi });
   });
-  // szyb: kolumna coreR od dysku do szczytu szybu
+  // podstawa wieży: kolumna coreR od dysku do szczytu podstawy
   const cz0 = z(H.discY1), cz1 = z(H.coreTop);
   add('H-C', 'core', Math.PI * H.coreR * H.coreR * (cz1 - cz0), 0, 0, (cz0 + cz1) / 2, cz0, cz1, H.coreR);
-  // wieża: szyja (rura) + talerz głowy + piasta
+  // wieża: trzon (rura) + korona + głowica
   const n0 = z(H.neckY0), n1 = z(H.neckY1), r0 = z(H.ringY0), r1 = z(H.ringY1), ht = z(H.headTop);
   const Vt = Math.PI * H.neckR * H.neckR * (n1 - n0) + Math.PI * (H.ringR1 * H.ringR1 - H.ringR0 * H.ringR0) * (r1 - r0)
     + Math.PI * H.headR * H.headR * (ht - r0);
@@ -370,7 +378,7 @@ function cabinTau(size) {
 function outwardNormal(m, x, y, z, out) {
   let dx = x - m.gx, dy = y - m.gy;
   let dz = Number.isFinite(z) ? (z - m.z) * 0.6 : 0;
-  if (m.kind === 'drum' || m.kind === 'disc' || m.kind === 'core' || m.kind === 'tech') {
+  if (m.kind === 'city' || m.kind === 'disc' || m.kind === 'core' || m.kind === 'tech') {
     // moduły habitatu: od osi habitatu (bęben, dysk — promieniowo)
     const hc = S.place?.habitat;
     if (hc) { dx = x - hc.x; dy = y - hc.y; }
@@ -546,7 +554,7 @@ export function noteBaseChunkBreak(id, at, { entity = null, drift = 0, dir = 'ou
   let x = m.gx, y = m.gy, z = m.z;
   let nx = 0, ny = 0, nz = 0;
   const ax = at && Number.isFinite(at.x) ? at.x : m.gx, ay = at && Number.isFinite(at.y) ? at.y : m.gy;
-  if (m.kind === 'drum' || m.kind === 'disc') {
+  if (m.kind === 'city' || m.kind === 'disc') {
     // ściana zewnętrzna po stronie punktu (kąt w obrębie modułu)
     const h = place.toHub(ax, ay);
     let a = Math.atan2(h.z, h.x);
@@ -554,7 +562,7 @@ export function noteBaseChunkBreak(id, at, { entity = null, drift = 0, dir = 'ou
     const da = Math.atan2(Math.sin(a - mid), Math.cos(a - mid));
     const half = (m.a1 - m.a0) / 2 * 0.8;
     a = mid + clamp(da, -half, half);
-    const r = m.kind === 'drum' ? H.drumR : H.discR * 0.92;
+    const r = m.kind === 'city' ? H.drumR : H.discR * 0.92;
     const g = place.toGame(Math.cos(a) * r, Math.sin(a) * r);
     x = g.x; y = g.y;
     const dx = x - hc.x, dy = y - hc.y, l = Math.hypot(dx, dy) || 1;
@@ -637,14 +645,14 @@ function distToModule(m, x, y, z = 0) {
   const place = S.place;
   const H = place.layout.habitat;
   const hc = place.habitat;
-  if (m.kind === 'drum' || m.kind === 'disc') {
+  if (m.kind === 'city' || m.kind === 'disc') {
     const h = place.toHub(x, y);
     const r = Math.hypot(h.x, h.z);
     const a = Math.atan2(h.z, h.x);
     const mid = (m.a0 + m.a1) / 2;
     const da = Math.abs(Math.atan2(Math.sin(a - mid), Math.cos(a - mid)));
     const half = (m.a1 - m.a0) / 2;
-    const r0 = m.kind === 'drum' ? H.innerR : 0, r1 = m.kind === 'drum' ? H.drumR : H.discR;
+    const r0 = m.kind === 'city' ? H.stemR : 0, r1 = m.kind === 'city' ? H.drumR : H.discR;
     const dr = r < r0 ? r0 - r : (r > r1 ? r - r1 : 0);
     const darc = da > half ? (da - half) * Math.max(r, 1) : 0;
     return Math.hypot(dr, darc);

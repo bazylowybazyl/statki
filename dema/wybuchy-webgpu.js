@@ -208,13 +208,13 @@ function threshold() {
     const c = layout.chunkById.get(id);
     base.breakChunk(id, { speed: 70, spin: 0.08, life: 45 });
     const p = chunkGame(id);
-    boom('capital', p.x, p.y, c.kind === 'drum' ? 520 : 380);
+    boom('capital', p.x, p.y, c.kind === 'city' ? 520 : 380);
     window.camera.addShake(12, 0.5);
   }));
 }
 
 // Kolejność łańcucha: od habitatu na zewnątrz, czas z odległości kawałka i rozrzut z numeru grupy (bez Math.random).
-const CHAIN_BLAST = { drum: 320, core: 320, pier: 250, tank: 220, manifold: 220, warehouse: 250, annex: 150, highrise: 220 };
+const CHAIN_BLAST = { city: 320, core: 320, pier: 250, tank: 220, manifold: 220, warehouse: 250, annex: 150, antigrav: 220 };
 function chain() {
   setView('dok');
   base.resetChunks();
@@ -225,7 +225,7 @@ function chain() {
     const t = Math.hypot((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2) / 1800 + (h - Math.floor(h)) * 0.3;
     tLast = Math.max(tLast, t);
     schedule(0.3 + t, () => {
-      base.breakChunk(c.id, { speed: c.kind === 'drum' ? 55 : 95, spin: c.kind === 'drum' ? 0.05 : 0.14, life: 40 });
+      base.breakChunk(c.id, { speed: c.kind === 'city' ? 55 : 95, spin: c.kind === 'city' ? 0.05 : 0.14, life: 40 });
       const size = CHAIN_BLAST[c.kind] || 0;
       if (size > 0) boom('capital', p.x, p.y, size);
     });

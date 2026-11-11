@@ -140,7 +140,7 @@ try {
     if (args.maxWez) zapytanie.set('maxWez', String(args.maxWez));
     // Miasto (plan LOD § 5): --zrzut M1 --miasto '{"dx":10}' --maxWez 64000 [--nKom 524288] --kamery atlas,bliska [--kosztMiasta 1].
     if (args.miasto) zapytanie.set('miasto', String(args.miasto));
-    // Baza piratów (plan LOD § 5c): --zrzut B1 --baza '{"dx":40}' --maxWez 86000 --nKom 131072 --kamery bAtlas,bBliska [--kosztMiasta 1]. W1: --baza '{"dx":40,"stoi":true}' --chwile 5.
+    // Baza piratów (plan LOD § 5c): --zrzut B1 --baza '{"dx":40}' --maxWez 140000 --nKom 262144 --kamery bAtlas,bBliska [--kosztMiasta 1]. W1: --baza '{"dx":40,"stoi":true}' --chwile 5.
     if (args.baza) zapytanie.set('baza', String(args.baza));
     if (args.nKom) zapytanie.set('nKom', String(args.nKom));
     if (args.sloty) zapytanie.set('sloty', String(args.sloty));

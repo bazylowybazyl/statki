@@ -2,11 +2,11 @@
  * Baza piratów jako CIAŁA ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F2): kawałki bazy
  * (pirateBaseLayout.chunks) w bańce gracza stają się PŁASKIMI, ZAKOTWICZONYMI ciałami silnika belek
  * (src/game/worldBodies.js). Osobne MIEJSCE na budowlę (habitat, paliwo, magazyn, pomosty) — trafienia liczą punkty
- * swojej budowli (byt stacji ma `_worldSite`). Taran = zderzenie kadłubów: bęben habitatu to „rura” (ściana, grodzie,
- * pierścień) — gnie się i pęka pod Atlasem; pomosty pękają między rzadkimi kotwicami.
+ * swojej budowli (byt stacji ma `_worldSite`). Taran = zderzenie kadłubów: ćwiartka miasta habitatu to jej wieżowce
+ * (ściany, rdzeń, słupy narożne) — ściany gną się i pękają pod Atlasem; pomosty pękają między rzadkimi kotwicami.
  *
  * Kawałek = raster z góry brył przecinających płaszczyznę gry (buildingChunkSolids.js — narzędzia brył
- * budowli Z7, wiersze odwrócone), kotwice wg rodzaju, materiał. Część techniczna nad bębnem i dysk
+ * budowli Z7, wiersze odwrócone), kotwice wg rodzaju, materiał. Wieża nad podstawą i dysk
  * mieszkalny pod nim to DUCHY (raster wszystkich brył, rzadka kratownica, ciałem dopiero w rozpadzie — implozja).
  * Układ bazy: x wzdłuż osi, z w poprzek; gra: toGame(x, z) (pirateBaseSite.placePirateBase), kurs ciała = place.axis.
  * Bez three i DOM.
@@ -20,7 +20,7 @@ import { buildBeamStructure } from '../beamBody3D.js';
 
 // BRYŁY 3D (docs/PORT-silnik-belek.md § „Ciała 3D”, decyzja użytkownika 2026-10-15: „silnik prawdziwie 3D”): wieża
 // habitatu (szyja z głową — H-T) i sektory dysku mieszkalnego (D-1…8) to ciała 3D z wokselizacji brył sceny — wieża
-// po zerwaniu szyi przewraca się (pirateBaseNeck.js), uderza bokiem w koronę bębna i spada na dysk, który pęka.
+// po zerwaniu szyi przewraca się (pirateBaseNeck.js), uderza bokiem w wieżowce miasta i spada na dysk, który pęka.
 // cell — komórka [j.], interior / shellLayers / ribStep — wnętrze wokselizacji (skorupa + kratownica w głębi).
 // gravity — umowna grawitacja habitatu (ku dyskowi, −z świata) [j/s²] dla odłamów i przewracanej wieży: dobrana tak,
 // żeby przechył szedł powoli, a koniec był szybki (pomiar: scripts/destrukcja-taran-sym.mjs --tryb wieza).
@@ -37,17 +37,18 @@ const DISC_PIN_GRID = 6;
 
 /** Materiał kawałków (gęstość × kadłuba 1,19; pancerz zderzeń — Atlas 16, fregata 1). */
 export const PIRATE_BASE_BODY_MATERIAL = Object.freeze({
-  drum: Object.freeze({ density: 2.4, armor: 5 }),
+  // ćwiartka miasta (2026-11-11): wieżowce — ściany i rdzeń jak magazyn, trochę lżejsze (dawny wieżowiec na pomoście)
+  city: Object.freeze({ density: 1.8, armor: 3.5 }),
   core: Object.freeze({ density: 3.2, armor: 10 }),
   pier: Object.freeze({ density: 2.2, armor: 3 }),
   tank: Object.freeze({ density: 1.6, armor: 2 }),
   manifold: Object.freeze({ density: 2.6, armor: 6 }),
   warehouse: Object.freeze({ density: 2.2, armor: 4 }),
   annex: Object.freeze({ density: 1.4, armor: 1.5 }),
-  // wieżowiec na pomoście (2026-11-03): ściany i rdzeń jak magazyn, trochę lżejsze
-  highrise: Object.freeze({ density: 1.8, armor: 3.5 }),
+  // reaktor antygrawitacyjny na pomoście (2026-11-11): obudowa z komorą rdzenia — jak kolektor paliwa
+  antigrav: Object.freeze({ density: 2.6, armor: 6 }),
   // Wieża habitatu (H-T, bryła 3D — scenariusz szyi, 2026-10-15: „bok wieży ma się rozwalić, płaszczyć”): miękka
-  // względem bębna i dysku — przy uderzeniu bokiem gniecie się wieża (zgniot dzieli się ∝ 1/pancerz²: 2,5 vs 5 → wieża
+  // względem miasta i dysku — przy uderzeniu bokiem gniecie się wieża (zgniot dzieli się ∝ 1/pancerz²: 2,5 vs 3,5 → wieża
   // ~80%), dysk pęka lokalnie i odpada kawałkami (wisi na trzonie), wieża zostaje na nim.
   tech: Object.freeze({ density: 1.6, armor: 2.5 }),
   disc: Object.freeze({ density: 1.2, armor: 3 })
@@ -65,8 +66,8 @@ export function pirateBaseMaterial(kind) {
 // 30 j. (dawniej 45): krater głowy w dysku nie jest kanciasty (pomiar kosztu — scripts/destrukcja-taran-sym.mjs --tryb szyja).
 const GHOST_CELL = 30;
 const GHOST_UPP = 15;
-// Podział skóry (najdłuższa krawędź trójkąta w rzucie [komórki]): bęben i pomosty gną się przy taranie — gęsto.
-const SKIN_EDGE_CELLS = Object.freeze({ drum: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4, highrise: 3 });
+// Podział skóry (najdłuższa krawędź trójkąta w rzucie [komórki]): wieżowce i pomosty gną się przy taranie — gęsto.
+const SKIN_EDGE_CELLS = Object.freeze({ city: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4, antigrav: 3 });
 // Rzadkie fundamenty: kotwica co tyle komórek kratownicy (worldBodies.anchorComponents). Szyb habitatu (H-C) bez
 // siatki (audyt destruktora 2026-10-14, R8): trzymają go tylko kotwice osi (szyja do dysku i głowy) o skończonej
 // wytrzymałości — szarża Atlasa je zrywa.
@@ -78,11 +79,23 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
   const H = layout.habitat;
   const near = 1.6 * cs;
   switch (chunk.kind) {
-    case 'drum':
-      // pierścień wewnętrzny trzyma się szybu (ściana zewnętrzna i grodzie swobodne — taran je gnie i rwie)
-      return (x, z) => Math.hypot(x, z) <= H.innerR + near * 0.5;
+    case 'city': {
+      // każdy wieżowiec ćwiartki stoi na rdzeniu i czterech słupach narożnych (ściany między nimi swobodne — taran je
+      // gnie i rwie); wyspa bez kotwic nie powstaje, bo rdzeń ma każdy
+      const list = H.buildings.filter((b) => b.chunk === chunk.id);
+      return (x, z) => {
+        for (const b of list) {
+          const s = Math.abs((x - b.x) * b.ux + (z - b.z) * b.uz);
+          const o = Math.abs((x - b.x) * b.nx + (z - b.z) * b.nz);
+          if (s > b.w / 2 + near || o > b.d / 2 + near) continue;
+          if (s <= b.coreW / 2 && o <= b.coreW / 2) return true;
+          if (s >= b.w / 2 - 60 && o >= b.d / 2 - 60) return true;
+        }
+        return false;
+      };
+    }
     case 'core':
-      // szyb trzyma się szyi (rura neckR nad bębnem i trzon dysku pod nim) — kotwice na PIERŚCIENIU rury, nie w całym
+      // podstawa wieży trzyma się trzonu (rura neckR nad nią i cokół dysku pod nią) — kotwice na PIERŚCIENIU rury, nie w całym
       // środku (dawny dysk r ≤ 0,6 coreR: 292 kotwice — przy skończonej wytrzymałości kotwic taran nie zrywał szyi);
       // przebita ściana rury (utrata ≥ 8% z nich) = szyja zerwana (pirateBaseNeck.js)
       return (x, z) => { const r = Math.hypot(x, z); return r <= H.neckR && r >= H.neckR - near; };
@@ -90,10 +103,10 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
       // głowa wisi na szyi (rura neckR) — kotwice w osi; scenariusz szyi zrywa je od razu (detachPiece)
       return (x, z) => Math.hypot(x, z) <= H.neckR;
     case 'disc':
-      // dysk mieszkalny wisi na trzonie (stemR) pod bębnem; resztę trzyma rzadka siatka podpór (PIN_GRID_CELLS.disc)
+      // dysk mieszkalny wisi na trzonie (stemR) pod wieżą; resztę trzyma rzadka siatka podpór (PIN_GRID_CELLS.disc)
       return (x, z) => Math.hypot(x, z) <= H.stemR * 0.5;
     case 'pier': {
-      // końce przy węzłach (rozwidlenie, bęben, zbiorniki) i rzadkie podpory co ~1/3 odcinka na osi pomostu
+      // końce przy węzłach (rozwidlenie, miasto, zbiorniki) i rzadkie podpory co ~1/3 odcinka na osi pomostu
       const p = layout.piers.find((q) => q.chunks.includes(chunk.id));
       if (!p) return () => false;
       const parts = p.chunks.length;
@@ -126,15 +139,16 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
       const a = layout.warehouse.annex;
       return (x, z) => Math.abs(x - a.x) <= a.w * 0.25 && Math.abs(z - a.z) <= a.d * 0.25;
     }
-    case 'highrise': {
-      // wieżowiec stoi okrakiem na pomoście: kotwice w pasie pokładu (ściany poprzeczne nad nim) i w rdzeniu
-      const h = (layout.highrises || []).find((q) => q.chunk === chunk.id);
+    case 'antigrav': {
+      // reaktor stoi okrakiem na pomoście: kotwice w pasie pokładu (ściany poprzeczne nad nim) i w komorze rdzenia
+      const h = (layout.antigravs || []).find((q) => q.chunk === chunk.id);
       if (!h) return () => false;
       const deck = layout.spec.pier.halfW * 0.6;
+      const core = h.coreR * 0.7;
       return (x, z) => {
         const s = (x - h.x) * h.ux + (z - h.z) * h.uz;
         const o = (x - h.x) * h.nx + (z - h.z) * h.nz;
-        return Math.abs(o) <= deck || (Math.abs(s) <= h.coreW / 2 && Math.abs(o) <= h.coreW / 2);
+        return Math.abs(o) <= deck || (Math.abs(s) <= core && Math.abs(o) <= core);
       };
     }
     default:
@@ -229,7 +243,7 @@ export function prebuildPirateBaseBodies(layout, scene, palette = null) {
   return n;
 }
 
-// Słup kawałka płaskiego dla brył 3D: zakres wysokości jego brył w płaszczyźnie gry (ściany bębna od dna po koronę,
+// Słup kawałka płaskiego dla brył 3D: zakres wysokości jego brył w płaszczyźnie gry (wieżowce od tarasu po granicę FG,
 // pomost od rękawów po balustradę); szyb habitatu przycięty pod spód wieży (CORE_COLUMN_GAP).
 const _columns = new WeakMap();
 function planarColumn(layout, scene, c) {

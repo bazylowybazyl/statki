@@ -12,8 +12,8 @@
 //   przed      — habitat cały, kamera nad habitatem (--zoom);
 //   ostrzal-N  — serie 20 strzałów bronią gry (fireWeaponCore, jak baza-zniszczenie-gra.mjs) po ETAPACH finału habitatu
 //                (od 2026-11-03 punkty habitatu = maks. × etapy do zrobienia, src/game/story/pirateBaseIntegrity.js —
-//                habitatStages): wyłom (ćwiartka bębna od strony Atlasa, H-S), wieża (szyb H-C przez wyłom — szyja
-//                zrywa się, wieża pada), wieżowce (highrise1, highrise2); po każdej serii okno 2 s; pierwsze okno =
+//                habitatStages): wyłom (ćwiartka miasta od strony Atlasa, H-S), wieża (podstawa H-C przez wyłom — szyja
+//                zrywa się, wieża pada), reaktory antygrawitacyjne (antigrav1, antigrav2); po każdej serii okno 2 s; pierwsze okno =
 //                pierwsze trafienia. Komplet etapów = habitat ginie SAM (syncBaseStages w grze) = finał misji — w trakcie
 //                serii, więc pierwsze sekundy upadku są w ostatnim oknie ostrzal-N (kolumna `upadek`, `ft`).
 //                --prog P (domyślnie 0): koniec ostrzału przy HP ≤ P % (etapy: 75 / 50 / 25 / 0); --strzalyMaks
@@ -475,9 +475,9 @@ async function okno(label, sekundy, { slad = false } = {}) {
 
 // Seria 20 strzałów w 2 s (lufa 1,6 km za celem, kierunki na zmianę) — jak gracz, po etapach finału habitatu
 // (cel misji: „wyłom w bębnie, szyb pod wieżą (zwal ją), wieżowce na pomostach”); cel wybierany przy każdym strzale:
-//   wyłom   — stojąca ćwiartka bębna (najpierw H-S, od strony Atlasa), środek pierścienia ćwiartki, lufa na jej osi;
-//   wieża   — szyb H-C (środek habitatu) przez wyłom: lufa w kącie pękniętej ćwiartki (tor promienisty — przez lukę);
-//   wieżowce — pierwszy stojący wieżowiec (highrise1, highrise2), środek bryły, cztery kierunki;
+//   wyłom   — stojąca ćwiartka miasta (najpierw H-S, od strony Atlasa), środek pasa wieżowców ćwiartki, lufa na jej osi;
+//   wieża   — podstawa wieży H-C (środek habitatu) przez wyłom: lufa w kącie pękniętej ćwiartki (tor promienisty — przez lukę);
+//   reaktory — pierwszy stojący reaktor antygrawitacyjny (antigrav1, antigrav2), środek bryły, cztery kierunki;
 // habitat bez etapów (gra sprzed 2026-11-03) — stojące kawałki habitatu na zmianę, jak dawniej.
 const SERIA = `new Promise((res) => {
   const S = window.StoryGame, site = S.site, d = site.dock, l = d.layout, st = site.structures.habitat, Hb = l.habitat;
@@ -492,7 +492,7 @@ const SERIA = `new Promise((res) => {
   });
   const ids = stoi.length ? stoi : l.structures.habitat;
   const quads = [...Hb.quadrants].sort((a, b) => (b.id === 'H-S') - (a.id === 'H-S'));
-  const ringR = (Hb.innerR - Hb.innerW + Hb.drumR) / 2;
+  const ringR = (Hb.stemR + Hb.drumR) / 2;
   let k = 0;
   const aim = () => {
     const s = site.habitatStages ? site.habitatStages() : null;
@@ -505,7 +505,7 @@ const SERIA = `new Promise((res) => {
       const q = quads.find((qd) => broken(qd.id)) || quads[0], c = (q.a0 + q.a1) / 2;
       return { tx: 0, tz: 0, a: c + jit, cel: 'H-C' };
     }
-    const hr = s ? (l.highrises || []).find((h) => !site.structureDestroyed(h.structure)) : null;
+    const hr = s ? (l.antigravs || []).find((h) => !site.structureDestroyed(h.structure)) : null;
     if (hr) {
       const c = l.chunkById.get(hr.chunk);
       return { tx: (c.box.x0 + c.box.x1) / 2, tz: (c.box.z0 + c.box.z1) / 2, a: (k % 4) * Math.PI / 2 + 0.3, cel: hr.structure };
@@ -528,12 +528,12 @@ const SERIA = `new Promise((res) => {
   const h = setInterval(tick, 100);
   tick();
 })`;
-// Etapy finału i postęp ostrzału (suma pul kawałków habitatu + punkty wieżowców) — zastój = brak zmiany
+// Etapy finału i postęp ostrzału (suma pul kawałków habitatu + punkty reaktorów) — zastój = brak zmiany
 const ETAPY = `(() => {
   const site = window.StoryGame.site, st = site.structures.habitat, s = site.habitatStages ? site.habitatStages() : null;
   let pule = st.piecePools ? Object.values(st.piecePools).reduce((a, p) => a + p.hp, 0) : st.hp;
-  for (const h of site.dock.layout.highrises || []) { const q = site.structures[h.structure]; if (q) pule += Math.max(0, q.hp || 0); }
-  return { etapy: s ? \`wyłom \${s.breach}/\${s.breachNeed} wieża \${s.tower ? 1 : 0} wieżowce \${s.highrises}/\${s.highrisesTotal}\` : null,
+  for (const h of site.dock.layout.antigravs || []) { const q = site.structures[h.structure]; if (q) pule += Math.max(0, q.hp || 0); }
+  return { etapy: s ? \`wyłom \${s.breach}/\${s.breachNeed} wieża \${s.tower ? 1 : 0} reaktory \${s.reactors}/\${s.reactorsTotal}\` : null,
     zrobione: s ? s.done : null, wszystkie: s ? s.total : null, pule: Math.round(pule), hp: Math.round(st.hp),
     proc: +(100 * st.hp / Math.max(1, st.maxHp)).toFixed(1), zniszczony: !!st._destroyed3D || !(st.hp > 0) };
 })()`;

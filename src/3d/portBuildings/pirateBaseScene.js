@@ -17,13 +17,14 @@ export const PBASE_CH = Object.freeze({
   alarm: 0,                       // alarm bazy (koguty)
   busy: (k) => 1 + k,             // maski bitowe stanowisk z okrętem (24 bity na kanał, k = 0..1) — lampki zielone
   free: (k) => 3 + k,             // maski stanowisk pustych (okręt odleciał / zniszczony) — lampki czerwone
-  habitat: 5,                     // zasilanie bębna i części technicznej (okna) 0..1
+  habitat: 5,                     // zasilanie habitatu: plac i podstawa wieży (lampy) 0..1
   disc: 6,                        // zasilanie dysku mieszkalnego (okna gasną od środka) 0..1
   bays: 7,                        // hangary dronów: start (światła biegnące) 0/1
   fuel: 8,                        // zasilanie zbiorników i kolektora 0..1
   warehouse: 9,                   // zasilanie magazynu 0..1
   // światła wnętrza modułów ciśnieniowych (2026-10-19, dekompresja — src/game/story/pirateBaseAtmosphere.js: moduł, który
-  // stracił powietrze, miga i gaśnie): okna głowy wieży i przedziały ćwiartek bębna (k = indeks ćwiartki w układzie)
+  // stracił powietrze, miga i gaśnie): okna korony wieży i dzielnice miasta — okna wieżowców i lampy ulic (k = indeks ćwiartki w układzie; nazwa
+  // kanału drumQ sprzed miasta)
   tech: 10,
   drumQ: (k) => 11 + k
 });
@@ -89,123 +90,185 @@ function ringBoxes(f, r, d, y, h, a0, a1, step, mat, cb = null) {
 // ---------------------------------------------------------------------------
 // Habitat
 
-function drumQuadrant(f, l, qd, qi) {
+// Wieżowiec miasta (2026-11-11): stoi na tarasie dysku mieszkalnego (b.baseY), przecina płaszczyznę gry (bryła trafień
+// i ciało ćwiartki: ściany, rdzeń, słupy narożne), nad fgY idzie do FG (nad statkami). Pasy okien na zasilaniu swojej
+// ćwiartki (kanał drumQ — gasną i migają z powietrzem dzielnicy), zwężenie od setbackY, dach z kolcami, włazem
+// i kratką, na wyższych iglica ze światłem przeszkodowym. Osie: u — styczna do pierścienia, n — promień na zewnątrz.
+function cityBuilding(f, l, b, qi) {
+  const rot = -b.angle;
+  const at = (s, o) => [b.x + b.ux * s + b.nx * o, b.z + b.uz * s + b.nz * o];
+  const W = b.w;
+  const D = b.d;
+  const t = b.wall;
+  const fgY = b.fgY;
+  const k = b.seed;
+  // pudło-skorupa (cztery ściany) w zakresie y0..y1 o wymiarach w × d
+  const shell = (w, d, y0, y1, mat) => {
+    const yc = (y0 + y1) / 2;
+    const hh = y1 - y0;
+    for (const o of [-1, 1]) boxAt(f, at(0, o * (d / 2 - t / 2)), yc, w, hh, t, mat, rot);
+    for (const s of [-1, 1]) boxAt(f, at(s * (w / 2 - t / 2), 0), yc, t, hh, d - 2 * t, mat, rot);
+  };
+  // pasy okien i stropów na czterech ścianach pudła w × d (piętro co `step`)
+  const floors = (w, d, y0, y1, step, seed) => {
+    let i = 0;
+    for (let y = y0 + step * 0.5; y < y1 - step * 0.3; y += step, i++) {
+      for (const o of [-1, 1]) boxAt(f, at(0, o * (d / 2 + 3)), y - step * 0.42, w + 8, 10, 6, M.rail, rot);
+      f.fx(1.25, PB_FX.fill, 0.15 + 0.7 * (1 - (y - y0) / Math.max(1, y1 - y0)), PBASE_CH.drumQ(qi));
+      for (const o of [-1, 1]) {
+        // okna: dwa pasy na ścianach stycznych (tu i ówdzie ciemne — rozbite), jeden na ścianach promieniowych
+        for (const s of [-1, 1]) {
+          if (pbHash1(seed * 13.7 + i * 3.1 + s + o * 0.5) > 0.15) boxAt(f, at(s * w * 0.24, o * (d / 2 + 4)), y, w * 0.4, 26, 5, pbHash1(seed + i * 1.7 + o) < 0.8 ? M.warm : M.cyan, rot);
+        }
+        boxAt(f, at(o * (w / 2 + 4), 0), y, 5, 26, d * 0.7, M.warm, rot);
+      }
+      f.nofx();
+    }
+  };
+  const top1 = b.setbackY || b.roofY;
+  // ---- cokół na tarasie i trzon do fgY (BG): ściany, rdzeń, słupy narożne, pas ostrzegawczy pod granicą FG
+  f.box(b.x, b.baseY + 30, b.z, W + 50, 60, D + 50, M.steel, rot);
+  shell(W, D, b.baseY + 40, fgY, M.dark);
+  boxAt(f, at(0, 0), (b.baseY + fgY) / 2, b.coreW, fgY - b.baseY, b.coreW, M.steel, rot);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (b.baseY + fgY) / 2, 66, fgY - b.baseY, 66, M.rail, rot);
+  // okna dolnych pięter (pod płaszczyzną gry — widać je z góry w kanionach ulic)
+  f.fx(1.1, PB_FX.fill, 0.3 + 0.4 * pbHash1(k * 2.3), PBASE_CH.drumQ(qi));
+  for (let y = b.baseY + 180; y < -60; y += 170) for (const o of [-1, 1]) boxAt(f, at(0, o * (D / 2 + 4)), y, W * 0.7, 22, 5, M.warm, rot);
+  f.nofx();
+  for (const o of [-1, 1]) for (let i = 0; i < 6; i++) boxAt(f, at(-W / 2 + (i + 0.5) * (W / 6), o * (D / 2 + 5)), fgY - 40, W / 6 - 8, 24, 4, (i + k) % 2 ? M.black : M.yellow, rot);
+  // ---- wysoka część (FG): powłoka do zwężenia albo dachu, słupy narożne, piętra z oknami
+  f.set = 'fg';
+  shell(W, D, fgY, top1, M.dark);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (fgY + top1) / 2, 70, top1 - fgY, 70, M.rail, rot);
+  floors(W, D, fgY, top1, 300, k * 5 + 1);
+  let w2 = W;
+  let d2 = D;
+  if (b.setbackY) {
+    w2 = W * 0.74;
+    d2 = D * 0.74;
+    boxAt(f, at(0, 0), b.setbackY + 15, W + 30, 30, D + 30, M.steel, rot);
+    spikeRow(f, ...at(-W / 2, D / 2 + 10), ...at(W / 2, D / 2 + 10), b.setbackY + 40, 150, 110, 14, b.nx, b.nz, 0.5, k * 7 + 3);
+    shell(w2, d2, b.setbackY + 30, b.roofY, M.dark);
+    floors(w2, d2, b.setbackY + 30, b.roofY, 300, k * 5 + 3);
+    for (const o of [-1, 1]) boxAt(f, at(0, o * (d2 / 2 + 4)), b.roofY - 70, w2 + 6, 40, 6, M.red, rot);
+  }
+  // ---- dach (z góry widzi go wypiek skóry wokseli): płyta, obrzeże w pasy, kolce na zewnątrz miasta, właz, kratka, lampy
+  boxAt(f, at(0, 0), b.roofY + 15, w2 + 40, 30, d2 + 40, M.steel, rot);
+  boxAt(f, at(0, 0), b.roofY + 32, w2 - 30, 6, d2 - 30, pbHash1(k * 3.7) < 0.5 ? M.floor : M.dark, rot);
+  for (const o of [-1, 1]) for (let i = 0; i < 5; i++) boxAt(f, at(-w2 / 2 + (i + 0.5) * (w2 / 5), o * (d2 / 2 + 8)), b.roofY + 34, w2 / 5 - 6, 4, 20, (i + k) % 2 ? M.black : M.yellow, rot);
+  spikeRow(f, ...at(-w2 / 2, d2 / 2 + 14), ...at(w2 / 2, d2 / 2 + 14), b.roofY + 40, 130, 130, 16, b.nx, b.nz, 0.6, k * 11 + 1);
+  const [hx, hz] = at(-w2 * 0.24, d2 * 0.16);
+  hatch(f, hx, b.roofY + 34, hz, Math.min(46, d2 * 0.16));
+  const [gx, gz] = at(w2 * 0.2, -d2 * 0.18);
+  grille(f, gx, b.roofY + 38, gz, Math.min(120, w2 * 0.3), 60, rot);
+  if (pbHash1(k * 5.3 + 0.2) < 0.5) {
+    const [cx, cz] = at(w2 * 0.05, d2 * 0.24);
+    f.cyl(cx, b.roofY + 56, cz, 16, w2 * 0.6, M.copper, [0, -b.angle, Math.PI / 2]);
+  }
+  f.fx(1.1, PB_FX.fill, 0.25, PBASE_CH.drumQ(qi));
+  for (const s of [-1, 1]) boxAt(f, at(s * (w2 / 2 - 26), -d2 / 2 + 26), b.roofY + 38, 22, 6, 22, s > 0 ? M.warm : M.cyan, rot);
+  f.nofx();
+  if (b.spireTop) {
+    const sy = (b.roofY + b.spireTop) / 2;
+    f.cyl(b.x, b.roofY + 70, b.z, 54, 80, M.dark);
+    f.cyl(b.x, sy, b.z, 18, b.spireTop - b.roofY, M.steel);
+    f.cyl(b.x, sy, b.z, 28, 14, M.rail);
+    f.fx(1.8, PB_FX.blink, pbHash1(k * 4.1 + 0.7), 0.55);
+    f.box(b.x, b.spireTop + 14, b.z, 24, 20, 24, M.red);
+    f.nofx();
+  } else {
+    f.fx(1.6, PB_FX.blink, pbHash1(k * 4.1 + 0.7), 0.5);
+    boxAt(f, at(w2 / 2 - 24, d2 / 2 - 24), b.roofY + 44, 20, 16, 20, M.red, rot);
+    f.nofx();
+  }
+  f.set = 'bg';
+}
+
+// Ćwiartka miasta (kawałek z pulą): wieżowce, lampy ulic na tarasach dysku (światła dzielnicy — kanał drumQ), lądowisko
+// dronów na obrzeżu dysku (start — kanał bays), kogut alarmu. W płaszczyźnie gry tylko wieżowce (ciało ćwiartki).
+function cityQuadrant(f, l, qd, qi) {
   const H = l.habitat;
-  const R = H.drumR;
-  const wy = (H.floorY + H.wallTop) / 2;
-  const wh = H.wallTop - H.floorY;
-  const a0 = qd.a0;
-  const a1 = qd.a1;
-  const step = TAU / 64;
-  const bayIn = (a) => H.bays.some((b) => Math.abs(Math.atan2(Math.sin(a - b.angle), Math.cos(a - b.angle))) < 0.055);
-  // ściana zewnętrzna (rura): korpus, cokół, listwa szczytowa w czerwono-czarne pasy, łaty rdzy, kolce na zewnątrz
-  ringBoxes(f, R - H.wall / 2, H.wall, wy, wh, a0, a1, step, M.dark);
-  ringBoxes(f, R - H.wall / 2, H.wall + 26, H.floorY + 40, 80, a0, a1, step, M.steel);
-  ringBoxes(f, R - H.wall / 2, H.wall + 18, H.rimTop - 10, 22, a0, a1, step, M.rail, (a, k) => {
-    const [x, z] = ang(a, R - H.wall / 2);
-    f.box(x, H.rimTop + 2, z, 40, 3, H.wall + 10, (k + qi) % 2 ? M.black : M.yellow, -(a + Math.PI / 2));
-    if (pbHash1(qi * 13 + k * 1.7) < 0.3) f.box(x, H.rimTop + 4, z, 70, 2, H.wall - 20, M.orange, -(a + Math.PI / 2));
-  });
-  // przypory zewnętrzne co ~22°, kolce na krawędzi
-  for (let a = a0 + 0.2; a < a1 - 0.05; a += 0.39) {
-    const [x, z] = ang(a, R + 30);
-    f.box(x, wy - 60, z, 60, wh - 140, 70, M.steel, -a);
-    const [sx, sz] = ang(a, R + 90);
-    f.cone(sx, H.rimTop - 30, sz, 22, 150, M.rail, [Math.cos(a), 0.35, Math.sin(a)]);
+  const [inner, outer] = l.spec.city.rings;
+  for (const b of H.buildings) if (b.chunk === qd.id) cityBuilding(f, l, b, qi);
+  // ulice: lampy wzdłuż obwodnic (przy cokole wieży, między pierścieniami wieżowców, na krawędzi miasta)
+  const midR = (inner.r + inner.d / 2 + outer.r - outer.d / 2) / 2;
+  for (const [r, y, n] of [[H.stemR + 110, H.tier2Y, 7], [midR, H.tier1Y, 10], [H.drumR - 20, H.tier1Y, 12]]) {
+    for (let i = 0; i < n; i++) {
+      const a = qd.a0 + ((i + 0.5) / n) * (qd.a1 - qd.a0);
+      const h = pbHash1(qi * 31 + i * 2.3 + r * 0.01);
+      f.fx(1.1, PB_FX.fill, 0.15 + 0.3 * h, PBASE_CH.drumQ(qi));
+      boxAt(f, ang(a, r), y + 14, 60, 4, 12, h < 0.6 ? M.warm : M.cyan, -(a + Math.PI / 2));
+      f.nofx();
+    }
   }
-  for (let a = a0 + 0.1; a < a1; a += 0.2) {
-    const [x, z] = ang(a, R + 60);
-    f.cone(x, H.rimTop - 10, z, 18, 120, M.rail, [Math.cos(a), 0.4, Math.sin(a)]);
-  }
-  // grodzie promieniowe (bulkheady) i pierścień wewnętrzny
-  for (const s of H.spokes) {
-    const w = Math.atan2(Math.sin(s - (a0 + a1) / 2), Math.cos(s - (a0 + a1) / 2));
-    if (Math.abs(w) > Math.PI / 4) continue;
-    const r0 = H.innerR;
-    const r1 = R - H.wall;
-    const [x, z] = ang(s, (r0 + r1) / 2);
-    f.box(x, wy, z, r1 - r0 + 20, wh - 40, H.spokeW, M.dark, -s);
-    f.box(x, H.wallTop - 10, z, r1 - r0, 16, H.spokeW + 14, M.rail, -s);
-    // drzwi grodziowe (wnęka) i lampka
-    boxAt(f, ang(s, r0 + 110), 30, 80, 180, H.spokeW + 8, M.black, -s);
-    f.fx(1.0, PB_FX.fill, 0.2, PBASE_CH.drumQ(qi));
-    boxAt(f, ang(s, r1 - 60), H.wallTop + 6, 18, 6, 18, M.warm, -s);
-    f.nofx();
-  }
-  ringBoxes(f, H.innerR - H.innerW / 2, H.innerW, wy, wh, a0, a1, TAU / 48, M.steel);
-  ringBoxes(f, H.innerR - H.innerW / 2, H.innerW + 10, H.wallTop - 6, 14, a0, a1, TAU / 48, M.rail);
-  // dno przedziałów (pod płaszczyzną gry — widać je przez otwarty bęben): pokłady, łaty, oświetlone pasy, ładunek
-  for (const [r, d, mat] of [[640, 160, M.floor], [790, 150, M.steel], [880, 60, M.dark]]) ringBoxes(f, r, d, H.floorY, 18, a0, a1, TAU / 72, mat);
-  let k = 0;
-  for (let a = a0 + 0.03; a < a1 - 0.02; a += 0.065, k++) {
-    const h = pbHash1(qi * 31 + k * 2.3);
-    const r = 600 + 270 * h;
-    const [x, z] = ang(a, r);
-    if (h < 0.35) f.box(x, H.floorY + 40, z, 90, 70, 60 + 50 * h, h < 0.18 ? M.orange : M.teal, -a);
-    else if (h < 0.55) { f.box(x, H.floorY + 22, z, 70, 30, 70, M.dark, -a); hatch(f, x, H.floorY + 38, z, 26); }
-    // światła przedziałów (zasilanie habitatu)
-    f.fx(1.1, PB_FX.fill, 0.15 + 0.3 * h, PBASE_CH.drumQ(qi));
-    const [lx, lz] = ang(a + 0.02, 600 + 300 * pbHash1(qi * 7 + k));
-    f.box(lx, H.floorY + 12, lz, 60, 4, 10, h < 0.5 ? M.warm : M.cyan, -a);
-    f.nofx();
-  }
-  // hangary dronów w ścianie: rama w pasy, wrota, światła startu (kanał bays)
+  // lądowiska dronów na obrzeżu dysku (za miastem): płyta w żółtej ramie, światła startu (kanał bays), światło przeszkodowe
+  const am = (qd.a0 + qd.a1) / 2;
   for (const b of H.bays) {
-    const w = Math.atan2(Math.sin(b.angle - (a0 + a1) / 2), Math.cos(b.angle - (a0 + a1) / 2));
-    if (Math.abs(w) > Math.PI / 4) continue;
-    const [x, z] = ang(b.angle, R + 8);
+    const w = Math.atan2(Math.sin(b.angle - am), Math.cos(b.angle - am));
+    if (w < -Math.PI / 4 || w >= Math.PI / 4) continue;
+    const rr = (H.tier1R + H.discR) / 2;
     const rot = -(b.angle + Math.PI / 2);
-    f.box(x, wy + 20, z, 230, wh - 60, 30, M.yellow, rot);
-    f.box(x, wy + 10, z, 190, wh - 110, 36, M.black, rot);
+    boxAt(f, ang(b.angle, rr), H.discY1 + 16, 240, 14, 250, M.yellow, rot);
+    boxAt(f, ang(b.angle, rr), H.discY1 + 22, 210, 6, 220, M.black, rot);
     for (let i = 0; i < 4; i++) {
-      const [px, pz] = ang(b.angle, R - 40 - i * 90);
       f.fx(1.4, PB_FX.launch, i / 4, PBASE_CH.bays);
-      f.box(px, H.floorY + 30, pz, 20, 8, 70, M.warm, -b.angle);
+      boxAt(f, ang(b.angle, rr - 90 + i * 60), H.discY1 + 30, 20, 8, 70, M.warm, -b.angle);
       f.nofx();
     }
     f.fx(1.6, PB_FX.blink, b.angle, 0.8);
-    boxAt(f, ang(b.angle - 0.06, R + 20), H.rimTop + 20, 16, 14, 16, M.red);
+    boxAt(f, ang(b.angle - 0.05, rr + 100), H.discY1 + 40, 16, 14, 16, M.red);
     f.nofx();
   }
-  // koguty alarmu na krawędzi ćwiartki
   f.fx(1.7, PB_FX.alarm, qi * 0.25, PBASE_CH.alarm);
-  boxAt(f, ang((a0 + a1) / 2, R - 40), H.rimTop + 30, 30, 24, 30, M.red);
+  boxAt(f, ang(am, H.drumR - 60), H.tier1Y + 40, 30, 24, 30, M.red);
   f.nofx();
 }
 // box() z punktem jako [x] … — pomocnik: box na (x, y, z) z punktu ang()
 function boxAt(f, p, y, w, h, d, mat, rot = 0) { f.box(p[0], y, p[1], w, h, d, mat, rot); }
 
+// Podstawa wieży (kawałek H-C): cokół trzonu na dysku (plac na floorY), na nim walec podstawy przez płaszczyznę gry
+// (bryła trafień — koło coreR) z obręczami, przyporami i bramami; nad coreTop przechodzi w trzon wieży (habitatTech).
 function habitatCore(f, l) {
   const H = l.habitat;
-  // szyb (przecina płaszczyznę gry; nad bębnem przechodzi w szyję — habitatTech), grodzie wewnętrzne, trzon do dysku
-  f.cyl(0, (H.floorY + H.coreTop) / 2, 0, H.coreR, H.coreTop - H.floorY, M.steel);
-  for (const y of [H.floorY + 60, 40, 230, 520]) f.ring(0, y, 0, H.coreR + 8, 0, M.rail, [Math.PI / 2, 0, 0]);
-  for (const s of H.innerSpokes) {
-    const r0 = H.coreR;
-    const r1 = H.innerR - H.innerW;
-    const [x, z] = ang(s, (r0 + r1) / 2);
-    f.box(x, (H.floorY + H.wallTop) / 2, z, r1 - r0 + 20, H.wallTop - H.floorY - 60, 54, M.dark, -s);
-    f.box(x, H.wallTop - 20, z, r1 - r0, 14, 66, M.yellow, -s);
-  }
-  // dno między szybem a pierścieniem: pokład z włazami windy
-  ringBoxes(f, (H.coreR + H.innerR - H.innerW) / 2, H.innerR - H.innerW - H.coreR, H.floorY, 18, 0, TAU, TAU / 24, M.floor);
-  for (const s of H.innerSpokes) {
-    const [hx, hz] = ang(s + 0.5, 380);
-    hatch(f, hx, H.floorY + 12, hz, 36);
-  }
-  // światła windy (bieg wzdłuż szybu — z góry widać pas na obwodzie)
-  for (let i = 0; i < 12; i++) {
-    f.fx(1.2, PB_FX.chase, i / 12, 0.35);
-    boxAt(f, ang((i / 12) * TAU, H.coreR + 12), H.wallTop + 120, 22, 10, 22, M.cyan);
-    f.nofx();
-  }
-  // trzon pod bębnem do dysku mieszkalnego
+  // cokół od tarasu dysku do placu i plac: płyta, pierścień pasów na krawędzi, włazy, lampy (zasilanie habitatu)
   f.cyl(0, (H.floorY - 40 + H.tier2Y) / 2, 0, H.stemR, H.floorY - 40 - H.tier2Y, M.dark);
   for (const y of [H.floorY - 120, (H.floorY + H.tier2Y) / 2, H.tier2Y + 60]) f.ring(0, y, 0, H.stemR + 10, 0, M.rail, [Math.PI / 2, 0, 0]);
+  f.cyl(0, H.floorY - 20, 0, H.stemR, 40, M.steel);
+  ringBoxes(f, (H.coreR + H.stemR) / 2, H.stemR - H.coreR - 30, H.floorY + 4, 8, 0, TAU, TAU / 24, M.floor);
+  ringBoxes(f, H.stemR - 30, 50, H.floorY + 8, 6, 0, TAU, TAU / 32, M.rail, (a, i) => {
+    boxAt(f, ang(a, H.stemR - 30), H.floorY + 13, 60, 3, 56, i % 2 ? M.black : M.yellow, -(a + Math.PI / 2));
+  });
+  for (let i = 0; i < 6; i++) {
+    const [hx, hz] = ang((i / 6) * TAU + 0.5, (H.coreR + H.stemR) / 2);
+    hatch(f, hx, H.floorY + 10, hz, 34);
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = ((i + 0.5) / 12) * TAU;
+    f.fx(1.1, PB_FX.fill, 0.2 + 0.3 * pbHash1(i * 3.3), PBASE_CH.habitat);
+    boxAt(f, ang(a, H.stemR - 80), H.floorY + 16, 50, 4, 12, i % 3 ? M.warm : M.cyan, -(a + Math.PI / 2));
+    f.nofx();
+  }
+  // podstawa wieży: walec przez płaszczyznę gry, obręcze, przypory (pod płaszczyzną), bramy, bieg świateł windy
+  f.cyl(0, (H.floorY + H.coreTop) / 2, 0, H.coreR, H.coreTop - H.floorY, M.steel);
+  for (const y of [H.floorY + 60, 40, 230, 520]) f.ring(0, y, 0, H.coreR + 8, 0, M.rail, [Math.PI / 2, 0, 0]);
+  for (let i = 0; i < 8; i++) {
+    const a = ((i + 0.5) / 8) * TAU;
+    boxAt(f, ang(a, H.coreR + 30), (H.floorY + 60) / 2, 90, 60 - H.floorY, 60, M.dark, -a);
+    if (i % 2 === 0) {
+      const g = a + TAU / 16;
+      boxAt(f, ang(g, H.coreR + 4), H.floorY + 110, 12, 200, 150, M.yellow, -g);
+      boxAt(f, ang(g, H.coreR + 8), H.floorY + 100, 12, 170, 120, M.black, -g);
+    }
+  }
+  for (let i = 0; i < 12; i++) {
+    f.fx(1.2, PB_FX.chase, i / 12, 0.35);
+    boxAt(f, ang((i / 12) * TAU, H.coreR + 12), H.coreTop - 60, 22, 10, 22, M.cyan);
+    f.nofx();
+  }
 }
 
-// Część techniczna nad bębnem (FG, duch) = SZYJA i GŁOWA (2026-10-14, prośba użytkownika: „powiększ górę i zrób
-// znacznie dłuższą szyję”). Szyja: rura z kratownicą czterech dźwigarów, obręcze, rury, winda (bieg świateł),
+// Wieża nad podstawą (FG, duch) = TRZON i KORONA (2026-11-11: „duża wieża pośrodku” miasta — trzon grubszy, korona
+// węższa niż dawny talerz, żeby z góry było widać wieżowce wokół). Trzon (w kodzie „szyja”, neck*): rura z kratownicą czterech dźwigarów, obręcze, rury, winda (bieg świateł),
 // platforma w połowie. Głowa: talerz ze schodkowym spodem do szyi, okna cywilów na obwodzie i świetliki na wierzchu
 // (zasilanie habitatu), piasta z kopułą, radiatory, talerze łączności, maszty anten, kolce na obrzeżu.
 function habitatTech(f, l) {
@@ -300,7 +363,7 @@ function habitatHead(f, H) {
   const rd = H.ringR1 - H.ringR0;
   const hr = H.headR;
   // spód talerza: schodki od obrzeża do szyi
-  const steps = [[H.ringR1 - 30, 90], [H.ringR1 - 170, 90], [H.ringR1 - 330, 90], [hr + 60, 100], [H.neckR + 110, 110]];
+  const steps = [[H.ringR1 - 30, 90], [H.ringR1 - 120, 90], [hr + 40, 100], [H.neckR + 60, 110]];
   let yb = y0;
   steps.forEach(([r, h], i) => {
     f.cyl(0, yb - h / 2, 0, r, h + 4, i % 2 ? M.steel : M.dark);
@@ -313,7 +376,7 @@ function habitatHead(f, H) {
     boxAt(f, ang(a, H.ringR1 - 30), y1 + 14, 60, 3, 76, i % 2 ? M.black : M.yellow, -(a + Math.PI / 2));
   });
   // okna cywilów na obwodzie (cztery rzędy) i świetliki na wierzchu — zasilanie habitatu
-  const wins = 64;
+  const wins = 40;
   const wlen = 2 * H.ringR1 * Math.tan(Math.PI / wins) * 0.62;
   [0.16, 0.56, 0.72, 0.88].forEach((t, row) => {
     for (let i = 0; i < wins; i++) {
@@ -326,8 +389,8 @@ function habitatHead(f, H) {
     }
   });
   const skyR = H.ringR0 + rd * 0.3;
-  for (let i = 0; i < 40; i++) {
-    const a = ((i + 0.5) / 40) * TAU;
+  for (let i = 0; i < 24; i++) {
+    const a = ((i + 0.5) / 24) * TAU;
     f.fx(1.2, PB_FX.fill, 0.1 + 0.6 * pbHash1(i * 4.1), PBASE_CH.tech);
     boxAt(f, ang(a, skyR), y1 + 12, 54, 4, rd * 0.22, i % 3 ? M.warm : M.white, -(a + Math.PI / 2));
     f.nofx();
@@ -376,8 +439,8 @@ function habitatHead(f, H) {
     const dx = Math.cos(a);
     const dz = Math.sin(a);
     f.cyl(x, y1 + 110, z, 20, 200, M.steel);
-    f.cone(x + dx * 40, y1 + 260, z + dz * 40, 200, 90, M.pale, [dx, 1.2, dz]);
-    f.ring(x + dx * 46, y1 + 268, z + dz * 46, 196, 0, M.rail, [Math.PI / 2 - 0.6, -a, 0]);
+    f.cone(x + dx * 40, y1 + 260, z + dz * 40, 130, 70, M.pale, [dx, 1.2, dz]);
+    f.ring(x + dx * 46, y1 + 268, z + dz * 46, 126, 0, M.rail, [Math.PI / 2 - 0.6, -a, 0]);
   }
   // maszty anten z poprzeczkami i światłami przeszkodowymi
   for (let i = 0; i < 4; i++) {
@@ -422,10 +485,15 @@ function discSector(f, l, k, n) {
     const d = Math.min(300, H.discR - r + 150);
     ringBoxes(f, r, d, yc, hh, a0, a1, Math.min(TAU / n, 480 / r), (Math.round(r / 300) % 2) ? M.dark : M.steel);
   }
-  // tarasy (wyższe pierścienie bliżej środka)
-  for (let r = H.stemR + 150; r < H.tier1R; r += 300) {
-    const top = r < H.tier2R ? H.tier2Y : H.tier1Y;
-    ringBoxes(f, r, 300, (H.discY1 + top) / 2, top - H.discY1, a0, a1, Math.min(TAU / n, 480 / r), M.steel);
+  // tarasy miasta (wyższe bliżej środka): tier2 pod wewnętrznym pierścieniem wieżowców, tier1 pod zewnętrznym — pasy
+  // co ≤ 300 j. dokładnie do krawędzi tarasu (wieżowce stoją na nich całym rzutem)
+  for (const [r0, r1, top] of [[H.stemR, H.tier2R, H.tier2Y], [H.tier2R, H.tier1R, H.tier1Y]]) {
+    const parts = Math.max(1, Math.round((r1 - r0) / 300));
+    const d = (r1 - r0) / parts;
+    for (let i = 0; i < parts; i++) {
+      const r = r0 + (i + 0.5) * d;
+      ringBoxes(f, r, d, (H.discY1 + top) / 2, top - H.discY1, a0, a1, Math.min(TAU / n, 480 / r), (i + (top === H.tier2Y ? 0 : 1)) % 2 ? M.steel : M.floor);
+    }
   }
   // świetliki i okna dzielnic: pas na każdym pierścieniu (z przerwami), faza zasilania rośnie ku środkowi
   for (let r = H.stemR + 300; r < H.discR - 80; r += 300) {
@@ -739,97 +807,104 @@ function warehouseYard(f, l) {
 }
 
 // ---------------------------------------------------------------------------
-// Wieżowce (2026-11-03, decyzja użytkownika: dwa wieżowce na pomostach — cel finału obok habitatu)
+// Reaktory antygrawitacyjne (2026-11-11, prośba użytkownika: w miejsce dwóch wieżowców na pomostach „struktury
+// antygrawitacyjne — reaktory trzymające bazę na orbicie”; osobne budowle — cel finału obok habitatu)
 
-// Wieżowiec okrakiem nad pomostem: podest pod pokładem, trzon z rdzeniem i słupami narożnymi (przecina płaszczyznę gry —
-// bryła trafień), powłoka z pasami okien (zasilanie habitatu; gasną od góry), zwężenie od setbackY, dach z kolcami
-// i włazami, iglica ze światłami przeszkodowymi, koguty alarmu. Część nad ~200 j. świata — FG (nad statkami, jak maszty).
-function highriseTower(f, l, h, k) {
+// Reaktor okrakiem nad pomostem. Pod pokładem DZWON EMITERA skierowany ku planetoidzie (kołnierz, żebra, świecąca
+// gardziel i pierścienie pola pod nią — emisja w paśmie HDR), w płaszczyźnie gry OBUDOWA (ściany, komora rdzenia, słupy
+// narożne — bryła trafień), nad nią (FG) kolumna rdzenia w klatce czterech pylonów, PIERŚCIEŃ POLA na ringY, radiatory,
+// piorunochron ze światłem przeszkodowym, koguty alarmu. Świeci stale: budowla martwa = kawałek pęknięty.
+function antigravReactor(f, l, h, k) {
   const rot = -h.angle;
   const at = (s, o) => [h.x + h.ux * s + h.nx * o, h.z + h.uz * s + h.nz * o];
   const P = l.spec.pier;
   const W = h.w;
   const D = h.d;
   const t = h.wall;
-  const fgY = 600;
-  // pudło-skorupa (cztery ściany) w zakresie y0..y1 o wymiarach w × d
-  const shell = (w, d, y0, y1, mat) => {
-    const yc = (y0 + y1) / 2;
-    const hh = y1 - y0;
-    for (const o of [-1, 1]) boxAt(f, at(0, o * (d / 2 - t / 2)), yc, w, hh, t, mat, rot);
-    for (const s of [-1, 1]) boxAt(f, at(s * (w / 2 - t / 2), 0), yc, t, hh, d - 2 * t, mat, rot);
-  };
-  // pasy okien i stropów na czterech ścianach pudła w × d (piętro co `step`)
-  const floors = (w, d, y0, y1, step, seed) => {
-    let i = 0;
-    for (let y = y0 + step * 0.5; y < y1 - step * 0.3; y += step, i++) {
-      for (const o of [-1, 1]) boxAt(f, at(0, o * (d / 2 + 3)), y - step * 0.42, w + 8, 10, 6, M.rail, rot);
-      for (const s of [-1, 1]) boxAt(f, at(s * (w / 2 + 3), 0), y - step * 0.42, 6, 10, d + 8, M.rail, rot);
-      f.fx(1.25, PB_FX.fill, 0.15 + 0.7 * (1 - (y - y0) / Math.max(1, y1 - y0)), PBASE_CH.habitat);
-      for (const o of [-1, 1]) {
-        // okna: dwa pasy na ścianie wzdłuż pomostu, przerwa przy słupie środkowym; tu i ówdzie ciemne (rozbite) okno
-        for (const s of [-1, 1]) if (pbHash1(seed * 13.7 + i * 3.1 + s + o * 0.5) > 0.12) boxAt(f, at(s * w * 0.24, o * (d / 2 + 4)), y, w * 0.4, 26, 5, M.warm, rot);
-        boxAt(f, at(o * (w / 2 + 4), 0), y, 5, 26, d * 0.7, M.warm, rot);
-      }
-      f.nofx();
-    }
-  };
-  // ---- podest pod pokładem pomostu: blok, wsporniki do kratownicy pomostu, kolce w dół
-  f.box(h.x, (h.baseY + P.deckY0) / 2, h.z, W + 120, P.deckY0 - h.baseY, D + 120, M.dark, rot);
-  for (const s of [-1, 1]) for (const o of [-1, 1]) {
-    const [x0, z0] = at(s * (W / 2 + 40), o * (D / 2 + 40));
-    const [x1, z1] = at(s * (W / 2 + 220), o * 30);
-    f.beam([x0, h.baseY + 80, z0], [x1, -238, z1], 24, M.steel);
-    f.cone(x0, h.baseY - 40, z0, 20, 160, M.rail, [s * 0.3, -1, o * 0.3]);
+  const fgY = h.fgY;
+  // ---- dzwon emitera pod pokładem: kołnierz, stożek ścięty z walców, żebra, gardziel, pierścienie pola
+  f.box(h.x, P.deckY0 - 60, h.z, W + 80, 120, D + 80, M.dark, rot);
+  const bellTop = P.deckY0 - 120;
+  const bellH = bellTop - h.baseY;
+  for (let i = 0; i < 4; i++) {
+    const r = h.bellR * (0.62 + 0.38 * (i / 3));
+    f.cyl(h.x, bellTop - (i + 0.5) * (bellH / 4), h.z, r, bellH / 4 + 4, i % 2 ? M.steel : M.dark);
   }
-  // ---- trzon w płaszczyźnie gry (BG do fgY): ściany, rdzeń, słupy narożne, wrota pomostu, pasy ostrzegawcze
-  shell(W, D, P.deckY0 - 20, fgY, M.dark);
-  boxAt(f, at(0, 0), (P.deckY0 + fgY) / 2, h.coreW, fgY - P.deckY0, h.coreW, M.steel, rot);
-  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (P.deckY0 + fgY) / 2, 66, fgY - P.deckY0 + 20, 66, M.rail, rot);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + 0.2;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    f.beam([h.x + ca * h.bellR * 0.6, bellTop, h.z + sa * h.bellR * 0.6], [h.x + ca * (h.bellR + 14), h.baseY + 20, h.z + sa * (h.bellR + 14)], 22, M.rail);
+  }
+  f.ring(h.x, h.baseY + 6, h.z, h.bellR + 10, 0, M.yellow, [Math.PI / 2, 0, 0]);
+  f.fx(2.0, PB_FX.steady);
+  f.cyl(h.x, h.baseY + 30, h.z, h.bellR * 0.78, 20, M.cyan);
+  f.cyl(h.x, h.baseY + 14, h.z, h.bellR * 0.4, 20, M.white);
+  f.nofx();
+  for (let i = 0; i < 3; i++) {
+    f.fx(1.7, PB_FX.chase, i / 3, 0.6);
+    f.ring(h.x, h.baseY - 110 - i * 130, h.z, h.bellR * (0.9 - 0.2 * i), 0, M.cyan, [Math.PI / 2, 0, 0]);
+    f.nofx();
+  }
+  // ---- obudowa w płaszczyźnie gry (BG do fgY): ściany, komora rdzenia, słupy narożne, wrota pomostu, pasy ostrzegawcze
+  for (const o of [-1, 1]) boxAt(f, at(0, o * (D / 2 - t / 2)), (P.deckY0 - 20 + fgY) / 2, W, fgY - P.deckY0 + 20, t, M.dark, rot);
+  for (const s of [-1, 1]) boxAt(f, at(s * (W / 2 - t / 2), 0), (P.deckY0 - 20 + fgY) / 2, t, fgY - P.deckY0 + 20, D - 2 * t, M.dark, rot);
+  f.cyl(h.x, (P.deckY0 + fgY) / 2, h.z, h.coreR, fgY - P.deckY0, M.steel);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (P.deckY0 + fgY) / 2, 70, fgY - P.deckY0 + 20, 70, M.rail, rot);
   for (const s of [-1, 1]) {
-    // wrota, którymi pomost wchodzi w wieżowiec (ciemny otwór, żółta rama)
     boxAt(f, at(s * (W / 2 + 6), 0), P.deckY1 + 90, 10, 190, 2 * P.halfW + 30, M.black, rot);
     boxAt(f, at(s * (W / 2 + 10), 0), P.deckY1 + 192, 12, 16, 2 * P.halfW + 50, M.yellow, rot);
   }
   for (const o of [-1, 1]) for (let i = 0; i < 6; i++) boxAt(f, at(-W / 2 + (i + 0.5) * (W / 6), o * (D / 2 + 5)), fgY - 40, W / 6 - 8, 24, 4, i % 2 ? M.black : M.yellow, rot);
-  // ---- wysoka część (FG): powłoka do setbackY, zwężenie do dachu, słupy narożne, piętra z oknami
+  // ---- nad obudową (FG): strop z kratkami i radiatorami, kolumna rdzenia ze świecącymi pasami, pylony, pierścień pola
   f.set = 'fg';
-  shell(W, D, fgY, h.setbackY, M.dark);
-  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (fgY + h.setbackY) / 2, 70, h.setbackY - fgY, 70, M.rail, rot);
-  floors(W, D, fgY, h.setbackY, 300, k * 5 + 1);
-  const w2 = W * 0.76;
-  const d2 = D * 0.76;
-  boxAt(f, at(0, 0), h.setbackY + 15, W + 30, 30, D + 30, M.steel, rot);
-  spikeRow(f, ...at(-W / 2, -D / 2 - 10), ...at(W / 2, -D / 2 - 10), h.setbackY + 40, 120, 120, 14, -h.nx, -h.nz, 0.5, k * 7 + 2);
-  spikeRow(f, ...at(-W / 2, D / 2 + 10), ...at(W / 2, D / 2 + 10), h.setbackY + 40, 120, 120, 14, h.nx, h.nz, 0.5, k * 7 + 3);
-  shell(w2, d2, h.setbackY + 30, h.roofY, M.dark);
-  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (w2 / 2 - 16), o * (d2 / 2 - 16)), (h.setbackY + h.roofY) / 2, 54, h.roofY - h.setbackY, 54, M.rail, rot);
-  floors(w2, d2, h.setbackY + 30, h.roofY, 300, k * 5 + 3);
-  // rury (miedź) po ścianie od strony pomostu i czerwone pasy pod dachem
-  for (const s of [-0.3, 0.3]) {
-    const [x, z] = at(s * W, -D / 2 - 14);
-    f.cyl(x, (fgY + h.setbackY) / 2, z, 14, h.setbackY - fgY, M.copper);
+  boxAt(f, at(0, 0), fgY + 15, W + 30, 30, D + 30, M.steel, rot);
+  // kolce na krawędziach stropu od strony stanowisk (styl piratów; nad płaszczyzną gry — poza ciałem budowli)
+  spikeRow(f, ...at(-W / 2, -D / 2 - 10), ...at(W / 2, -D / 2 - 10), fgY + 40, 120, 120, 14, -h.nx, -h.nz, 0.5, k * 7 + 2);
+  spikeRow(f, ...at(-W / 2, D / 2 + 10), ...at(W / 2, D / 2 + 10), fgY + 40, 120, 120, 14, h.nx, h.nz, 0.5, k * 7 + 3);
+  for (const o of [-1, 1]) {
+    const [gx, gz] = at(0, o * D * 0.34);
+    grille(f, gx, fgY + 34, gz, W * 0.5, 70, rot);
   }
-  for (const o of [-1, 1]) boxAt(f, at(0, o * (d2 / 2 + 4)), h.roofY - 70, w2 + 6, 40, 6, M.red, rot);
-  // ---- dach: płyta, kolce na obrzeżu, właz, kratka, maszt z iglicą i światłami przeszkodowymi
-  boxAt(f, at(0, 0), h.roofY + 15, w2 + 40, 30, d2 + 40, M.steel, rot);
-  for (const [s0, o0, s1, o1, ox, oz] of [[-1, -1, 1, -1, -h.nx, -h.nz], [-1, 1, 1, 1, h.nx, h.nz], [-1, -1, -1, 1, -h.ux, -h.uz], [1, -1, 1, 1, h.ux, h.uz]]) {
-    spikeRow(f, ...at(s0 * (w2 / 2 + 14), o0 * (d2 / 2 + 14)), ...at(s1 * (w2 / 2 + 14), o1 * (d2 / 2 + 14)), h.roofY + 40, 110, 140, 16, ox, oz, 0.6, k * 11 + s0 + o0);
+  for (const s of [-1, 1]) for (let i = -1; i <= 1; i++) boxAt(f, at(s * (W / 2 - 40), i * 110), fgY + 100, 12, 150, 90, M.copper, rot);
+  f.cyl(h.x, (fgY + h.topY) / 2, h.z, h.coreR * 0.62, h.topY - fgY, M.dark);
+  for (let y = fgY + 150; y < h.topY - 60; y += 190) f.cyl(h.x, y, h.z, h.coreR * 0.7, 26, M.rail);
+  f.fx(1.9, PB_FX.steady);
+  for (let y = fgY + 245; y < h.topY - 120; y += 190) f.cyl(h.x, y, h.z, h.coreR * 0.64, 70, M.cyan);
+  f.nofx();
+  for (const s of [-1, 1]) for (const o of [-1, 1]) {
+    const [x0, z0] = at(s * (W / 2 - 30), o * (D / 2 - 30));
+    const [x1, z1] = at(s * h.coreR * 0.5, o * h.coreR * 0.5);
+    f.beam([x0, fgY + 20, z0], [x1, h.topY - 40, z1], 30, M.steel);
+    const [x2, z2] = at(s * h.ringR * 0.7, o * h.ringR * 0.7);
+    f.beam([x2, h.ringY, z2], [(x0 + x1) / 2, (fgY + h.topY) / 2, (z0 + z1) / 2], 16, M.rail);
   }
-  const [hx, hz] = at(-w2 * 0.22, d2 * 0.18);
-  hatch(f, hx, h.roofY + 30, hz, 46);
-  const [gx, gz] = at(w2 * 0.2, -d2 * 0.2);
-  grille(f, gx, h.roofY + 34, gz, 110, 70, rot);
-  const sy = (h.roofY + h.spireTop) / 2;
-  f.cyl(h.x, h.roofY + 90, h.z, 70, 120, M.dark);
-  f.cyl(h.x, sy, h.z, 22, h.spireTop - h.roofY, M.steel);
-  for (const y of [h.roofY + 260, sy, h.spireTop - 220]) f.cyl(h.x, y, h.z, 34, 16, M.rail);
+  const seg = 16;
+  const segLen = 2 * h.ringR * Math.tan(Math.PI / seg);
+  for (let i = 0; i < seg; i++) {
+    const a = ((i + 0.5) / seg) * TAU;
+    const x = h.x + Math.cos(a) * h.ringR;
+    const z = h.z + Math.sin(a) * h.ringR;
+    const r = -(a + Math.PI / 2);
+    f.box(x, h.ringY, z, segLen * 1.06, 60, 56, i % 2 ? M.dark : M.steel, r);
+    f.box(x, h.ringY + 32, z, segLen * 0.9, 4, 40, i % 2 ? M.black : M.yellow, r);
+    f.fx(1.8, PB_FX.chase, i / seg, 0.8);
+    f.box(x, h.ringY - 34, z, segLen * 0.7, 8, 30, M.cyan, r);
+    f.nofx();
+  }
+  f.ring(h.x, h.ringY, h.z, h.ringR + 34, 0, M.rail, [Math.PI / 2, 0, 0]);
+  // głowica kolumny: kondensator, świecąca kopuła, piorunochron ze światłem przeszkodowym
+  f.cyl(h.x, h.topY + 20, h.z, h.coreR * 0.9, 40, M.steel);
+  f.fx(2.2, PB_FX.blink, pbHash1(k * 3.1), 1.3);
+  f.cyl(h.x, h.topY + 60, h.z, h.coreR * 0.55, 40, M.white);
+  f.nofx();
+  const sy = (h.topY + h.spireTop) / 2;
+  f.cyl(h.x, sy, h.z, 16, h.spireTop - h.topY, M.steel);
   f.fx(1.8, PB_FX.blink, pbHash1(k * 4.1 + 0.7), 0.55);
-  f.box(h.x, h.spireTop + 16, h.z, 26, 22, 26, M.red);
-  f.box(h.x, sy, h.z, 18, 14, 50, M.red);
+  f.box(h.x, h.spireTop + 14, h.z, 24, 20, 24, M.red);
   f.nofx();
   f.fx(1.7, PB_FX.alarm, pbHash1(k * 2.3 + 0.2), PBASE_CH.alarm);
-  for (const s of [-1, 1]) boxAt(f, at(s * (w2 / 2 - 30), s * (d2 / 2 - 30)), h.roofY + 50, 28, 22, 28, M.red, rot);
+  for (const s of [-1, 1]) boxAt(f, at(s * (W / 2 - 40), s * (D / 2 - 40)), fgY + 50, 28, 22, 28, M.red, rot);
   f.nofx();
   f.set = 'bg';
 }
@@ -846,10 +921,10 @@ export function buildPirateBaseScene(l, style) {
   const G = (id) => l.chunkById.get(id).group;
   if (l.chunks.length + 1 > PB_MAX_GROUPS) throw new Error(`baza piratów: ${l.chunks.length} kawałków > ${PB_MAX_GROUPS - 1}`);
   void style;
-  // ---- habitat: ćwiartki bębna, szyb z trzonem, część techniczna (duch), dysk mieszkalny (duch)
+  // ---- habitat: ćwiartki miasta (wieżowce), podstawa wieży z cokołem, wieża (duch), dysk mieszkalny (duch)
   l.habitat.quadrants.forEach((qd, qi) => {
     f.group = G(qd.id);
-    drumQuadrant(f, l, qd, qi);
+    cityQuadrant(f, l, qd, qi);
   });
   f.group = G('H-C');
   habitatCore(f, l);
@@ -884,15 +959,18 @@ export function buildPirateBaseScene(l, style) {
   warehouseHall(f, l);
   f.group = G('M-2');
   warehouseYard(f, l);
-  // ---- wieżowce na pomostach (osobne budowle)
-  (l.highrises || []).forEach((h, k) => {
+  // ---- reaktory antygrawitacyjne na pomostach (osobne budowle)
+  (l.antigravs || []).forEach((h, k) => {
     f.group = G(h.chunk);
-    highriseTower(f, l, h, k);
+    antigravReactor(f, l, h, k);
   });
-  // ---- maszty reflektorów (kawałek masztu) i lampy budowli
+  // ---- maszty reflektorów (kawałek masztu) i lampy budowli. Maszt miasta stoi na pylonie z tarasu dysku: pylon kończy
+  // się pod płaszczyzną gry, maszt zaczyna nad nią — żadna z tych brył nie wchodzi do ciała ćwiartki (same wieżowce).
   l.lights.forEach((L, k) => {
     f.group = G(L.chunk);
-    const baseY = L.chunk.startsWith('H-') ? l.habitat.rimTop : l.spec.pier.deckY1;
+    const city = L.chunk.startsWith('H-');
+    if (city) f.box(L.x, (l.habitat.tier1Y + 100) / 2, L.z, 50, 100 - l.habitat.tier1Y, 50, M.steel);
+    const baseY = city ? 130 : l.spec.pier.deckY1;
     floodMast(f, L, baseY, k);
     if (lamps.length < PB_MAX_LAMPS) lamps.push([L.x, k7HeightToZ(L.y - 140), L.z, 1]);
   });

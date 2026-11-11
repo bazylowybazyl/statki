@@ -73,7 +73,7 @@ if (args.czujka) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { sourc
     const Wb = window.WorldBodies, sites = Wb && Wb.sites;
     if (!sites || !sites.length) return;
     for (const site of sites) for (const p of site.pieces) {
-      if ((p.kind !== 'drum' && p.kind !== 'pier') || p.state !== 'live') continue;
+      if ((p.kind !== 'city' && p.kind !== 'pier') || p.state !== 'live') continue;
       const n = p.alive | 0, was = W.prev[p.id];
       W.prev[p.id] = n;
       if (was && n < was - 20 && W.hits.length < 12) {

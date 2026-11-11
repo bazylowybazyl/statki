@@ -7,16 +7,17 @@
 //     trafień (statyka schowana, ciało rozbite na odłamy-wraki). Habitat ma 5 kawałków z bryłami na 8 progów — po
 //     piątym progu (37,5% punktów) nie było w co trafić i punkty stały (magazyn: 2 kawałki na 4 progi — 50%, pomosty:
 //     10 na 14 — 29%). OSTATNI stojący kawałek budowli zostaje do jej śmierci (rozpad misji łamie go sam).
-// (2) TARAN: zgniot ciał budowli (kawałki w bańce gracza) liczył tylko fizykę — ściana bębna traciła 80% węzłów,
+// (2) TARAN: zgniot ciał budowli (kawałki w bańce gracza) liczył tylko fizykę — ściana habitatu traciła 80% węzłów,
 //     a habitat miał 100%. Węzły stracone przez kawałek w oknie styku z okrętem spoza piratów (zdarzenie zderzenia
 //     ≥ `ramMinSpeed`) zdejmują punkty: ubytek / wszystkie węzły budowli × maks. punkty × `ramHpMul` (jak sufit
 //     punktów kadłuba okrętu — `HULL_INTEGRITY.npcExponent`, przy małym ubytku ~2,2 × udział).
 // (3) BEZPIECZNIK: budowla bez stojącego kawałka (pęknięte, schowane albo zjedzone ogniem do zera) ginie — punkty
 //     nie mogą zostać bez bryły, w którą da się trafić. Budowla z `noFuse` (habitat — śmierć z etapów) go nie ma.
 // (4) PULE KAWAŁKÓW I ETAPY HABITATU (decyzje użytkownika 2026-11-03, zgłoszenie „punkty stają, ciężko zbić,
-//     nienaturalnie się ostrzeliwuje”): kawałek z pulą (ćwiartki bębna, szyb) pęka od trafień W NIEGO (taran — od
+//     nienaturalnie się ostrzeliwuje”): kawałek z pulą (ćwiartki miasta, podstawa wieży) pęka od trafień W NIEGO (taran — od
 //     zgniotu jego węzłów), nie od progu „kawałek najbliżej ostatniego trafienia”. Habitat ginie z ETAPÓW: wyłom
-//     (`breachNeed` ćwiartek), wieża (szyja zerwana — szyb pęknięty z puli albo taran) i wieżowce na pomostach.
+//     (`breachNeed` ćwiartek), wieża (zerwana — podstawa pęknięta z puli albo taran) i reaktory antygrawitacyjne na
+//     pomostach (2026-11-11; do tego dnia dwa wieżowce).
 // ============================================================
 import { pirateBaseChunkAt, pirateBaseNearestChunk } from '../../3d/portBuildings/pirateBaseLayout.js';
 
@@ -25,7 +26,7 @@ export const BASE_INTEGRITY_TUNE = {
   ramMinSpeed: 40,    // j/s — prędkość względna styku, od której liczy się taran (docisk bez ruchu — nie)
   ramHpMul: 2.2,      // mnożnik udziału zgniecionych węzłów w punktach budowli
   // Szarża F gracza przy bazie (prośba użytkownika 2026-11-08: „Atlas musi mieć większą siłę taranowania w tej misji” —
-  // przebijał pierwszą ścianę bębna i wieżę, a stawał na drugiej ścianie): masa Atlasa w stykach silnika belek × chargeRamMass
+  // przebijał pierwszą ścianę habitatu i wieżę, a stawał na drugiej ścianie): masa Atlasa w stykach silnika belek × chargeRamMass
   // (body.rammingMassMult — ciąg, lot i masa gry bez zmian), w pasie chargeRamPad od obwiedni bazy. Symulacja Node (rozbieg
   // 1,5 km, 4 kierunki): × 1 staje w 3 na 4, × 2 przechodzi na wylot (wyjście 2350–3000 j/s), × 3 prawie nie zwalnia.
   chargeRamMass: 2,
@@ -58,7 +59,7 @@ export function baseStepChunk(layout, structure, hx, hz, isGone) {
 }
 
 /**
- * Pule punktów kawałków budowli `structure`: kawałki bez duchów, których rodzaj ma wpis w `byKind` ({ drum: 6000, … }).
+ * Pule punktów kawałków budowli `structure`: kawałki bez duchów, których rodzaj ma wpis w `byKind` ({ city: 6000, … }).
  * Zwraca { id: { hp, max } } (pusty obiekt — budowla bez pul).
  */
 export function createPiecePools(layout, structure, byKind) {
@@ -97,16 +98,17 @@ export function damagePool(pools, id, dmg) {
 }
 
 /**
- * Etapy finału habitatu: wyłom (pęknięte ćwiartki bębna, potrzeba `breachNeed`), wieża (szyja zerwana), wieżowce
- * (zniszczone z wszystkich). Kolejność dowolna. Zwraca { breach, breachNeed, tower, highrises, highrisesTotal, done,
- * total, left } — `left`: ułamek etapów do zrobienia (punkty habitatu = maks. × left; 0 — habitat ginie).
+ * Etapy finału habitatu: wyłom (pęknięte ćwiartki miasta, potrzeba `breachNeed`), wieża (zerwana), reaktory
+ * antygrawitacyjne (zniszczone z wszystkich). Kolejność dowolna. Zwraca { breach, breachNeed, tower, reactors,
+ * reactorsTotal, done, total, left } — `left`: ułamek etapów do zrobienia (punkty habitatu = maks. × left; 0 — habitat
+ * ginie).
  */
-export function habitatStages({ quadrantsDown = 0, breachNeed = 1, towerDown = false, highrisesDown = 0, highrisesTotal = 0 } = {}) {
+export function habitatStages({ quadrantsDown = 0, breachNeed = 1, towerDown = false, reactorsDown = 0, reactorsTotal = 0 } = {}) {
   const breach = Math.min(Math.max(0, quadrantsDown | 0), breachNeed);
-  const highrises = Math.min(Math.max(0, highrisesDown | 0), highrisesTotal);
-  const total = breachNeed + 1 + highrisesTotal;
-  const done = breach + (towerDown ? 1 : 0) + highrises;
-  return { breach, breachNeed, tower: !!towerDown, highrises, highrisesTotal, done, total, left: total > 0 ? (total - done) / total : 0 };
+  const reactors = Math.min(Math.max(0, reactorsDown | 0), reactorsTotal);
+  const total = breachNeed + 1 + reactorsTotal;
+  const done = breach + (towerDown ? 1 : 0) + reactors;
+  return { breach, breachNeed, tower: !!towerDown, reactors, reactorsTotal, done, total, left: total > 0 ? (total - done) / total : 0 };
 }
 
 /** Styk okrętu z kawałkiem budowli (zdarzenie zderzenia, czas symulacji silnika): otwiera okno taranu kawałka. */

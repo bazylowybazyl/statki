@@ -30,7 +30,7 @@ export const VENT_REC = Object.freeze({
 });
 
 /** Rodzaje modułów ciśnieniowych (paleta obrazu: szczątki, barwa dymu, światło wnętrza). */
-export const VENT_KIND = Object.freeze({ drum: 0, core: 1, tech: 2, disc: 3, warehouse: 4, annex: 5, tank: 6 });
+export const VENT_KIND = Object.freeze({ city: 0, core: 1, tech: 2, disc: 3, warehouse: 4, annex: 5, tank: 6 });
 
 const HEAD = Object.freeze({ HAS: 0, N: 1, TIME: 2, DT: 3, STRIDE: 4 });
 export const PIRATE_VENTS_BLOCK = Object.freeze({ HEAD });

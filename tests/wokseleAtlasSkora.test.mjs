@@ -104,7 +104,7 @@ test('skóra w demie: obraz ze skórą ma cele wypieku, materiał brył i kawał
   assert.match(g.v, /uWokSkoraMin/, 'gruz w barwie skóry');
 });
 
-test('skóra w demie: wypiek na kwadracie wokół węzłów z zapasem, wysokość z węzłów; B1R zgłasza brak bębna i koła z grubszą szyją', () => {
+test('skóra w demie: wypiek na kwadracie wokół węzłów z zapasem, wysokość z węzłów; baza bez miasta zgłasza to obrazowi, koła z promieniem trzonu z opcji', () => {
   const w = { n: 3, pos: new Float32Array([-1000, -200, -600, 3000, 400, 100, 500, 2200, 1500]) };
   const u = ukladSkory(w);
   assert.equal(u.w, u.h);
@@ -113,10 +113,10 @@ test('skóra w demie: wypiek na kwadracie wokół węzłów z zapasem, wysokoś�
   assert.equal(u.x0, 1000 - 2500);
   assert.equal(u.gora, 1500 + 1500);
   assert.equal(u.zakres, 3000 - (-600 - 300));
-  const demo = scenaB1({ mocSzyi: 3, giecieSzyi: 1, bezBebna: true, szyjaR: 200, szyjaWnetrze: 1, stoi: true });
-  assert.equal(demo.miasto.bezBebna, true);
+  const demo = scenaB1({ mocSzyi: 3, giecieSzyi: 1, bezMiasta: true, szyjaR: 200, szyjaWnetrze: 1, stoi: true });
+  assert.equal(demo.miasto.bezMiasta, true);
   assert.equal(demo.miasto.kola[0], 200);
   const gra = scenaB1({});
-  assert.equal(gra.miasto.bezBebna, false);
-  assert.equal(gra.miasto.kola.length, 12);
+  assert.equal(gra.miasto.bezMiasta, false);
+  assert.equal(gra.miasto.kola.length, 9);
 });

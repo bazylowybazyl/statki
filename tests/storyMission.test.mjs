@@ -205,7 +205,7 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'course');
   assert.ok(S.site && S.site.station, 'baza postawiona');
-  assert.deepEqual(Object.keys(S.site.structures).sort(), ['fuel', 'habitat', 'highrise1', 'highrise2', 'piers', 'warehouse'], 'budowle bazy');
+  assert.deepEqual(Object.keys(S.site.structures).sort(), ['antigrav1', 'antigrav2', 'fuel', 'habitat', 'piers', 'warehouse'], 'budowle bazy');
   assert.equal(S.site.station, S.site.structures.habitat, 'cel misji = habitat');
   assert.equal(S.site.parkedList.length, 47, 'okręty w stanowiskach (bez herszta)');
   assert.equal(S.site.crewList.length, 12, 'kilkanaście z załogą');
@@ -259,7 +259,7 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   kill(ramRow[ramRow.length - 1]);
   await frames(S, w, 2, view);
   assert.ok(S.site.alarmed, 'alarm po taranie');
-  // herszt startuje z zatoki pierwszy (trasa z planu bazy), drony z hangarów bębna habitatu
+  // herszt startuje z zatoki pierwszy (trasa z planu bazy), drony z lądowisk na obrzeżu habitatu
   const boss = S.site.flagship;
   assert.ok(boss.launch && boss.launch.path.length >= 3 && boss.launch.delay < 1, 'herszt wylatuje trasą z zatoki');
   assert.equal(S.site.droneWave, 1, 'pierwsza fala dronów');
@@ -737,7 +737,7 @@ test('zwiad fregatą z ładowni: oblot bazy (budowle n / 6), ostrzeżenie, powr�
   assert.ok(/ZA BLISKO/.test(S.ui.objective.progress()), 'ostrzeżenie przed zasięgiem wykrycia');
   await frames(S, w, 10, view);
   assert.ok(!S.site.alarmed, '4 km od bazy — jeszcze nie wykryta');
-  for (const k of ['fuel', 'warehouse', 'piers', 'highrise1', 'highrise2']) w.fogSeen.add(S.site.structures[k]);
+  for (const k of ['fuel', 'warehouse', 'piers', 'antigrav1', 'antigrav2']) w.fogSeen.add(S.site.structures[k]);
   await frames(S, w, 3, view);
   assert.equal(S.ui.objective?.id, 'recall', 'po oblocie — stery z powrotem na Atlasa');
   bay.recall();

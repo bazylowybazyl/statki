@@ -110,7 +110,7 @@ export const MISSION01_DIALOGUE = Object.freeze({
   ],
   // Habitat wylatuje w powietrze.
   shipyardDown: [
-    { who: 'xo', text: '[Habitat pęka! Bęben się składa — dysk pod nim idzie razem z nim!]' },
+    { who: 'xo', text: '[Reaktory padły, habitat pęka! Całe miasto leci na planetoidę!]' },
     { who: 'pirate', text: '[Herszt: zapłacisz za to…]' }
   ],
   // Koniec misji 1 — w polu, nad gruzami (dalej misja 2: naprawa, odwet).

@@ -141,8 +141,9 @@ test('bezpiecznik: budowla bez stojącego kawałka ginie; duch się nie liczy', 
 });
 
 // Decyzje użytkownika 2026-11-03 („punkty stają, ciężko zbić, nienaturalnie się ostrzeliwuje”): kawałek habitatu pęka od
-// trafień w niego (pula), habitat ginie z etapów — wyłom (1 ćwiartka), wieża, wieżowce.
-test('pule kawałków: habitat — ćwiartki bębna i szyb (bez duchów), inne budowle bez pul', () => {
+// trafień w niego (pula), habitat ginie z etapów — wyłom (1 ćwiartka miasta), wieża, reaktory antygrawitacyjne
+// (2026-11-11; do tego dnia bęben i dwa wieżowce).
+test('pule kawałków: habitat — ćwiartki miasta i podstawa wieży (bez duchów), inne budowle bez pul', () => {
   const T = PIRATE_BASE_TUNE.hp.habitat;
   const pools = createPiecePools(L, 'habitat', T.pieces);
   assert.deepEqual(Object.keys(pools).sort(), ['H-C', 'H-E', 'H-N', 'H-S', 'H-W']);
@@ -155,7 +156,7 @@ test('pule kawałków: habitat — ćwiartki bębna i szyb (bez duchów), inne b
 });
 
 test('pule kawałków: trafienie zdejmuje punkty kawałka trafionego, nie przechodzi na inny', () => {
-  const pools = createPiecePools(L, 'habitat', { drum: 100, core: 100 });
+  const pools = createPiecePools(L, 'habitat', { city: 100, core: 100 });
   const gone = new Set();
   const isGone = (id) => gone.has(id);
   const at = center(L.chunkById.get('H-S'));
@@ -176,21 +177,21 @@ test('pule kawałków: trafienie zdejmuje punkty kawałka trafionego, nie przech
   assert.equal(poolPieceAt(L, null, at.x, at.z, isGone), null);
 });
 
-test('etapy habitatu: wyłom 1 ćwiartki + wieża + wieżowce, kolejność dowolna; punkty = maks. × reszta', () => {
+test('etapy habitatu: wyłom 1 ćwiartki + wieża + reaktory, kolejność dowolna; punkty = maks. × reszta', () => {
   const need = PIRATE_BASE_TUNE.hp.habitat.breachNeed;
   assert.equal(need, 1);
-  const total = L.highrises.length;
-  assert.equal(total, 2, 'dwa wieżowce');
-  let s = habitatStages({ breachNeed: need, highrisesTotal: total });
+  const total = L.antigravs.length;
+  assert.equal(total, 2, 'dwa reaktory antygrawitacyjne');
+  let s = habitatStages({ breachNeed: need, reactorsTotal: total });
   assert.deepEqual([s.done, s.total, s.left], [0, 4, 1]);
-  s = habitatStages({ quadrantsDown: 3, breachNeed: need, highrisesTotal: total });
+  s = habitatStages({ quadrantsDown: 3, breachNeed: need, reactorsTotal: total });
   assert.equal(s.breach, 1, 'więcej ćwiartek nie liczy się ponad potrzebę');
   assert.equal(s.left, 0.75);
-  s = habitatStages({ quadrantsDown: 1, breachNeed: need, towerDown: true, highrisesDown: 1, highrisesTotal: total });
+  s = habitatStages({ quadrantsDown: 1, breachNeed: need, towerDown: true, reactorsDown: 1, reactorsTotal: total });
   assert.equal(s.left, 0.25);
-  s = habitatStages({ quadrantsDown: 0, breachNeed: need, towerDown: true, highrisesDown: 2, highrisesTotal: total });
+  s = habitatStages({ quadrantsDown: 0, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
   assert.ok(s.left > 0, 'bez wyłomu habitat żyje');
-  s = habitatStages({ quadrantsDown: 1, breachNeed: need, towerDown: true, highrisesDown: 2, highrisesTotal: total });
+  s = habitatStages({ quadrantsDown: 1, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
   assert.deepEqual([s.done, s.left], [4, 0], 'komplet — finał');
 });
 
