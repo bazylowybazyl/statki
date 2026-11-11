@@ -84,7 +84,7 @@ function rozszerzenie(format) {
 }
 
 function pelnyOpis(d) {
-  return `${d.prompt}. ${STYL}`;
+  return `${d.prompt}. ${d.styl ?? STYL}`; // `styl` — wpis z własnym stylem zamiast wspólnego
 }
 
 // Zadania do wykonania: po jednym na brakujący (albo nadpisywany) plik wariantu.

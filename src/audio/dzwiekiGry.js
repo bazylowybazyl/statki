@@ -202,12 +202,14 @@ export function utworzDzwiekiGry(opts) {
     }
     const zadania = [];
     for (const id of ids) {
-      const lista = (plikiId.get(id) || []).slice().sort((a, b) => (a.wariant || 0) - (b.wariant || 0));
+      const d = TAB[id] || {};
+      // `warianty: [1, 3]` w tabeli — tylko te pliki (wariant z samym basem albo spóźnionym atakiem zostaje w manifeście)
+      const lista = (plikiId.get(id) || []).filter((f) => !Array.isArray(d.warianty) || d.warianty.includes(f.wariant))
+        .sort((a, b) => (a.wariant || 0) - (b.wariant || 0));
       if (!lista.length) {
         ostrzez(`id:${id}`, `brak dźwięku "${id}" w manifest.json — cisza`);
         continue;
       }
-      const d = TAB[id] || {};
       const wpis = { id, pliki: lista.map((f) => f.plik), bufory: new Array(lista.length).fill(null), wzm: new Array(lista.length).fill(1), pomiary: new Array(lista.length).fill(null), poprzedni: -1, petla: !!d.petla };
       dzwieki.set(id, wpis);
       lista.forEach((f, i) => {

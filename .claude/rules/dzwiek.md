@@ -12,6 +12,9 @@ paths:
   - "tests/dzwiekiLogika.test.mjs"
   - "src/game/k7HallSound.js"
   - "tests/k7HallSound.test.mjs"
+  - "src/game/dzwiekiObszarow.js"
+  - "tests/dzwiekiObszarow.test.mjs"
+  - "scripts/dzwieki-pomiar.mjs"
 ---
 
 # Dźwięk: scena dźwięków, warstwa dźwięku gry, synteza, dźwięki robocze z generatora
@@ -55,6 +58,13 @@ paths:
 - Silnik: `soundSceneFrame` w `loop()` przy dawnym dźwięku silnika; silniki SIDE: `soundSceneRcs(driveLeft, driveRight)` w `physicsStep` → `SND.silnikSide(max)` co krok (dźwięk ciągły, wygaszanie w `klatka()`).
 - Interfejs: `fcGroupKey` (grupa w rękę → `grupa`, Ctrl/Alt — auto wł. → `potwierdzenie`, wył. → `grupa`, brak broni → `blad`), postawa ognia Y (swobodny → `potwierdzenie`, inna → `grupa`), Hexlance bez działa i pusty magazynek rakiety specjalnej → `blad`, nowy cel priorytetowy → `namiar` (przy malowaniu T → `malowanie`), kadłub < 25% → pętla `alarm`.
 - Bez zdarzenia w grze / bez dźwięku: wiązki ciągłe gracza (Atlas sceny ich nie ma; piraci — pętla `wiazka`), trafienie wiązką, odmowa przy namiarze poza zasięgiem, brak osobnego zdarzenia „łamanie belki” (zgniot = utrata węzła poza bronią). Dźwięki w manifeście nieużywane w scenie: `hexlance`, `mjolnir`, `salwa`, `reaktor`, `maska*`, `warp*`, `przylot`, `klik`, `mostek`, `rcs`.
+
+## Dźwięki obszarów (warp, przyloty, maskowanie, rdzeń reaktora, mostek, klik — kolejne obszary etapami)
+
+- Tabela: `src/audio/dzwiekiSwiata.js` (`DZWIEKI_SWIATA`, `ZDARZENIA_SWIATA`), rozwinięta w `DZWIEKI` / `ZDARZENIA` jedną linią w `dzwiekiLogika.js` — nowe dźwięki obszarów dopisuj TAM, nie we wspólnej tabeli. Pole `obszar` — grupa w panelu sceny; pole `warianty: [1, 3]` — które pliki id warstwa wczytuje (wariant z pomiaru „sam bas” albo z atakiem po czasie zostaje w manifeście, poza grą). Lista generatora: `scripts/dzwieki-elevenlabs.lista-swiat.mjs` (wpisy z `styl` zamiast wspólnego `STYL` z „cinematic”).
+- Reżyser: `src/game/dzwiekiObszarow.js` (czysty, testy `tests/dzwiekiObszarow.test.mjs`) — zdarzenia z różnicy stanu gry, pierwszy odczyt tylko zapamiętuje. Warp gracza (`warp.state`): idle → charging `warpLadowanie` (ładowanie 0,8 s), charging → active `warpKop`, active → pętla `warpTunel`, active → idle `warpZejscie`; TRAVEL TO i POWRÓT tym samym automatem. Osie warpa obcych (`warpTraffic.records`, zegar `warpTraffic.time`): przylot — `fx.t0` `warpZwiastun`, `fx.tBrake` `przylotWyrzut`; odlot — `fx.t0` `warpZwiastun`, `fx.tDive` `warpKop` w punkcie skoku; zdarzenie zastane później niż 0,6 s po swojej chwili nie gra. Maskowanie gracza (`cloak.state`): off → engaging `maskaWl`, → revealing `maskaWyl`, nowe `lastBreak` z `forced` `maskaZerwanie` (ręczne wyłączenie też pisze `lastBreak`, z `forced: false`). Rdzeń: `onState` meltdown → pętla `reaktorStopienie` na slot gospodarza, głośność 0,45 → 1 z postępem stopienia; `onDetonate` → `reaktorWybuch` (także śmierć z puli HP, bez zapowiedzi). Plik `reaktor` (7 s z 3 s narastania) poza warstwą: stopienie trwa 1,5 / 2,5 / 3,5 s wg klasy. Tło `mostek` (gra nie ma widoku mostka — ciche tło lotu) i `klik` bez położenia.
+- STAN: tabela, pliki i reżyser są; haki w `index.html` i przyciski panelu sceny czekają na włączenie warstwy w zwykłej grze (sesja „Scena testowa dźwięków w grze”). Pomiary plików, opisy i kredyty: `docs/DZWIEKI-obszary-2026-11-11.md`.
+- Opisy dla generatora: przy świstach, wyrzutach i skokach samo „mid-range, no bass boom” nie wystarcza (79–97% energii < 150 Hz) — „high and mid frequencies only, no low end, no rumble”. Pomiar każdego pliku: `node scripts/dzwieki-pomiar.mjs --tylko <id,id>` (Chrome headless, `OfflineAudioContext`; długość, szczyt, RMS głośnej części, start / atak / słyszalny do, udział < 150 Hz).
 
 ## Hala K-7 (blok „DŹWIĘKI HALI K-7” w `index.html`, reżyser `src/game/k7HallSound.js`)
 

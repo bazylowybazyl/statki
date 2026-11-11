@@ -1,0 +1,136 @@
+// Dźwięki obszarów gry (reguła `dzwiek`): tabela src/audio/dzwiekiSwiata.js zgodna z manifestem i tabelą warstwy,
+// reżyser src/game/dzwiekiObszarow.js — zdarzenia z różnicy stanu (warp gracza, osie warpa NPC, maskowanie, rdzeń).
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { DZWIEKI_SWIATA, ZDARZENIA_SWIATA } from '../src/audio/dzwiekiSwiata.js';
+import { DZWIEKI, ZDARZENIA, KATEGORIE } from '../src/audio/dzwiekiLogika.js';
+import { utworzRezyserObszarow } from '../src/game/dzwiekiObszarow.js';
+
+const manifest = JSON.parse(readFileSync(new URL('../public/sounds/ai/manifest.json', import.meta.url), 'utf8'));
+
+test('tabela obszarów: w tabeli warstwy, pliki i warianty w manifeście, kategoria, obszar', () => {
+  for (const [id, d] of Object.entries(DZWIEKI_SWIATA)) {
+    assert.equal(DZWIEKI[id], d, `${id} poza tabelą warstwy`);
+    assert.ok(KATEGORIE[d.kat], `kategoria ${id}`);
+    assert.ok(typeof d.obszar === 'string' && d.obszar, `obszar ${id}`);
+    const pliki = manifest.pliki.filter((p) => p.id === id);
+    assert.ok(pliki.length, `brak ${id} w manifeście`);
+    for (const p of pliki) assert.equal(!!p.petla, !!d.petla, `pętla ${p.plik}`);
+    if (d.warianty) {
+      assert.ok(d.warianty.length >= 1);
+      for (const w of d.warianty) assert.ok(pliki.some((p) => p.wariant === w), `${id}: brak wariantu ${w}`);
+    }
+  }
+  for (const [zd, id] of Object.entries(ZDARZENIA_SWIATA)) {
+    assert.equal(ZDARZENIA[zd], id, `zdarzenie ${zd} poza ZDARZENIA`);
+    assert.ok(DZWIEKI_SWIATA[id], `zdarzenie ${zd} → ${id} spoza tabeli obszarów`);
+  }
+});
+
+test('poziomy: tło mostka najciszej, detonacja rdzenia w superbroniach, klik w interfejsie', () => {
+  assert.equal(DZWIEKI_SWIATA.mostek.kat, 'tlo');
+  assert.equal(DZWIEKI_SWIATA.reaktorWybuch.kat, 'superbron');
+  assert.equal(DZWIEKI_SWIATA.klik.kat, 'interfejs');
+  assert.ok(DZWIEKI_SWIATA.mostek.ui && DZWIEKI_SWIATA.klik.ui, 'bez położenia');
+});
+
+function ujscie() {
+  const graj = [];
+  const petle = [];
+  return {
+    graj, petle,
+    u: { graj: (id, x, y, g) => { graj.push(id); return true; }, petla: (k, id, g, x, y) => { petle.push([k, id, g]); } }
+  };
+}
+
+test('warp gracza: ładowanie, skok, tunel co klatkę, zejście; pierwszy odczyt cicho, przerwane ładowanie cicho', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  r.warpGracza('active', 0, 0); // zastany w warpie: tylko pętla
+  assert.deepEqual(s.graj, []);
+  assert.equal(s.petle.length, 1);
+  r.warpGracza('idle', 0, 0);
+  r.warpGracza('charging', 0, 0);
+  r.warpGracza('idle', 0, 0); // przerwane
+  r.warpGracza('charging', 0, 0);
+  r.warpGracza('charging', 0, 0);
+  r.warpGracza('active', 0, 0);
+  r.warpGracza('active', 0, 0);
+  r.warpGracza('idle', 0, 0);
+  assert.deepEqual(s.graj, ['warpZejscie', 'warpLadowanie', 'warpLadowanie', 'warpKop', 'warpZejscie']);
+  assert.equal(r.stats.warpPrzerwane, 1);
+  assert.equal(s.petle.filter((p) => p[1] === 'warpTunel').length, 3);
+});
+
+test('osie warpa NPC: zwiastun i wyrzut raz na oś, odlot ładowanie i skok, spóźnione bez dźwięku', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  const przylot = { kind: 'arrival', fx: { t0: 1, tBrake: 3.5, x: 10, y: 20 } };
+  const piraci = { kind: 'arrival', fx: { t0: 1, tBrake: Infinity, x: 0, y: 0 } };
+  const odlot = { kind: 'departure', fx: { t0: 2, tDive: 4.2, x: 0, y: 0, cx: 100, cy: 0 } };
+  const rek = [przylot, piraci, odlot];
+  for (let t = 0; t <= 5; t += 0.1) r.osieWarpa(rek, t);
+  assert.equal(r.stats.przylotZwiastun, 2);
+  assert.equal(r.stats.przylotWyrzut, 1);
+  assert.equal(r.stats.odlotLadowanie, 1);
+  assert.equal(r.stats.odlotSkok, 1);
+  // zastane po czasie (np. zapis wczytany w trakcie osi) — bez dźwięku
+  const r2 = utworzRezyserObszarow(ujscie().u);
+  r2.osieWarpa([{ kind: 'arrival', fx: { t0: 0, tBrake: 1, x: 0, y: 0 } }], 10);
+  assert.equal(r2.stats.przylotWyrzut, 0);
+  assert.equal(r2.stats.spoznione, 2);
+});
+
+test('maskowanie: włączenie, wyłączenie, zerwanie (forced) zamiast wyłączenia', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  const c = { state: 'off', lastBreak: null };
+  const krok = () => r.maskowanieGracza(c.state, c.lastBreak, 0, 0);
+  krok();
+  c.state = 'engaging'; krok();
+  c.state = 'on'; krok();
+  c.state = 'revealing'; c.lastBreak = { reason: 'manual', forced: false }; krok();
+  c.state = 'off'; krok();
+  c.state = 'engaging'; krok();
+  c.state = 'on'; krok();
+  c.state = 'cooldown'; c.lastBreak = { reason: 'fire', forced: true }; krok();
+  krok();
+  assert.deepEqual(s.graj, ['maskaWl', 'maskaWyl', 'maskaWl', 'maskaZerwanie']);
+});
+
+test('rdzeń: pętla stopienia narasta z postępem, gaśnie przy detonacji, detonacja gra wybuch', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  const host = { x: 5, y: 6 };
+  r.rdzenStopienie(host, 10, 2.5);
+  r.klatka(10);
+  r.klatka(11.25);
+  r.klatka(12.5);
+  const g = s.petle.map((p) => p[2]);
+  assert.equal(s.petle[0][1], 'reaktorStopienie');
+  assert.ok(g[0] < g[1] && g[1] < g[2] && g[2] <= 1, `narastanie ${g}`);
+  r.rdzenDetonacja(host, 5, 6);
+  r.klatka(12.6);
+  assert.equal(s.petle.length, 3, 'po detonacji pętla bez odświeżenia');
+  assert.deepEqual(s.graj, ['reaktorWybuch']);
+  // śmierć z puli HP: detonacja bez stopienia
+  r.rdzenDetonacja({ x: 0, y: 0 }, 0, 0);
+  assert.equal(r.stats.rdzenDetonacja, 2);
+  // stopienie bez detonacji (gospodarz zniknął) — slot się zwalnia
+  const h2 = { x: 0, y: 0 };
+  r.rdzenStopienie(h2, 20, 1.5);
+  h2.dead = true;
+  r.klatka(20.5);
+  assert.equal(s.petle.length, 3);
+});
+
+test('tło mostka i klik bez położenia', () => {
+  const s = ujscie();
+  const r = utworzRezyserObszarow(s.u);
+  r.tloMostka(0);
+  r.tloMostka(0.8);
+  r.klik();
+  assert.deepEqual(s.petle.map((p) => p[1]), ['mostek']);
+  assert.deepEqual(s.graj, ['klik']);
+});
