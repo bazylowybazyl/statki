@@ -44,7 +44,7 @@ const SUFITY = {
   'import:src/game/haloRingPlanets.js': 2,
   'import:src/game/hullBodies.js': 8,
   'import:src/game/hullCraters.js': 1,
-  'import:src/game/hullMounts.js': 2,
+  'import:src/game/hullMounts.js': 3, // 2026-11-11 zasilanie z siatki belek: src/vfx/turret2D.js — lampka gotowości wieży w części kadłuba odciętej od komory reaktora gaśnie (hullPointPowered, ta sama funkcja co bramka strzału), klasa A
   'import:src/game/reactorCore.js': 1,
   'import:src/game/repairRig.js': 1,
   'import:src/game/repairSwarm.js': 1,
