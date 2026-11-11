@@ -13,6 +13,8 @@
 //
 // Klucz = id profilu renderu kadłuba (HULL_RENDER_PROFILES, getNpcHullRenderProfileId).
 
+import { workHullRows } from './workHulls.js';
+
 const tank = (m) => Object.freeze([Object.freeze(m)]);
 
 export const FUEL_TANK_MARKERS = Object.freeze({
@@ -34,6 +36,8 @@ export const FUEL_TANK_MARKERS = Object.freeze({
   refinery_tender: tank({ id: 'refinery_tender_fuel', x: -300, y: -20, r: 55.4 }),
   tanker: tank({ id: 'tanker_fuel', x: -250, y: -60, r: 49.5 }),
   salvage_hauler: tank({ id: 'salvage_hauler_fuel', x: 60, y: -20, r: 63.4 }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v, id) => (v.fuel ? tank({ id: `${id}_fuel`, ...v.fuel }) : null)),
   construction_tug: tank({ id: 'construction_tug_fuel', x: -110, y: -20, r: 110.9 }),
   smuggler: tank({ id: 'smuggler_fuel', x: -100, y: -20, r: 110.9 }),
   pirate_raider: tank({ id: 'pirate_raider_fuel', x: -400, y: -20, r: 92.4 }),

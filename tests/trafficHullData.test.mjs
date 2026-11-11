@@ -49,8 +49,8 @@ function scaleOf(id) {
   return { x: size.w / img.width, y: size.h / img.height, w: size.w, h: size.h };
 }
 
-test('21 kadłubów ruchu: wpis edytora, mostek z poziomem, rdzeń, zbiornik, rozmiar dysz', () => {
-  assert.equal(HULLS.length, 21, HULLS.join(', '));
+test('27 kadłubów ruchu (21 + 6 statków roboczych z kreatora): wpis edytora, mostek z poziomem, rdzeń, zbiornik, rozmiar dysz', () => {
+  assert.equal(HULLS.length, 27, HULLS.join(', '));
   for (const id of HULLS) {
     const cfg = SHIPS[id];
     assert.ok(cfg, `${id}: wpis edytora`);

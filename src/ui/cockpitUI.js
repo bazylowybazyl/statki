@@ -15,7 +15,8 @@ import { CAPITAL_SHIP_TEMPLATES, SUPPORT_SHIP_TEMPLATES } from '../data/ships.js
 import { TRAFFIC_HULLS } from '../data/trafficHulls.js';
 import { SUPPORT_FACTIONS } from '../data/supportRoster.js';
 import { DRIVE_RPM_MAX, TRAVEL_SHIFT_RPM } from '../game/flight/driveTransmission.js';
-import { formatTradeDistance, formatTradeSeconds, formatTradeMode, formatTradeProfit } from '../game/tradePartners.js';
+import { formatTradeDistance, formatTradeSeconds, formatTradeMode, formatTradeProfit } from '../game/tradePartners.js';
+import { workHullRows } from '../data/workHulls.js';
 import {
   formatLocalDistance,
   formatNavigationDistance,
@@ -207,6 +208,7 @@ const SUPPORT_CLASS_META = Object.freeze({
   refinery_tender: { label: 'Industry', code: 'I', hardpoints: 0 },
   surveyor: { label: 'Survey', code: 'S', hardpoints: 0 },
   salvage_hauler: { label: 'Salvage', code: 'U', hardpoints: 0 },
+  ...workHullRows(() => ({ label: 'Salvage', code: 'U', hardpoints: 0 })),
   construction_tug: { label: 'Tug', code: 'U', hardpoints: 0 },
   service_tug: { label: 'Service', code: 'U', hardpoints: 0 },
   repair_drone: { label: 'Drone', code: 'U', hardpoints: 0 },

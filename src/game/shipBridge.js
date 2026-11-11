@@ -30,6 +30,8 @@
 // pancerz strefy. Bellator + Iron Skull: 3/0,6 → mediana 2,6× pocisków puli HP
 // (mostek pierwszy 4/72), 1,5/0,35 → 1,7× (17/72); z pulą ×0,5 → 0,85× (40/72).
 // Niżej (0,25) pojedyncza torpeda/Yamato w strefie potrafi zdecydować.
+import { workHullRows } from '../data/workHulls.js';
+
 export const BRIDGE_DEFAULTS = Object.freeze({
   armorMul: 1.5,        // mnożnik HP komórek mostka (pancerz nadbudówki)
   killFrac: 0.35,       // ułamek komórek strefy, którego utrata niszczy mostek
@@ -261,6 +263,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   refinery_tender: trafficBridge('Mobilna rafineria', '#ffe0b0', { x: 310, y: -20, w: 214.4, h: 110.9, level: 3 }),
   tanker: trafficBridge('Tankowiec', '#ffe0b0', { x: 520, y: -20, w: 191.2, h: 99, level: 3 }),
   salvage_hauler: trafficBridge('Złomiarz', '#ffe0b0', { x: 300, y: -20, w: 245, h: 126.7, level: 3 }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v) => (v.bridge ? trafficBridge(v.label, '#ffdca6', v.bridge) : null)),
   construction_tug: trafficBridge('Holownik budowlany', '#ffe0b0', { x: 400, y: -15, w: 230, h: 131.4, level: 1 }),
   smuggler: trafficBridge('Przemytnik', '#ff9a4a', { x: 320, y: -15, w: 230, h: 131.4, level: 1 }),
   pirate_raider: trafficBridge('Rajder piratów', '#ff9a4a', { x: 340, y: -15, w: 258.7, h: 135.5, level: 2 }),

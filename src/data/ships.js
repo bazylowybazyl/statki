@@ -1,5 +1,6 @@
 import { FIGHTER_SQUADRON_DEFS } from './fighterSquadrons.js';
 import { flightTemplateStats } from './shipFlightSpecs.js';
+import { workHullRows } from './workHulls.js';
 
 export const SHIP_SENSOR_PROFILES = {
   fighter_combat: { passiveRange: 8000, activeRange: 10000, lockRange: 8000, asteroidScanRange: 8000, scanWaveSpeed: 12000, role: 'combat' },
@@ -241,6 +242,8 @@ export const HULL_RENDER_PROFILES = {
   refinery_tender: { id: 'refinery_tender', length: 800, radius: 260 },
   tanker: { id: 'tanker', length: 900, radius: 260 },
   salvage_hauler: { id: 'salvage_hauler', length: 700, radius: 240 },
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v, id) => ({ id, length: v.length, radius: v.radius })),
   construction_tug: { id: 'construction_tug', length: 360, radius: 140 },
   pirate_raider: { id: 'pirate_raider', length: 480, radius: 170 },
   smuggler: { id: 'smuggler', length: 360, radius: 130 },

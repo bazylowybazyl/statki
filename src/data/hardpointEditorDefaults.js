@@ -1,6 +1,7 @@
 import { ATLAS_EDITOR_DEFAULTS } from './atlasHardpointDefaults.js';
 import { PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS } from './pirateSupercapitalDefaults.js';
 import { withShipNavLights } from './shipNavLights.js';
+import { workHullRows } from './workHulls.js';
 
 export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 
@@ -185,6 +186,9 @@ export const SHIP_EDITOR_DEFAULTS = {
       civilSide('side_rear_left', -628, -217, 'lower_left'),
       civilSide('side_rear_right', -628, 186, 'lower_right')
     ]),
+    // Statki robocze złomowania z kreatora (src/data/workHulls.js): dysze MAIN i SIDE z mocowań projektu.
+    ...workHullRows((v) => trafficCivilHull(v.label, v.main.map(([x, y], i) => trafficMain(`main_${i + 1}`, x, y)),
+      v.side.map(([x, y], i) => civilSide(`side_${x >= 0 ? 'front' : 'rear'}_${y < 0 ? 'left' : 'right'}${i >= 4 ? `_${i}` : ''}`, x, y, `${x >= 0 ? 'upper' : 'lower'}_${y < 0 ? 'left' : 'right'}`)))),
     construction_tug: trafficCivilHull('Holownik budowlany', [trafficMain('main_1', -727, -132), trafficMain('main_2', -728, -18), trafficMain('main_3', -727, 97)], [
       civilSide('side_front_left', 308, -160, 'upper_left'),
       civilSide('side_front_right', 308, 125, 'upper_right'),

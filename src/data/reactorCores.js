@@ -21,6 +21,8 @@
 //
 // Klucz = id profilu renderu kadłuba (HULL_RENDER_PROFILES, getNpcHullRenderProfileId).
 
+import { workHullRows } from './workHulls.js';
+
 const marker = (m) => Object.freeze([Object.freeze(m)]);
 
 export const REACTOR_CORE_MARKERS = Object.freeze({
@@ -46,6 +48,8 @@ export const REACTOR_CORE_MARKERS = Object.freeze({
   refinery_tender: marker({ id: 'refinery_tender_A', x: -560, y: -20, r: 83.2, hr: 51.7, tier: 'R3', model: 'terran' }),
   tanker: marker({ id: 'tanker_A', x: -460, y: -20, r: 74.2, hr: 46.2, tier: 'R3', model: 'terran' }),
   salvage_hauler: marker({ id: 'salvage_hauler_A', x: -440, y: -20, r: 95, hr: 59.1, tier: 'R3', model: 'terran' }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v, id) => (v.core ? marker({ id: `${id}_A`, ...v.core, model: 'terran' }) : null)),
   construction_tug: marker({ id: 'construction_tug_A', x: -420, y: -20, r: 160.2, hr: 41.1, tier: 'R1', model: 'terran' }),
   smuggler: marker({ id: 'smuggler_A', x: -420, y: -20, r: 160.2, hr: 41.1, tier: 'R1', model: 'pirate' }),
   pirate_raider: marker({ id: 'pirate_raider_A', x: -640, y: -20, r: 129.4, hr: 49.3, tier: 'R2', model: 'pirate' }),

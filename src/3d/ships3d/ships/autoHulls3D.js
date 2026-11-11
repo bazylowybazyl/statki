@@ -19,6 +19,7 @@
 import { TRAFFIC_HULLS } from '../../../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../../../data/hardpointEditorDefaults.js';
 import { ENGINE_FX_DEFAULTS } from '../../../data/engineFx.js';
+import { WORK_HULLS, WORK_HULL_IDS, workHullSpritePath } from '../../../data/workHulls.js';
 
 const TRAFFIC_LABELS = {
   inter_station_shuttle: ['Wahadłowiec międzystacyjny', 'Wahadłowiec'],
@@ -43,7 +44,9 @@ const TRAFFIC_LABELS = {
   rescue_ship: ['Statek ratunkowy', 'Ratownik'],
   crew_shuttle: ['Prom rotacyjny', 'Prom'],
   crew_liner: ['Liniowiec kontraktowy', 'Liniowiec'],
-  colony_liner: ['Liniowiec dalekiego zasięgu', 'Liniowiec DZ']
+  colony_liner: ['Liniowiec dalekiego zasięgu', 'Liniowiec DZ'],
+  // statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js)
+  ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, [`${WORK_HULLS[id].label} (roboczy)`, WORK_HULLS[id].label]]))
 };
 
 // Ścieżki PNG w repo (TRAFFIC_HULLS ma URL-e modułu — tu ścieżki do testów, dema i generatora).
@@ -72,7 +75,8 @@ const TRAFFIC_SPRITES = {
   // ścieżkę i przeliczyć obrysy (`node scripts/webgpu/obrysy-floty.mjs`), wtedy bez `outlineOf` niżej.
   crew_shuttle: 'assets/inter_station_shuttle.png',
   crew_liner: 'assets/container_ship.png',
-  colony_liner: 'assets/long_haul_freighter.png'
+  colony_liner: 'assets/long_haul_freighter.png',
+  ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, workHullSpritePath(id)]))
 };
 
 // Promy z ludźmi (workforce W7): ten sam sprite co frachtowiec bazowy — obrys 3D bazowego.

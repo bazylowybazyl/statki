@@ -11,6 +11,8 @@
 //
 // Moduł czysty (bez three i DOM): czytają go dane edytora, migracja zapisu, runtime lamp i węzeł TSL src/3d/tsl/navBlink.js.
 
+import { workHullRows } from './workHulls.js';
+
 /**
  * Wzory migania. Czasy w ułamkach cyklu `period` [s]: narastanie `attack`, pełny błysk `flash`, gaśnięcie `release`;
  * `second` — początek drugiego błysku (> 1 — jeden błysk). Indeks na liście = numer wzoru w danych lampy i w shaderze;
@@ -71,6 +73,8 @@ export const NAV_LIGHT_POINTS = Object.freeze({
   refinery_tender: { r: 6, p: [[769, -44], [769, 9], [-508, -296], [-508, 260], [-745, -217], [-745, 182]] },
   tanker: { r: 5.5, p: [[781, -66], [781, 34], [-441, -233], [-441, 198], [-786, -175], [-786, 143]] },
   salvage_hauler: { r: 6.5, p: [[776, -60], [776, 33], [-174, -316], [-174, 288], [-787, -168], [-787, 137]] },
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v) => v.lights),
   construction_tug: { r: 10.5, p: [[698, -66], [698, 33], [0, -311], [0, 274], [-705, -162], [-705, 127]] },
   service_tug: { r: 2.5, p: [[801, -61], [801, 28], [8, -253], [8, 269], [-794, -212], [-794, 179]] },
   pirate_raider: { r: 8.5, p: [[745, -36], [745, 35], [-372, -195], [-372, 193], [-757, -146], [-757, 143]] },

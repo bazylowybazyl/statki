@@ -13,6 +13,7 @@
 // a gabaryty może brać i worker ruchu. Sprite'y przez `new URL(literał,
 // import.meta.url)`: Vite dołącza plik do builda, w node to ścieżka file://.
 import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE, getHullRenderSize } from './ships.js';
+import { WORK_HULLS } from './workHulls.js';
 
 /**
  * Kadłuby, które ruch v2 umie narysować.
@@ -27,6 +28,12 @@ import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE, getHullRenderSize } from
  *   fx      palety silników, gdy inne niż zapasowe (ENGINE_FX_FALLBACK)
  */
 const PIRATE_FX = Object.freeze({ mainPalette: 'rakieta', warpPalette: 'crimson' });
+/**
+ * Statek roboczy złomowania z kreatora kadłubów: płótno i dysze MAIN z tabeli generowanej (src/data/workHulls.js),
+ * sprite wypieczony z kompozytora (assets/ships/work/ — scripts/webgpu/kreator-kadluby-gry.mjs). URL jako literał
+ * (Vite dołącza plik do builda).
+ */
+const workHull = (id, sprite) => Object.freeze({ sprite, png: WORK_HULLS[id].png, main: WORK_HULLS[id].main });
 
 export const TRAFFIC_HULLS = Object.freeze({
   inter_station_shuttle: Object.freeze({
@@ -89,6 +96,12 @@ export const TRAFFIC_HULLS = Object.freeze({
     png: [1774, 887],
     main: [[-789, -149, 65], [-808, -16, 97], [-789, 118, 65]]
   }),
+  work_zlomiarz: workHull('work_zlomiarz', new URL('../../assets/ships/work/zlomiarz.png', import.meta.url).href),
+  work_paszcza: workHull('work_paszcza', new URL('../../assets/ships/work/paszcza.png', import.meta.url).href),
+  work_mlyn: workHull('work_mlyn', new URL('../../assets/ships/work/mlyn.png', import.meta.url).href),
+  work_rafineria: workHull('work_rafineria', new URL('../../assets/ships/work/rafineria.png', import.meta.url).href),
+  work_rampowiec: workHull('work_rampowiec', new URL('../../assets/ships/work/rampowiec.png', import.meta.url).href),
+  work_dzwig: workHull('work_dzwig', new URL('../../assets/ships/work/dzwig.png', import.meta.url).href),
   construction_tug: Object.freeze({
     sprite: new URL('../../assets/construction_tug.png', import.meta.url).href,
     png: [1774, 887],
@@ -224,7 +237,8 @@ export const TRAFFIC_UNIT_HULLS = Object.freeze({
   // Łowca nagród frakcji (piracy.js, kurs PATROL): sprite Z11, kadłub bojowy z mostkiem i gniazdami.
   hunter: 'bounty_hunter',
   // Złomiarze (scrapperFleets.js): holownik po wrak — tnie albo holuje.
-  tug: 'salvage_hauler',
+  // Od 2026-11-11 złomiarz z kreatora kadłubów (widły, 4 wysięgniki, kosz) — dawny sprite: 'salvage_hauler'.
+  tug: 'work_zlomiarz',
   // Wyprawa wojenna (warDispatcher.js): jeden kurs = cała flota. TODO AGENT:
   // rodziny frakcyjne z Z11 (mars_/inner_/belt_/outer_destroyer…, z mostkami)
   // i szyk kilku proxy na kurs; dziś jeden niszczyciel Terra Novy.

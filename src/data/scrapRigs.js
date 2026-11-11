@@ -4,6 +4,8 @@
 // kadłuba innej wielkości. Czysty moduł danych z kinematyką ramienia — czyta go gra (`src/game/scrapProcess.js`)
 // i obraz (`src/3d/trafficWork3D.js`), jak `swarmArmPose` w `swarmDrones.js`.
 
+import { workHullRows } from './workHulls.js';
+
 /**
  * Zestaw domyślny (sprite złomiarza `salvage_hauler`: paszcza z zębami na dziobie, ładownia na śródokręciu).
  *   maw      — punkt mielenia: tu sekcja znika w kadłubie; `mawR` — zasięg zębów wokół niego,
@@ -30,7 +32,10 @@ export const SCRAP_RIG_DEFAULT = Object.freeze({
 
 /** Zestawy kadłubów (id kadłuba ruchu → zestaw); kadłub spoza tabeli — domyślny. */
 export const SCRAP_RIGS = Object.freeze({
-  salvage_hauler: SCRAP_RIG_DEFAULT
+  salvage_hauler: SCRAP_RIG_DEFAULT,
+  // Statki robocze z kreatora kadłubów (src/data/workHulls.js): podstawy wysięgników = obrotnice projektu, punkt
+  // mielenia = paszcza albo — u złomiarza z koszem — środek ładowni otwartej od góry (sekcja wciągana do kosza).
+  ...workHullRows((v) => v.rig)
 });
 
 export function scrapRigFor(hullId) {

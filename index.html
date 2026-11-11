@@ -1196,6 +1196,7 @@
       classifyGameWreck, forEachTrafficSalvageWreck, isTrafficSalvageWreck
     } from "./src/game/trafficSalvage.js";
     import { scrapRigFor } from "./src/data/scrapRigs.js";
+    import { WORK_HULLS, WORK_HULL_IDS } from "./src/data/workHulls.js";
     import { createTrafficWorkBlock } from "./src/render/blocks/trafficWorkBlock.js";
     import { TrafficWork3D } from "./src/3d/trafficWork3D.js";
     import {
@@ -1933,6 +1934,8 @@
       refinery_tender: 'battleship',
       tanker: 'battleship',
       salvage_hauler: 'destroyer',
+      // statki robocze z kreatora kadłubów (src/data/workHulls.js): klasa wagowa z klasy okrętu I–VI
+      ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, ['frigate', 'frigate', 'destroyer', 'destroyer', 'battleship', 'capital', 'capital'][WORK_HULLS[id].cls] || 'destroyer'])),
       construction_tug: 'frigate',
       repair_drone: 'frigate',
       distress_beacon_ship: 'destroyer',
@@ -10618,7 +10621,9 @@
       // Promy z ludźmi (workforce W7): kadłuby pasażerskie (do PNG z generatora — sprite'y frachtowców bazowych, D14).
       crew_shuttle: { hull: 'crew_shuttle', hp: 400, speed: 210 },
       crew_liner: { hull: 'crew_liner', hp: 900, speed: 175 },
-      colony_liner: { hull: 'colony_liner', hp: 1600, speed: 140 }
+      colony_liner: { hull: 'colony_liner', hp: 1600, speed: 140 },
+      // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js): sprite z kompozytora, tabele z projektu.
+      ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, { hull: id, hp: 600 + 500 * WORK_HULLS[id].cls, speed: 170 - 12 * WORK_HULLS[id].cls }]))
     });
 
     function spawnDevHull(key, opts = {}) {
@@ -18236,6 +18241,17 @@
         { role: 'fregata', key: 'frigate_pd', du: -700, dv: 500, kill: 'hp' },
         { role: 'frachtowiec', key: 'freighter-large', du: 1100, dv: 50, kill: 'hp', dev: true },
         { role: 'odlamy', key: 'pirate_battleship', du: 3400, dv: 0, kill: 'rdzen' }
+      ],
+      /**
+       * Statki robocze z kreatora kadłubów (src/data/workHulls.js) na POSTOJU z boku placu — pokaz kadłubów, bez pracy
+       * (pracuje tylko złomiarz: kadłub klasy `tug` świata ruchu to `work_zlomiarz`). Młyn i rafineria burta w burtę.
+       */
+      props: [
+        { key: 'work_paszcza', du: -700, dv: -1500 },
+        { key: 'work_mlyn', du: 150, dv: -1500 },
+        { key: 'work_rafineria', du: 430, dv: -1500 },
+        { key: 'work_rampowiec', du: 1500, dv: -1700 },
+        { key: 'work_dzwig', du: 2600, dv: -1500 }
       ]
     };
     const TowScene = {
@@ -18324,6 +18340,23 @@
         npc.vx = 0;
         npc.vy = 0;
         S.ships.push({ role: def.role, key: def.key, kill: def.kill, npc, pos });
+      }
+      // Statki robocze na postoju (pokaz kadłubów z kreatora): stoją do końca gry; ponowny start sceny je przestawia.
+      S.props = S.props || [];
+      for (const def of TOW_SCENE.props) {
+        const pos = { x: P.x + ux * def.du + vx * def.dv, y: P.y + uy * def.du + vy * def.dv };
+        let rec = S.props.find((q) => q.key === def.key && q.npc && !q.npc.dead && npcs.includes(q.npc));
+        if (!rec) {
+          const npc = spawnDevHull(def.key, { pos, mode: 'dummy', spawnAngle: a + Math.PI / 2 });
+          if (!npc) { towSceneNote(`brak-statku:${def.key}`); continue; }
+          rec = { key: def.key, npc };
+          S.props.push(rec);
+        }
+        const n = rec.npc;
+        n.x = pos.x; n.y = pos.y; n.vx = 0; n.vy = 0;
+        if (n.pos) { n.pos.x = pos.x; n.pos.y = pos.y; }
+        n.angle = n.desiredAngle = a + Math.PI / 2;
+        rec.pos = pos;
       }
       // Plac i lejek odsłonięte w mgle wojny (złomiarze, wraki i Atlas w jednym kadrze).
       SensorSystem.revealArea('scena-holowanie', P.x - ux * 4000, P.y - uy * 4000, 16000, Infinity);

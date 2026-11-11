@@ -1,5 +1,6 @@
 import { migratePirateSpriteLayout } from '../data/pirateSpriteMigration.js';
-import { buildEntityEngineFx } from '../data/engineFx.js';
+import { buildEntityEngineFx } from '../data/engineFx.js';
+import { WORK_HULL_IDS } from '../data/workHulls.js';
 import {
   forwardFromEditorDeg, normalizeEditorEngineDeg, inferEditorEngineMount, normalizeEditorEngineMount, normalizeEditorEngineGimbal, clampNozzleDegToGimbal, inferEditorEngineSide,
   resolveEditorEngineOffset, normalizeEditorHardpoint, normalizeEditorCore, normalizeEditorEngine, buildMainThrusters, buildSideThrusters
@@ -49,7 +50,9 @@ const FREIGHTER_EDITOR_FRAMES = new Set([
   'heavy_harvester', 'belter', 'surveyor', 'refinery_tender', 'tanker', 'salvage_hauler', 'construction_tug',
   'smuggler', 'pirate_raider', 'distress_beacon_ship', 'repair_drone', 'bounty_hunter', 'police_cutter', 'rescue_ship',
   // Promy z ludźmi (workforce W7).
-  'crew_shuttle', 'crew_liner', 'colony_liner'
+  'crew_shuttle', 'crew_liner', 'colony_liner',
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js).
+  ...WORK_HULL_IDS
 ]);
 export const TRAFFIC_EDITOR_FRAMES = FREIGHTER_EDITOR_FRAMES;
 const FREIGHTER_HULL_BY_TYPE = Object.freeze({
