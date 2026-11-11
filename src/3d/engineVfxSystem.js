@@ -517,7 +517,7 @@ function syncNozzleMounts(entity, fxData) {
       set.cells[i] = bindHullMount(hull, Number(slot.offset.x) || 0, Number(slot.offset.y) || 0, rest);
     }
   }
-  refreshHullMountSet(set, hull);
+  refreshHullMountSet(set, hull, entity);
   return set.alive;
 }
 
