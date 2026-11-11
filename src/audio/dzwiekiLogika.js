@@ -16,13 +16,19 @@ const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
  * Kategorie i poziom docelowy (dB RMS głośnej części pliku, przed szyną). Kolejność głośności z opisu zadania:
  * superbronie i duże wybuchy najgłośniej, potem działa, trafienia, drobne, interfejs najciszej.
  */
+// Ocena użytkownika w scenie 2026-11-11: „wszystko jest zdecydowanie za głośne — wystrzały + silnik”.
+// Stąd: wszystkie kategorie −4 dB, wystrzały dodatkowo −6 dB (`POZIOM_WYSTRZALU`, razem −10 dB),
+// silnik MAIN −12 dB, seria CIWS −10 dB (poprawki `poziom` w tabelach niżej).
 export const KATEGORIE = Object.freeze({
-  superbron: { cel: -13, opis: 'superbronie, duże wybuchy' },
-  dzialo: { cel: -17, opis: 'działa, rakiety, wybuchy, taran' },
-  trafienie: { cel: -21, opis: 'trafienia, tarcza, kadłub' },
-  drobne: { cel: -25, opis: 'drobne: dysze, małe wybuchy, tarcie' },
-  interfejs: { cel: -28, opis: 'interfejs' }
+  superbron: { cel: -17, opis: 'superbronie, duże wybuchy' },
+  dzialo: { cel: -21, opis: 'działa, rakiety, wybuchy, taran' },
+  trafienie: { cel: -25, opis: 'trafienia, tarcza, kadłub' },
+  drobne: { cel: -29, opis: 'drobne: dysze, małe wybuchy, tarcie' },
+  interfejs: { cel: -32, opis: 'interfejs' }
 });
+
+/** Poprawka wystrzałów [dB] względem kategorii: strzał powtarza się najczęściej, więc gra pod wybuchami. */
+export const POZIOM_WYSTRZALU = -6;
 
 /** Najwięcej, ile wyrównanie podbija cichy plik [dB] (powyżej — podbijałoby szum i ogon). */
 export const MAX_PODBICIE_DB = 18;
@@ -36,24 +42,25 @@ export const SZCZYT_PO_WYROWNANIU_DB = -3;
  */
 export const DZWIEKI = Object.freeze({
   // Działa gracza
-  tempestIon: { kat: 'dzialo', limit: 6, odstep: 28, zwloka: 4, ton: 0.05, glos: 0.12 },
-  yamato: { kat: 'superbron', limit: 4, odstep: 60, zwloka: 3, ton: 0.03, glos: 0.08 },
-  rakieta: { kat: 'dzialo', limit: 6, odstep: 45, zwloka: 4, ton: 0.06, glos: 0.12 },
-  supernovaStart: { kat: 'dzialo', limit: 3, odstep: 90, zwloka: 3, ton: 0.04, glos: 0.08 },
+  tempestIon: { kat: 'dzialo', limit: 6, odstep: 28, zwloka: 4, ton: 0.05, glos: 0.12, poziom: POZIOM_WYSTRZALU },
+  yamato: { kat: 'superbron', limit: 4, odstep: 60, zwloka: 3, ton: 0.03, glos: 0.08, poziom: POZIOM_WYSTRZALU },
+  rakieta: { kat: 'dzialo', limit: 6, odstep: 45, zwloka: 4, ton: 0.06, glos: 0.12, poziom: POZIOM_WYSTRZALU },
+  supernovaStart: { kat: 'dzialo', limit: 3, odstep: 90, zwloka: 3, ton: 0.04, glos: 0.08, poziom: POZIOM_WYSTRZALU },
   // Broń piratów (wg kategorii broni)
-  autocannon: { kat: 'dzialo', limit: 6, odstep: 35, zwloka: 2, ton: 0.07, glos: 0.15 },
-  dzialo: { kat: 'dzialo', limit: 5, odstep: 50, zwloka: 3, ton: 0.05, glos: 0.12 },
-  railgun: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 3, ton: 0.04, glos: 0.1 },
-  laserPD: { kat: 'drobne', limit: 6, odstep: 30, zwloka: 2, ton: 0.06, glos: 0.15 },
-  flak: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 2, ton: 0.06, glos: 0.12 },
-  wiazka: { kat: 'dzialo', petla: true, limit: 4 },
+  autocannon: { kat: 'dzialo', limit: 6, odstep: 35, zwloka: 2, ton: 0.07, glos: 0.15, poziom: POZIOM_WYSTRZALU },
+  dzialo: { kat: 'dzialo', limit: 5, odstep: 50, zwloka: 3, ton: 0.05, glos: 0.12, poziom: POZIOM_WYSTRZALU },
+  railgun: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 3, ton: 0.04, glos: 0.1, poziom: POZIOM_WYSTRZALU },
+  laserPD: { kat: 'drobne', limit: 6, odstep: 30, zwloka: 2, ton: 0.06, glos: 0.15, poziom: -3 },
+  flak: { kat: 'dzialo', limit: 4, odstep: 60, zwloka: 2, ton: 0.06, glos: 0.12, poziom: POZIOM_WYSTRZALU },
+  wiazka: { kat: 'dzialo', petla: true, limit: 4, poziom: POZIOM_WYSTRZALU },
   // Trafienia
   trafienie: { kat: 'trafienie', limit: 6, odstep: 25, zwloka: 2, ton: 0.08, glos: 0.18 },
   trafieniePlazma: { kat: 'trafienie', limit: 4, odstep: 50, zwloka: 2, ton: 0.05, glos: 0.12 },
   kadlub: { kat: 'trafienie', limit: 4, odstep: 45, zwloka: 2, ton: 0.06, glos: 0.15 },
   rykoszet: { kat: 'drobne', limit: 3, odstep: 70, zwloka: 1, ton: 0.08, glos: 0.15 },
   // Tarcza
-  tarcza: { kat: 'trafienie', limit: 5, odstep: 35, zwloka: 2, ton: 0.06, glos: 0.15 },
+  // Użytkownik 2026-11-11: tarcza „łagodniejsza i szybsza”, wzorzec — Starsector: krótki plik (0,5 s), ciszej.
+  tarcza: { kat: 'trafienie', limit: 5, odstep: 35, zwloka: 2, ton: 0.06, glos: 0.15, poziom: -3 },
   tarczaWl: { kat: 'interfejs', limit: 1, odstep: 200, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: 6 },
   tarczaWyl: { kat: 'interfejs', limit: 1, odstep: 200, zwloka: 0, ton: 0, glos: 0, ui: true, poziom: 6 },
   tarczaPekniecie: { kat: 'dzialo', limit: 2, odstep: 300, zwloka: 0, ton: 0.03, glos: 0.08 },
@@ -81,8 +88,9 @@ export const DZWIEKI = Object.freeze({
 
 /** Dźwięki z syntezy (nie z plików) — w panelu bez wariantów, tylko wyciszenie. */
 export const DZWIEKI_SYNTEZY = Object.freeze({
-  silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -6 },
-  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -4 }
+  // Synteza nie przechodzi przez wyrównanie plików — `poziom` to cała jej głośność [dB].
+  silnikMain: { kat: 'drobne', nazwa: 'Silnik MAIN (synteza)', poziom: -18 },
+  gatling: { kat: 'dzialo', nazwa: 'CIWS / Vulcan (synteza)', poziom: -14 }
 });
 
 /**

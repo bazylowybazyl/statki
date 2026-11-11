@@ -129,9 +129,11 @@ export const DZWIEKI = [
     prompt: 'Projectile ricochet off thick metal armor: bright metallic clang followed by a fast whining whizz flying away',
   },
   {
-    id: 'tarcza', grupa: 'Kadłub i tarcza', nazwa: 'Trafienie w tarczę', s: 1.5,
-    opis: 'Uderzenie w pole, szklisty rezonans.',
-    prompt: 'Projectile hitting an energy shield: electric bubble impact with a glassy resonant shimmer and a short crackling energy ripple',
+    // Decyzja użytkownika 2026-11-11: „tarcza musi być łagodniejsza i szybsza”, wzorzec charakteru — trafienie
+    // w tarczę w Starsectorze (miękkie, stłumione, krótkie; bez dzwonienia i szklistego ogona).
+    id: 'tarcza', grupa: 'Kadłub i tarcza', nazwa: 'Trafienie w tarczę', s: 0.5,
+    opis: 'Miękkie, stłumione, krótkie pochłonięcie trafienia przez pole.',
+    prompt: 'Soft energy shield absorbing a projectile hit with instant attack: very short muffled low thump with a faint quick electric fizz, damped and gentle, quick decay, no ringing, no glassy shimmer, subtle',
   },
   {
     id: 'zgrzyt', grupa: 'Kadłub i tarcza', nazwa: 'Zgrzyt kadłubów', s: 4,

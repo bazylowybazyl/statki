@@ -877,14 +877,14 @@
       "wariant": 1,
       "grupa": "Kadłub i tarcza",
       "nazwa": "Trafienie w tarczę",
-      "opis": "Uderzenie w pole, szklisty rezonans.",
-      "prompt": "Projectile hitting an energy shield: electric bubble impact with a glassy resonant shimmer and a short crackling energy ripple. Modern cinematic game sound design, high fidelity, no music, no voices.",
-      "sekundy": 1.5,
+      "opis": "Miękkie, stłumione, krótkie pochłonięcie trafienia przez pole.",
+      "prompt": "Soft energy shield absorbing a projectile hit with instant attack: very short muffled low thump with a faint quick electric fizz, damped and gentle, quick decay, no ringing, no glassy shimmer, subtle. Modern cinematic game sound design, high fidelity, no music, no voices.",
+      "sekundy": 0.5,
       "petla": false,
       "model": "eleven_text_to_sound_v2",
       "format": "mp3_44100_128",
       "wplyw": 0.3,
-      "data": "2026-11-11T10:54:07.796Z"
+      "data": "2026-11-11T14:11:07.777Z"
     },
     {
       "plik": "tarcza_2.mp3",
@@ -892,14 +892,14 @@
       "wariant": 2,
       "grupa": "Kadłub i tarcza",
       "nazwa": "Trafienie w tarczę",
-      "opis": "Uderzenie w pole, szklisty rezonans.",
-      "prompt": "Projectile hitting an energy shield: electric bubble impact with a glassy resonant shimmer and a short crackling energy ripple. Modern cinematic game sound design, high fidelity, no music, no voices.",
-      "sekundy": 1.5,
+      "opis": "Miękkie, stłumione, krótkie pochłonięcie trafienia przez pole.",
+      "prompt": "Soft energy shield absorbing a projectile hit with instant attack: very short muffled low thump with a faint quick electric fizz, damped and gentle, quick decay, no ringing, no glassy shimmer, subtle. Modern cinematic game sound design, high fidelity, no music, no voices.",
+      "sekundy": 0.5,
       "petla": false,
       "model": "eleven_text_to_sound_v2",
       "format": "mp3_44100_128",
       "wplyw": 0.3,
-      "data": "2026-11-11T10:54:09.376Z"
+      "data": "2026-11-11T14:11:09.523Z"
     },
     {
       "plik": "tarcza_3.mp3",
@@ -907,14 +907,14 @@
       "wariant": 3,
       "grupa": "Kadłub i tarcza",
       "nazwa": "Trafienie w tarczę",
-      "opis": "Uderzenie w pole, szklisty rezonans.",
-      "prompt": "Projectile hitting an energy shield: electric bubble impact with a glassy resonant shimmer and a short crackling energy ripple. Modern cinematic game sound design, high fidelity, no music, no voices.",
-      "sekundy": 1.5,
+      "opis": "Miękkie, stłumione, krótkie pochłonięcie trafienia przez pole.",
+      "prompt": "Soft energy shield absorbing a projectile hit with instant attack: very short muffled low thump with a faint quick electric fizz, damped and gentle, quick decay, no ringing, no glassy shimmer, subtle. Modern cinematic game sound design, high fidelity, no music, no voices.",
+      "sekundy": 0.5,
       "petla": false,
       "model": "eleven_text_to_sound_v2",
       "format": "mp3_44100_128",
       "wplyw": 0.3,
-      "data": "2026-11-11T10:54:11.053Z"
+      "data": "2026-11-11T14:11:11.707Z"
     },
     {
       "plik": "zgrzyt_1.mp3",
