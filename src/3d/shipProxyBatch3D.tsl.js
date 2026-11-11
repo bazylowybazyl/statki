@@ -88,7 +88,10 @@ function buildGraph() {
     uLacquerGlint: vB.w,
     uNavPhase: vLocal.z,
     // światła efektów z siatki: proxy nie ma własnych świateł w siatce (właściciel 0 — nic nie pomija)
-    uGridOwner: float(0.0)
+    uGridOwner: float(0.0),
+    // zasilanie okrętu (src/game/shipPower.js): proxy zawsze w pracy — pełne lampy, rejs, wszystkie lampy własne
+    uPowerA: vec4(2.0, 1.0, 1.0, 0.0),
+    uPowerB: vec4(0.0, 1e6, 0.0, 0.0)
   };
 
   const cutDiscard = (spriteUV) => {

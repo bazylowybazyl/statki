@@ -1027,6 +1027,8 @@
     // hangary i drony; sygnatura spada z gaszeniem. Osłona gazu dla czujników — src/game/gasCover.js. Blok „ZASILANIE OKRĘTU”.
     import { shipPowerOf, powerStateOf, shipPowerOn, shipPowerDown, powerAllowsEngines, powerSignatureMul, powerSensorMul, powerDownShip, powerUpShip, toggleShipPower, setShipPowerState, stepShipPower, powerHudLabel, powerStartupLeft, powerSequenceProgress, POWER_OFF, POWER_STARTUP, POWER_ON, POWER_SHUTDOWN, SHIP_POWER_TUNE } from "./src/game/shipPower.js";
     import { gasCoverAt, gasSignatureMul } from "./src/game/gasCover.js";
+    // Alarmy okrętu gracza (2026-11-11, src/game/shipAlarms.js): szyna stanu i zdarzeń — blok „ALARMY OKRĘTU”.
+    import { ShipAlarm, SHIP_ALARM, SHIP_ALARM_TUNE } from "./src/game/shipAlarms.js";
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
@@ -10354,6 +10356,86 @@
       stepEntityPower(ship, dt);
       if (was === POWER_STARTUP && powerStateOf(ship) === POWER_ON) pushZoneMessage('ZASILANIE: PRACA — SYSTEMY GOTOWE', 1.6, { label: 'ZASILANIE' });
     }
+    // ALARMY OKRĘTU (2026-11-11, prośba użytkownika: „syreny alarmowe — np. low-hp”; src/game/shipAlarms.js — szyna
+    // ShipAlarm). Warunki co krok fizyki: kadłub < 25%, rdzeń reaktora krytyczny / stopienie, zapadnięcie tarczy,
+    // rakieta lub torpeda z namiarem na gracza, trafiony mostek, świeże wykrycie przez piratów. Jeden alarm naraz
+    // (priorytet), po 4 s ciszej. Obraz: koguty na kadłubie (hexShips3D — kod alarmu w migawce: ENT.ALARM) i czerwona
+    // ramka HUD (drawShipAlarmFrame); dźwięk podpina sesja dźwięków przez ShipAlarm.on / ShipAlarm.state.
+    const _alarmIncoming = new Map();
+    const _alarmPrev = { shield: '', bridgeLoss: -1, detected: false };
+    function stepShipAlarmConditions(dt) {
+      if (!ship || ship.destroyed || !gameStarted) {
+        ShipAlarm.clear();
+        ShipAlarm.step(dt);
+        if (ship) ship.__alarmCode = 0;
+        _alarmPrev.bridgeLoss = -1; _alarmPrev.detected = false; _alarmPrev.shield = '';
+        return;
+      }
+      const A = SHIP_ALARM;
+      const hv = Number(ship.hull?.val), hm = Number(ship.hull?.max);
+      if (hm > 0 && hv / hm < SHIP_ALARM_TUNE.hullFrac) ShipAlarm.set(A.HULL, true);
+      const cores = Array.isArray(ship.reactorCores) ? ship.reactorCores : null;
+      if (cores) {
+        for (let i = 0; i < cores.length; i++) {
+          const c = cores[i];
+          if (c && c.host === ship && (c.state === REACTOR_CORE_STATE.CRITICAL || c.state === REACTOR_CORE_STATE.MELTDOWN)) { ShipAlarm.set(A.REACTOR, true); break; }
+        }
+      }
+      const shs = ship.shield?.state || '';
+      if (shs === 'breaking' && _alarmPrev.shield !== 'breaking') ShipAlarm.set(A.SHIELD, true, 3);
+      _alarmPrev.shield = shs;
+      let incoming = false;
+      for (let i = 0; i < _pdEnemyRocketBuffer.length && !incoming; i++) {
+        const rb = _pdEnemyRocketBuffer[i];
+        if (rb && (rb.target === ship || rb.slot?.target === ship)) incoming = true;
+      }
+      if (!incoming && typeof window.rocketSystem3D?.collectIncoming === 'function') {
+        _alarmIncoming.clear();
+        try { window.rocketSystem3D.collectIncoming(_alarmIncoming, true); } catch (err) { /* bez alarmu rakiet */ }
+        incoming = (_alarmIncoming.get(ship) || 0) > 0;
+      }
+      if (incoming) ShipAlarm.set(A.MISSILE, true, 1.5);
+      let loss = 0;
+      const brs = ship.bridgeState?.bridges;
+      if (Array.isArray(brs)) for (let i = 0; i < brs.length; i++) { const t = Number(brs[i]?.lastLossAt); if (t > loss) loss = t; }
+      if (_alarmPrev.bridgeLoss >= 0 && loss > _alarmPrev.bridgeLoss) ShipAlarm.set(A.BRIDGE, true, SHIP_ALARM_TUNE.bridgeHold);
+      _alarmPrev.bridgeLoss = loss;
+      const det = isVisibleToSide('pirate', ship);
+      if (det && !_alarmPrev.detected) ShipAlarm.set(A.DETECTED, true, 3);
+      _alarmPrev.detected = det;
+      ShipAlarm.step(dt);
+      ship.__alarmCode = ShipAlarm.state.id;
+    }
+    ShipAlarm.on((ev) => {
+      if (ev.active) pushZoneMessage(ev.label, 2.6, { label: 'ALARM', tone: 'alert' });
+    });
+    // Czerwona ramka ekranu przy alarmie (HUD 2D, pod celownikiem i panelami): barwa alarmu, puls ~1,6 Hz, jasność
+    // × głośność szyny (po 4 s ciszej). Bez CIC, stacji, ukrytego HUD i letterboxu.
+    function drawShipAlarmFrame(c) {
+      const st = ShipAlarm.state;
+      if (!st.active || !ship || ship.destroyed || !gameStarted) return;
+      if (CICDisplay.active || stationUI.open || StoryGame.hudHidden || StoryGame.letterbox) return;
+      const pulse = 0.5 + 0.5 * Math.sin(st.age * Math.PI * 2 * 1.6);
+      const a = st.volume * (0.10 + 0.16 * pulse);
+      if (!(a > 0.004)) return;
+      const w = c.canvas.width, h = c.canvas.height;
+      const edge = Math.max(24, Math.min(w, h) * 0.09);
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      const col = st.color || '#ff3a26';
+      const sides = [[0, 0, w, edge, 0, 0, 0, edge], [0, h - edge, w, edge, 0, h, 0, h - edge], [0, 0, edge, h, 0, 0, edge, 0], [w - edge, 0, edge, h, w, 0, w - edge, 0]];
+      for (const [x, y, sw, sh, gx0, gy0, gx1, gy1] of sides) {
+        const g = c.createLinearGradient(gx0, gy0, gx1, gy1);
+        g.addColorStop(0, col);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.globalAlpha = a;
+        c.fillStyle = g;
+        c.fillRect(x, y, sw, sh);
+      }
+      c.restore();
+    }
+    window.ShipAlarmDev = { set: (id, sec = 5) => ShipAlarm.set(id, true, sec), state: () => ({ ...ShipAlarm.state }) };
+
     /** Komunikat odmowy systemu przy braku zasilania (zwraca true = zablokowane). */
     function playerPowerRefuse(what) {
       if (playerPowered()) return false;
@@ -30980,6 +31062,8 @@
       tPhysSection0 = performance.now();
       const tProjectilesTotal0 = tPhysSection0;
       ciwsStep(dt);
+      // Alarmy okrętu (src/game/shipAlarms.js) — po obronie punktowej: bufory rakiet tego kroku gotowe.
+      stepShipAlarmConditions(dt);
       PerfHUD.addTiming('ciwsTime', performance.now() - tPhysSection0);
       tPhysSection0 = performance.now();
       bulletsAndCollisionsStep(dt, runFrameLogic, frameLogicDt);
@@ -35207,6 +35291,8 @@
 
       // --- Flash rendering (handled by CanvasVFX) ---
       CanvasVFX.drawFlashes?.(ctx, cam);
+      // Alarm okrętu: czerwona ramka ekranu (blok „ALARMY OKRĘTU”).
+      drawShipAlarmFrame(ctx);
 
       // --- Linie celowania broni (weapon aim lines, Starsector-style) ---
       function _drawWeaponAimLines(camRef) {
