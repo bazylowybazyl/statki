@@ -43,8 +43,10 @@ Wyniki: `.tmp/dzwieki/gra/wyniki.json` (nieśledzone). Ostatnie przebiegi (2026-
   pliki: RMS −26…−29 dB), malowanie +1 / −10,3 / −6,3, alarm −16…−20, blad −18…−22. RMS głośnej części plików przed
   wyrównaniem: od −4 dB (tempestIon, railgun) do −29 dB (malowanie_1, kadlub_3); szczyty po dekodowaniu do +1 dBFS.
 - Przebieg pełny (tarcza, grupy 1–5, silnik i dysze, ogień, piraci strzelają, alarm, taran, malowanie, śmierć celów,
-  odnowienie): zagrało 36 / 36 dźwięków w jednym przebiegu, 34 / 36 w kolejnym (fregata laserowa nie strzelała, przyczyna niesprawdzona —
-  `laserPD`, `wiazka`); konsola bez błędów poza brakiem favicon.
+  odnowienie): zagrało 36 / 36 dźwięków w jednym przebiegu; w innych 34–35 / 36 — fregata laserowa traciła wszystkie
+  wieże pod ogniem Atlasa przed etapem ognia piratów (`laserPD`, `wiazka`; harness odnawia teraz cele przed tym
+  etapem), a `rykoszet` zależy od kąta trafienia Vulcanem w pancerz Atlasa (0–17 na przebieg). Konsola bez błędów poza
+  brakiem favicon.
 - Suma: szczyt na wejściu szyny (przed kompresorem i limiterem) +3,3…+4,7 dBFS, po limiterze −4,1 dB (głośność 0,7)
   / −6,8 dB (0,5); przesterów (szczyt po > −0,04 dB) 0; najwięcej 48–66 głosów naraz (ogień piratów + Atlas).
 - Limit głosów (przebieg pełny, głośność 0,7): tempestIon zagrał 352 razy, 1528 startów odrzucił limit (6 głosów

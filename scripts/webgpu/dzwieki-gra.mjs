@@ -161,6 +161,10 @@ try {
   });
 
   await etap('piraci strzelają (ich broń, rakiety → CIWS, tarcza, kadłub)', async () => {
+    // Piraci od nowa: ogień Atlasa z poprzedniego etapu zdejmuje wieże małych okrętów (fregata laserowa traci
+    // wszystkie — zwykła mechanika gniazd), a ten etap ma usłyszeć broń każdej kategorii.
+    await ev('window.DevScene.dzwiekiOdnow()');
+    await step(30);
     await ev('window.DevScene.dzwiekiPiraciStrzelaja(true)');
     for (let i = 0; i < 6; i++) await step(60);
     // salwa Atlasa w pancernik (po przeładowaniu wyrzutni) — obrona punktowa piratów ma do czego strzelać

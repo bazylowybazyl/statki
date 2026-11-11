@@ -66,6 +66,8 @@ const HullDamageEvents = {
   kerf(e, x0, y0, x1, y1, family) { stamps.push({ type: 'kerf', family, entity: e, x0, y0, x1, y1 }); }
 };
 const game = {
+  // Scena dźwięków (blok „SCENA DŹWIĘKI”): poza sceną warstwy dźwięku nie ma — haki w pętli pocisków to `if (SND)`.
+  SND: null,
   bullets: [], npcs: [], wrecks: window.wrecks, ship: null, player2Ship: null, splitScreenMode: false,
   SpatialGrid: {
     list: [], _resultBuffer: [],

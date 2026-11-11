@@ -1857,7 +1857,9 @@
         GameSparks.ready = true;
         const rocketFx = createRocketFx(Core3D);
         // RW-23: lot (gra) → rekordy RKT_* → reżyser efektów (pula rakiet i dekoder renderu).
-        const rocketSim = initRocketSystem3D(Core3D.scene, { effects: soundRocketEffects(createRocketCommandAdapter(RenderCommands.writer)) });
+        const rocketSim = initRocketSystem3D(Core3D.scene, { effects: createRocketCommandAdapter(RenderCommands.writer) });
+        // Scena dźwięków: zdarzenia rakiet (wyrzut, detonacja, zestrzelenie) także do warstwy dźwięku — adapter owinięty w miejscu.
+        soundRocketEffects(rocketSim.effects);
         if (rocketFx && typeof rocketFx.attachRockets === 'function') rocketFx.attachRockets(rocketSim.rockets);
         installRocketFxCommands(RenderCommands.reader, rocketFx?.director || null, (i) => rocketSim.rockets[i]);
         // RW-30: wstrząs Supernowej — żądanie do gry.
