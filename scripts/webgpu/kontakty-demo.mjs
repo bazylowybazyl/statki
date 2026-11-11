@@ -9,7 +9,7 @@
 //     [--film 1] (klatki porównania kontaktów co 0,1 s w skali 0,5 → <out>/film/NNN.png — do animacji)
 //     [--film-namiar 1|misja|uklad|przelot|zblizenie] (klatki 60 kl/s czujki: <out>/film-<scena>/ — pełna pętla sceny
 //        w skali 0,75; <out>/film-zblizenie/ — struna przy Atlasie w misji 1, piksel w piksel; czas: kilka minut)
-//     [--film-granica 1|tafla|zblizenie|objawienie] (granica wykrycia, scena GRANICA 29 s, 60 kl/s: pełna pętla tafli
+//     [--film-granica 1|tafla|zblizenie|objawienie|obustronne|namierzanie|patrol] (granica wykrycia, scena GRANICA 29 s, 60 kl/s: pełna pętla tafli
 //        w skali 0,75 → <out>/film-granica-tafla/; zbliżenie — kadr 15 km przy Atlasie, 7,5–16 s; objawienie i utrata —
 //        kamera na patrolu, kadr 20 km; piksel w piksel)
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -184,6 +184,24 @@ try {
       k++;
     }
     await set({ kadrKm: 0, camFix: null });
+    // obustronnie (plan § 7b): NAMIERZANIE — oni widzą dalej (sama szara linia, wroga nie widać), PATROL — ja widzę dalej
+    const OBUSTR = {
+      namierzanie: [[3.0, 'nic'], [4.8, 'namierzaja-mnie'], [8.0, 'tylko-szara-linia'], [11.0, 'moj-kontakt-xy'],
+        [12.6, 'ich-wzrok'], [17.3, 'objawienie'], [22.3, 'rozpad-w-xy'], [26.6, 'zgubilem-go'], [32.0, 'wyjscie']],
+      patrol: [[4.0, 'xy-i-ich-strefa'], [12.2, 'widze-ich'], [13.0, 'najblizej'], [16.0, 'znowu-xy']]
+    };
+    let ks = 0;
+    for (const [scene, list] of Object.entries(OBUSTR)) {
+      await set({ mode: 'namiar', variant: 'tafla', scene, time: 0, clean: true, labels: true });
+      let tnow = 0;
+      for (let i = 0; i < list.length; i++) {
+        const [tm, name] = list[i];
+        await run(Math.round((tm - tnow) * 60));
+        tnow = tm;
+        await shot(`9${ks}${i}-${scene}-${name}`, `${scene}, t = ${tm} s: ${name}`, 1);
+      }
+      ks++;
+    }
     for (const [st, tm] of [['przyboj', 12.0], ['swiatlo', 18.5]]) {
       await set({ mode: 'namiar', variant: st, scene: 'granica', time: 0, clean: true, labels: true });
       await run(Math.round(tm * 60));
@@ -206,6 +224,12 @@ try {
       await set({ mode: 'namiar', variant: 'tafla', scene: 'granica', time: 0, clean: true, labels: true });
       await film(join(out, 'film-granica-tafla'), 29 * 60, { x: 0, y: 0, width: W, height: H, scale: 0.75 });
       console.log('film granica tafla');
+    }
+    for (const [scene, len] of [['namierzanie', 33], ['patrol', 26]]) {
+      if (fg !== '1' && fg !== 'obustronne' && fg !== scene) continue;
+      await set({ mode: 'namiar', variant: 'tafla', scene, time: 0, clean: true, labels: true });
+      await film(join(out, `film-${scene}`), len * 60, { x: 0, y: 0, width: W, height: H, scale: 0.75 });
+      console.log('film', scene);
     }
     if (fg === '1' || fg === 'zblizenie') {
       // kadłub w kadrze 15 km: szara granica przechodzi przez Atlasa („?”), cisza ją cofa, wejście w ich wzrok („!”)

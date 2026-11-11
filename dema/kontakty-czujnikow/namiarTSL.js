@@ -43,7 +43,7 @@ export const NAMIAR_ANCH = 6;
 export const NAMIAR_ANCH_VEC = 4;
 export const NAMIAR_MARKS = 32;
 export const NAMIAR_MARK_BASE = NAMIAR_HDR + NAMIAR_ANCH_VEC * NAMIAR_ANCH;
-export const NAMIAR_MARK_VEC = 4;
+export const NAMIAR_MARK_VEC = 5;     // 5 × vec4 na znacznik (piąty — granica wykrycia: wiedza obustronna)
 /** Wachlarz w px CSS: łuków, odstęp, pół szerokości [rad], grubość. Trójkąty struny [px CSS]: pół podstawy i wysokość
  *  (statek / budowla), odstęp, uniesienie nad struną. */
 export const NAMIAR_GEOM = Object.freeze({
@@ -82,7 +82,8 @@ function markLoop(B, start, end, name, body) {
       M0: tv('v4', B.element(base)),
       M1: tv('v4', B.element(base.add(1))),
       M2: tv('v4', B.element(base.add(2))),
-      M3: tv('v4', B.element(base.add(3)))
+      M3: tv('v4', B.element(base.add(3))),
+      get M4() { return tv('v4', B.element(base.add(4))); }
     });
   });
 }

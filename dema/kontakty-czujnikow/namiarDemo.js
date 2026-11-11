@@ -22,7 +22,15 @@ const ATLAS_LEN = 3000;
 const ENEMY_LEN = 1200;           // pancernik piratów (src/data/ships.js: pirate_battleship)
 const KM = 1000;
 const OFF = 99;
-export const NAMIAR_SCENES = Object.freeze(['misja', 'uklad', 'przelot', 'granica']);
+export const NAMIAR_SCENES = Object.freeze(['misja', 'uklad', 'przelot', 'granica', 'namierzanie', 'patrol']);
+/** Szerokość kadru scen z małym statkiem [j.] (pozostałe — 45 km). */
+export const NAMIAR_SCENE_KADR = Object.freeze({ namierzanie: 30000, patrol: 34000 });
+/** Mój okręt w scenie: długość sprite'a [j.], podpis, obraz (atlas — nakładka z dema, frig — fregata Terra Nova). */
+const PLAYER_SHIPS = {
+  atlas: { len: ATLAS_LEN, name: 'ATLAS', img: 'atlas' },
+  fregata: { len: 640, name: 'FREGATA', img: 'frig' },
+  zwiad: { len: 640, name: 'FREGATA ZWIADU', img: 'frig' }
+};
 /** Pomysły granicy wykrycia (czwarta runda) → kwady. Decyzja użytkownika 2026-11-10: „tafla, ale bez podświetlenia, nie
  *  podoba mi się” — TAFLA sama; przybój i podświetlenie zostają do porównania. */
 const GRANICA_OF = { tafla: ['tafla'], przyboj: ['przyboj', 'swiatlo'], swiatlo: ['swiatlo'] };
@@ -62,7 +70,10 @@ function group(x, y, Rt, Rm, extra = {}) {
     Rvis: undefined, Rv: 0, lvl: null, gvis: 1,
     cC: { age: OFF, dir: 1, ang: 0, R: 0 }, cV: { age: OFF, dir: 1, ang: 0, R: 0 },
     // objawienie (ja ich): objaw — grupa widziana najpierw jako kontakt (obłok X-ów), myVis — mój wzrok, idP 0..1
-    objaw: false, myVis: 0, myIdOn: false, idP: 1, meA: 0, ...extra
+    objaw: false, myVis: 0, myIdOn: false, idP: 1, meA: 0,
+    // obustronnie (plan § 7b): mój poziom wobec nich (0 nic, 1 kontakt — X-y, 2 wzrok — cały okręt) i widoczność ich granic:
+    // szara — gdy wykrywam ich albo oni mnie, czerwona — gdy identyfikuję ich albo oni mnie; całe koło — gdy wiem, gdzie są
+    myLvl: 2, myCon: false, redA: 0, grayA: 0, knownA: 0, knownV: 0, orbit: null, facing: undefined, ...extra
   };
 }
 /** Ciało niebieskie: R — promień [j.], rodzaj 0 skalista, 1 gazowa, 2 lodowa / wodna, 3 gwiazda. */
@@ -96,26 +107,31 @@ function linTab(tab, T) {
   }
   return tab[tab.length - 1][1];
 }
-const BORDER_X = (() => {
-  const n = Math.ceil(BORDER_T / BORDER_DT) + 2;
+/** Droga po osi x z tablicy prędkości [km/s] (całkowana raz, co 1/240 s) → x(T) [j.]. */
+function makePath(V, x0, Tmax) {
+  const n = Math.ceil(Tmax / BORDER_DT) + 2;
   const a = new Float64Array(n);
-  a[0] = BORDER_X0;
-  for (let i = 1; i < n; i++) a[i] = a[i - 1] + 0.5 * (linTab(BORDER_V, (i - 1) * BORDER_DT) + linTab(BORDER_V, i * BORDER_DT)) * KM * BORDER_DT;
-  return a;
-})();
-function borderX(T) {
-  const f = T / BORDER_DT;
-  const i = Math.max(0, Math.min(BORDER_X.length - 2, Math.floor(f)));
-  return BORDER_X[i] + (BORDER_X[i + 1] - BORDER_X[i]) * (f - i);
+  a[0] = x0;
+  for (let i = 1; i < n; i++) a[i] = a[i - 1] + 0.5 * (linTab(V, (i - 1) * BORDER_DT) + linTab(V, i * BORDER_DT)) * KM * BORDER_DT;
+  return (T) => {
+    const f = T / BORDER_DT;
+    const i = Math.max(0, Math.min(n - 2, Math.floor(f)));
+    return a[i] + (a[i + 1] - a[i]) * (f - i);
+  };
 }
+const borderX = makePath(BORDER_V, BORDER_X0, BORDER_T);
+// NAMIERZANIE (oni widzą dalej): mała fregata leci na pancernik piratów i zawraca
+const SEEK_T = 33;
+const seekX = makePath([[0, 2.2], [12, 2.2], [14, 1.0], [19, 0.7], [20, 0], [21, -1.2], [22, -2.3], [SEEK_T, -2.3]], -38000, SEEK_T);
 /** Ślad: zwykła praca 1, ciąg ×1,35 (8–9 s), cicha praca ×0,5 (13–14 s), powrót do zwykłej (21–22 s). */
 const borderSig = (T) => 1 + 0.35 * ss(8, 9, T) - 0.85 * ss(13, 14, T) + 0.5 * ss(21, 22, T);
-/** Podpis sceny GRANICA ze stanu: tryb pracy · co oni wiedzą o mnie · co ja wiem o nich. */
-function borderCaption(v, T) {
+/** Podpis scen granicy ze stanu: tryb pracy · co oni wiedzą o mnie · co ja wiem o nich. */
+function borderCaption(v, T, sc) {
   const g = v.groups[0];
-  const mode = T >= 19 && T < 21 ? 'ZAWRACAM' : v.sig > 1.2 ? 'CIĄG' : v.sig < 0.7 ? 'CICHA PRACA' : 'ZWYKŁA PRACA';
-  const they = g.lvl === 2 ? 'oni: wiedzą, że to Atlas' : g.lvl === 1 ? 'oni: mają kontakt, nie wiedzą kto' : 'oni: nic';
-  const me = g.idP > 0.5 ? 'ja: widzę patrol' : 'ja: kontakt (X-y)';
+  const turning = sc.turn && T >= sc.turn[0] && T < sc.turn[1];
+  const mode = turning ? 'ZAWRACAM' : v.sig > 1.2 ? 'CIĄG' : v.sig < 0.7 ? 'CICHA PRACA' : 'ZWYKŁA PRACA';
+  const they = g.lvl === 2 ? 'oni: wiedzą, kim jestem' : g.lvl === 1 ? 'oni: mają kontakt (namierzają mnie)' : 'oni: nic';
+  const me = g.myLvl === 2 ? 'ja: widzę ich' : g.myLvl === 1 ? 'ja: kontakt (X-y)' : 'ja: nic (nie widzę ich)';
   return `${mode} · ${they} · ${me}`;
 }
 
@@ -199,11 +215,7 @@ const SCENES = {
       const g = group(0, 0, 14000, 34000, {
         nSmall: 3, sprites: 3, name: 'patrol, 3 statki', Rvis: 9000, objaw: true, myVis: 18000, idP: 0
       });
-      const c = makeContact ? makeContact(2, 0, 0) : null;
-      if (c) {
-        c.move = (t, cc) => { cc.tx = g.x; cc.ty = g.y; };
-        g.contact = c;
-      }
+      attachContact(g, makeContact, 2);
       v.groups = [g];
       v.planets = [body('Mars', 0, 7000, 150 * KM, 2.3), body('Jowisz', 1, 32000, 700 * KM, -2.5), body('Słońce', 3, 60000, 2200 * KM, 1.0)];
       return v;
@@ -215,9 +227,76 @@ const SCENES = {
       v.sens = 1 - 0.4 * ss(13, 14, T) * (1 - ss(21, 22, T));
       return { on: false, aim: v.heading, caption: null };
     },
+    turn: [19, 21],
+    caption: borderCaption
+  },
+  // NAMIERZANIE (obustronnie, przykład użytkownika 1 — „my mamy krótszy, przeciwnik ma dłuższy … widzimy tylko szarą linię
+  // sensora przeciwnika, a samego przeciwnika nie widzimy”): mała fregata, pancernik piratów. Ich kontakt na mnie 28 km, ich
+  // wzrok 11 km; mój kontakt na nich 15 km, mój wzrok 6 km. Wejście w ich szarą strefę (~4,5 s): „?” i szara linia za mną,
+  // pancernika nie widać; mój kontakt (~10,4 s): X-y; ich wzrok (~12,4 s): „!”; mój wzrok (~16,5 s): objawienie; zawrót,
+  // ucieczka: rozpad w X-y, wyjście z ich wzroku, X-y znikają (zgubiłem go), szara linia zostaje, aż wyjdę z ich kontaktu.
+  namierzanie: {
+    period: SEEK_T,
+    cam: { x: 5000, y: 0 },
+    build(makeContact) {
+      const v = { x: -38000, y: 1500, sig: 1, sens: 1, heading: 0, ship: 'fregata' };
+      const g = group(0, 0, 28000, 15000, {
+        nBig: 0, nSmall: 1, sprites: 1, name: 'pancernik piratów', Rvis: 11000, objaw: true, myVis: 6000, idP: 0
+      });
+      attachContact(g, makeContact, 3);
+      v.groups = [g];
+      v.planets = [body('Mars', 0, 7000, 150 * KM, 2.3), body('Jowisz', 1, 32000, 700 * KM, -2.5), body('Słońce', 3, 60000, 2200 * KM, 1.0)];
+      return v;
+    },
+    script(v, T) {
+      v.x = seekX(T);
+      v.heading = Math.PI * ss(19.5, 21.5, T);
+      v.sig = 1;
+      v.sens = 1;
+      return { on: false, aim: v.heading, caption: null };
+    },
+    turn: [19.5, 21.5],
+    caption: borderCaption
+  },
+  // PATROL (obustronnie, przykład użytkownika 2 — „latamy małym statkiem, wokół jakiegoś punktu krąży patrol … widzimy jego
+  // szarą strefę (nie jesteśmy w niej) … nasze czujniki są lepsze, więc go widzimy”): fregata zwiadu krąży powoli 16 km od
+  // punktu, wokół którego patrol (3 statki) krąży w promieniu 8 km. Ich kontakt na mnie 7 km, wzrok 4 km — nie sięgają mnie
+  // (najbliżej 2,2 km od szarej granicy); mój kontakt 30 km — zawsze X-y, mój wzrok 10 km — przez ~4,5 s widzę ich całych.
+  patrol: {
+    period: 26,
+    cam: { x: 8000, y: 0 },
+    build(makeContact) {
+      const v = { x: -17200, y: 0, sig: 1, sens: 1, heading: 0, ship: 'zwiad' };
+      const g = group(8000, 0, 7000, 30000, {
+        nSmall: 3, sprites: 3, name: 'patrol, 3 statki', Rvis: 4000, objaw: true, myVis: 10000, idP: 0,
+        orbit: { cx: 0, cy: 0, r: 8000, period: 26, phase: 0 }
+      });
+      attachContact(g, makeContact, 2);
+      v.groups = [g];
+      v.planets = [body('Mars', 0, 7000, 150 * KM, 2.3), body('Jowisz', 1, 32000, 700 * KM, -2.5), body('Słońce', 3, 60000, 2200 * KM, 1.0)];
+      return v;
+    },
+    script(v, T) {
+      // fregata zwiadu: mała pętla 1,2 km wokół (−16 km, 0), najdalej od patrolu, gdy ten przechodzi najbliżej (13 s)
+      const a = 2 * Math.PI * (T - 13) / 26;
+      v.x = -16000 - 1200 * Math.cos(a);
+      v.y = 1200 * Math.sin(a);
+      v.heading = Math.atan2(Math.cos(a), Math.sin(a));
+      v.sig = 1;
+      v.sens = 1;
+      return { on: false, aim: v.heading, caption: null };
+    },
     caption: borderCaption
   }
 };
+
+/** Kontakt (obłok X-ów) przypięty do grupy z objawieniem — miejsce z grupy, wygląd steruje `step`. */
+function attachContact(g, makeContact, cls) {
+  const c = makeContact ? makeContact(cls, g.x, g.y) : null;
+  if (!c) return;
+  c.move = (t, cc) => { cc.tx = g.x; cc.ty = g.y; };
+  g.contact = c;
+}
 
 export function createNamiarDemo(core, distLayer, hullTex = null) {
   const STYLES = [...NAMIAR_STYLES, ...GRANICA_STYLES];
@@ -233,6 +312,8 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
   };
   const enemyImg = new Image();
   enemyImg.src = '../src/assets/ships/piratebattleship.png';
+  const frigImg = new Image();                      // mały statek gracza (sceny NAMIERZANIE, PATROL)
+  frigImg.src = '../src/assets/ships/terranfrigate.png';
 
   function setScene(scene, cam, W, H, makeContact, time = 0) {
     gid = 1;
@@ -241,6 +322,10 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
     const v = st.view;
     Object.assign(v, { phi: Math.PI, on: false, onAge: OFF, vis: 0, amp: 0, pluck: 0, tau: 7.3, harm: 0, det: 0 });
     v.heading = v.heading || 0;
+    const ship = PLAYER_SHIPS[v.ship] || PLAYER_SHIPS.atlas;
+    v.shipLen = ship.len;
+    v.shipName = ship.name;
+    v.shipImg = ship.img;
     st.t0 = time;
     st.manual = false;
     st.eye = 0;
@@ -281,7 +366,13 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
     // grupy technologiczne
     let signal = 0, detBeam = 0, eye = 0;
     for (const g of v.groups) {
-      if (g.flyby) {
+      if (g.orbit) {
+        const o = g.orbit;
+        const a = o.phase + 2 * Math.PI * T / o.period;
+        g.x = o.cx + Math.cos(a) * o.r;
+        g.y = o.cy + Math.sin(a) * o.r;
+        g.facing = a + Math.PI / 2;
+      } else if (g.flyby) {
         const f = flyby(T);
         g.x = v.x + Math.cos(g.dir) * f.d;
         g.y = v.y + Math.sin(g.dir) * f.d;
@@ -351,11 +442,21 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
           c.followTau = g.idP > 0 && g.idP < 1 ? 0.12 : 0.45;
         }
       }
+      // obustronnie: mój poziom wobec nich (grupy bez objawienia — znane od razu, jak w scenach czujki)
+      g.myCon = g.myCon ? g.me >= 0.975 : g.me >= 1;
+      g.myLvl = g.objaw ? (g.myIdOn ? 2 : g.myCon ? 1 : 0) : 2;
+      const seeRed = g.myLvl === 2 || g.lvl === 2;
+      const seeGray = g.myLvl >= 1 || g.lvl >= 1;
+      const fade = (cur, on) => (dt > 0 ? approach(cur, on ? 1 : 0, dt, 0.25, 0.6) : (on ? 1 : 0));
+      g.redA = fade(g.redA, seeRed);
+      g.grayA = fade(g.grayA, seeGray);
+      g.knownA = fade(g.knownA, g.myLvl >= 1);
+      g.knownV = fade(g.knownV, g.myLvl === 2);
       if (v.on) signal += Math.min(1.4, g.me) * g.m;
       detBeam = Math.max(detBeam, g.det * g.reveal);
       eye = Math.max(eye, g.det * g.reveal);
     }
-    if (sc.caption) st.caption = sc.caption(v, T);
+    if (sc.caption) st.caption = sc.caption(v, T, sc);
     const sg = Math.min(1, signal);
     const ampT = 0.35 + 5.2 * sg * Math.sqrt(sg);
     v.amp = approach(v.amp, ampT, dt, 0.35, 0.5);
@@ -382,7 +483,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
 
   const toS = (cam, W, H, x, y) => [(x - cam.x) * cam.zoom + W * 0.5, (y - cam.y) * cam.zoom + H * 0.5];
   /** Promień bazowy błony [px CSS]: obrys kadłuba + ślad. */
-  const blonaR = (cam, sig) => ATLAS_LEN * 0.5 * cam.zoom * 0.72 + 8 + 26 * sig;
+  const blonaR = (cam, sig) => (st.view?.shipLen || ATLAS_LEN) * 0.5 * cam.zoom * 0.72 + 8 + 26 * sig;
   const strunaR = (cam) => blonaR(cam, 1.6) + 50;      // poza błoną z wybrzuszeniami
 
   function packStruna(A, cam, W, H, pxs) {
@@ -436,14 +537,17 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       if (n >= NAMIAR_MARKS) break;
       const [cx, cy] = toS(cam, W, H, g.x, g.y);
       const o = NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * n;
-      A[o].set(cx * pxs, cy * pxs, g.R * z, 1);
+      // czerwona: widoczność; est — ich wzrok zgadnięty (nie identyfikuję ich) → w kreskach
+      A[o].set(cx * pxs, cy * pxs, g.R * z, g.redA);
       A[o + 1].set(g.cC.age < 2.8 ? g.cC.age : -1, g.cC.dir, g.cC.ang, g.cC.R * z);
-      A[o + 2].set(g.est, g.rate * z, Math.atan2(v.y - g.y, v.x - g.x), g.Rv * z);
-      A[o + 3].set(g.cV.age < 2.8 ? g.cV.age : -1, g.cV.dir, g.cV.ang, g.gvis);
+      A[o + 2].set(Math.max(g.est, 1 - g.knownV), g.rate * z, Math.atan2(v.y - g.y, v.x - g.x), g.Rv * z);
+      A[o + 3].set(g.cV.age < 2.8 ? g.cV.age : -1, g.cV.dir, g.cV.ang, g.gvis * g.grayA);
+      // w: przesunięcie okna szarej [px] — gdy mnie namierzają, najbliższy kawałek ich granicy (droga ucieczki) zostaje widać
+      A[o + 4].set(g.knownA, g.knownV, g.grayA, g.lvl >= 1 ? Math.max(0, Math.abs(g.d - g.R) - WIN_NEAR) * z : 0);
       n++;
     }
     const a = NAMIAR_HDR;
-    A[a].set(sx * pxs, sy * pxs, ATLAS_LEN * 0.5 * z, 1);
+    A[a].set(sx * pxs, sy * pxs, (v.shipLen || ATLAS_LEN) * 0.5 * z, 1);
     A[a + 1].set(WIN_NEAR * z, WIN_FAR * z, WAVE_LEN * pxs, WAVE_V * pxs);
     A[a + 2].set(0, 0, 0, 0);
     A[a + 3].set(0, 0, 0, 0);
@@ -691,15 +795,17 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       }
     }
     const border = !!GRANICA_OF[variant];
-    const hullShader = !!GRANICA_OF[variant]?.includes('swiatlo');
-    if (!hullShader && atlasImg?.complete && atlasImg.naturalWidth) {
+    const hullShader = !!GRANICA_OF[variant]?.includes('swiatlo') && v.shipImg === 'atlas';
+    const pImg = v.shipImg === 'frig' ? frigImg : atlasImg;
+    if (!hullShader && pImg?.complete && pImg.naturalWidth) {
       // z podświetleniem Atlasa rysuje shader (granicaTSL.js), inaczej — nakładka 2D
-      const L = ATLAS_LEN * cam.zoom;
+      const L = (v.shipLen || ATLAS_LEN) * cam.zoom;
+      const asp = pImg.naturalHeight / pImg.naturalWidth;
       ctx.save();
       ctx.globalAlpha = 0.97;
       ctx.translate(sx, sy);
       ctx.rotate(v.heading || 0);
-      ctx.drawImage(atlasImg, -L / 2, -L * 1677 / 3747 / 2, L, L * 1677 / 3747);
+      ctx.drawImage(pImg, -L / 2, -L * asp / 2, L, L * asp);
       ctx.restore();
     }
     for (const g of v.groups) {
@@ -708,7 +814,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       if (ex < -40 || ex > W + 40 || ey < -40 || ey > H + 40 || !enemyImg.complete || !enemyImg.naturalWidth) continue;
       const L = ENEMY_LEN * cam.zoom;
       const asp = enemyImg.naturalHeight / enemyImg.naturalWidth;
-      const a = Math.atan2(sy - ey, sx - ex);
+      const a = g.facing ?? Math.atan2(sy - ey, sx - ex);
       for (let s = 0; s < g.sprites; s++) {
         // rozstaw w świecie (przy kadrze 45 km ≈ 26 / 24 px i −22 / 30 px), żeby zbliżenie nie zlepiało okrętów
         const ox = (s === 0 ? 0 : (s === 1 ? 730 : -620)) * cam.zoom, oy = (s === 0 ? 0 : (s === 1 ? 675 : 845)) * cam.zoom;
@@ -725,7 +831,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       }
     }
     if (labels) {
-      text('ATLAS', sx, sy + ATLAS_LEN * 0.27 * cam.zoom + 4, '159, 220, 255', 0.75, 10);
+      text(v.shipName || 'ATLAS', sx, sy + (v.shipLen || ATLAS_LEN) * 0.27 * cam.zoom + 4, '159, 220, 255', 0.75, 10);
       // co jest w namiarze (podpis do oceny — w grze nie musi być)
       let best = null;
       for (const g of v.groups) if (g.reveal > 0.5 && (!best || g.m > best.m)) best = g;
@@ -739,9 +845,12 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
         for (const g of v.groups) if (!nb || Math.min(Math.abs(g.d - g.R), Math.abs(g.d - g.Rv)) < Math.min(Math.abs(nb.d - nb.R), Math.abs(nb.d - nb.Rv))) nb = g;
         if (nb) {
           const km = (x) => (x / KM).toFixed(1).replace('.', ',');
-          head = nb.lvl === 2 ? `W ICH WZROKU: ${nb.name} — wiedzą, że to Atlas · do wyjścia ze wzroku ${km(nb.Rv - nb.d)} km`
-            : nb.lvl === 1 ? `KONTAKT: ${nb.name} — wiedzą, że coś tu jest · do ich wzroku ${km(nb.d - nb.Rv)} km · do wyjścia ${km(nb.R - nb.d)} km`
-              : `POZA ZASIĘGIEM: ${nb.name} · do kontaktu ${km(nb.d - Math.max(nb.R, nb.Rv))} km`;
+          // kto to — tylko tyle, ile wiem (nie wykrywam ich: „ktoś”)
+          const who = nb.myLvl === 2 ? nb.name : nb.myLvl === 1 ? 'kontakt bez identyfikacji' : 'ktoś, kogo nie widzę';
+          head = nb.lvl === 2 ? `W ICH WZROKU: ${who} — wie, kim jestem · do wyjścia ze wzroku ${km(nb.Rv - nb.d)} km`
+            : nb.lvl === 1 ? `NAMIERZAJĄ MNIE: ${who} — wie, że coś tu jest · do jego wzroku ${km(nb.d - nb.Rv)} km · do wyjścia ${km(nb.R - nb.d)} km`
+              : nb.myLvl >= 1 ? `NIE WIDZĄ MNIE: ${who} · do jego kontaktu ${km(nb.d - Math.max(nb.R, nb.Rv))} km`
+                : 'nic w zasięgu';
           red = nb.lvl === 2;
         }
       }
@@ -768,6 +877,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
 
   return {
     meshes, dists, st, setScene, step, sync, drawOverlay, mouse, camAnchor,
+    sceneKadr: (name) => NAMIAR_SCENE_KADR[name] || 0,
     warmupObjects: () => meshes.slice(),
     get distLive() { return st.distLive; }
   };

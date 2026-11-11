@@ -21,7 +21,10 @@
 //     prędkość fal [px/s]); znacznik = grupa: M0 = (cx, cy, promień KONTAKTU Rc [px], widoczność), M1 = przejście granicy
 //     kontaktu (wiek [s] albo −1, kierunek +1 do środka / −1 na zewnątrz, kąt miejsca przejścia, Rc w chwili przejścia),
 //     M2 = (est, prędkość granicy kontaktu [px/s, + = rośnie], kąt mojego okrętu od środka grupy, promień WZROKU Rv [px]),
-//     M3 = przejście granicy wzroku (wiek, kierunek, kąt, widoczność szarej tafli — 0, gdy Rc ≤ Rv)
+//     M3 = przejście granicy wzroku (wiek, kierunek, kąt, widoczność szarej tafli — wiedza × zlewanie: 0, gdy Rc ≤ Rv),
+//     M4 = (całe koło szarej — wykrywam ich, całe koło czerwonej — identyfikuję ich, widoczność „?”, —); M0.w — widoczność
+//     czerwonej. Obustronnie (słowa użytkownika, plan § 7b): ich granice widać, gdy wykrywam ich ALBO oni mnie; kawałek przy
+//     mnie zawsze, całe koło słabo tylko wtedy, gdy wiem, gdzie są
 //   PODŚWIETLENIE: A0 = (sx, sy, długość okrętu [px], kurs), A1 = (poziom mipmapy, fale przyboju 0/1, długość fali,
 //     prędkość fal), A2 = (wysokość / długość sprite'a, widoczność); znacznik = grupa, która mnie widzi:
 //     M0 = (cx, cy, światło 0..1, wiek włączenia [s]), M1 = (ziarno, —)
@@ -119,12 +122,13 @@ function taflaLook(B, px, noiseTex) {
   const S = A0.xy;
   const wNear = A1.x, wFar = A1.y;
   If(A0.w.greaterThan(0.001), () => {
-    markLoop(B, int(0), count, 'tg', ({ M0, M1, M2, M3 }) => {
+    markLoop(B, int(0), count, 'tg', ({ M0, M1, M2, M3, M4 }) => {
       const C = tv('v2', M0.xy);
-      const vis = tv('f', M0.w);
+      const vis = tv('f', M0.w);                          // czerwona (wzrok): znam ich albo oni mnie widzą
       const Rc = tv('f', M0.z);
       const Rv = tv('f', M2.w);
-      const gvis = tv('f', M3.w.mul(vis));
+      const gvis = tv('f', M3.w);                         // szara (kontakt): wykrywam ich albo oni mnie; × zlewanie
+      const full = tv('v4', M4);                          // (całe koło szarej, całe koło czerwonej, „?”, przesunięcie okna szarej)
       const rate = tv('f', M2.y);
       const est = M2.x;
       const dv = tv('v2', px.sub(C));
@@ -138,7 +142,7 @@ function taflaLook(B, px, noiseTex) {
         const win = tv('f', float(1.0).sub(smoothstep(wNear, wFar, length(C.add(nrm.mul(Rv)).sub(S)))));
         const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(dS0.sub(Rv)))));
         const X = crossing(px, C, Rv, th, fV, M3, pxs);
-        const V = tv('f', max(win, X.trail.mul(0.85)).mul(vis));
+        const V = tv('f', max(max(win, X.trail.mul(0.85)), full.y.mul(0.3)).mul(vis));
         // zmarszczki od punktu granicy najbliższego mnie
         const Pn = C.add(vec2(cos(M2.z), sin(M2.z)).mul(Rv));
         const dn = tv('f', length(px.sub(Pn)));
@@ -168,10 +172,11 @@ function taflaLook(B, px, noiseTex) {
       If(gvis.greaterThan(0.001).and(abs(fC).lessThan(pxs.mul(60.0).add(abs(rate).mul(0.22)))), () => {
         const nrm = tv('v2', dv.div(max(r, 1.0)));
         const th = tv('f', atan(dv.y, dv.x));
-        const win = tv('f', float(1.0).sub(smoothstep(wNear, wFar, length(C.add(nrm.mul(Rc)).sub(S)))));
+        // okno przesunięte o `full.w`, gdy mnie namierzają — najbliższy kawałek ich granicy (droga ucieczki) zostaje widać
+        const win = tv('f', float(1.0).sub(smoothstep(wNear, wFar, length(C.add(nrm.mul(Rc)).sub(S)).sub(full.w))));
         const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(dS0.sub(Rc)))));
         const X = crossing(px, C, Rc, th, fC, M1, pxs);
-        const V = tv('f', max(win, X.trail.mul(0.85)).mul(gvis));
+        const V = tv('f', max(max(win, X.trail.mul(0.85)), full.x.mul(0.3)).mul(gvis));
         // X-y w komórkach 6 px (łuk od punktu najbliższego mnie × odległość od granicy): rzędy przy linii gęsto, dalej
         // rzadko; każdy żyje 0,7–1,6 s i odradza się w innym miejscu komórki — ten sam język co obłok kontaktu
         const arcPx = tv('f', wrapAngle(th.sub(M2.z)).mul(Rc).div(pxs));
@@ -212,7 +217,7 @@ function taflaLook(B, px, noiseTex) {
       });
       // znaki przejść: „?” (kontakt) i „!” (wzrok), wyjście — błękitny błysk
       const lift = A0.z.mul(0.45).add(pxs.mul(24.0));        // pół wysokości kadłuba + odstęp
-      rgb.addAssign(crossMark(px, C, M1, pxs, 0, lift).mul(vis));
+      rgb.addAssign(crossMark(px, C, M1, pxs, 0, lift).mul(full.z));
       rgb.addAssign(crossMark(px, C, vec4(M3.xyz, Rv), pxs, 1, lift).mul(vis));
     });
   });
@@ -256,7 +261,7 @@ function taflaDisp(B, px) {
         const o = tv('v2', along.add(rip).mul(vis));
         disp.addAssign(vec2(o.x, o.y.negate()));
       });
-      const gvis = tv('f', M3.w.mul(vis));
+      const gvis = tv('f', M3.w);
       const fC = tv('f', r.sub(Rc));
       If(gvis.greaterThan(0.001).and(abs(fC).lessThan(pxs.mul(50.0))), () => {
         const nrm = tv('v2', dv.div(max(r, 1.0)));

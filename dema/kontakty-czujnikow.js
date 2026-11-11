@@ -10,7 +10,7 @@
 //   ?wariant=0..4|porownanie   ?scena=plansza|gra   ?podpisy=0   ?daleko=1   ?clean=1 (bez paneli)
 //   ?tryb=namiar (klawisz W): CZUJKA na PPM — 1 CZUJKA (struna + błona), 2 STRUNA, 3 BŁONA, 0 WACHLARZ (druga runda);
 //     granica wykrycia (czwarta runda) — 4 TAFLA, 5 PRZYBÓJ (obie z podświetleniem kadłuba), 6 samo PODŚWIETLENIE;
-//     ?namiar=czujka|struna|blona|wachlarz|tafla|przyboj|swiatlo; ?scena=misja|uklad|przelot|granica (klawisz S);
+//     ?namiar=czujka|struna|blona|wachlarz|tafla|przyboj|swiatlo; ?scena=misja|uklad|przelot|granica|namierzanie|patrol (S);
 //     PPM na kanwie — własna ręka; ?kadr=<km> — szerokość kadru (domyślnie 45)
 //   ?test=1 (klatki tylko z __kontakty.runFrames — zrzuty: scripts/webgpu/kontakty-demo.mjs)
 import * as THREE from 'three/webgpu';
@@ -66,7 +66,7 @@ const NAM_DESC = {
   struna: '<b>Struna</b> — sama część technologiczna czujki: łuk w stronę myszki, drganie z siły sygnału, trójkąty nad grupami, czerwień i „!” przy wykryciu.',
   blona: '<b>Błona</b> — sama część niebieska czujki: 360°, wybrzuszenia w stronę planet i gwiazdy (bliżej = większe, większe ciało = szersze, barwa = rodzaj ciała), impuls PPM z refrakcją.',
   wachlarz: '<b>Wachlarz</b> (druga runda, do porównania) — jeden na okręt: przy mnie niebieski z mojego zasięgu, przy wrogu czerwony z ich zasięgu.',
-  tafla: '<b>Tafla graniczna (wybrana, bez podświetlenia) — dwa poziomy.</b> Szara tafla z X-ów = ich KONTAKT („coś tam jest, nie wiedzą kto”; promień = ich czujniki × mój ślad — ciąg pcha ją na mnie, cisza odsuwa). Czerwona tafla = ich WZROK („wiedzą, że to Atlas”; stoi — cisza nie pomaga). Widać tylko kawałek przy okręcie; przejście: zmarszczka obiega koło, „?” albo „!” nad miejscem przejścia, wyjście — błękit. Ja ich: poza moim wzrokiem patrol to obłok X-ów, w moim wzroku X-y zwijają się w kadłuby (objawienie). Scena GRANICA (S).',
+  tafla: '<b>Tafla graniczna (wybrana, bez podświetlenia) — dwa poziomy.</b> Szara tafla z X-ów = ich KONTAKT („coś tam jest, nie wiedzą kto”; promień = ich czujniki × mój ślad — ciąg pcha ją na mnie, cisza odsuwa). Czerwona tafla = ich WZROK („wiedzą, że to Atlas”; stoi — cisza nie pomaga). Widać tylko kawałek przy okręcie; przejście: zmarszczka obiega koło, „?” albo „!” nad miejscem przejścia, wyjście — błękit. Ja ich: poza moim wzrokiem patrol to obłok X-ów, w moim wzroku X-y zwijają się w kadłuby (objawienie), poza moim kontaktem nie widzę ich wcale. Obustronnie: ich granice widać, gdy wykrywam ich albo oni mnie (wtedy sam kawałek przy mnie — „ktoś mnie namierza”); całe koło słabo, gdy wiem, gdzie są. Sceny: GRANICA (Atlas), NAMIERZANIE (oni widzą dalej), PATROL (ja widzę dalej).',
   przyboj: '<b>Przybój + podświetlenie.</b> Od wroga biegną słabe fale (jego czujniki) i łamią się na granicy jego zasięgu — linia piany wybiega za granicę i cofa się; widać ją tylko w pobliżu okrętu. W zasięgu fale obmywają kadłub, a skan na kadłubie idzie grzbietami tych fal. Scena GRANICA (S).',
   swiatlo: '<b>Samo podświetlenie (zamiast oka przy kursorze).</b> Gdy grupa mnie widzi, kadłub jest oświetlony od jej strony: czerwone światło z płaskorzeźbą paneli, świecąca krawędź od strony wroga, linie skanu, słaby snop w przestrzeni. Bez granicy — tylko „już mnie widzą i skąd”.'
 };
@@ -291,7 +291,8 @@ function stepContacts(dt) {
 // Wariant, kamera
 
 function applyZoom() {
-  S.cam.zoom = W / (S.kadrKm > 0 ? S.kadrKm * 1000 : (S.far ? 180000 : 45000));
+  const sceneKadr = S.mode === 'namiar' && namiar ? namiar.sceneKadr(S.namScene) : 0;
+  S.cam.zoom = W / (S.kadrKm > 0 ? S.kadrKm * 1000 : (S.far ? 180000 : (sceneKadr || 45000)));
 }
 
 function setVariant(v) {

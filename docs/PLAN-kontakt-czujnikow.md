@@ -39,6 +39,15 @@ Stan: **KONTAKT = obłok szarych X-ów; CZUJKA na PPM (struna z kolcami + błona
   przybój i podświetlenie odpadają (zostają w demie do porównania). Pytanie użytkownika: „pozostają jeszcze zasięg —
   nie wiadomo kto — zasięg objawienie kto; jak to rozwiązać?” — dwa poziomy modelu (KONTAKT i IDENTYFIKACJA), § 7a;
   na propozycję: „zbuduj oba” (dwie tafle i objawienie kontaktu — w demie).
+- 2026-11-11, ocena: „okej, tak może to być” + mechanika obustronna (§ 7b): „my też mamy takie zasięgi. zależy, kto ma
+  dalszy sensor — przykład — my mamy krótszy, przeciwnik ma dłuższy — widzimy tylko szarą linię sensora przeciwnika, a
+  samego przeciwnika nie widzimy (nawet tych X-ów) — oznacza to, że ktoś nas namierza, ale nie mamy go w NASZEJ szarej
+  strefie. Na odwrót — latamy małym statkiem, wokół jakiegoś punktu krąży patrol. Widzimy jego szarą strefę (nie jesteśmy
+  w niej, więc dla niego nie jesteśmy X-ami), ale nasze czujniki są lepsze, więc go widzimy (jeśli jest w naszej szarej
+  strefie, to widzimy go X-ami, jeśli jest w naszej wewnętrznej strefie, to widzimy go całego). Taka mechanika musi być
+  zaimplementowana … jesteśmy na finiszu — zrób ostatnie szlify i puść sobie sesję pomocniczą, która ci sprawdzi zasięgi
+  w GRZE. Każda jednostka musi mieć zasięgi zrobione.” Sesja pomocnicza „Zasięgi czujników każdej jednostki w grze”
+  (audyt i uzupełnienie zasięgów, sprawdzenie w grze z `?radarZasiegi`).
 
 ## 1. Co obraz ma oddać
 
@@ -357,4 +366,38 @@ W demie (wariant 4 TAFLA, scena GRANICA — pętla 29 s; `granicaTSL.js` → `ta
 Wpięcie: obie granice z modelu (`detectR` = czujniki × sygnatura × osłona — szara; `ident` = wzrok — czerwona;
 `computeDetectionPicture` liczy obie strony), objawienie = przejście `level` KONTAKT → IDENTYFIKACJA w wiedzy gracza
 (`knowList`); w grze kadłub odsłania się w materiale kadłuba (maska komórek z haszu, jak przy maskowaniu), nie clipem 2D.
-Decyzje: (15) dwie tafle (szara z X-ów, czerwona) — czy tak; (16) objawienie — tempo (~0,55 s) i wygląd.
+Decyzje: (15) i (16) — „tak może to być” (2026-11-11).
+
+### 7b. Obustronnie: kto ma dalszy czujnik (2026-11-11)
+
+Cytat użytkownika — § 0. Model ma dwa poziomy w OBIE strony:
+- **oni → ja** (`lvl`): kontakt (ich czujniki × mój ślad) albo wzrok (ich wzrok) — ich szara i czerwona tafla;
+- **ja → oni** (`myLvl`): 0 — nie wykrywam ich (nie widać ich wcale, nawet X-ów), 1 — kontakt (moje czujniki × ich
+  sygnatura): obłok X-ów, 2 — mój wzrok: cały okręt (objawienie przy przejściu, rozpad w X-y przy wyjściu).
+
+- **Kiedy widać ich granice:** szarą — gdy wykrywam ich (`myLvl` ≥ 1) ALBO oni mnie (`lvl` ≥ 1); czerwoną — gdy
+  identyfikuję ich (`myLvl` = 2) ALBO oni mnie (`lvl` = 2). Kawałek przy mnie (okno 3–12 km) — zawsze, gdy granica
+  widoczna; CAŁE koło, słabo (30%) — tylko gdy wiem, gdzie są (szare przy `myLvl` ≥ 1, czerwone przy `myLvl` = 2). Gdy
+  mnie namierzają, okno szarej przesuwa się o moją odległość od granicy — najbliższy kawałek ich granicy (droga ucieczki)
+  zostaje widać także głęboko w ich strefie. Czerwona wroga, którego nie identyfikuję (oni widzą mnie, ja ich nie) —
+  w kreskach (ich wzrok zgadnięty).
+- **Napis:** kto to — tylko tyle, ile wiem: „ktoś, kogo nie widzę”, „kontakt bez identyfikacji”, nazwa; stan: NIE WIDZĄ
+  MNIE / NAMIERZAJĄ MNIE / W ICH WZROKU z odległościami.
+- **Sceny** (wariant 4 TAFLA; mały statek — fregata Terra Nova, 640 j., kadr 30 / 34 km):
+  - NAMIERZANIE (33 s, oni widzą dalej): fregata leci na pancernik piratów i zawraca. Ich kontakt na mnie 28 km, ich wzrok
+    11 km; mój kontakt na nich 15 km, mój wzrok 6 km. 4,6 s — wchodzę w ich szarą strefę: „?”, szara linia za mną,
+    pancernika nie widać; 10,5 s — mój kontakt: X-y; 12,4 s — ich wzrok: „!”; 16,8 s — mój wzrok: objawienie; zawrót;
+    21,9 s — rozpad w X-y; 24,2 s — wyjście z ich wzroku; 26 s — X-y znikają (zgubiłem go), szara linia zostaje;
+    31,8 s — wyjście z ich kontaktu.
+  - PATROL (26 s, ja widzę dalej): fregata zwiadu krąży powoli 16 km od punktu, wokół którego patrol krąży w promieniu
+    8 km. Ich kontakt na mnie 7 km, wzrok 4 km — nie sięgają mnie; mój kontakt 30 km — cały czas X-y i ich szara strefa,
+    mój wzrok 10 km — przez ~3 s widzę ich całych.
+  - GRANICA (Atlas): Atlas wykrywa patrol od początku — ich strefy słabo całe od startu.
+- Zrzuty `.tmp/kontakty/granica9/9NN-<scena>-<chwila>`, animacje `98-namierzanie.webp`, `99-patrol.webp` (pełne pętle,
+  skala 0,75). Pipeline'y synchroniczne 0, błędy 0. Koszt (1600 × 900, pojedyncze próbki): klatka z taflami ~0,12 ms (pusta 0,065 ms).
+
+Wpięcie: model liczy obie strony naraz (`computeDetectionPicture`: źródło nie wykrywa swojej strony); `myLvl` = poziom
+w wiedzy gracza (`knowList`), `lvl` = poziom, na którym grupa wroga ma gracza (`det.seenBy[0]` / `level` gracza wobec ich
+źródeł), granice = ich `detectR` (× mój ślad) i `ident`. Audyt zasięgów każdej jednostki i dane pod obustronność — sesja
+pomocnicza (`docs/AUDYT-zasiegi-jednostek-2026-11-11.md` na jej gałęzi).
+Decyzje: (17) całe koło słabo, gdy wiem, gdzie są — czy zostaje; (18) przesunięcie okna szarej, gdy mnie namierzają.
