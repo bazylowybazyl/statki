@@ -482,6 +482,7 @@ function cockpitMarkup(devMode) {
           <div class="flank left">
             <div class="vital-readout hp" id="roHp"><small>KADŁUB</small><b id="vitalHpValue">0</b></div>
             <div class="drive-readout speed"><small>PRĘDKOŚĆ</small><span class="drive-value"><b id="spValue">0</b><span class="drive-unit" id="spSpeedUnit">M/S</span></span></div>
+            <button type="button" class="power-switch on" id="pwrSwitch" title="Zasilanie okrętu — włącz / wyłącz [−]"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6v6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M4.6 3.9a5.4 5.4 0 1 0 6.8 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg><span class="pwr-label" id="pwrLabel">PRACA</span></button>
           </div>
           <div class="flank right">
             <div class="vital-readout shield" id="roShield"><small>TARCZA</small><b id="vitalShieldValue">0</b></div>
@@ -617,7 +618,7 @@ export class CockpitUI {
       'targetPanel', 'targetBody', 'lockChips', 'scanPanel', 'scanCount', 'scanTimer', 'scanRows', 'overviewPanel',
       'contactCount', 'scannerFilters', 'contactRows', 'hudBottom', 'weaponBar', 'abilityBar', 'cluster', 'alertLine',
       'telltales', 'clusterCanvas', 'radarCanvas', 'roHp', 'roShield', 'vitalHpValue', 'vitalShieldValue', 'radarTop',
-      'rdHostile', 'rdRange', 'rdOrient', 'spMode', 'spValue', 'spSpeedUnit', 'spRpm', 'spGearWrap', 'spGear', 'modePanel', 'modeTrack',
+      'rdHostile', 'rdRange', 'rdOrient', 'pwrSwitch', 'pwrLabel', 'spMode', 'spValue', 'spSpeedUnit', 'spRpm', 'spGearWrap', 'spGear', 'modePanel', 'modeTrack',
       'pbComm', 'pbMissions', 'pbShip', 'pbMap', 'scScan', 'scLock', 'scAuto', 'scStab', 'rotaryKnob',
       'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText', 'tabletClose', 'stationTabsBar',
       'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane', 'missionFilters', 'missionList',
@@ -717,6 +718,8 @@ export class CockpitUI {
     this.els.pbShip?.addEventListener('click', () => this.launchRingCityFlight());
     this.els.pbMap?.addEventListener('click', () => this.dispatchGameKey('KeyM', 'm'));
     this.els.scScan?.addEventListener('click', () => this.dispatchGameKey('KeyX', 'x'));
+    // Wyłącznik zasilania okrętu pod licznikiem (src/game/shipPower.js) — ta sama akcja co klawisz − (bramki gry).
+    this.els.pwrSwitch?.addEventListener('click', () => this.dispatchGameKey('Minus', '-'));
     this.els.scLock?.addEventListener('click', () => this.lockCurrentTarget());
     this.els.scAuto?.addEventListener('click', () => window.shipDriveControls?.toggleAuto?.());
     this.els.scStab?.addEventListener('click', () => this.dispatchGameKey('KeyB', 'b'));
@@ -969,7 +972,28 @@ export class CockpitUI {
     }
   }
 
+  // Wyłącznik zasilania pod licznikiem: stan okrętu (POWER_*: 0 WYŁ., 1 ROZRUCH, 2 PRACA, 3 GASZENIE) i sekundy rozruchu.
+  updatePowerSwitch(systems) {
+    const el = this.els.pwrSwitch;
+    if (!el) return;
+    const st = Number.isFinite(systems.power) ? systems.power : 2;
+    const left = Math.ceil(Number(systems.powerLeft) || 0);
+    const label = st === 0 ? 'WYŁ.' : st === 1 ? `ROZRUCH ${left} s` : st === 3 ? 'GASZENIE' : 'PRACA';
+    if (this.cache.pwrLabel !== label) {
+      this.cache.pwrLabel = label;
+      if (this.els.pwrLabel) this.els.pwrLabel.textContent = label;
+    }
+    if (this.cache.pwrState !== st) {
+      this.cache.pwrState = st;
+      el.classList.toggle('on', st === 2);
+      el.classList.toggle('off', st === 0);
+      el.classList.toggle('busy', st === 1 || st === 3);
+      el.setAttribute('aria-pressed', st === 2 || st === 1 ? 'true' : 'false');
+    }
+  }
+
   updateTelltales(systems, environment) {
+    this.updatePowerSwitch(systems);
     const warpState = String(systems.warpState || 'idle');
     for (const item of this.telltaleEls) {
       let on = false;

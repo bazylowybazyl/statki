@@ -553,6 +553,23 @@ button:focus-visible,
 .radar-top #rdOrient { color: #e0915a; }
 /* Prędkość i obroty pod kadłubem / tarczą (.flank), jak ich łuki na wewnętrznym pierścieniu.
    Kolor liczby obrotów podpowiada zmianę biegu (zielony = okno, czerwony = za późno). */
+/* Wyłącznik zasilania okrętu pod licznikiem prędkości (stan zasilania — src/game/shipPower.js): zielony w pracy,
+   bursztynowy w rozruchu i gaszeniu (miga), przygaszony czerwony przy wyłączonym. Klik = klawisz −. */
+.power-switch {
+  display: inline-flex; align-items: center; gap: calc(5 * var(--u)); margin-right: calc(40 * var(--u));
+  padding: calc(3 * var(--u)) calc(8 * var(--u)) calc(3 * var(--u)) calc(6 * var(--u));
+  border: 1px solid rgba(255, 255, 255, 0.18); border-radius: calc(12 * var(--u));
+  background: rgba(8, 10, 14, 0.62); color: #8a8f98;
+  font: inherit; font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.14em; white-space: nowrap;
+  text-shadow: 0 1px 3px #000; cursor: pointer; pointer-events: auto;
+  transition: color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.power-switch svg { display: block; width: calc(13 * var(--u)); height: calc(13 * var(--u)); }
+.power-switch:hover { border-color: rgba(255, 255, 255, 0.4); }
+.power-switch.on { color: #5dffa8; border-color: rgba(93, 255, 168, 0.45); box-shadow: 0 0 8px rgba(56, 224, 138, 0.25); }
+.power-switch.busy { color: #ffc24a; border-color: rgba(255, 194, 74, 0.5); animation: power-busy 0.9s ease-in-out infinite; }
+.power-switch.off { color: #ff6b5a; border-color: rgba(255, 107, 90, 0.4); }
+@keyframes power-busy { 50% { box-shadow: 0 0 10px rgba(255, 194, 74, 0.45); } }
 .drive-readout {
   display: flex; flex-direction: column; gap: 1px;
   font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #000, 0 0 10px #000; white-space: nowrap;

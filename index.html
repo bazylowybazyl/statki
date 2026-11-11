@@ -5736,6 +5736,9 @@
         driveShiftCueDanger: driveState.shiftCueDanger,
         driveAuto: driveState.auto,
         roadLights: !ship?.roadLightsOff,
+        // Stan zasilania okrętu (src/game/shipPower.js) — wyłącznik pod licznikiem kokpitu.
+        power: ship ? powerStateOf(ship) : POWER_ON,
+        powerLeft: ship ? powerStartupLeft(ship) : 0,
         driveShiftBoost: driveState.shiftBoostTimer > 0,
         driveSpeedLimit: driveState.speedLimit,
         driveModeMaxSpeed: driveState.modeMaxSpeed

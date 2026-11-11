@@ -190,6 +190,24 @@ try {
   check(result.kroki.npc && result.kroki.npc.off.stan === 0 && result.kroki.npc.off.tarcza, 'NPC wyłączony: WYŁ. i tarcza wył.');
   check(result.kroki.npc && result.kroki.npc.on.stan === 2 && !result.kroki.npc.on.tarcza, 'NPC włączony: PRACA, tarcza wraca');
 
+  // Wyłącznik pod licznikiem kokpitu (przycisk #pwrSwitch — klik = klawisz −), kamera statku (poza trybem RTS).
+  result.kroki.wylacznik = await ev(`(async () => { const H = window.__harness; H.scene.shipCam(0.5); await H.step(5);
+    const btn = window.cockpitUI?.els?.pwrSwitch; if (!btn) return { brak: true };
+    const r = { przed: btn.textContent.trim(), klasaPrzed: btn.className };
+    btn.click(); await H.step(12);
+    r.stanPo = ship.shipPower ? ship.shipPower.state : -1; r.etykietaPo = btn.textContent.trim(); r.klasaPo = btn.className;
+    await H.step(150); r.etykietaWyl = btn.textContent.trim(); r.klasaWyl = btn.className;
+    return r; })()`);
+  console.log('wyłącznik', JSON.stringify(result.kroki.wylacznik));
+  check(result.kroki.wylacznik && result.kroki.wylacznik.stanPo === 3 && /WYŁ/.test(result.kroki.wylacznik.etykietaWyl), 'wyłącznik pod licznikiem: klik → GASZENIE → WYŁ.');
+  await shot('7g-wylacznik-wyl');
+  result.kroki.wylacznik2 = await ev(`(async () => { const H = window.__harness; const btn = window.cockpitUI?.els?.pwrSwitch;
+    btn.click(); await H.step(60); const r = { stan: ship.shipPower.state, etykieta: btn.textContent.trim(), klasa: btn.className };
+    return r; })()`);
+  check(result.kroki.wylacznik2.stan === 1 && /ROZRUCH/.test(result.kroki.wylacznik2.etykieta), `wyłącznik: klik → ROZRUCH (${JSON.stringify(result.kroki.wylacznik2)})`);
+  await shot('7h-wylacznik-rozruch');
+  await ev(`(async () => { await window.__harness.step(300); return true; })()`);
+
   // Daleki kadr: wyłączony obok włączonego.
   await ev(`(async () => { window.ShipPower.off(window.__ZasScene.ally); await window.__harness.step(150); window.__harness.scene.cam(${DEEP.x}, ${DEEP.y} - 800, 0.2); return true; })()`);
   await shot('8-daleko-sojusznik-wylaczony');
