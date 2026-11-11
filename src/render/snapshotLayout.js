@@ -34,7 +34,9 @@ import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 // 3 (2026-10-26): WORLD — oś β soczewki świata (WARP_LENS_*: rekord stepWarpLensPhase strony gry).
 // 4 (2026-10-26, DECYZJE-2 T2): WORLD — plan trasy skoku gracza (WARP_ROUTE_*: warp.route z planPlayerWarp);
 //   HEAD — okręt prowadzony przez kamerę (LEAD_*: niebo-sfera, 2026-10-27).
-export const SNAPSHOT_LAYOUT_VERSION = 4;
+// 5 (2026-11-11): ENT — stan zasilania okrętu (PWR_STATE, PWR_T — src/game/shipPower.js), migotanie świateł po trafieniu
+//   (PWR_FLICK), reflektor dziobowy (SPOT_ANG), alarm (ALARM); FLAGS2 — światło bojowe floty (BATTLE_LIGHTS).
+export const SNAPSHOT_LAYOUT_VERSION = 5;
 
 function fields(names) {
   const o = {};
@@ -121,7 +123,10 @@ export const ENT = record({
     // poziom B: wymiary sprite'a (koło zapasowe tarczy), obraz sprite'a renderu (width, height, natural*)
     'SPRITE_W', 'SPRITE_H', 'RS_W', 'RS_H', 'RS_NW', 'RS_NH',
     // zimny wrak: smuga z migawki (_coldSnapshot.impostor)
-    'CI_X', 'CI_Y', 'CI_ROT', 'CI_HALF_W', 'CI_HALF_H', 'CI_R', 'CI_G', 'CI_B', 'CI_WX', 'CI_WY', 'CI_REACH', 'CI_OPACITY'
+    'CI_X', 'CI_Y', 'CI_ROT', 'CI_HALF_W', 'CI_HALF_H', 'CI_R', 'CI_G', 'CI_B', 'CI_WX', 'CI_WY', 'CI_REACH', 'CI_OPACITY',
+    // stan zasilania (czas fazy shipPower.t; NaN — encja bez stanu), migotanie świateł 0..1, kąt reflektora dziobowego
+    // (świat gry, rad; NaN — zgaszony)
+    'PWR_T', 'PWR_FLICK', 'SPOT_ANG'
   ],
   i32: [
     'SLOT', 'GEN', 'FLAGS', 'FLAGS2', 'BODY_SLOT', 'BODY_GEN',
@@ -135,7 +140,9 @@ export const ENT = record({
     // migawki i ród (A)
     'MODEL3D', 'WEAPON_TIER', 'FACTION', 'FACTION_ID', 'HULL_ID', 'SHIP_ID', 'COLD_KIND', 'COLD_DMG_KEY',
     // wersje konfiguracji statycznej (rosną przy zmianie tożsamości źródła)
-    'V_VISUAL', 'V_HULL', 'V_NOZZLES', 'V_LIGHTS', 'V_BRIDGE', 'V_SHIELD'
+    'V_VISUAL', 'V_HULL', 'V_NOZZLES', 'V_LIGHTS', 'V_BRIDGE', 'V_SHIELD',
+    // stan zasilania (POWER_*; −1 — encja bez stanu = PRACA), kod alarmu okrętu (0 — brak; src/game/shipAlarms.js)
+    'PWR_STATE', 'ALARM'
   ]
 });
 
@@ -158,7 +165,9 @@ export const ENT_FLAG2 = Object.freeze({
   HAS_RS: 128, HAS_COLD_SNAP: 256,
   // hipercruise encji (`__hyperMode` 'charging' / 'active' / 'drop' — plazma WARP na dyszach MAIN: żar, ogień,
   // dogasanie — engineVfxSystem.js)
-  HYPER_CHARGING: 512, HYPER_ACTIVE: 1024, HYPER_DROP: 2048
+  HYPER_CHARGING: 512, HYPER_ACTIVE: 1024, HYPER_DROP: 2048,
+  // światło bojowe (strona w szyku bojowym — fleetCoordinator; gracz w walce): lampy pokładowe i okna mostka na czerwono
+  BATTLE_LIGHTS: 4096
 });
 
 /** Wyrzut atmosfery mostka (obiekt `vent` gry; ID = numer obiektu — tożsamość dla prepareEmitterDelays). */

@@ -54,6 +54,7 @@ export const INPUT_ACTIONS = Object.freeze([
   { id: 'ship.lights', name: 'Reflektory', cat: 'okret', kind: 'edge', ctx: G },
   { id: 'ship.repair', name: 'Naprawa', cat: 'okret', kind: 'edge', ctx: G },
   { id: 'ship.engines', name: 'Silniki główne: odpal / zgaś', cat: 'okret', kind: 'edge', ctx: G },
+  { id: 'ship.power', name: 'Okręt: włącz / wyłącz (zasilanie)', cat: 'okret', kind: 'edge', ctx: G },
   { id: 'mode.mining', name: 'Tryb wydobycia', cat: 'tryby', kind: 'edge', ctx: G },
   { id: 'mode.torpedo', name: 'Tryb torped / wachlarz', cat: 'tryby', kind: 'edge', ctx: G },
   { id: 'mode.fleet', name: 'Tryb floty', cat: 'tryby', kind: 'edge', ctx: ['game', 'rts'] },
@@ -149,6 +150,7 @@ export const KEYBOARD_LAYOUT = Object.freeze({
   'ship.lights': ['KeyL'],
   'ship.repair': ['KeyR'],
   'ship.engines': ['Digit0', 'Numpad0'],
+  'ship.power': ['Minus', 'NumpadSubtract'],
   'mode.mining': ['KeyN'],
   'mode.torpedo': ['Digit8', 'Numpad8'],
   'mode.fleet': ['KeyG'],
@@ -245,6 +247,7 @@ export const PAD_LAYOUT = Object.freeze({
   'ship.repair': null,
   'ship.scout': null,
   'ship.engines': null,
+  'ship.power': null,
   'mode.mining': null,
   'mode.torpedo': null,
   'mode.fleet': null,
@@ -325,7 +328,7 @@ export const KEYDOWN_ORDER = Object.freeze([
   'wpn.group1', 'wpn.group2', 'wpn.group3', 'tgt.priority', 'tgt.queue', 'wpn.posture', 'wpn.special',
   'wpn.lance', 'wpn.energy', 'ui.cicMap', 'ui.journal', 'mode.fleet', 'fly.damper', 'ship.lights',
   'fly.stabilizer', 'ui.pause', 'tgt.scan', 'ui.cic', 'cic.pan', 'cic.trade', 'cic.coverage', 'radar.look', 'ship.ram', 'wpn.rocketKey', 'ship.scout', 'tgt.drone',
-  'cic.systemView', 'wpn.fighters', 'ship.repair', 'fly.driveMode', 'ship.engines', 'nav.hypercruise'
+  'cic.systemView', 'wpn.fighters', 'ship.repair', 'fly.driveMode', 'ship.engines', 'ship.power', 'nav.hypercruise'
 ]);
 
 /** Kod klawisza → akcje głównego keydown (w kolejności KEYDOWN_ORDER). */

@@ -9,7 +9,7 @@
 // z uniformu (bez rozwijania). Potęgi całkowite mnożeniem (pow z ujemną podstawą = NaN, pułapka 3).
 import {
   Fn, If, Loop, float, int, vec3, vec4, ivec3, uvec3, uint, mat3,
-  abs, cos, dot, exp, floor, fract, max, min, mix, normalize, cross, sin, smoothstep, sqrt, atan, clamp, length
+  abs, cos, dot, exp, floor, fract, max, min, mix, normalize, cross, sin, smoothstep, sqrt, atan, clamp, length, step
 } from 'three/tsl';
 
 // ── Hasz całkowity 3D (jak sunHashU w planet3d.assets.tsl.js) ───────────────────────────────────────────────────
@@ -235,16 +235,21 @@ export const PG_ROT = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0
 // i w progach z próby. Bez `full` wynik jest unormowany do policzonych oktaw (każda liczba oktaw = inna skala).
 
 /** fbm szumu gradientowego: n oktaw (węzeł int), lakunarność, wzmocnienie. Wynik ~[−1, 1]. */
-export function pgFbm(p0, octaves, lac = 2.03, gain = 0.5, full = false) {
+// `tail` = { from, gain } — OGON szeregu: oktawy o numerze ≥ `from` gasną szybciej (`tail.gain` zamiast `gain`).
+// Przy gain · lac > 1 nachylenie szumu rośnie z każdą oktawą: próg takiego szeregu (brzeg morza, granica lasu) jest
+// w coraz drobniejszej skali coraz bardziej postrzępiony, a każda oktawa dokładana przez głębszy poziom zbliżenia
+// otwiera i zamyka cieśniny widoczne już poziom wyżej. Ogon z gain · lac < 1 dokłada szczegół, który kształtu
+// nie zmienia. Oktawy przed `from` — bez zmian (mapy liczone z mniejszą liczbą oktaw zostają takie same).
+export function pgFbm(p0, octaves, lac = 2.03, gain = 0.5, full = false, tail = null) {
   const f = float(0.0).toVar();
   const amp = float(1.0).toVar();
   const norm = float(0.0).toVar();
   const p = vec3(p0).toVar();
-  Loop({ start: int(0), end: int(octaves), type: 'int', condition: '<' }, () => {
+  Loop({ start: int(0), end: int(octaves), type: 'int', condition: '<' }, ({ i }) => {
     f.addAssign(amp.mul(pgNoise(p)));
     norm.addAssign(amp);
     p.assign(PG_ROT.mul(p).mul(lac).add(vec3(1.7, -3.1, 2.3)));
-    amp.mulAssign(gain);
+    amp.mulAssign(tail ? mix(float(tail.gain), float(gain), step(float(i).add(1.5), float(tail.from))) : gain);
   });
   return full ? f.mul(1 - gain) : f.div(max(norm, 1e-4));
 }

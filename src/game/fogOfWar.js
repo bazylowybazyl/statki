@@ -41,6 +41,9 @@ export const FOG_TUNE = Object.freeze({
   entityMarginMax: 1500,
   // Sygnatura masy: czas wygaszania po rozpoznaniu (s).
   massResolveSec: 1.8,
+  // Wzrok wobec okrętu wyłączonego albo w gazie (2026-11-11, `src/game/shipPower.js`, `src/game/gasCover.js`): koło wzroku
+  // × sygnatura bytu (`e.__sigMul`, pisze ją fleetAwareness co odświeżenie), nie mniej niż ten ułamek; strefy fabuły bez zmian.
+  visionSigFloor: 0.5,
   // Najwięcej źródeł wzroku w jednym kroku (pula bez alokacji; nadmiar — najmniejsze koła odpadają).
   maxSources: 96
 });
@@ -136,6 +139,30 @@ export function fogPointVisible(state, x, y, margin = 0) {
   return false;
 }
 
+/**
+ * Jak `fogPointVisible`, ale koła wzroku (bez stref fabuły) × `mul` — byt wyłączony albo w gazie widać z bliższa.
+ * `mul` ≥ 1 — dokładnie `fogPointVisible`.
+ */
+export function fogPointVisibleMul(state, x, y, margin = 0, mul = 1) {
+  if (!(mul < 1)) return fogPointVisible(state, x, y, margin);
+  const S = state.sources;
+  for (let i = 0; i < state.sourceCount; i++) {
+    const s = S[i];
+    const r = (s.kind === FOG_KIND.reveal ? s.r : s.r * mul) + margin;
+    const dx = x - s.x, dy = y - s.y;
+    if (dx * dx + dy * dy <= r * r) return true;
+  }
+  return false;
+}
+
+/** Mnożnik wzroku wobec bytu z jego sygnatury stanu (`__sigMul`), z podłogą `visionSigFloor`. */
+function entityVisionMul(state, e) {
+  const m = e.__sigMul;
+  if (!(m < 1)) return 1;
+  const floor = state.tune.visionSigFloor ?? 0.5;
+  return m > floor ? m : floor;
+}
+
 function entityMargin(state, e) {
   const r = finite(e?.radius ?? e?.r, 0);
   return Math.min(state.tune.entityMarginMax, Math.max(0, r) * state.tune.entityMarginFrac);
@@ -207,7 +234,7 @@ export function stepFogEntities(state, { player = null, npcs = null, stations = 
       const e = npcs[i];
       if (!e) continue;
       if (!on || isFogFriendly(e, player)) { e.__fogVisible = true; continue; }
-      const seen = fogPointVisible(state, posX(e), posY(e), entityMargin(state, e))
+      const seen = fogPointVisibleMul(state, posX(e), posY(e), entityMargin(state, e), entityVisionMul(state, e))
         || (finite(e.__fogRevealUntil, -1) > state.time);
       e.__fogVisible = seen;
       if (seen) e.__fogDiscovered = true;

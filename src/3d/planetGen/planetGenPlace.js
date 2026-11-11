@@ -11,7 +11,7 @@
 // skali.
 import { DRAIN_SEA_K, drainFlowDecode, drainReceiver } from './planetGenDrainage.js';
 import { mix32 } from './planetGenRng.js';
-import { terrainForestColor } from './planetGenTerrainMap.js';
+import { terrainForestColor, PLANET_VEGETATION } from './planetGenTerrainMap.js';
 
 // kodowanie klimatu w 8 bitach (pola `temp` i `moist` w `baked.drainage`)
 export const PLACE_T = Object.freeze({ lo: -1, hi: 2 });
@@ -143,7 +143,8 @@ export function describePlace(baked, dir, { searchKm = 14 } = {}) {
   // czerwona), odcień w połowie przesunięty ku barwie lasu PLANETY w tym klimacie — mapa i planeta z orbity są z jednej
   // rodziny barw, a układ jasności (ciemny las, jasne torfowiska) zostaje z palety mapy
   const look = baked.spec.look || {};
-  const veg = look.vegetation === 'rdzawa' ? 'czerwona' : (temp > 0.62 ? 'tropik' : 'tajga');
+  const vegPair = PLANET_VEGETATION[look.vegetation] || PLANET_VEGETATION.zielona;
+  const veg = temp > 0.62 ? vegPair[1] : vegPair[0];
   let vegTint = null;
   if (look.palette && look.palette.forest) {
     const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };

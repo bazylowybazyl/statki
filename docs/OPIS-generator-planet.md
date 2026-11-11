@@ -964,3 +964,37 @@ Czego nie ma / wady:
 - na planecie przygotowanej (z plików) strumienie liczą się u gracza — układ drobnych cieków może się różnić
   między kartami;
 - zakola wielkiej rzeki, delta, wybrzeże i pozostałe biomy — bez zmian (§ 10.18).
+
+### 10.20. Kształt brzegu przy zbliżaniu, palety roślinności na planecie (2026-11-11, demo)
+
+Uwagi użytkownika (dwa zrzuty tego samego wybrzeża i plansze map terenu): „czemu jedna scena zmienia kształt na
+przybliżeniu — oddalone »trzyma się«, przybliżone ma odstępy między wyspą a lądem?” oraz „co z różnymi kolorami?
+Przypomnę, że miałeś różne wersje … Zapomniałeś?”.
+
+**Brzeg.** Przyczyna: detal wybrzeża to szereg szumu o gain 0,62 przy lakunarności 2,03 (0,62 · 2,03 = 1,26 > 1),
+z liczbą oktaw rosnącą z poziomem okna. Każda dołożona oktawa ma większe nachylenie niż poprzednia, więc przesuwa
+brzeg o więcej niż własna długość fali: otwiera i zamyka cieśniny oraz przesmyki szerokie na kilka tekseli poziomu
+wyżej, a w skali kilkudziesięciu kilometrów strzępi brzeg w konfetti zatoczek. To samo dotyczyło granic lasu i pól
+(szumy `nMo`, `nD`, gain 0,6). Poprawka: OGON szeregu (`pgFbm(…, tail)`) — oktawy od 5. (wybrzeże) i od 3. (granice
+pokrycia) gasną z gain 0,45 / 0,42. Sprawdzone na jednym kadrze przy ujściu rzeki z oknem poziomu 4 i 6
+(`?poziom=`): przed poprawką poziom 6 miał wzdłuż brzegu zatoczki i laguny, których poziom 4 nie miał; po poprawce
+brzeg jest tą samą linią na obu poziomach. Miejsca ze zrzutów użytkownika nie odtworzyłem (nie znam jego położenia) —
+sprawdzony jest mechanizm, nie ten konkretny przesmyk. Skutek uboczny: wybrzeża planety są gładsze w skali poniżej
+~50 km (mniej zatoczek i wysepek przybrzeżnych) — także na mapie planety 4096 / 8192.
+
+Pierwszy miernik (klasa piksela morze / ląd z barwy zrzutu) był błędny: mylił torfowiska z morzem i pokazał 12%
+zmian; po zaostrzeniu progu nie widział morza pod smugą osadu. Ocena została wzrokowa, na kadrach obok siebie.
+
+**Barwy.** Palety (czerwona, purpura, złota, tropik, tajga) istniały tylko w generatorze mapy terenu; planeta miała
+cztery własne zestawy roślinności, a demo pokazywało jedną planetę (oliwkową). Zrobione:
+
+- zestawy roślinności planety `czerwona`, `purpurowa`, `zlota` z barwami wprost z palet mapy terenu, `zielona`
+  przestawiona na barwy tajgi i lasu równikowego; planety z ziarna dostają nowe zestawy kosztem dawnego udziału
+  rdzawej (8% → czerwona 3,5%, purpurowa 2,2%, złota 2,3%);
+- `describePlanet({ …, vegetation })` i lista „roślinność” w demie (`?ros=`);
+- kępy drugiego gatunku w lesie (barwa `accent` palety), w dwóch skalach;
+- morze: turkusowa płycizna i jasne dno smugi osadu (mleczny turkus przy ujściach).
+
+Czego nadal nie ma: style rzek z map terenu (ramiona delty, rzeka roztokowa z plecionką koryt, wielka rzeka
+z wyspami) — planeta ma jeden model rzeki; to osobny etap. Pliki planety przygotowanej wypalone ponownie (zmienił
+się brzeg i barwa płycizny).

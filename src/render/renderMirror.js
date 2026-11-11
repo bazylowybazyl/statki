@@ -59,6 +59,9 @@ export class MirrorEntity {
     this.thrusterInput = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
     this.input = { main: 0, thrustY: 0 };
     this.engineIgn = null;
+    // stan zasilania (src/game/shipPower.js — { state, t } albo null = PRACA), migotanie, reflektor, alarm, światło bojowe
+    this.shipPower = null;
+    this.__powerFlick = 0; this.__spotAng = undefined; this.__alarmCode = 0; this.__battleLights = false;
     // tarcza, maskowanie (stan gry)
     this.shield = null;
     this.cloak = null;
@@ -271,6 +274,16 @@ export function applyEntityPage(rm, m, v, s) {
     m.engineIgn.t = und(f64[b + EF.IGN_T]);
     m.engineIgn.hot = (flags & ENT_FLAG.IGN_HOT) !== 0;
   } else m.engineIgn = null;
+  const pws = i32[bi + EI.PWR_STATE];
+  if (pws >= 0) {
+    if (!m.shipPower) m.shipPower = { state: 0, t: 0, serial: 0 };
+    m.shipPower.state = pws;
+    m.shipPower.t = und(f64[b + EF.PWR_T]) || 0;
+  } else m.shipPower = null;
+  m.__powerFlick = f64[b + EF.PWR_FLICK] || 0;
+  m.__spotAng = und(f64[b + EF.SPOT_ANG]);
+  m.__alarmCode = i32[bi + EI.ALARM] | 0;
+  m.__battleLights = (flags2 & ENT_FLAG2.BATTLE_LIGHTS) !== 0;
   // tarcza
   if (flags & ENT_FLAG.HAS_SHIELD) {
     if (!m.shield) m.shield = { max: 0, val: 0, state: undefined, activationProgress: 0, hardness: undefined, show: undefined, forceOff: false, impacts: [], impactId: 0, _impPool: [] };

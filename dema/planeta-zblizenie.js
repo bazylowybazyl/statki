@@ -131,6 +131,8 @@ const S = {
   // TRYB ULTRA (`?ultra=1|0`, domyślnie na szerokich ekranach): mapa planety 4096 × 2048 zamiast 2048 × 1024, siatka
   // rzek 4096 (dwa razy gęstsza sieć), okno pod kamerą 6144 × 3072. `?mapa=`, `?rzeki=`, `?wycinek=` — wprost.
   ultra: ULTRA,
+  // roślinność planety terrańskiej: '' — z ziarna; zielona | czerwona | purpurowa | zlota | morska | oliwkowa
+  veg: ['zielona', 'czerwona', 'purpurowa', 'zlota', 'morska', 'oliwkowa'].includes(params.get('ros')) ? params.get('ros') : '',
   // PLANETA Z PLIKÓW (`?plik=nazwa` → /.tmp/planety/nazwa/ albo `?plik=ścieżka/od/korzenia`): gotowe mapy zamiast
   // wypieku — planety przygotowane (planetGenFiles.js; zapis: scripts/webgpu/planeta-wypal.mjs)
   file: params.get('plik') ? (params.get('plik').includes('/') ? `/${params.get('plik').replace(/^\/+|\/+$/g, '')}/` : `/.tmp/planety/${params.get('plik')}/`) : null,
@@ -282,14 +284,16 @@ async function build(style = S.style, seed = null) {
     const type = filed ? filed.spec.type : typeOf(style);
     const volcanic = type === 'volcanic';
     if (!filed) await baker.compile([type]);
-    const spec0 = describePlanet({ type, seed: S.seed });
+    // roślinność wprost (`?ros=`, lista w panelu) — tylko planety z lasem
+    const vegO = S.veg && type === 'terran' ? { vegetation: S.veg } : {};
+    const spec0 = describePlanet({ type, seed: S.seed, ...vegO });
     // wulkaniczna — noc bez lawy: żar daje materiał zbliżenia (w dzień i w nocy), mapa nocy zostaje dla świateł kolonii
     // bohater dema (domyślne ziarno planety z wodą): zachmurzenie ze środka zakresu generatora (0,26–0,48; z ziarna
     // wyszło najmniejsze) — bryły chmur widać od razu; planety z „Losuj” mają je z ziarna. `?chmury=0…1` — wprost.
     const cover = params.has('chmury') ? num('chmury', 0.33) : (S.seed === STYLE_SEED[style] ? 0.33 : null);
     const heroClouds = !volcanic && cover != null && spec0.clouds ? { ...spec0.clouds, cover } : null;
     const spec = filed ? filed.spec : (volcanic ? describePlanet({ type, seed: S.seed, night: { lava: 0 } })
-      : (heroClouds ? describePlanet({ type, seed: S.seed, clouds: heroClouds }) : spec0));
+      : (heroClouds ? describePlanet({ type, seed: S.seed, clouds: heroClouds, ...vegO }) : spec0));
     S.paused = true;
     let baked = filed;
     if (baked) S.paused = false;
@@ -304,7 +308,7 @@ async function build(style = S.style, seed = null) {
     if (S.view === null) S.view = 'orbit';
     const body = createGenNearBody(spec, baked, baker, {
       // (najgłębszy poziom okna: 10 — teksel ~8 m przy mapie 4096; kadr ~30 km, skala mapy terenu, jest ostry)
-      lava: S.lavaStrength, patch: { width: S.patchW, height: S.patchW / 2, maxLevel: pickNum('poziom', [6, 7, 8, 9, 10, 11], 10) },
+      lava: S.lavaStrength, patch: { width: S.patchW, height: S.patchW / 2, maxLevel: pickNum('poziom', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 10) },
       // strumienie regionu pod kamerą (`?strumienie=0` — bez; `?region=2048` — większa siatka)
       streams: params.get('strumienie') === '0' ? false : { size: pickNum('region', [512, 1024, 1536, 2048], 1024) },
       weather: { speed: S.wx, time: num('czas', 0), size: Number(params.get('mapaPogody')) === 2048 ? 2048 : 1024 }
@@ -499,6 +503,8 @@ function viewDirs() {
   $('b-vent').onclick = () => nextVent();
   $('b-all').onclick = () => viewAll();
   $('b-los').onclick = () => rebuild(S.style, seedForStyle(S.style, freshSeed()));
+  $('s-ros').value = S.veg;
+  $('s-ros').onchange = () => { S.veg = $('s-ros').value; rebuild(S.style, S.seed); };
 }
 function setToggle(id, key, v) { S[key] = v; $(id).classList.toggle('on', v); }
 function setViewMode(v) {

@@ -700,6 +700,19 @@ export class SnapshotPacker {
       i32[bi + EI.IGN_STATE] = -1;
       f64[b + EF.IGN_T] = NaN;
     }
+    // stan zasilania okrętu (src/game/shipPower.js), migotanie świateł, reflektor dziobowy, alarm, światło bojowe
+    const pw = e.shipPower;
+    if (pw) {
+      i32[bi + EI.PWR_STATE] = num(pw.state) | 0;
+      f64[b + EF.PWR_T] = raw(pw.t);
+    } else {
+      i32[bi + EI.PWR_STATE] = -1;
+      f64[b + EF.PWR_T] = NaN;
+    }
+    f64[b + EF.PWR_FLICK] = e.__powerFlick > 0 ? e.__powerFlick : 0;
+    f64[b + EF.SPOT_ANG] = e.__spotAng === undefined ? NaN : raw(e.__spotAng);
+    i32[bi + EI.ALARM] = e.__alarmCode > 0 ? e.__alarmCode | 0 : 0;
+    if (e.__battleLights === true) flags2 |= ENT_FLAG2.BATTLE_LIGHTS;
     // tarcza
     const sh = e.shield;
     if (sh) {

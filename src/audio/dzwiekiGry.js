@@ -12,9 +12,9 @@
 // Web Audio jest jednorazowe z natury — ogranicza je limit głosów, węzły głośności i panoramy są w puli.
 
 import {
-  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, STRZAL_GRACZA, jestCiws, kategoriaBroniNpc, idPlikowSceny,
+  DZWIEKI, DZWIEKI_SYNTEZY, ZDARZENIA, KATEGORIE, jestCiws, idPlikowSceny,
   zmierzPoziom, wzmocnienieWyrownania, buforPetliBezSzwu, wybierzWariant, utworzLimitGlosow, sciszenieTloku,
-  polozenie, liniaWyboru, dbToGain, gainToDb
+  polozenie, liniaWyboru, dbToGain, gainToDb, dzwiekStrzalu, slyszalne
 } from './dzwiekiLogika.js';
 import { wystrzalBroni, SERIA, PETLA_WIAZKI, WIAZKA_START } from './dzwiekiBroni.js';
 import { SoundEngine, paramDefaults } from './synteza.js';
@@ -90,6 +90,8 @@ export function utworzDzwiekiGry(opts) {
   const wybor = Object.create(null); // id → 0 (losowo) | 1…n
   const wycisz = Object.create(null); // id → bool
   const zagral = Object.create(null);
+  // Zmiana wyboru wariantu / wyciszenia z panelu → wołający zapisuje go (klucz `KLUCZ_WYBORU`, nie zapis gracza).
+  const zmianaWyboru = () => { if (typeof opts.przyZmianieWyboru === 'function') opts.przyZmianieWyboru(); };
   const ostrzezone = new Set();
   const limit = utworzLimitGlosow(TAB);
   const wynikLimitu = { aktywne: 0 };
@@ -310,7 +312,7 @@ export function utworzDzwiekiGry(opts) {
     if (wylaczony) return;
     const teraz = ctx.currentTime;
     let L = null;
-    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz) { L = petle[i]; break; }
+    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz && petle[i].id === id) { L = petle[i]; break; }
     const d = TAB[id] || {};
     let g = wycisz[id] ? 0 : glos;
     let pan = 0;
@@ -441,31 +443,36 @@ export function utworzDzwiekiGry(opts) {
   }
 
   /**
-   * Strzał z szyny broni → dźwięk. Jedna mapa dla gracza i NPC (`WYSTRZAL_BRONI`, src/audio/dzwiekiBroni.js): plik,
-   * seria z syntezy, pętla wiązki albo jawnie nic; broń spoza mapy — gracz `STRZAL_GRACZA`, potem kategoria broni.
-   * `isBeam` — wiązka ciągła (pętla pod kluczem strzelca; pierwszy strzał wiązki gra jeszcze zapłon `wiazkaStart`).
+   * Strzał z szyny broni → dźwięk. Jedna mapa dla gracza i NPC (`dzwiekStrzalu` → `WYSTRZAL_BRONI`,
+   * src/audio/dzwiekiBroni.js): plik, seria CIWS z syntezy, pętla wiązki albo jawnie nic (null); broń spoza mapy —
+   * gracz `STRZAL_GRACZA`, potem kategoria. Poza słyszalnością — nic (przed klasyfikacją broni); id dźwięku z pamięci
+   * na broń (bez napisów na strzał). `kluczStrzelca` — obiekt strzelca (klucz serii CIWS i pętli wiązki); pierwszy
+   * strzał wiązki ciągłej gra jeszcze zapłon `wiazkaStart`.
    */
+  const dzwiekBroniGracza = new Map();
+  const dzwiekBroniNpc = new Map();
   function strzal(weaponId, def, x, y, gracza, kluczStrzelca, isBeam = false) {
     stat.zdarzenia.strzal = (stat.zdarzenia.strzal || 0) + 1;
-    let id = wystrzalBroni(weaponId);
-    if (id === null) return;
+    if (wylaczony || !slyszalne(x, y, kadrFn ? kadrFn() : null)) return;
+    const pamiec = gracza ? dzwiekBroniGracza : dzwiekBroniNpc;
+    let id = pamiec.get(weaponId);
     if (id === undefined) {
-      if (jestCiws(weaponId)) id = SERIA;
-      else id = (gracza && STRZAL_GRACZA[weaponId]) || kategoriaBroniNpc(weaponId, def);
+      id = jestCiws(weaponId) && wystrzalBroni(weaponId) === undefined ? SERIA : dzwiekStrzalu(weaponId, def, gracza);
+      pamiec.set(weaponId, id);
     }
-    if (id === SERIA) { ciwsStrzal(`${kluczStrzelca}:${weaponId}`, x, y); return; }
+    if (id === null) return;
+    if (id === SERIA) { ciwsStrzal(kluczStrzelca, x, y); return; }
     if (id === PETLA_WIAZKI || isBeam) {
-      const klucz = `wiazka:${kluczStrzelca}`;
-      if (!maPetle(klucz)) graj(WIAZKA_START, x, y, 1);
-      petla(klucz, PETLA_WIAZKI, 1, x, y);
+      if (!maPetle(kluczStrzelca, PETLA_WIAZKI)) graj(WIAZKA_START, x, y, 1);
+      petla(kluczStrzelca, PETLA_WIAZKI, 1, x, y);
       return;
     }
     graj(id, x, y, 1);
   }
 
-  /** Czy pętla pod kluczem gra (np. wiązka strzelca — zapłon tylko na początku). */
-  function maPetle(klucz) {
-    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz) return true;
+  /** Czy pętla `id` pod kluczem gra (np. wiązka strzelca — zapłon tylko na początku). */
+  function maPetle(klucz, id) {
+    for (let i = 0; i < petle.length; i++) if (petle[i].klucz === klucz && petle[i].id === id) return true;
     return false;
   }
 
@@ -611,8 +618,15 @@ export function utworzDzwiekiGry(opts) {
   return {
     ctx, wczytaj, graj, zdarzenie, petla, silnikMain, silnikSide, ciwsStrzal, strzal, klatka, zatrzymajWszystko,
     statystyki, wyzerujStatystyki, lista, tekstWyboru, odsluch,
-    ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); },
-    ustawWyciszenie(id, b) { wycisz[id] = !!b; },
+    ustawWybor(id, w) { wybor[id] = Math.max(0, Number(w) | 0); zmianaWyboru(); },
+    ustawWyciszenie(id, b) { wycisz[id] = !!b; zmianaWyboru(); },
+    /** Wybór wariantów i wyciszeń (z zapisu przeglądarki — `parsujWybor`), bez wywołania `przyZmianieWyboru`. */
+    wczytajWybor(z) {
+      for (const [id, w] of Object.entries(z?.wybor || {})) wybor[id] = Math.max(0, Number(w) | 0);
+      for (const [id, b] of Object.entries(z?.wycisz || {})) wycisz[id] = b === true;
+    },
+    /** Bieżący wybór do zapisu (`tekstZapisuWyboru`). */
+    stanWyboru() { return { wybor: { ...wybor }, wycisz: { ...wycisz } }; },
     ustawGlosnosc(v) { glosnosc.gain.setTargetAtTime(Math.max(0, Number(v) || 0), ctx.currentTime, 0.05); },
     wylacz() { zatrzymajWszystko(); wylaczony = true; },
     wlacz() { wylaczony = false; },

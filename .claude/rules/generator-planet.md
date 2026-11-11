@@ -293,6 +293,25 @@ paths:
   (brzeg z szumu jest postrzępiony, piana obrysowuje każdy ząbek), pozostałe biomy; strumienie poza regionem
   (poziomy płytsze niż ~7) nie istnieją.
 
+## Kształt brzegu przy zbliżaniu i roślinność planety (opis i przyczyny: `docs/OPIS-generator-planet.md` § 10.20)
+
+- Szereg szumu, którego PRÓG rysuje granicę (brzeg morza, granica lasu, pola), z `gain · lakunarność > 1` ma
+  w coraz drobniejszej skali coraz większe nachylenie: każda oktawa dokładana przez głębszy poziom okna otwiera
+  i zamyka cieśniny, zatoki i przesmyki widoczne już poziom wyżej (użytkownik: „oddalone trzyma się, przybliżone
+  ma odstępy między wyspą a lądem”), a z bliska brzeg jest strzępiony w konfetti. Takie szeregi mają OGON
+  (`pgFbm(…, tail)`: oktawy ≥ `from` z `gain · 2,03 < 1`): `COAST_TAIL` — detal wybrzeża w `plates`,
+  `COVER_TAIL` — `nMo`, `nD`. Pierwsze oktawy (kształt z daleka) bez zmian. Nowy szereg progowy — też z ogonem.
+- Sprawdzanie spójności: ten sam kadr z różnym `?poziom=` (najgłębszy poziom okna) — brzeg ma być tą samą linią.
+- ROŚLINNOŚĆ PLANETY: zestawy `zielona`, `morska`, `oliwkowa`, `czerwona`, `purpurowa`, `zlota` (+ dawna
+  `rdzawa`); `PLANET_VEGETATION` (`planetGenTerrainMap.js`) mapuje zestaw na palety mapy terenu [chłodny, ciepły]
+  — jedno źródło dla barw planety (`landscapeUniforms`, zestawy `VEGETATION` w `planetGenSpec.js`) i dla mapy
+  miejsca (`describePlace`). `describePlanet({ …, vegetation })` nadpisuje roślinność (reszta planety z ziarna).
+- Kępy drugiego gatunku (`accent` palety: czerwone korony w lesie równikowym, złote w czerwonym, morskie
+  w purpurowym) — dwie skale płatów w lesie, skala nierozdzielona wchodzi średnią. Płycizna morza turkusowa,
+  dno smugi osadu jasne (mleczny turkus przy ujściach) — jak morze na mapach terenu.
+- Style rzek mapy terenu (ramiona delty, rzeka roztokowa, wielka rzeka z wyspami) NIE są jeszcze na planecie —
+  planeta ma jeden model rzeki (łuki z zakolami); to osobny etap.
+
 ## Planety przygotowane: mapy jako pliki (opis, liczby, format: `docs/OPIS-generator-planet.md` § 10.17)
 
 - Decyzja użytkownika (2026-11-11): planety pierwszego przejścia gry (kampania) są PRZYGOTOWANE i dostarczane jako
@@ -436,7 +455,8 @@ paths:
   `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
   `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
   (demo: `?ultra=1|0`, `?mapa=2048|4096|8192`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`,
-  `?plik=<nazwa>` — planeta z plików map, `?poziom=6…11` — najgłębszy poziom okna, `?strumienie=0`,
+  `?plik=<nazwa>` — planeta z plików map, `?poziom=1…11` — najgłębszy poziom okna, `?strumienie=0`,
+  `?ros=zielona|czerwona|purpurowa|zlota|morska|oliwkowa` — roślinność (także lista w panelu),
   `?region=512|1024|1536|2048` — strumienie regionu;
   orbitalne: `orbita,orbita-plaska,orbita-blisko,orbita-daleko,orbita-noc,orbita-zorza` albo
   `orbita-nazwa:dAz,dEl,odległość,px,py[,1]`; `--pogoda "0,1,2,13"` — ten sam kadr po kolejnych sekundach pogody,
