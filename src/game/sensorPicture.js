@@ -48,7 +48,13 @@ export const SENSOR_PICTURE_TUNE = Object.freeze({
   threatLeadHold: 1.15,
   // Członek grupy zostaje w niej do promienia × ten mnożnik (+ 2 × błędy miejsca), żeby wędrujące miejsca kontaktów nie
   // rozbijały stojącej floty; wejście do grupy — promień + błędy miejsca obu stron.
-  threatStayMul: 1.5
+  threatStayMul: 1.5,
+  // GRUPY UI (granice wykrycia i zęby czujki, 2026-11-12 — użytkownik: „jak jest grupa myśliwców, niech ma jedno koło,
+  // cała baza z jednostkami też jedno koło”): znani wrogowie i niewidziani obserwatorzy bliżej niż tyle [j.] od lidera
+  // (najdalej sięgającego) to jedna grupa, jedno koło; członek zostaje przy liderze do promienia × borderStayMul.
+  borderGroupRadius: 20000,
+  borderStayMul: 1.5,
+  borderMax: 32
 });
 
 const SIDE_PLAYER = 'friendly';
@@ -76,6 +82,7 @@ export function createSensorPicture(adapters, tune = SENSOR_PICTURE_TUNE) {
     knowList: [],                  // wiedza strony gracza o bytach wroga (pętla rysunku czyta level / ident / x / y)
     threats: createThreats(64),    // grupy zagrożeń: wrogowie w jednym miejscu — ich i mój zasięg jako ułamek odległości
     watchers: createWatchers(16),  // wrogowie, których strona gracza nie wykrywa, a którzy wykrywają gracza (sama granica)
+    borders: createBorders(64),    // grupy UI: jedno koło granicy i jedna gromada zębów czujki na skupisko wrogów
     know: new WeakMap(),
     states: new WeakMap(),
     nextId: 1,
@@ -155,7 +162,7 @@ function knowOf(P, e) {
   if (!k) {
     k = {
       e, id: P.nextId++, level: 0, ident: false, seenAt: -1e9, x: 0, y: 0, ang: 0, err: 0, sigSeen: 1, strength: 0, vision: 0,
-      themLvl: 0, disc: false, rec: -1, listed: false, wasLead: false, groupLeadId: -1
+      themLvl: 0, disc: false, rec: -1, listed: false, wasLead: false, groupLeadId: -1, borderLead: false, borderLeadId: -1
     };
     P.know.set(e, k);
   }
@@ -338,6 +345,7 @@ function rebuild(P, world) {
   }
   buildThreatGroups(P);
   buildWatchers(P);
+  buildBorders(P);
   P.version++;
   P.ready = true;
 }
@@ -519,6 +527,127 @@ function buildWatchers(P) {
     }
   }
   for (let i = Wt.n; i < prevN; i++) Wt.k[i] = null;
+}
+
+// ---------------------------------------------------------------- grupy UI: jedno koło na skupisko (2026-11-12)
+// Użytkownik: „nie dawaj np. myśliwcom tego, tylko jak jest grupa myśliwców, niech ma jedno koło, cała baza z jednostkami
+// też jedno koło”. Członkowie: znani wrogowie (kontakt / identyfikacja / odkryta stacja) i niewidziani obserwatorzy (mają
+// mnie, ja ich nie — `watchers`). Grupy zachłannie od najdalej sięgającego (lider z histerezą `threatLeadHold`), członek
+// bliżej niż `borderGroupRadius` (+ błędy miejsca) od lidera wchodzi do grupy, dotychczasowy zostaje do × `borderStayMul`.
+// Koło grupy: środek = lider, R = max(R członka + jego odległość od lidera) — obejmuje zasięgi wszystkich (kontakt wobec
+// mnie: moc × mój ślad; wzrok tak samo), poziomy = najwyższe członków, zęby czujki = znani członkowie (budowle / statki).
+
+function createBorders(cap) {
+  return {
+    n: 0,
+    lead: new Array(cap).fill(null),
+    x: new Float64Array(cap), y: new Float64Array(cap),
+    R: new Float64Array(cap), Rv: new Float64Array(cap), meR: new Float64Array(cap), err: new Float64Array(cap),
+    lvl: new Uint8Array(cap), myLvl: new Uint8Array(cap), est: new Uint8Array(cap),
+    count: new Uint16Array(cap), nSt: new Uint16Array(cap),
+    // członkowie (scratch)
+    _k: new Array(cap).fill(null),
+    _x: new Float64Array(cap), _y: new Float64Array(cap), _e: new Float64Array(cap),
+    _r: new Float64Array(cap), _rv: new Float64Array(cap), _me: new Float64Array(cap), _s: new Float64Array(cap),
+    _lvl: new Uint8Array(cap), _my: new Uint8Array(cap), _est: new Uint8Array(cap), _known: new Uint8Array(cap),
+    _st: new Uint8Array(cap), _o: new Int32Array(cap), _g: new Int32Array(cap)
+  };
+}
+
+function buildBorders(P) {
+  const T = P.tune;
+  const pl = P.player;
+  const list = P.knowList;
+  if (P.borders._x.length < list.length) {
+    let cap = P.borders._x.length;
+    while (cap < list.length) cap *= 2;
+    P.borders = createBorders(cap);
+  }
+  const B = P.borders;
+  const prevN = B.n;
+  B.n = 0;
+  let m = 0;
+  const isBuilding = P.A.isBuilding || P.A.isStation || null;
+  if (P.playerRec) {
+    const sig = pl.sigEff;
+    for (let j = 0; j < list.length; j++) {
+      const k = list[j];
+      const ks = sensorKnowState(P, k);
+      const known = ks === 'live' || ks === 'disc';
+      const watcher = !known && k.rec >= 0 && k.level === 0 && k.themLvl > 0;
+      if (!known && !watcher) continue;
+      const i = m++;
+      B._k[i] = k;
+      if (known) {
+        const est = !k.ident;
+        const cls = contactSizeClass(k.sigSeen);
+        B._x[i] = k.x; B._y[i] = k.y; B._e[i] = k.err || 0;
+        B._r[i] = (est ? T.strengthGuess[cls] : k.strength) * sig;
+        B._rv[i] = est ? T.visionGuess[cls] : k.vision;
+        B._me[i] = pl.strength * k.sigSeen;
+        B._my[i] = k.level; B._est[i] = est ? 1 : 0; B._known[i] = 1;
+        B._st[i] = isBuilding && isBuilding(k.e) ? 1 : 0;
+      } else {
+        const r = P.recs[k.rec];
+        B._x[i] = r.x; B._y[i] = r.y; B._e[i] = 0;
+        B._r[i] = r.strength * sig;
+        B._rv[i] = r.ident;
+        B._me[i] = 0; B._my[i] = 0; B._est[i] = 1; B._known[i] = 0; B._st[i] = 0;
+      }
+      B._lvl[i] = k.themLvl;
+      B._s[i] = B._r[i] * (k.borderLead ? T.threatLeadHold : 1);
+      B._o[i] = i;
+    }
+  }
+  if (m > 0) {
+    const o = B._o, S = B._s;
+    for (let i = 1; i < m; i++) {
+      const v = o[i];
+      let j = i - 1;
+      while (j >= 0 && S[o[j]] < S[v]) { o[j + 1] = o[j]; j--; }
+      o[j + 1] = v;
+    }
+    const Rg = T.borderGroupRadius, stay = Rg * T.borderStayMul, cap = Math.min(T.borderMax, B.lead.length);
+    let gn = 0;
+    for (let q = 0; q < m; q++) {
+      const i = o[q];
+      const k = B._k[i];
+      let g = -1;
+      for (let h = 0; h < gn; h++) {
+        const dx = B._x[i] - B.x[h], dy = B._y[i] - B.y[h];
+        const e = B._e[i] + B.err[h];
+        const rr = (B.lead[h].id === k.borderLeadId ? stay : Rg) + e;
+        if (dx * dx + dy * dy <= rr * rr) { g = h; break; }
+      }
+      if (g < 0) {
+        if (gn >= cap) { B._g[i] = -1; continue; }
+        g = gn++;
+        B.lead[g] = k;
+        B.x[g] = B._x[i]; B.y[g] = B._y[i]; B.err[g] = B._e[i];
+        B.R[g] = 0; B.Rv[g] = 0; B.meR[g] = 0; B.lvl[g] = 0; B.myLvl[g] = 0; B.est[g] = B._est[i];
+        B.count[g] = 0; B.nSt[g] = 0;
+      }
+      B._g[i] = g;
+      const dx = B._x[i] - B.x[g], dy = B._y[i] - B.y[g];
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (B._r[i] + d > B.R[g]) B.R[g] = B._r[i] + d;
+      if (B._rv[i] + d > B.Rv[g]) B.Rv[g] = B._rv[i] + d;
+      if (B._me[i] > B.meR[g]) B.meR[g] = B._me[i];
+      if (B._lvl[i] > B.lvl[g]) B.lvl[g] = B._lvl[i];
+      if (B._my[i] > B.myLvl[g]) B.myLvl[g] = B._my[i];
+      if (B._known[i]) { B.count[g]++; if (B._st[i]) B.nSt[g]++; }
+    }
+    B.n = gn;
+    for (let i = 0; i < m; i++) {
+      const k = B._k[i];
+      const g = B._g[i];
+      k.borderLead = false;
+      k.borderLeadId = g >= 0 ? B.lead[g].id : -1;
+    }
+    for (let g = 0; g < B.n; g++) B.lead[g].borderLead = true;
+  }
+  for (let g = B.n; g < prevN; g++) B.lead[g] = null;
+  for (let i = 0; i < m; i++) B._k[i] = null;
 }
 
 /** Wpis strefy wroga koła `i` sumy `P.enemy` (także w sumach pochodnych — znacznik koła = indeks wpisu). */

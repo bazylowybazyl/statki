@@ -429,3 +429,28 @@ Gracz klika PPM i pokaże mu się, gdzie są wrogowie, i będzie musiał tam pol
   bierne do alarmu, radar tylko w habitacie). Skutek z mgły wojny (`fogPointVisibleMul`): wyłączony okręt widać z połowy
   zasięgu wzroku (Atlas 9 km, fregata zwiadu 5 km) — dalej jest szarymi X-ami. Znacznik „NIEZNANA MASA” przy krawędzi
   kadru wciąż wskazuje kierunek bez PPM — do decyzji, czy zostaje.
+
+### 7d. Koszt w grze, jedno koło na grupę, wzory w świecie (2026-11-12)
+
+Zgłoszenia użytkownika: „strasznie muli w grze, pewnie dlatego, że wszystko generuje swoje zasięgi … nie dawaj np.
+myśliwcom tego, tylko jak jest grupa myśliwców, niech ma jedno koło, cała baza z jednostkami też jedno koło … spadek z 240
+na 100–140” oraz „przy zoomowaniu X-y szybko zaczynają się kręcić, to samo na czerwonym kole ta mgła”.
+
+- Pomiar (`node scripts/webgpu/czujniki-koszt-gra.mjs`, 5120 × 1440, tryb worker, czujniki wł. / wył. naprzemiennie w tej
+  samej scenie — główny wyłącznik `Czujka.input.off`): obrona bazy w misji 1 (1 grupa, 32 kontakty) — GPU 4,5 / 4,7 ms,
+  CPU workera 5,7 / 6,7 ms; to samo przy najdalszym zoomie — GPU 7,0 / 7,0 ms, CPU workera 9,0 / 13,8 ms (szum); scena
+  70 jednostek (17 grup) — GPU 2,3 / 2,5 ms, CPU workera 1,6 / 1,6 ms. Krok czujek na stronie 0,02–0,03 ms na klatkę,
+  przebudowa obrazu 0,25–0,34 ms co 0,2 s. Czujniki nie dają mierzalnego kosztu; ciężka jest sama scena bazy (klatka
+  workera 6–14 ms także z czujnikami wyłączonymi) — do osobnego profilu.
+- Jedno koło na grupę: `P.borders` (`sensorPicture.js`) — znani wrogowie i niewidziani obserwatorzy łączeni po miejscu
+  (`borderGroupRadius` 20 km od lidera, zostanie × 1,5, lider = najdalej sięgający z histerezą), koło = lider, promień
+  obejmuje zasięgi wszystkich członków; widok czujki bierze z tej listy i koła, i zęby. Scena 70 jednostek: 14 kół.
+- Render: granica, której linia nie przecina kadru (`ringInView`), nie trafia do bloku; warstwa DIST tafli tylko, gdy linia
+  biegnie przy okręcie albo trwa przejście (dawniej pass DIST co klatkę przy każdej granicy). Przełączniki A/B:
+  `CZUJNIKI_TUNE.granice / kontakty / dist`.
+- Wzory w świecie: X-y obłoku kontaktu i tafli, kreski czerwonej linii, „mgła” czerwonej tafli i smugi — w siatce /
+  skali ŚWIATA, rozmiar skokiem oktawy zoomu z przenikaniem dwóch poziomów (`zoomOctaves`, `xCellsOct` w `kontaktyTSL.js`).
+  Dawniej komórka X-a miała stałe px (kontakt: rozmiar w świecie = 10 px / zoom; tafla: komórki 6 px wzdłuż łuku od
+  punktu najbliższego okrętu) — każda zmiana zoomu (i ruch okrętu przy tafli) przetasowywała wzór. Sprawdzenie:
+  `czujniki-gra.mjs --zoomy 0.035,0.0362,0.0375` (zatrzymany zegar, kadry sprowadzone do jednej skali — X-y w tych samych
+  miejscach).

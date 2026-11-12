@@ -100,6 +100,17 @@ try {
     await sleep(2500);
   }
   if (args.zoom) await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${Number(args.zoom)}; return true; })()`);
+  // --zoomy 0.05,0.0515,0.053: zatrzymany zegar, ten sam kadr przy kolejnych zoomach — X-y kontaktów i tafli mają stać
+  // w świecie (zgłoszenie 2026-11-12: „przy zoomowaniu X-y szybko zaczynają się kręcić”)
+  if (args.zoomy) {
+    await ev(`(() => { window.__harness.clock.mode = 'frozen'; return true; })()`);
+    for (const zm of String(args.zoomy).split(',').map(Number)) {
+      await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${zm}; return true; })()`);
+      await sleep(900);
+      await shot(`zoom-${zm}`, `zatrzymany zegar, zoom ${zm}`);
+    }
+    await ev(`(() => { window.__harness.clock.mode = 'real'; return true; })()`);
+  }
   // dialog radia (XO) nie blokuje myszy; zamknięcie, gdyby był w trybie sceny
   await shot('01-po-przylocie', 'po wyjściu z warpa: kamera przy Atlasie, bez przelotu; granice i kontakty (bez PPM)');
   report.baza = await ev(`(() => { const S = window.StoryGame, b = S.site.building, s = window.ship;

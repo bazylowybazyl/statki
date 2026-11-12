@@ -17,7 +17,7 @@ import {
 } from './namiarTSL.js';
 import { createGranicaMeshes } from './granicaTSL.js';
 import { createContactBlock, createContactMesh, KONTAKT_HDR, KONTAKT_MAX, KONTAKT_NOISE_TILE, wrap01 } from './kontaktyTSL.js';
-import { CZUJNIKI_IN, CZUJNIKI_MAX, GRANICA_REC, KONTAKT_REC } from './czujnikiLayout.js';
+import { CZUJNIKI_IN, CZUJNIKI_MAX, GRANICA_REC, KONTAKT_REC, ringInView } from './czujnikiLayout.js';
 
 const I = CZUJNIKI_IN;
 const G = GRANICA_REC;
@@ -26,6 +26,10 @@ const K = KONTAKT_REC;
 /** Strojenie obrazu (px CSS — mnożone przez pxScale bufora). Wartości z dema (`dema/kontakty-czujnikow/namiarDemo.js`). */
 export const CZUJNIKI_TUNE = {
   enabled: true,
+  // A/B części obrazu (konsola: Czujka.render.tune / w workerze RenderWorkerHost.dev): granice, kontakty, refrakcja
+  granice: true,
+  kontakty: true,
+  dist: true,
   strHalf: 0.52,          // pół kąta struny [rad]
   winNear: 3000,          // okno granicy wokół okrętu [j.]: pełne do 3 km, zero od 12 km
   winFar: 12000,
@@ -36,6 +40,7 @@ export const CZUJNIKI_TUNE = {
 };
 
 const _rs = { x: 0, y: 0 };
+
 const _sp = { x: 0, y: 0 };
 const _c = { x: 0, y: 0 };
 
@@ -47,7 +52,8 @@ class CzujnikiSystem {
     this.ready = false;
     this.parts = null;
     this.step = null;
-    this.stats = { active: false, struna: false, granice: 0, kontakty: 0, cpuMs: 0 };
+    this.stats = { active: false, struna: false, granice: 0, graniceDist: false, kontakty: 0, cpuMs: 0 };
+    this._granDist = false;
     // widok tej klatki (bez alokacji w kroku)
     this._view = { cam: null, pxs: 1, zoom: 1, zoomBuf: 1, bw: 1, bh: 1, roll: 0, time: 0 };
   }
@@ -124,10 +130,11 @@ class CzujnikiSystem {
     st.active = true;
     let any = false;
     // czujka (PPM)
+    const T = this.tune;
     const strOn = IN[I.strunaOn] > 0.5 && IN[I.vis] > 0.001;
     p.struna.mesh.visible = strOn;
     p.blona.mesh.visible = strOn;
-    if (p.blona.dist) p.blona.dist.visible = strOn;
+    if (p.blona.dist) p.blona.dist.visible = strOn && T.dist;
     st.struna = strOn;
     if (strOn) {
       this._packStruna(p.strBlock.array, view);
@@ -135,19 +142,24 @@ class CzujnikiSystem {
       any = true;
     }
     // granice
-    const nG = IN[I.granicaOn] > 0.5 ? Math.min(CZUJNIKI_MAX.granica, IN[I.nGrn] | 0) : 0;
+    // tylko koła, których linia przecina kadr (shader liczy każdy znacznik dla każdego piksela); refrakcja (DIST) tylko,
+    // gdy linia biegnie przy okręcie albo trwa przejście — inaczej cały pass warstwy DIST szedł co klatkę na darmo
+    const nIn = T.granice && IN[I.granicaOn] > 0.5 ? Math.min(CZUJNIKI_MAX.granica, IN[I.nGrn] | 0) : 0;
+    const nG = nIn > 0 ? this._packGranica(p.grnBlock.array, view, nIn) : 0;
+    const granDist = nG > 0 && this._granDist;
     p.tafla.mesh.visible = nG > 0;
-    if (p.tafla.dist) p.tafla.dist.visible = nG > 0;
+    if (p.tafla.dist) p.tafla.dist.visible = granDist && T.dist;
     st.granice = nG;
-    if (nG > 0) { this._packGranica(p.grnBlock.array, view, nG); any = true; }
+    st.graniceDist = granDist;
+    if (nG > 0) any = true;
     // kontakty
-    const nK = Math.min(CZUJNIKI_MAX.kontakty, KONTAKT_MAX, IN[I.nKon] | 0);
+    const nK = T.kontakty ? Math.min(CZUJNIKI_MAX.kontakty, KONTAKT_MAX, IN[I.nKon] | 0) : 0;
     const nKon = nK > 0 ? this._packKontakty(p.konBlock.array, view, nK) : 0;
     p.kontakt.visible = nKon > 0;
     st.kontakty = nKon;
     if (nKon > 0) any = true;
     if (any) Core3D.setOverlayLayerActive(true);
-    if (strOn || nG > 0) Core3D.setDistortLayerActive(true);
+    if (T.dist && (strOn || granDist)) Core3D.setDistortLayerActive(true);
     st.cpuMs = performance.now() - t0;
   }
 
@@ -214,15 +226,34 @@ class CzujnikiSystem {
     A[1].set(v.bw, v.bh, 0, 0);
   }
 
+  // Pakuje granice, których linia (szara albo czerwona, z pasem shadera) przecina kadr; zwraca ich liczbę, `_granDist` —
+  // czy któraś potrzebuje refrakcji (linia przy okręcie w oknie granicy albo przejście w toku).
   _packGranica(A, v, n) {
     const IN = this.input;
     const T = this.tune;
     const z = v.zoomBuf;
     const c = _c;
+    const band = 110 * v.pxs;                         // pas liczenia shadera (95 px) z zapasem
+    const shipX = IN[I.px], shipY = IN[I.py];
+    const distNear = T.winFar + band / Math.max(1e-6, z);
+    let m = 0;
+    this._granDist = false;
     for (let i = 0; i < n; i++) {
       const s = I.grnBase + I.grnStride * i;
-      const o = NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * i;
       this._toBuf(IN[s + G.cx], IN[s + G.cy], v, c);
+      const gray = IN[s + G.gray], red = IN[s + G.redA];
+      const ev = IN[s + G.ageC] >= 0 || IN[s + G.ageV] >= 0;
+      const bandG = band + Math.abs(IN[s + G.rate]) * z * 0.22;
+      const seeG = (gray > 0.001 || ev) && ringInView(c.x, c.y, IN[s + G.R] * z, bandG, v.bw, v.bh);
+      const seeR = (red > 0.001 || ev) && ringInView(c.x, c.y, IN[s + G.Rv] * z, band, v.bw, v.bh);
+      if (!seeG && !seeR) continue;
+      // refrakcja: linia w oknie przy okręcie (odległość okrętu od linii < okno + pas) albo przejście
+      const dx = shipX - IN[s + G.cx], dy = shipY - IN[s + G.cy];
+      const dS = Math.sqrt(dx * dx + dy * dy);
+      if (ev || (seeR && red > 0.001 && Math.abs(dS - IN[s + G.Rv]) < distNear)
+        || (seeG && gray > 0.001 && Math.abs(dS - IN[s + G.R]) < distNear + IN[s + G.winShift])) this._granDist = true;
+      const o = NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * m;
+      m++;
       A[o].set(c.x, c.y, IN[s + G.R] * z, IN[s + G.redA]);
       A[o + 1].set(IN[s + G.ageC], IN[s + G.dirC], IN[s + G.angC] - v.roll, IN[s + G.RcX] * z);
       A[o + 2].set(IN[s + G.est], IN[s + G.rate] * z, IN[s + G.nearAng] - v.roll, IN[s + G.Rv] * z);
@@ -235,8 +266,9 @@ class CzujnikiSystem {
     A[a + 1].set(T.winNear * z, T.winFar * z, T.waveLen * v.pxs, T.waveV * v.pxs);
     A[a + 2].set(0, 0, 0, 0);
     A[a + 3].set(0, 0, 0, 0);
-    A[0].set(n, v.time, v.pxs, 1);
-    A[1].set(v.bw, v.bh, 0, 0);
+    A[0].set(m, v.time, v.pxs, 1);
+    A[1].set(v.bw, v.bh, v.zoomBuf, v.roll);   // tafla liczy wzory w świecie (zoom bufora, obrót kadru)
+    return m;
   }
 
   // Kontakty względem środka kadru w osiach sceny (y w górę), po obrocie kadru; poza kadrem (z zapasem) — pominięte.

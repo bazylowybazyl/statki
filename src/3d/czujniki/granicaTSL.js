@@ -34,7 +34,7 @@ import {
   exp, sin, cos, atan, length, mix, smoothstep, clamp, max, min, abs, fract, floor, step, dot, normalize
 } from 'three/tsl';
 import { fxNoise } from '../fx/noise.js';
-import { tv, pcg, u01, uOf, hash2, hash3 } from './kontaktyTSL.js';
+import { tv, pcg, u01, uOf, hash2, hash3, xCellsOct, zoomOctaves } from './kontaktyTSL.js';
 import { header, anchorAt, markLoop, baseMaterial, rectMask, gauss, wrapAngle, c3, BLUE, RED, PI } from './namiarTSL.js';
 
 export const GRANICA_STYLES = Object.freeze(['tafla', 'przyboj', 'swiatlo']);
@@ -115,8 +115,27 @@ function crossMark(px, C, ev, pxs, kind, lift) {
   return out;
 }
 
+// Punkt piksela w ŚWIECIE względem środka koła [j.] (osie gry, po obrocie kadru): px bufora / zoom bufora (H1.z),
+// obrót kadru H1.w. Wzory tafli (X-y, szum „mgły”, kreski) liczą się w świecie, skalą oktaw zoomu (`zoomOctaves`) —
+// w px ekranu kręciły się przy zoomie i jechały z ruchem okrętu (zgłoszenie 2026-11-12).
+function worldRel(dv, zb, roll) {
+  const s = dv.div(zb);
+  const c = cos(roll), sn = sin(roll);
+  return tv('v2', vec2(c.mul(s.x).sub(sn.mul(s.y)), sn.mul(s.x).add(c.mul(s.y))));
+}
+// Szum 3D w skali `targetPx` px (przy zoomie) zakotwiczony w świecie: dwie oktawy przenikane.
+function noiseOct(tex, rw, targetPx, pxs, zb, w, off) {
+  const O = zoomOctaves(pxs.mul(targetPx).div(zb));
+  const a = texture3D(tex, vec3(rw.div(O.s0).add(off), w)).level(0);
+  const b = texture3D(tex, vec3(rw.div(O.s1).add(off + 0.29), w)).level(0);
+  return tv('v4', mix(a, b, O.w1));
+}
+
 function taflaLook(B, px, noiseTex) {
   const { count, t, pxs } = header(B);
+  const H1 = B.element(1);
+  const zb = tv('f', max(H1.z, 1e-6));               // px bufora na j. świata
+  const roll = H1.w;
   const rgb = vec3(0).toVar('tfRgb');
   const [A0, A1] = anchorAt(B, int(0));
   const S = A0.xy;
@@ -148,13 +167,18 @@ function taflaLook(B, px, noiseTex) {
         const dn = tv('f', length(px.sub(Pn)));
         const ripPh = tv('f', dn.div(pxs.mul(15.0)).sub(t.mul(5.0)));
         const ripK = tv('f', exp(dn.div(pxs.mul(240.0)).negate()).mul(prox));
-        const q = tv('v2', dv.div(pxs));                  // szum zakotwiczony w grupie — nie płynie z kamerą
-        const n1 = tv('v4', texture3D(noiseTex, vec3(q.div(170.0).add(0.37), t.mul(0.04))).level(0));
-        const n2 = tv('v4', texture3D(noiseTex, vec3(q.div(55.0).add(0.31), t.mul(0.09))).level(0));
+        // szum zakotwiczony w grupie i w świecie (oktawy zoomu) — nie płynie z kamerą ani z zoomem
+        const rw = worldRel(dv, zb, roll);
+        const n1 = noiseOct(noiseTex, rw, 170.0, pxs, zb, t.mul(0.04), 0.37);
+        const n2 = noiseOct(noiseTex, rw, 55.0, pxs, zb, t.mul(0.09), 0.31);
         const fe = tv('f', fV.add(sin(ripPh).mul(ripK).mul(pxs.mul(1.3))).add(n2.x.sub(0.5).mul(pxs.mul(1.6))));
         // linia: rdzeń + poświata; est (radar zgadnięty) — szersza, w kreskach
         const lw = tv('f', pxs.mul(mix(float(0.85), float(2.4), est)));
-        const dash = mix(float(1.0), step(0.45, fract(wrapAngle(th.sub(M2.z)).mul(Rv).div(pxs.mul(9.0)))), est);
+        // kreski ~9 px wzdłuż koła, w świecie (kąt świata × promień w j.; oktawy zoomu przenikane)
+        const arcV = tv('f', atan(rw.y, rw.x).mul(Rv.div(zb)));
+        const Od = zoomOctaves(pxs.mul(9.0).div(zb));
+        const dashW = mix(step(0.45, fract(arcV.div(Od.s0))), step(0.45, fract(arcV.div(Od.s1))), Od.w1);
+        const dash = mix(float(1.0), dashW, est);
         const core = gauss(fe, lw).mul(dash);
         const halo = gauss(fe, pxs.mul(7.0)).mul(0.2);
         // tafla po stronie wroga: kaustyka pola siłowego, gaśnie w głąb
@@ -177,36 +201,24 @@ function taflaLook(B, px, noiseTex) {
         const prox = tv('f', float(1.0).sub(smoothstep(wNear.mul(0.35), wFar, abs(dS0.sub(Rc)))));
         const X = crossing(px, C, Rc, th, fC, M1, pxs);
         const V = tv('f', max(max(win, X.trail.mul(0.85)), full.x.mul(0.3)).mul(gvis));
-        // X-y w komórkach 6 px (łuk od punktu najbliższego mnie × odległość od granicy): rzędy przy linii gęsto, dalej
-        // rzadko; każdy żyje 0,7–1,6 s i odradza się w innym miejscu komórki — ten sam język co obłok kontaktu
-        const arcPx = tv('f', wrapAngle(th.sub(M2.z)).mul(Rc).div(pxs));
-        const fpx = tv('f', fC.div(pxs));
-        const gq = tv('v2', vec2(arcPx, fpx).div(6.0));
-        const ci = floor(gq);
-        const fr = tv('v2', fract(gq));
-        const key = tv('u', hash3(uOf(ci.x.add(65536.0)), uOf(ci.y.add(65536.0)), uint(41)));
-        const life = u01(pcg(key.add(uint(1)))).mul(0.9).add(0.7);
-        const ph = tv('f', t.div(life).add(u01(pcg(key.add(uint(2))))));
-        const k2 = tv('u', hash2(key, uOf(ph)));
-        const lp = fract(ph);
-        const fcR = ci.y.add(0.5).mul(6.0);
-        const P = exp(fcR.mul(fcR).div(49.0).negate()).mul(0.85);
-        const alive = step(u01(pcg(k2.add(uint(1)))), P);
-        const env = smoothstep(0.0, 0.14, lp).mul(float(1.0).sub(smoothstep(0.66, 1.0, lp)));
-        const cx = u01(pcg(k2.add(uint(2)))).mul(0.5).add(0.25);
-        const cy = u01(pcg(k2.add(uint(3)))).mul(0.5).add(0.25);
-        const qx = tv('v2', fr.sub(vec2(cx, cy)).mul(pxs.mul(6.0)));
-        const arm = tv('f', pxs.mul(u01(pcg(k2.add(uint(4)))).mul(0.6).add(1.3)).mul(1.4142));
-        const xa = qx.x.add(qx.y).mul(0.7071);
-        const xb = qx.x.sub(qx.y).mul(0.7071);
-        const dX = min(length(vec2(xb, max(abs(xa).sub(arm), 0.0))), length(vec2(xa, max(abs(xb).sub(arm), 0.0))));
-        const xI = tv('f', float(1.0).sub(smoothstep(pxs.mul(0.35), pxs.mul(1.05), dX)).mul(alive).mul(env));
+        // X-y w komórkach ~6 px siatki ŚWIATA wokół środka grupy (oktawy zoomu z przenikaniem): przy linii gęsto, dalej
+        // rzadko (szansa z odległości środka komórki od linii, px); każdy żyje 0,7–1,6 s i odradza się w innym miejscu
+        // komórki — ten sam język co obłok kontaktu. Dawniej komórki w px wzdłuż łuku od punktu najbliższego mnie:
+        // przy zoomie i ruchu okrętu X-y „jechały” po kole.
+        const rw = worldRel(dv, zb, roll);
+        const xI = tv('f', xCellsOct(rw, pxs.mul(6.0), zb, pxs, t, 41, (cw) => {
+          const fc = length(cw).mul(zb).sub(Rc).div(pxs);
+          return exp(fc.mul(fc).div(49.0).negate()).mul(0.85);
+        }, { armBase: 1.3, armVar: 0.6, soft: false, tone: false }));
         const core = gauss(fC, pxs.mul(0.9)).mul(0.2);
         // tafla w ruchu: prążki za nią (ciąg pcha ją na mnie, cisza odsuwa)
         const sg = tv('f', step(0.0, rate).mul(2.0).sub(1.0));
         const fm = tv('f', fC.mul(sg).negate());
         const smW = tv('f', abs(rate).mul(0.07).add(pxs));
-        const ns = tv('v4', texture3D(noiseTex, vec3(arcPx.div(7.0).add(0.17), fm.div(smW.mul(2.5)), t.mul(0.3))).level(0));
+        // smugi wzdłuż koła: współrzędna łuku w świecie (kąt świata × promień w j.), skala oktawy zoomu
+        const O7 = zoomOctaves(pxs.mul(7.0).div(zb));
+        const arcW = tv('f', atan(rw.y, rw.x).mul(Rc.div(zb)));
+        const ns = tv('v4', texture3D(noiseTex, vec3(arcW.div(O7.s0).add(0.17), fm.div(smW.mul(2.5)), t.mul(0.3))).level(0));
         const smear = step(0.0, fm).mul(exp(fm.div(smW).negate()))
           .mul(smoothstep(pxs.mul(25.0), pxs.mul(160.0), abs(rate))).mul(smoothstep(0.45, 0.8, ns.x).mul(0.8).add(0.08)).mul(0.3);
         const I = tv('f', prox.mul(0.65).add(0.35));

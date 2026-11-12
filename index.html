@@ -13026,6 +13026,7 @@
     // Krok obrazu w kroku informacji klatki (po czujnikach i CIC); przebudowa co ~0,2 s czasu logiki.
     function stepRadarRangePicture(dt) {
       if (!sensorPicture || !gameStarted) return;
+      if (czujkaInput.off && !RADAR_RANGE_PROTO) return;
       if (radarPingSerial !== _rrLastPing) {
         _rrLastPing = radarPingSerial;
         noteSensorPicturePing(sensorPicture, ship);
@@ -13089,7 +13090,9 @@
     // (src/3d/czujniki/czujniki3D.js) — tryb off: submit, worker: blok migawki `czujniki`. Alt + PPM — menu rozkazów
     // świata (dawniej sam PPM). Rozgrywki nie zmienia.
     // ============================================================
-    const czujkaInput = { held: false };
+    // `off` — główny wyłącznik czujników w grze (A/B pomiarów: obraz czujników, widok, wejście renderu; prototyp ?radarZasiegi
+    // liczy obraz dalej)
+    const czujkaInput = { held: false, off: false };
     const czujkaView = createCzujkaView();
     const czujnikiIn = createCzujnikiInput();
     const _czBodies = [];
@@ -13128,7 +13131,7 @@
         _czTimeFrame = window.__frameId;
         _czTime += Math.min(0.1, Math.max(0, Number(frameDt) || 0));
       }
-      const alive = gameStarted && ship && !ship.destroyed && !ship.dead;
+      const alive = gameStarted && ship && !ship.destroyed && !ship.dead && !czujkaInput.off;
       const show = !!alive && !CICDisplay.active && !stationUI.open && !splitScreenMode && !isView3DCamera(cam)
         && !StoryGame.letterbox;
       if (!show) czujkaInput.held = false;
@@ -13153,7 +13156,22 @@
       packCzujkaView(czujkaView, czujnikiIn, I);
       if (!RW_WORKER) Czujniki.submit(czujnikiIn);
     }
-    window.Czujka = { view: czujkaView, input: czujkaInput, wejscie: czujnikiIn, render: Czujniki, picture: sensorPicture, inp: _czInp };
+    window.Czujka = {
+      view: czujkaView, input: czujkaInput, wejscie: czujnikiIn, render: Czujniki, picture: sensorPicture, inp: _czInp,
+      // pomiar (narzędzia): przebudowa obrazu czujników teraz
+      przebuduj() { updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true); },
+      // pomiar (narzędzia): ms na wywołanie części kroku czujek (prawdziwy zegar `now`)
+      zmierz(n = 200, now = () => performance.now()) {
+        const r = {};
+        let t0 = now(); for (let i = 0; i < n; i++) stepCzujkaView(czujkaView, 1 / 240, _czInp); r.krokWidoku = (now() - t0) / n;
+        t0 = now(); for (let i = 0; i < n; i++) packCzujkaView(czujkaView, czujnikiIn, _czInp); r.pakowanie = (now() - t0) / n;
+        t0 = now(); for (let i = 0; i < n; i++) getCicEntityHullMetrics(ship, 1); r.wymiaryKadluba = (now() - t0) / n;
+        t0 = now(); for (let i = 0; i < n; i++) czujkaBodies(); r.ciala = (now() - t0) / n;
+        t0 = now(); for (let i = 0; i < n; i++) stepCzujniki(camera, 1 / 240, window.__interpShipPose); r.calyKrok = (now() - t0) / n;
+        for (const k in r) r[k] = +r[k].toFixed(4);
+        return r;
+      }
+    };
     // PPM puszczony poza kanwą (nad kokpitem, poza oknem) albo utrata fokusu — czujka gaśnie
     window.addEventListener('mouseup', (e) => { if (e.button === 2) czujkaInput.held = false; });
     window.addEventListener('blur', () => { czujkaInput.held = false; });

@@ -183,6 +183,44 @@ test('widok: bez pokazu (CIC, panel, kamera 3D) i w skoku (alfa soczewki) — ni
   assert.equal(out[I.active], 0);
 });
 
+test('grupy UI: baza z jednostkami = jedno koło, eskadra myśliwców = jedno koło, obserwatorzy dołączają do grupy', () => {
+  const player = { x: 0, y: 0, side: 'friendly', passive: 80000, sig: 1.3, vision: 9000 };
+  const adapters = {
+    alive: (e) => !!e && !e.dead, sideOf: (e) => e.side,
+    posOf: (e, out) => { out.x = e.x; out.y = e.y; return out; },
+    passiveOf: (e) => e.passive, activeOf: (e, p) => p, baseSigOf: (e) => e.sig, visionOf: (e) => e.vision,
+    coverAt: () => 1, identified: (e) => Math.hypot(e.x - player.x, e.y - player.y) <= player.vision,
+    cloaked: () => false, writeState: () => {}, isStation: () => false, isBuilding: (e) => !!e.baseStructure
+  };
+  // baza 40 km: habitat (budowla) + 6 okrętów w promieniu 6 km + 4 myśliwce krążące 12 km od habitatu
+  const npcs = [{ x: 40000, y: 0, side: 'pirate', passive: 60000, sig: 1, vision: 9000, baseStructure: true }];
+  for (let i = 0; i < 6; i++) npcs.push({ x: 40000 + Math.cos(i) * 6000, y: Math.sin(i) * 6000, side: 'pirate', passive: 30000, sig: 0.85, vision: 8000 });
+  // (myśliwce po mojej stronie bazy — w moim kontakcie: 80 km × 0,5 = 40 km)
+  for (let i = 0; i < 4; i++) npcs.push({ x: 40000 - 12000 + i * 400, y: 3000, side: 'pirate', passive: 8000, sig: 0.5, vision: 5000 });
+  // osobna eskadra myśliwców po drugiej stronie (~32 km ode mnie — w moim kontakcie: 80 km × 0,5), 4 maszyny w 2 km
+  for (let i = 0; i < 4; i++) npcs.push({ x: -30000 + i * 500, y: 10000 + (i % 2) * 600, side: 'pirate', passive: 8000, sig: 0.5, vision: 5000 });
+  const P = SP.createSensorPicture(adapters);
+  SP.updateSensorPicture(P, 0, { player, npcs, stations: null, extraSources: null }, true);
+  const B = P.borders;
+  assert.equal(B.n, 2, `dwie grupy (baza z jednostkami, eskadra) — jest ${B.n}`);
+  const base = B.count[0] >= B.count[1] ? 0 : 1, sq = 1 - base;
+  assert.equal(B.count[base], 11, 'baza: habitat + 6 okrętów + 4 myśliwce');
+  assert.equal(B.nSt[base], 1, 'habitat — budowla');
+  assert.equal(B.count[sq], 4, 'eskadra: jedna grupa, nie cztery koła');
+  // koło bazy obejmuje zasięg każdego członka (moc — tu zgadnięta z rozmiaru, kontakt bez identyfikacji — × mój ślad
+  // + odległość od lidera; miejsca kontaktów mają błąd, stąd zapas)
+  for (const e of npcs.slice(0, 11)) {
+    const k = P.know.get(e);
+    const d = Math.hypot(k.x - B.x[base], k.y - B.y[base]);
+    const reach = P.tune.strengthGuess[D.contactSizeClass(k.sigSeen)] * P.player.sigEff;
+    assert.ok(B.R[base] + 1e-6 >= reach + d, 'zasięg członka w kole grupy');
+  }
+  // widok: jedno koło na grupę
+  const view = V.createCzujkaView();
+  const out = run(view, baseInp(P), 1);
+  assert.equal(out[I.nGrn], 2);
+});
+
 test('grupy zagrożeń: budowle (adapter isBuilding) to duże zęby struny', () => {
   const player = { x: 0, y: 0, side: 'friendly', passive: 80000, sig: 1.3, vision: 18000 };
   const habitat = { x: 50000, y: 0, side: 'pirate', passive: 60000, sig: 1, vision: 9000, baseStructure: true };
@@ -199,6 +237,15 @@ test('grupy zagrożeń: budowle (adapter isBuilding) to duże zęby struny', () 
   assert.equal(P.threats.n, 1);
   assert.equal(P.threats.count[0], 2);
   assert.equal(P.threats.nSt[0], 1, 'habitat bazy — budowla');
+});
+
+test('render: granica liczona tylko, gdy jej linia przecina kadr (pierścień z pasem shadera)', () => {
+  const W = 1600, H = 900;
+  assert.equal(L.ringInView(800, 450, 100, 10, W, H), true, 'małe koło w kadrze');
+  assert.equal(L.ringInView(800, 450, 5000, 10, W, H), false, 'kadr cały w środku koła — linii nie widać');
+  assert.equal(L.ringInView(-5000, 450, 4900, 200, W, H), true, 'łuk zahacza o lewy brzeg');
+  assert.equal(L.ringInView(-5000, 450, 3000, 10, W, H), false, 'koło całe poza kadrem');
+  assert.equal(L.ringInView(800, 450, 0, 10, W, H), false, 'bez promienia');
 });
 
 test('blok migawki `czujniki`: kopia nagłówka i zajętych sekcji; brak wejścia — pusty', () => {

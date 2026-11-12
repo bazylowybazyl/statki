@@ -125,53 +125,38 @@ export function stepCzujkaView(V, dt, inp) {
   const stepA = Math.max(-T.aimMax * dt, Math.min(T.aimMax * dt, dphi * (1 - Math.exp(-dt / T.aimTau))));
   V.phi = wrap(V.phi + stepA);
 
-  // ---------------------------------------------------------------- grupy (zagrożenia + niewidziani obserwatorzy)
+  // ---------------------------------------------------------------- grupy (jedno koło i jedna gromada zębów na skupisko)
+  // Obraz czujników łączy znanych wrogów i niewidzianych obserwatorów w grupy po miejscu (`P.borders`, 2026-11-12 —
+  // „grupa myśliwców jedno koło, cała baza z jednostkami jedno koło”). Grupa bez znanych członków = sama granica (nie
+  // wykrywam ich), zęby czujki tylko ze znanych członków.
   const P = inp.picture && inp.picture.ready ? inp.picture : null;
   const glist = V._glist;
   glist.length = 0;
   const pose = V._pose;
   const fr = V.frame;
-  if (P && show) {
-    const F = P.threats;
-    for (let i = 0; F && i < F.n; i++) {
-      const lead = F.lead[i];
-      if (!lead) continue;
-      const g = groupOf(V, lead.id);
-      g.used = fr;
-      let tx = F.x[i], ty = F.y[i], tau = T.posTau;
-      if (lead.ident && lead.e && inp.poseOf && inp.poseOf(lead.e, pose)) { tx = pose.x; ty = pose.y; tau = T.posTauIdent; }
-      if (g.fresh) { g.x = tx; g.y = ty; } else { g.x = follow(g.x, tx, dt, tau); g.y = follow(g.y, ty, dt, tau); }
-      const Rt = Math.max(0, F.themR[i]), Rv = Math.max(0, F.themIdR[i]);
-      g.R = g.fresh ? Rt : follow(g.R, Rt, dt, T.radTau);
-      g.Rv = g.fresh ? Rv : follow(g.Rv, Rv, dt, T.radTau);
-      g.est = F.est[i];
-      g.nBig = Math.min(4, F.nSt ? F.nSt[i] : 0);
-      g.nSmall = Math.min(12, Math.max(0, F.count[i] - g.nBig));
-      g.lvlTrue = F.themLvl[i];
-      g.myLvl = F.meLvl[i];
-      g.strOK = g.myLvl >= 1;
-      g.meR = F.meR[i];
-      glist.push(g);
-    }
-    const W = P.watchers;
-    for (let i = 0; W && i < W.n; i++) {
-      const k = W.k[i];
-      if (!k) continue;
-      const g = groupOf(V, k.id);
-      g.used = fr;
-      let tx = W.x[i], ty = W.y[i];
-      if (k.e && inp.poseOf && inp.poseOf(k.e, pose)) { tx = pose.x; ty = pose.y; }
-      if (g.fresh) { g.x = tx; g.y = ty; } else { g.x = follow(g.x, tx, dt, T.posTauIdent); g.y = follow(g.y, ty, dt, T.posTauIdent); }
-      g.R = g.fresh ? W.R[i] : follow(g.R, W.R[i], dt, T.radTau);
-      g.Rv = g.fresh ? W.idR[i] : follow(g.Rv, W.idR[i], dt, T.radTau);
-      g.est = 1;                // ich wzroku nie znam — w kreskach
-      g.nBig = 0; g.nSmall = 0;
-      g.lvlTrue = W.lvl[i];
-      g.myLvl = 0;              // nie wykrywam ich: sama granica, bez wroga
-      g.strOK = false;
-      g.meR = 0;
-      glist.push(g);
-    }
+  const Bd = P && show ? P.borders : null;
+  for (let i = 0; Bd && i < Bd.n; i++) {
+    const lead = Bd.lead[i];
+    if (!lead) continue;
+    const g = groupOf(V, lead.id);
+    g.used = fr;
+    // środek: identyfikowany lider albo obserwator (prawdziwe miejsce) — poza renderu, bez opóźnienia przebudowy;
+    // kontakt — miejsce przybliżone, gonione wolniej
+    let tx = Bd.x[i], ty = Bd.y[i], tau = T.posTau;
+    const posed = (lead.ident || lead.level === 0) && lead.e && inp.poseOf && inp.poseOf(lead.e, pose);
+    if (posed) { tx = pose.x; ty = pose.y; tau = T.posTauIdent; }
+    if (g.fresh) { g.x = tx; g.y = ty; } else { g.x = follow(g.x, tx, dt, tau); g.y = follow(g.y, ty, dt, tau); }
+    const Rt = Math.max(0, Bd.R[i]), Rv = Math.max(0, Bd.Rv[i]);
+    g.R = g.fresh ? Rt : follow(g.R, Rt, dt, T.radTau);
+    g.Rv = g.fresh ? Rv : follow(g.Rv, Rv, dt, T.radTau);
+    g.est = Bd.est[i];
+    g.nBig = Math.min(4, Bd.nSt[i]);
+    g.nSmall = Math.min(12, Math.max(0, Bd.count[i] - Bd.nSt[i]));
+    g.lvlTrue = Bd.lvl[i];
+    g.myLvl = Bd.myLvl[i];
+    g.strOK = g.myLvl >= 1 && Bd.count[i] > 0;
+    g.meR = Bd.meR[i];
+    glist.push(g);
   }
   // grupy, których obraz już nie ma: gasną (widoczności → 0), potem wypadają
   for (const g of V.groups.values()) {

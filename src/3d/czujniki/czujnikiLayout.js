@@ -64,3 +64,13 @@ export const GRANICA_REC = Object.freeze({
 /** Rekord kontaktu (obłok X-ów): miejsce w świecie, „ciało” R [j.] z klasy, najmniej minPx [px CSS], mnożnik promienia
  *  objawienia Rk, niepewność err [j.], klasa 0–3, masa, ziarno 0–1, alfa. */
 export const KONTAKT_REC = Object.freeze({ x: 0, y: 1, R: 2, minPx: 3, Rk: 4, err: 5, cls: 6, mass: 7, seed: 8, alpha: 9 });
+
+/** Czy pierścień (środek cx, cy, promień R, pół szerokości `band` — px bufora) przecina prostokąt kadru 0..w × 0..h. */
+export function ringInView(cx, cy, R, band, w, h) {
+  if (!(R > 0)) return false;
+  const nx = Math.max(0, -cx, cx - w), ny = Math.max(0, -cy, cy - h);
+  const dMin = Math.sqrt(nx * nx + ny * ny);                     // najbliższy punkt kadru
+  const fx = Math.max(Math.abs(cx), Math.abs(cx - w)), fy = Math.max(Math.abs(cy), Math.abs(cy - h));
+  const dMax = Math.sqrt(fx * fx + fy * fy);                     // najdalszy narożnik kadru
+  return dMin <= R + band && dMax >= R - band;
+}

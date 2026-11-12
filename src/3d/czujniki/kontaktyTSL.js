@@ -20,7 +20,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, float, int, uint, vec2, vec3, vec4, uniform, uniformArray, screenCoordinate, positionGeometry,
-  exp, log, sin, cos, atan, length, dot, mix, smoothstep, clamp, max, min, abs, fract, floor, step, fwidth, texture,
+  exp, log, log2, exp2, sin, cos, atan, length, dot, mix, smoothstep, clamp, max, min, abs, fract, floor, step, fwidth, texture,
   texture3D, select
 } from 'three/tsl';
 import { fxNoise } from '../fx/noise.js';
@@ -398,40 +398,77 @@ function iksyLook(B, H, ctx, noiseTex) {
   const ragged = clamp(E.div(max(Rm, 1.0)).mul(0.5), 0.0, 0.6);
   const D = tv('f', F.mul(mix(float(1.0), fb.x.mul(2.0), ragged.add(0.35))), 'xD');
   const cloud = tv('f', smoothstep(0.08, 0.8, D), 'xCloud');
-  // komórki X-ów w świecie: punkt w kaflu szumu (początek kafla w double na CPU) — X-y stoją, gdy kamera jedzie
-  const cellPx = tv('f', H.pxs.mul(10.0), 'xCellPx');
-  const cellW = tv('f', cellPx.div(H.zoom), 'xCellW');
+  // komórki X-ów w ŚWIECIE (punkt w kaflu szumu — początek kafla w double na CPU): X-y stoją, gdy kamera jedzie i gdy
+  // zoom się zmienia — rozmiar komórki skokiem oktawy zoomu z przenikaniem dwóch siatek (`xCellsOct`; dawniej komórka
+  // = 10 px na ekranie, więc każda zmiana zoomu przetasowywała X-y — „przy zoomowaniu X-y szybko zaczynają się kręcić”)
   const wpos = tv('v2', H.nbase.mul(KONTAKT_NOISE_TILE).add(rel), 'xWpos');
-  const g = tv('v2', wpos.div(cellW), 'xG');
-  const ci = floor(g);
-  const f = tv('v2', fract(g), 'xFr');
-  const key = tv('u', hash3(uOf(ci.x.add(65536.0)), uOf(ci.y.add(65536.0)), uint(29)), 'xKey');
-  const life = u01(pcg(key.add(uint(1)))).mul(0.9).add(0.7);
-  const ph = tv('f', t.div(life).add(u01(pcg(key.add(uint(2))))), 'xPh');
-  const k2 = tv('u', hash2(key, uOf(ph)), 'xK2');
-  const lp = fract(ph);
-  const P = clamp(cloud.mul(K.mul(0.08).add(0.42)), 0.0, 0.62);
-  const u = u01(pcg(k2.add(uint(1))));
-  const alive = smoothstep(u, u.add(0.1), P);               // P = 0 → nigdy (poza obłokiem pusto)
-  const env = smoothstep(0.0, 0.14, lp).mul(float(1.0).sub(smoothstep(0.66, 1.0, lp)));
-  const cx = u01(pcg(k2.add(uint(2)))).mul(0.5).add(0.25);       // rozrzut w komórce — bez widocznej kratki
-  const cy = u01(pcg(k2.add(uint(3)))).mul(0.5).add(0.25);
-  const q = tv('v2', f.sub(vec2(cx, cy)).mul(cellPx), 'xQ');
-  const arm = tv('f', H.pxs.mul(u01(pcg(k2.add(uint(4)))).mul(0.8).add(1.6)).mul(cloud.mul(0.35).add(0.8)), 'xArm');
-  const a = q.x.add(q.y).mul(0.7071);
-  const b = q.x.sub(q.y).mul(0.7071);
-  const L = arm.mul(1.4142);
-  const d1 = length(vec2(b, max(abs(a).sub(L), 0.0)));
-  const d2 = length(vec2(a, max(abs(b).sub(L), 0.0)));
-  const line = float(1.0).sub(smoothstep(H.pxs.mul(0.35), H.pxs.mul(1.05), min(d1, d2)));
-  const tone = u01(pcg(k2.add(uint(5)))).mul(0.35).add(0.65);
-  const xI = line.mul(alive).mul(env).mul(tone);
+  const P = tv('f', clamp(cloud.mul(K.mul(0.08).add(0.42)), 0.0, 0.62), 'xP');
+  const armK = tv('f', cloud.mul(0.35).add(0.8), 'xArmK');
+  const xI = xCellsOct(wpos, H.pxs.mul(10.0), H.zoom, H.pxs, t, 29, () => P,
+    { armBase: 1.6, armVar: 0.8, armK, soft: true, tone: true });
   const gray = vec3(0.34, 0.355, 0.38);
   const rgb = gray.mul(xI.mul(1.15).add(cloud.mul(cloud).mul(0.022)));
   return vec4(rgb, cloud.mul(0.1));
 }
 
 const LOOKS = { echo: echoLook, oblok: oblokLook, wir: wirLook, roj: rojLook, iksy: iksyLook };
+
+// ── skala zakotwiczona w świecie, krokiem oktawy zoomu (2026-11-12) ────────────────────────────────────────────────
+// Cel `targetW` [j. świata] (np. komórka 10 px / zoom) → dwie skale 2^⌊log2⌋ i 2× większa; waga drugiej rośnie w środku
+// oktawy (0,25…0,75). Wzór stoi w świecie przy zoomie, a przy przejściu oktawy dwie siatki się przenikają — na granicy
+// oktawy waga jednej jest 0, więc zmiana poziomu nie skacze. Wartości z uniformów (zoom) — gałęzie jednolite.
+export function zoomOctaves(targetW) {
+  const L = tv('f', log2(max(targetW, 1e-6)));
+  const L0 = tv('f', floor(L));
+  const w1 = tv('f', smoothstep(0.25, 0.75, L.sub(L0)));
+  const s0 = tv('f', exp2(L0));
+  return { L0, w1, s0, s1: s0.mul(2.0) };
+}
+
+// Jeden X w komórce siatki świata `cellW` [j.] (komórka ma `cellPx` px bufora): intensywność 0..1. `prob(środek
+// komórki w j.)` — szansa życia komórki; `salt` (uint) — ziarno siatki. X żyje 0,7–1,6 s i odradza się w innym miejscu
+// komórki (ten sam język co obłok kontaktu i tafla granicy).
+function xCell(wpos, cellW, cellPx, pxs, t, salt, prob, o) {
+  const g = tv('v2', wpos.div(cellW));
+  const ci = tv('v2', floor(g));
+  const f = tv('v2', fract(g));
+  const key = tv('u', hash3(uOf(ci.x.add(65536.0)), uOf(ci.y.add(65536.0)), salt));
+  const life = u01(pcg(key.add(uint(1)))).mul(0.9).add(0.7);
+  const ph = tv('f', t.div(life).add(u01(pcg(key.add(uint(2))))));
+  const k2 = tv('u', hash2(key, uOf(ph)));
+  const lp = fract(ph);
+  const P = tv('f', prob(ci.add(0.5).mul(cellW)));
+  const u = u01(pcg(k2.add(uint(1))));
+  const alive = o.soft ? smoothstep(u, u.add(0.1), P) : step(u, P);   // P = 0 → nigdy
+  const env = smoothstep(0.0, 0.14, lp).mul(float(1.0).sub(smoothstep(0.66, 1.0, lp)));
+  const cx = u01(pcg(k2.add(uint(2)))).mul(0.5).add(0.25);             // rozrzut w komórce — bez widocznej kratki
+  const cy = u01(pcg(k2.add(uint(3)))).mul(0.5).add(0.25);
+  const q = tv('v2', f.sub(vec2(cx, cy)).mul(cellPx));
+  const arm = tv('f', pxs.mul(u01(pcg(k2.add(uint(4)))).mul(o.armVar).add(o.armBase)).mul(o.armK || 1.0));
+  const a = q.x.add(q.y).mul(0.7071);
+  const b = q.x.sub(q.y).mul(0.7071);
+  const L = arm.mul(1.4142);
+  const d1 = length(vec2(b, max(abs(a).sub(L), 0.0)));
+  const d2 = length(vec2(a, max(abs(b).sub(L), 0.0)));
+  const line = float(1.0).sub(smoothstep(pxs.mul(0.35), pxs.mul(1.05), min(d1, d2)));
+  const xI = line.mul(alive).mul(env);
+  return o.tone ? xI.mul(u01(pcg(k2.add(uint(5)))).mul(0.35).add(0.65)) : xI;
+}
+
+/** X-y w siatce świata, rozmiar komórki ~`cellPxTarget` px bufora przy zoomie `zoomBuf` [px bufora / j.], skokiem oktawy
+ *  z przenikaniem (`zoomOctaves`); ziarno siatki = `salt` + poziom oktawy (ta sama siatka po obu stronach przejścia). */
+export function xCellsOct(wpos, cellPxTarget, zoomBuf, pxs, t, salt, prob, o) {
+  const O = zoomOctaves(cellPxTarget.div(zoomBuf));
+  const xI = float(0).toVar();
+  const lvl = uOf(O.L0.add(4096.0));
+  If(O.w1.lessThan(0.999), () => {
+    xI.addAssign(xCell(wpos, O.s0, O.s0.mul(zoomBuf), pxs, t, lvl.add(uint(salt)), prob, o).mul(float(1.0).sub(O.w1)));
+  });
+  If(O.w1.greaterThan(0.001), () => {
+    xI.addAssign(xCell(wpos, O.s1, O.s1.mul(zoomBuf), pxs, t, lvl.add(uint(salt + 1)), prob, o).mul(O.w1));
+  });
+  return xI;
+}
 
 // Pomocniki wspólne z wachlarzami (wachlarzeTSL.js) — ten sam język: hasze PCG, zmienne typowane stałą.
 export { tv, pcg, u01, uOf, hash2, hash3 };

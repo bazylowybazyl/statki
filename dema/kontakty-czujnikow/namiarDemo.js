@@ -654,7 +654,7 @@ export function createNamiarDemo(core, distLayer, hullTex = null) {
       else if (style === 'wachlarz') packWachlarz(A, cam, W, H, pxs);
       else if (style === 'swiatlo') packSwiatlo(A, cam, W, H, pxs, variant === 'przyboj' ? 1 : 0);
       else packGranica(A, cam, W, H, pxs);
-      A[1].set(bw, bh, 0, 0);
+      A[1].set(bw, bh, cam.zoom * pxs, 0);   // z — zoom bufora (tafla liczy wzory w świecie)
     }
     // kursor: własna ręka — myszka; skrypt — punkt 250 px od okrętu w kierunku celowania
     if (v) {
