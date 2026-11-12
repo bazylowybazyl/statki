@@ -29,7 +29,7 @@ import { PlanetGenWeather, WX_DEFAULT, windRate, bandLat, bandAngle, bandRateAt,
 import { WX_BANDS, WX_PHASE, WX_SEAM, CLOUD_CYCLONES } from '../src/3d/planetGen/planetGenBake.tsl.js';
 import {
   createGenCloudVolumeMaterial, cloudVolumeUniforms, CLOUD_VOLUME_UNIFORM_KEYS, CLOUD_VOLUME_STEPS, CLOUD_VOLUME_STEPS_MIN,
-  CLOUD_MODEL, CLOUD_LIGHT_FAR
+  CLOUD_MODEL, CLOUD_LIGHT_FAR, CLOUD_JITTER, CLOUD_STEP_BIAS
 } from '../src/3d/planetGen/planetGenCloudVolume.tsl.js';
 import {
   createGenAtmosphereMaterial, atmosphereUniforms, ATMOSPHERE_UNIFORM_KEYS,
@@ -326,6 +326,9 @@ test('szum 3D: powtarzalny, kanały w zakresie, rozkład kanału kłębów obejm
   assert.ok(M.towerThr > q(0.9) && M.towerThr < q(0.98), `próg wieży ${M.towerThr}`);
   assert.ok(M.towerThr + M.towerTaper * 0.86 - M.anvil < M.towerThr, 'pod stropem próg niższy niż przy podstawie');
   assert.ok(M.hMid < M.hHigh && M.hHigh < 1 && CLOUD_LIGHT_FAR >= 3);
+  // przesunięcie startu marszu częściowe (pełne — ziarno, zerowe — linie na stykach warstw próbek); próbki gęstsze
+  // ku podstawie powłoki
+  assert.ok(CLOUD_JITTER > 0 && CLOUD_JITTER < 1 && CLOUD_STEP_BIAS > 1);
   for (let c = 1; c < 4; c++) {
     let lo = 255; let hi = 0;
     for (let i = c; i < a.length; i += 4) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; }
@@ -544,6 +547,13 @@ test('pogoda w materiałach: kłęby bryły i cień na gruncie jadą z pasami wi
   assert.match(vol, /function bandFrames\(x, wxv\)/);
   assert.match(vol, /export function cloudShape\(x, P, cov, reg, opts = \{\}\)/);
   assert.match(vol, /export function cloudRegime\(x, noise, time, bias\)/);
+  // światło raz na piksel na wierzchu chmury (ciągłym między pikselami), gęstość jako średnia z kroku marszu
+  assert.match(vol, /const xt = x\.add\(normalize\(x\)\.mul\(S0\.topUp\.mul\(thick\)\)\)/);
+  assert.match(vol, /topDone\.lessThan\(0\.5\)\.and\(d\.greaterThan\(0\.12\)\)/);
+  assert.match(vol, /if \(opts\.stepH\) \{/);
+  // demo: bryła chmur domyślnie w obu widokach
+  const demo = read('dema/planeta-zblizenie.js');
+  assert.match(demo, /volOrbit: params\.get\('bryla'\) !== '0', volTop: params\.get\('bryla'\) !== '0'/);
   assert.match(vol, /smoothstep\(WX_SEAM, 0\.5, abs\(fr\)\)/, 'ten sam podział na pasy co w grafie chmur');
   assert.match(vol, /export const wxGlideU/);
   const bake = read('src/3d/planetGen/planetGenBake.tsl.js');

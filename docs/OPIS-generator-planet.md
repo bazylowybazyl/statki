@@ -1087,3 +1087,40 @@ cienia na grunt i nie są cieniowane przez wieże; przy bardzo niskim słońcu c
 punktach (może się rwać); z najbliższej odległości (1,1 R) kłęby są miękkie — tekstura szumu 64³ to ~4 km na
 teksel — i zostaje lekkie ziarno; rodzaj chmur nie wynika z klimatu mapy (poza tropikami), nie ma osobnej chmury
 deszczowej; styl „pokład” (planeta toksyczna) nie był oglądany — demo nie pokazuje takiej planety w widoku orbitalnym.
+
+### 10.23. Chmury: bryła także w widoku z góry, światło raz na piksel, drobny szczegół z bliska (2026-11-12, demo)
+
+Po § 10.22 użytkownik wybrał „Tak, przenieś” (nowe chmury także do widoku z góry). Widok z góry rysował chmury płaską
+maską z mapy pokrycia (dawny wygląd, inny układ chmur niż bryła w widoku orbitalnym).
+
+Stan po przełączeniu samej flagi (`?bryla=1`): z daleka dobrze, z bliska (kadr 600 i 180 km) gładkie „woskowe” bryły
+bez drobnej faktury i wyraźne ziarno — widok z góry schodzi znacznie bliżej niż orbitalny, a szum kłębów ma ~4 km na
+teksel.
+
+Zrobione:
+
+- **Drobny szczegół z bliska**: trzy oktawy szumu kłębów w progu (kłębki ~22, ~5, ~1,3 km), wchodzące z rozmiarem
+  piksela, czytane w kolumnie; próbki tylko przy powierzchni chmury.
+- **Światło raz na piksel na wierzchu chmury** (punkt wyznaczony z rampy progu): dwie bliskie próbki z drobnym
+  szczegółem + dalekie do stropu; głębsze próbki ciemnieją z drogą przebytą w chmurze.
+- **Gęstość = średnia z kroku marszu** (całka rampy progu), przesunięcie startu marszu częściowe (0,6).
+- Demo: bryła domyślnie w obu widokach; `?bryla=0` — płaska maska.
+
+Błędy po drodze: pierwsze amplitudy drobnych oktaw (0,10 / 0,06 / 0,035 odchyleń szumu) nie przebijały rampy progu —
+chmura dalej gładka (teraz 0,26 / 0,11 / 0,04, jak w szeregu fraktalnym); ziarno przypisałem najpierw próbkowaniu
+rampy gęstości — średnia z kroku go nie usunęła; próba bez przesunięcia startu pokazała pasy i plamy o ostrych
+brzegach, czyli źródłem było ŚWIATŁO liczone w miejscu każdej próbki (i dalekie próbki uruchamiane w różnych krokach
+u sąsiednich pikseli).
+
+Koszt (czas GPU całej klatki, 1600 × 900, ten sam kadr przy brzegu układu chmur):
+
+| Widok | chmury płaskie | bryła § 10.22 | bryła teraz |
+|---|---|---|---|
+| z góry, zoom 0,06 / 0,3 / 1,2 / 4 | 0,62 / 0,73 / 0,67 / 0,76 ms | (pierwsza próba) 1,47 / 1,39 / 1,19 / 1,21 | 1,52 / 1,48 / 1,24 / 1,30 ms |
+| orbitalny, 2,2 R / 1,3 R / 1,1 R | — | 1,65 / 1,17 / 1,20 ms | 1,75 / 1,32 / 1,34 ms |
+
+Stara bryła (przed § 10.22) w widoku orbitalnym: 1,27 / 0,87 / 0,96 ms. W 5120 × 1440 nie mierzone.
+
+Czego brakuje: chmury płaskie (dalsze planety, `?bryla=0`) mają dawny wygląd i inny układ chmur; na granicach cienia
+zostaje lekkie ziarno; przy kadrze poniżej ~100 km chmura wypełnia ekran miękką bielą (szczegół kończy się na ~1,3 km);
+cień chmur na gruncie nie ma drobnego szczegółu (miękki).

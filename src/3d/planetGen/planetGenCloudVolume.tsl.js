@@ -15,10 +15,14 @@
 //     drobne komórki płatami, przy dużej ilości gładka ława altostratus);
 //   • SZCZEGÓŁ PONIŻEJ PIKSELA wchodzi średnią (`lodW`, `fineW`): pole kłębów mniejszych od piksela to
 //     półprzezroczysty welon o gęstości = udział pokrycia, nie ziarno;
-//   • ŚWIATŁO: w każdej próbce gęstość ku słońcu — bliska próbka z kłębami (sąsiednie kłęby) i kilka dalekich aż do
-//     stropu powłoki (wieża rzuca długi cień na ławę pod sobą), osłabienie z drugim, wolniej gasnącym członem
-//     (wielokrotne rozpraszanie w przybliżeniu), faza z rozjaśnieniem pod słońce, światło nieba zależne od wysokości
-//     w chmurze, cień planety i barwa słońca przy terminatorze.
+//   • ŚWIATŁO liczone RAZ NA PIKSEL na WIERZCHU chmury (punkt nad pierwszą gęstą próbką, wyznaczony z rampy progu —
+//     ciągły między pikselami): gęstość ku słońcu w dwóch bliskich próbkach z kłębami i drobnym szczegółem (strona
+//     od słońca jasna, odsłoneczna ciemna) i w kilku dalekich aż do stropu powłoki (wieża rzuca długi cień na ławę
+//     pod sobą); głębsze próbki marszu ciemnieją z grubością optyczną przebytą w chmurze. Światło liczone
+//     w miejscu każdej próbki zależało od tego, gdzie w kroku wypadła próbka: z przesunięciem startu szumem piksela
+//     — ziarno, bez niego — pasy. Do tego: osłabienie z drugim, wolniej gasnącym członem (wielokrotne rozpraszanie
+//     w przybliżeniu), faza z rozjaśnieniem pod słońce, światło nieba zależne od wysokości w chmurze, cień planety
+//     i barwa słońca przy terminatorze.
 // Cień chmur na gruncie liczy materiał powierzchni z tego samego kształtu (funkcje `cloudCover`, `cloudRegime`,
 // `cloudShape` stąd; uniformy uGnCloud, uGnCloudVol). Wartości per obiekt w `material.uniforms`
 // (CLOUD_VOLUME_UNIFORM_KEYS, tekstura `cloudTexture`). Obraz (zasada żelazna 1).
@@ -36,7 +40,7 @@ const PI = Math.PI;
 export const CLOUD_VOLUME_UNIFORM_KEYS = Object.freeze({
   ...SHELL_UNIFORM_KEYS,
   uCvShape: 'vec4',    // r0, r1 (promienie powłoki), ekstynkcja [1 / R], wzmocnienie pokrycia
-  uCvNoise: 'vec4',    // częstość kłębów [1 / R], częstość erozji, siła erozji, czas [s]
+  uCvNoise: 'vec4',    // częstość kłębów [1 / R], częstość drobnego szczegółu (kłębki z bliska, erozja brzegów), siła erozji, czas [s]
   uCvTint: 'vec3',     // barwa chmur (albedo)
   uCvSky: 'vec4',      // rgb — światło nieba w chmurze, a — kąt teksela mapy chmur [rad]
   uCvWx: 'vec4',       // pogoda: bieżący czas [s] (kłęby jadą z pasami wiatru), wiatr [rad / s], 1 — włączona, czas mapy pogody [s]
@@ -47,6 +51,8 @@ export const CLOUD_VOLUME_STEPS = 44;
 export const CLOUD_VOLUME_STEPS_MIN = 20;
 /** Zagęszczenie próbek marszu ku podstawie powłoki (promień trafiający w planetę): położenie = 1 − (1 − u)^p. */
 export const CLOUD_STEP_BIAS = 1.6;
+/** Udział szumu piksela w przesunięciu startu marszu (0 — stały start w połowie kroku, 1 — cały krok). */
+export const CLOUD_JITTER = 0.6;
 /** Dalekie próbki światła ku słońcu (do stropu powłoki) w każdej gęstej próbce marszu. */
 export const CLOUD_LIGHT_FAR = 4;
 const LUM = vec3(0.299, 0.587, 0.114);
@@ -148,10 +154,17 @@ const fadeOf = (cov, hN) => smoothstep(0.0, 0.06, hN).mul(float(1.0).sub(smooths
  * Opcje: `puffs: false` (stała JS) — bez szumu kłębów (średnia gęstość masy + wieże: dalekie próbki światła);
  * `lodW` — węzeł 0…1: 1 — kłęby rozdzielone, 0 — mniejsze od piksela (wchodzą średnią); `sharp` — węzeł ≥ 1:
  * mnożnik stromości progu (z bliska brzeg kłębu ostrzejszy — przy stałej stromości przejście ma ~20 km i kłąb
- * widziany z kilkuset km jest rozmyty).
+ * widziany z kilkuset km jest rozmyty); `detail: { w, fine }` — DROBNY SZCZEGÓŁ progu z bliska: trzy oktawy szumu
+ * kłębów o częstości `fine` · (1; 4,1; 17) (kłębki ~22, ~5 i ~1,3 km) z wagami `w` (vec3 0…1, z rozmiaru piksela),
+ * czytane w KOLUMNIE (pion ściśnięty 5×) — szczegół 3D drobniejszy niż krok marszu dawał ziarno zamiast faktury;
+ * `stepH` — węzeł: pionowy zasięg kroku marszu [wysokości powłoki]: gęstość kłębów jest wtedy ŚREDNIĄ z kroku
+ * (próg rośnie z wysokością liniowo, więc całka przyciętej rampy ma wzór) zamiast wartością w punkcie — krycie nie
+ * zależy od tego, gdzie w kroku wypadła próbka (punkt + przesunięcie startu szumem piksela = ziarno).
  * Zwraca { d — gęstość 0…1 przed erozją brzegów, sheet — cienka ława wokół mas, fade — zanik podstawy / stropu,
- * xr — punkt w układzie pasa wiatru (erozja brzegów), hN — wysokość w powłoce }. Gęstość bez erozji:
- * max(sheet, d) · fade. Wklejana.
+ * fineS — próbka pierwszej oktawy drobnego szczegółu (kanały G, B — erozja brzegów; bez `detail` mediany), det —
+ * drobny szczegół progu (± ~0,05; światło: wypukłość jaśniejsza, wklęsłość ciemniejsza), topUp — odległość w górę
+ * do wierzchu chmury [wysokości powłoki], hN — wysokość w powłoce }.
+ * Gęstość bez erozji: max(sheet, d) · fade. Wklejana.
  */
 export function cloudShape(x, P, cov, reg, opts = {}) {
   const puffs = opts.puffs !== false;
@@ -165,7 +178,9 @@ export function cloudShape(x, P, cov, reg, opts = {}) {
   fade.assign(fadeOf(cov, hN));
   const d = float(0.0).toVar();
   const sheet = float(0.0).toVar();
-  const xr = vec3(0.0).toVar();
+  const fineS = vec4(N_MED, W_MED, W_MED, 0.5).toVar();
+  const det = float(0.0).toVar();
+  const topUp = float(0.0).toVar();
   // 0 — ława warstwowa (płaska), 1 — chmury kłębiaste
   const cum = float(0.0).toVar();
   cum.assign(smoothstep(0.3, 0.5, reg.x));
@@ -177,8 +192,9 @@ export function cloudShape(x, P, cov, reg, opts = {}) {
   // ponad najwyższym możliwym wierzchem (próg powyżej całego szumu) i poza strefą wież — bez próbek szumu
   If(fade.greaterThan(0.002).and(thrFloor.add(hN.mul(slope)).lessThan(0.88).or(conv.greaterThan(0.01))), () => {
     const B = bandFrames(x, P.wxv);
-    xr.assign(B.xr);
     const drift = vec3(P.time.mul(0.006), 0.0, P.time.mul(0.004));
+    // pion ściśnięty 5×: wzór czytany w KOLUMNIE (prawie stały wzdłuż promienia planety)
+    const rc = P.r0.add(hN.mul(P.thick).mul(0.2)).div(len).toVar();
     // (kłąb, skupisko, komórki, drobne komórki): kanał R tekstury w skali kłębu i ~3× większej; kanały Worleya (G, B)
     // tej samej próbki co kłąb — drobne kopułki bez osobnej próbki (szczegół drobniejszy niż krok marszu, z osobnej
     // próbki o wyższej częstości, dawał ziarno: sąsiednie piksele trafiały w różne warstwy wzoru)
@@ -204,7 +220,33 @@ export function cloudShape(x, P, cov, reg, opts = {}) {
       // drobne kopułki: ława — komórki Worleya (środek komórki wyżej, styki niżej: stratocumulus), kłębiaste —
       // drobniejsze kłęby na dużych (kalafior). Wchodzą w PRÓG, więc mają cień własny, nie tylko zarys
       const bump = mix(v.z.sub(W_MED).mul(0.3), v.w.sub(W_MED).mul(0.14), cum);
-      const dNear = clamp(v.x.add(bump).sub(thr).mul(kN), 0.0, 1.0);
+      if (opts.detail) {
+        // drobny szczegół tylko przy POWIERZCHNI chmury (rampa bez szczegółu w zasięgu jego amplitudy): wysoko nad
+        // wierzchem i głęboko we wnętrzu nie zmienia gęstości, a próbki w każdym kroku marszu podwajały koszt bryły
+        const base = v.x.add(bump).sub(thr);
+        If(base.greaterThan(-0.11).and(base.lessThan(0.27)), () => {
+          const xc = B.xr.mul(rc).mul(opts.detail.fine).toVar();
+          const w = opts.detail.w;
+          fineS.assign(texture3D(P.noise, xc.add(vec3(0.0, P.time.mul(0.009), 0.0)), float(0.0)));
+          det.assign(fineS.r.sub(N_MED).mul(0.26).mul(w.x));
+          If(w.y.greaterThan(0.01), () => {
+            det.addAssign(texture3D(P.noise, xc.mul(4.1).add(vec3(0.31, 0.57, 0.13)), float(0.0)).r.sub(N_MED).mul(0.11).mul(w.y));
+          });
+          If(w.z.greaterThan(0.01), () => {
+            det.addAssign(texture3D(P.noise, xc.mul(17.0).add(vec3(0.71, 0.23, 0.49)), float(0.0)).r.sub(N_MED).mul(0.04).mul(w.z));
+          });
+        });
+      }
+      const ramp = v.x.add(bump).add(det).sub(thr).mul(kN);
+      // wierzch chmury nad punktem: tam, gdzie rampa progu schodzi do zera (próg rośnie z wysokością liniowo)
+      topUp.assign(clamp(ramp.div(kN.mul(slope)), 0.0, 0.35));
+      let dNear = clamp(ramp, 0.0, 1.0);
+      if (opts.stepH) {
+        // średnia przyciętej rampy na odcinku ±half: (F(a + half) − F(a − half)) / (2 · half), F — całka clamp(u, 0, 1)
+        const half = max(slope.mul(kN).mul(opts.stepH).mul(0.5), 1e-3);
+        const F = (u) => clamp(u, 0.0, 1.0).pow2().mul(0.5).add(max(u.sub(1.0), 0.0));
+        dNear = F(ramp.add(half)).sub(F(ramp.sub(half))).div(half.mul(2.0));
+      }
       d.assign(lodW ? mix(dAvg, dNear, lodW) : dNear);
     } else {
       d.assign(dAvg);
@@ -216,18 +258,16 @@ export function cloudShape(x, P, cov, reg, opts = {}) {
     // wyrasta z najmocniejszych kłębów; próg rośnie lekko z wysokością (słabsze wieże kończą się niżej), pod stropem
     // spada (kowadło)
     If(conv.greaterThan(0.01), () => {
-      // pion ściśnięty 5×: wzór czytany w KOLUMNIE (prawie stały wzdłuż promienia planety)
-      const rc = P.r0.add(hN.mul(P.thick).mul(0.2)).div(len).toVar();
       const tower = (xq) => texture3D(P.noise, xq.mul(rc).mul(P.freq).add(drift), float(0.0)).r;
       const nT = float(0.0).toVar();
       nT.assign(tower(B.xr));
       If(B.seam.greaterThan(0.002), () => { nT.assign(mixNoise(nT, tower(B.x2), B.seam, N_MED)); });
       const thrT = float(M.towerThr).add(hN.mul(M.towerTaper)).sub(smoothstep(0.7, 0.86, hN).mul(M.anvil)).add(float(1.0).sub(conv).mul(0.25));
-      const dT = clamp(nT.add(v.w.sub(W_MED).mul(0.1)).sub(thrT).mul(kN.mul(1.6)), 0.0, 1.0);
+      const dT = clamp(nT.add(v.w.sub(W_MED).mul(0.1)).add(det).sub(thrT).mul(kN.mul(1.6)), 0.0, 1.0);
       d.assign(max(d, lodW ? mix(conv.mul(0.07), dT, lodW) : dT));
     });
   });
-  return { d, sheet, fade, xr, hN };
+  return { d, sheet, fade, fineS, det, topUp, hN };
 }
 
 // Wysokość punktu w powłoce 0…1 (podstawa → strop).
@@ -253,20 +293,11 @@ const coverUv = (dir, U) => {
 // Pokrycie z mapy chmur w kierunku punktu x (układ kuli chmur) — próbka mapy z poziomem mipmapy.
 const coverAt = (x, U, lod) => cloudCover(dot(cloudTex.sample(coverUv(x.div(max(length(x), 1e-5)), U)).level(lod).rgb, LUM), U.uCvShape.w);
 
-// Gęstość z erozją brzegów: Worley średni i drobny (kanały G, B) strzępi brzegi kłębu, wnętrze zostaje lite.
-// Wzór erozji czytany w KOLUMNIE (pion ściśnięty 5×): komórki 3–11 km są drobniejsze niż krok marszu, w pełnym 3D
-// sąsiednie piksele trafiały w różne warstwy wzoru i zamiast faktury wychodziło ziarno.
-function eroded(S, U, noise, erodeK) {
-  const d = float(0.0).toVar();
-  d.assign(S.sheet);
-  If(S.d.greaterThan(0.0), () => {
-    const up = S.hN.mul(U.uCvShape.y.sub(U.uCvShape.x));
-    const rc = U.uCvShape.x.add(up.mul(0.2)).div(U.uCvShape.x.add(up));
-    const hs = texture3D(noise, S.xr.mul(rc).mul(U.uCvNoise.y).add(vec3(0.0, U.uCvNoise.w.mul(0.009), 0.0)), float(0.0));
-    const m = float(1.0).sub(hs.g.mul(0.62).add(hs.b.mul(0.38))).mul(erodeK);
-    d.assign(max(d, clamp(S.d.sub(m).div(max(float(1.0).sub(m), 0.2)), 0.0, 1.0)));
-  });
-  return d.mul(S.fade);
+// Gęstość z erozją brzegów: Worley średni i drobny (kanały G, B pierwszej oktawy drobnego szczegółu — czytanej
+// w kolumnie) strzępi brzegi kłębu, wnętrze zostaje lite.
+function eroded(S, erodeK) {
+  const m = float(1.0).sub(S.fineS.g.mul(0.62).add(S.fineS.b.mul(0.38))).mul(erodeK);
+  return max(S.sheet, clamp(S.d.sub(m).div(max(float(1.0).sub(m), 0.2)), 0.0, 1.0)).mul(S.fade);
 }
 
 let graph = null;
@@ -286,6 +317,8 @@ function build() {
     const erodeK = U.uCvNoise.z.mul(fineW).toVar();
     // z bliska (piksel poniżej ~0,0005 R) brzegi kłębów ostrzejsze
     const sharp = mix(float(2.4), float(1.0), smoothstep(0.0001, 0.0006, pixA)).toVar();
+    // drobny szczegół kłębów: oktawa wchodzi, gdy jej kłębki (~0,004, ~0,001, ~0,00025 R) mają kilka pikseli
+    const detW = vec3(fineW, float(1.0).sub(smoothstep(0.00012, 0.0005, pixA)), float(1.0).sub(smoothstep(0.00003, 0.00012, pixA))).toVar();
     const R = shellRay(U, vDir, U.uCvShape.y, U.uCvShape.x);
     const sun = normalize(U.uShSun.xyz).toVar();
     const seg = min(max(R.t1.sub(R.t0), 0.0), U.uCvMisc.x).toVar();
@@ -294,7 +327,9 @@ function build() {
     // tarczy odcinek jest wielokrotnie dłuższy (pełna liczba)
     const nS = int(clamp(seg.div(max(thick.mul(U.uCvMisc.z), 1e-7)), float(CLOUD_VOLUME_STEPS_MIN), float(CLOUD_VOLUME_STEPS))).toVar();
     const dt = seg.div(float(nS)).toVar();
-    const jit = pixelNoise().toVar();
+    // przesunięcie startu marszu szumem piksela — częściowe: pełne daje ziarno na granicach cienia, zerowe zostawia
+    // cienkie linie na stykach warstw próbek
+    const jit = mix(float(0.5), pixelNoise(), CLOUD_JITTER).toVar();
     const sigma = U.uCvShape.z;
     // faza: rozjaśnienie pod słońce (srebrne brzegi przy terminatorze), przycięte — bez prześwietlenia całej ławy
     const cosT = dot(R.rd, sun);
@@ -401,10 +436,10 @@ function build() {
     const any = dot(cloudTex.sample(coverUv(xm.div(max(length(xm), 1e-5)), U)).level(lodSeg).rgb, LUM).mul(U.uCvShape.w);
     // warstwa średnia wchodzi do marszu w chwili, gdy promień schodzi poniżej jej wysokości (wieże wystają ponad nią)
     const midDone = float(0.0).toVar();
-    // dalekie próbki światła liczone RAZ na piksel — w pierwszej wyraźnie gęstej próbce marszu (wierzch chmury
-    // widziany z kamery): grubość optyczna do stropu powłoki
-    const farTau = float(0.0).toVar();
-    const farDone = float(0.0).toVar();
+    // światło słońca liczone RAZ na piksel — na wierzchu chmury nad pierwszą wyraźnie gęstą próbką marszu:
+    // grubość optyczna ku słońcu [R]
+    const topTau = float(0.0).toVar();
+    const topDone = float(0.0).toVar();
     If(dt.greaterThan(1e-7).and(any.greaterThan(0.02)), () => {
       Loop({ start: int(0), end: nS, type: 'int', condition: '<' }, ({ i }) => {
         // promień trafiający w planetę kończy się przy podstawie powłoki, gdzie leży większość chmur (ławy to ~1/5
@@ -423,43 +458,48 @@ function build() {
         // mipmapy co najmniej 1,2: grzbiet pokrycia o szerokości teksela mapy (obwódka układu chmur) dawał w bryle
         // cienki jasny obrys wzdłuż brzegu masy
         const cov = coverAt(x, U, max(lod, 1.2)).toVar();
-        const S0 = cloudShape(x, P, cov, reg, { lodW, sharp });
-        const d = eroded(S0, U, noise, erodeK);
+        const stepH = dtI.mul(abs(dot(R.rd, normalize(x)))).div(thick);
+        const S0 = cloudShape(x, P, cov, reg, { lodW, sharp, detail: { w: detW, fine: U.uCvNoise.y }, stepH });
+        const d = float(0.0).toVar();
+        d.assign(eroded(S0, erodeK));
         If(d.greaterThan(0.004), () => {
           // nocna strona (poza pasem zmierzchu) — bez próbek światła: chmura tylko zasłania
           const mu = dot(normalize(x), sun).toVar();
           const S = vec3(0.0).toVar();
+          const a = float(0.0).toVar();
+          a.assign(float(1.0).sub(exp(d.mul(sigma).mul(dtI).negate())));
           If(mu.greaterThan(-0.2), () => {
-            const tau = float(0.0).toVar();
-            // bliska próbka z kłębami i drobnymi kopułkami: sąsiednie kłęby cieniują się nawzajem, wierzchołek
-            // jaśniejszy niż bok
-            const Sn = cloudShape(x.add(sun.mul(thick.mul(0.16))), P, cov, reg, { lodW, sharp });
-            tau.addAssign(max(Sn.sheet, Sn.d).mul(Sn.fade).mul(thick.mul(0.3)));
-            // dalekie próbki aż do stropu powłoki (bez szumu kłębów: masa i wieże) — wysoka chmura rzuca długi cień
-            // na niższe. Odstępy stałe: przesunięcie szumem piksela dawało ziarno w litej chmurze. Raz na piksel
-            // (w każdej gęstej próbce marszu kosztowały ponad połowę czasu bryły)
-            If(farDone.lessThan(0.5).and(d.greaterThan(0.12)), () => {
-              farDone.assign(1.0);
-              const span = min(max(float(1.0).sub(S0.hN), 0.0).mul(thick).div(max(mu, 0.09)), 0.1).toVar();
+            If(topDone.lessThan(0.5).and(d.greaterThan(0.12)), () => {
+              topDone.assign(1.0);
+              // wierzch chmury nad próbką (ciągły między pikselami — nie zależy od tego, w którym kroku marsz
+              // pierwszy raz trafił w chmurę)
+              const xt = x.add(normalize(x).mul(S0.topUp.mul(thick))).toVar();
+              // dwie bliskie próbki z kłębami i drobnym szczegółem: strona od słońca jasna, odsłoneczna i szczeliny
+              // między kłębami ciemne
+              for (const o of [0.07, 0.2]) {
+                const Sn = cloudShape(xt.add(sun.mul(thick.mul(o))), P, cov, reg, { lodW, sharp, detail: { w: detW, fine: U.uCvNoise.y } });
+                topTau.addAssign(max(Sn.sheet, Sn.d).mul(Sn.fade).mul(thick.mul(0.15)));
+              }
+              // dalekie próbki aż do stropu powłoki (bez szumu kłębów: masa i wieże) — wysoka chmura rzuca długi cień
+              // na niższe. Odstępy stałe: przesunięcie szumem piksela dawało ziarno w litej chmurze
+              const span = min(max(float(1.0).sub(S0.hN.add(S0.topUp)), 0.0).mul(thick).div(max(mu, 0.09)), 0.1).toVar();
               for (let k = 0; k < CLOUD_LIGHT_FAR; k++) {
-                const xs = x.add(sun.mul(span.mul((k + 0.6) / CLOUD_LIGHT_FAR))).toVar();
+                const xs = xt.add(sun.mul(span.mul((k + 0.6) / CLOUD_LIGHT_FAR))).toVar();
                 const cs = coverAt(xs, U, lod.add(1.5)).toVar();
                 const Sf = cloudShape(xs, P, cs, reg, { puffs: false });
-                farTau.addAssign(max(Sf.sheet, Sf.d).mul(Sf.fade).mul(span.div(CLOUD_LIGHT_FAR)));
+                topTau.addAssign(max(Sf.sheet, Sf.d).mul(Sf.fade).mul(span.div(CLOUD_LIGHT_FAR)));
               }
             });
-            // głębsze próbki: do tego własna chmura nad próbką — z grubości optycznej przebytej po promieniu widzenia
-            // (ciągła w obrazie; wysokość pierwszej trafionej próbki skakała między pikselami na brzegu cienkiej
-            // chmury nad grubszą i rysowała wzdłuż niego obrys)
-            tau.addAssign(farTau);
-            const selfOd = log2(max(Tr, 0.03)).mul(-0.6931472 * 0.5);
-            const od = tau.mul(sigma).add(selfOd);
+            // głębsze próbki: własna chmura nad próbką — z grubości optycznej przebytej po promieniu widzenia do
+            // środka kroku (ciągła w obrazie)
+            const selfOd = log2(max(Tr.mul(sqrt(float(1.0).sub(a))), 0.03)).mul(-0.6931472 * 0.5);
+            const od = topTau.mul(sigma).add(selfOd);
             // osłabienie wprost + wolniej gasnący człon (światło rozproszone wielokrotnie we wnętrzu chmury)
             const lightT = exp(od.negate()).mul(0.7).add(exp(od.mul(-0.14)).mul(0.3));
-            // światło nieba: wierzchołki jaśniejsze niż podstawy, tylko po dziennej stronie
-            S.assign(lightAt(x, mu, lightT, S0.hN.mul(0.7).add(0.3)));
+            // światło nieba: wierzchołki jaśniejsze niż podstawy, tylko po dziennej stronie; drobne kłębki: wypukłość
+            // jaśniejsza, wklęsłość ciemniejsza (światło nieba nie dochodzi do szczelin)
+            S.assign(lightAt(x, mu, lightT.mul(clamp(S0.det.mul(2.2).add(1.0), 0.7, 1.2)), S0.hN.mul(0.7).add(0.3)));
           });
-          const a = float(1.0).sub(exp(d.mul(sigma).mul(dtI).negate()));
           col.addAssign(S.mul(a).mul(Tr));
           Tr.mulAssign(float(1.0).sub(a));
         });

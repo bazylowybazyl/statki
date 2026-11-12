@@ -126,8 +126,9 @@ const S = {
   // pogoda: mnożnik czasu (0 — stoi; `?pogoda=off` — mapa chmur wypieczona raz, bez pogody)
   wx: num('pogoda', 1), wxOn: params.get('pogoda') !== 'off',
   patchOn: params.get('wycinki') !== '0', lavaOn: true, cloudsOn: false,
-  // chmury jako bryła: osobno dla widoku orbitalnego (domyślnie tak) i widoku z góry (domyślnie płaska maska)
-  volOrbit: params.get('bryla') !== '0', volTop: params.get('bryla') === '1', auroraOn: true, atmOn: true,
+  // chmury jako bryła: przełącznik osobno dla widoku orbitalnego i widoku z góry; domyślnie w obu (`?bryla=0` —
+  // płaska maska w obu)
+  volOrbit: params.get('bryla') !== '0', volTop: params.get('bryla') !== '0', auroraOn: true, atmOn: true,
   // TRYB ULTRA (`?ultra=1|0`, domyślnie na szerokich ekranach): mapa planety 4096 × 2048 zamiast 2048 × 1024, siatka
   // rzek 4096 (dwa razy gęstsza sieć), okno pod kamerą 6144 × 3072. `?mapa=`, `?rzeki=`, `?wycinek=` — wprost.
   ultra: ULTRA,

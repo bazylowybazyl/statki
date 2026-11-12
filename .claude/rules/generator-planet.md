@@ -105,40 +105,36 @@ paths:
   pióropusz 10 (`renderOrder`).
 - Tekstura szumu 3D (`planetGenNoise3D.js`, 64³, okres 1, z haszu na CPU) jest wspólna dla chmur, zorzy i cienia
   kłębów na gruncie. Próbki w pętli i gałęziach z jawnym poziomem (`texture3D(t, uvw, float(0))`, `.level()`).
-- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`, opis i błędy po drodze: `docs/OPIS-generator-planet.md`
-  § 10.22): gęstość = (szum kłębów − próg) · K; próg z MASY i WYSOKOŚCI w powłoce (`cloudShape`, liczby
-  `CLOUD_MODEL` — stoją na kwantylach kanału R szumu, pilnuje test). MASA = pokrycie z mapy chmur + szum SKUPISK
-  (~3× większa skala niż kłąb, siła `agg`): w tym samym pokryciu są miejsca lite i puste — nieregularne zbiorowiska
-  z czystym niebem pomiędzy. Samo pokrycie w progu (kłęby równo po całym polu) wygląda z daleka jak piana.
-- RODZAJ chmur z pola niskiej częstości (`cloudRegime`, jedna próbka na piksel, stały w kolumnie): ława warstwowa
-  (niska, płaska, kopułki z kanału Worleya tej samej próbki co kłąb), kłębiaste (kopuły — próg rośnie z wysokością;
-  nachylenie = stosunek szerokości kłębu do wysokości: 0,8 dawało placki półprzezroczyste z bliska, jest 0,5),
-  WIEŻE (szum kłębów czytany w kolumnie — pion ściśnięty 5×; próg prawie stały z wysokością, pod stropem niższy =
-  kowadło). Próg podstawy ma dno zależne od rodzaju (`topDeck`, `topCum`) — najgęstsza masa nie wypełnia całej
-  powłoki, więc wieże wystają ponad nią. Rodzaje per styl chmur planety: `uCvKind` (wieże, warstwy cienkie,
-  przesunięcie rodzaju).
-- WARSTWY CIENKIE (wysoka — cirrus, średnia — altocumulus) liczone RAZ NA PIKSEL w punkcie przecięcia promienia
-  z kulą warstwy, bez marszu; wzór z szumu o ściśniętej osi y dziedziny (smugi wzdłuż równoleżników), miękki próg,
-  krycie z ILOŚCI, nie z progu (próg rosnący z ilością zostawia z rzadkich cirrusów cienkie „żyłki”). Warstwa
-  średnia tylko na obrzeżach układów chmur — nad litą masą biała płaska warstwa zasłania jej rzeźbę rozmytą plamą.
-  Średnia wchodzi do marszu w chwili zejścia promienia poniżej jej wysokości, wysoka leży nad wszystkim.
-- ŚWIATŁO: bliska próbka z kłębami w każdej gęstej próbce marszu + DALEKIE próbki do stropu powłoki (bez szumu
-  kłębów: masa i wieże — długi cień wieży na niższych chmurach) liczone raz na piksel, w pierwszej wyraźnie gęstej
-  próbce (w każdej próbce kosztowały ponad połowę czasu bryły); cień własny głębszych próbek z grubości optycznej
-  przebytej po promieniu widzenia (wysokość pierwszej trafionej próbki skacze między pikselami i rysuje obrysy).
-  Odstępy dalekich próbek STAŁE — przesunięcie szumem piksela daje ziarno w litej chmurze (zgłoszenie użytkownika).
-- Szczegół poniżej piksela wchodzi średnią (`lodW`: gęstość = udział pokrycia przy danym progu), drobny szczegół
-  3D drobniejszy niż krok marszu daje ZIARNO zamiast faktury (sąsiednie piksele trafiają w różne warstwy wzoru):
-  kopułki z próbki w skali kłębu, wzór erozji brzegów czytany w kolumnie. Próbki marszu gęstsze ku podstawie powłoki
-  (promień trafiający w planetę — tam leży większość chmur), z bliska brzeg kłębu ostrzejszy (`sharp`).
-- Zmiana modelu = zmiana także cienia na gruncie: materiał powierzchni woła te same funkcje (`cloudCover`,
-  `cloudRegime`, `cloudShape`) na trzech wysokościach (ława, kopuły, wieże); wieże i przesunięcie rodzaju
-  przechodzą z bryły do cienia w `setCloudMode` (`uGnCloudVol3.y / z`).
+- CHMURY JAKO BRYŁA (`planetGenCloudVolume.tsl.js`; opis, błędy po drodze i koszt: `docs/OPIS-generator-planet.md`
+  § 10.22–10.23): gęstość = (szum kłębów − próg) · K; próg z MASY i WYSOKOŚCI w powłoce (`cloudShape`, liczby
+  `CLOUD_MODEL` na kwantylach kanału R szumu — pilnuje test). MASA = pokrycie z mapy chmur + szum SKUPISK (~3×
+  większa skala niż kłąb): zbiorowiska lite w środku, z czystym niebem pomiędzy. Samo pokrycie w progu (kłęby równo
+  po całym polu) wygląda z daleka jak piana.
+- RODZAJ chmur z pola niskiej częstości (`cloudRegime`, raz na piksel, stały w kolumnie): ława warstwowa (niska,
+  kopułki z kanału Worleya próbki kłębu), kłębiaste (nachylenie progu 0,5 = kłąb wysoki jak szeroki; 0,8 dawało
+  półprzezroczyste placki), WIEŻE (szum kłębów w kolumnie — pion ściśnięty 5×; pod stropem próg niższy = kowadło).
+  Dno progu podstawy zależne od rodzaju (`topDeck`, `topCum`) — masa nie wypełnia powłoki, wieże wystają ponad nią.
+  Rodzaje per styl chmur planety: `uCvKind`.
+- WARSTWY CIENKIE (cirrus, altocumulus) RAZ NA PIKSEL w punkcie przecięcia promienia z kulą warstwy, bez marszu:
+  wzór o ściśniętej osi y dziedziny (smugi wzdłuż równoleżników), miękki próg, krycie z ILOŚCI (próg rosnący
+  z ilością zostawia cienkie „żyłki”). Średnia tylko na obrzeżach układów chmur (nad litą masą zasłania jej rzeźbę).
+- ŚWIATŁO słońca RAZ NA PIKSEL na WIERZCHU chmury — punkt nad pierwszą wyraźnie gęstą próbką, wyznaczony z rampy
+  progu (`topUp`, ciągły między pikselami): dwie bliskie próbki z kłębami i drobnym szczegółem + dalekie do stropu
+  powłoki bez szumu kłębów (cień wieży na niższych chmurach); głębsze próbki ciemnieją z grubością optyczną przebytą
+  po promieniu widzenia. Światło w miejscu KAŻDEJ próbki zależy od jej położenia w kroku: z przesunięciem startu
+  szumem piksela — ziarno (zgłoszenie użytkownika), bez niego — pasy. Przesunięcie startu częściowe (`CLOUD_JITTER`).
+- GĘSTOŚĆ w próbce marszu = ŚREDNIA z kroku (`stepH`: całka rampy progu), nie wartość w punkcie; próbki gęstsze ku
+  podstawie powłoki. Szczegół poniżej piksela wchodzi średnią (`lodW`). DROBNY SZCZEGÓŁ z bliska (`detail`): trzy
+  oktawy szumu kłębów (~22, ~5, ~1,3 km) w PROGU, wchodzące z rozmiarem piksela, czytane w KOLUMNIE (szczegół 3D
+  drobniejszy niż krok marszu daje ziarno), amplitudy jak w szeregu fraktalnym (mniejsze nie przebijają rampy),
+  próbki tylko przy powierzchni chmury (w każdej próbce marszu podwajały koszt). Z bliska brzeg ostrzejszy (`sharp`).
+- Zmiana modelu = zmiana cienia na gruncie: materiał powierzchni woła `cloudCover`, `cloudRegime`, `cloudShape` na
+  trzech wysokościach; wieże i przesunięcie rodzaju przechodzą do cienia w `setCloudMode` (`uGnCloudVol3.y / z`).
 - Gęstość „pokrycie × profil wysokości + szum” daje gładką masę (wygląd bitej śmietany); kłęby jednej skali —
   z daleka równy „popcorn” i widoczny okres kafla szumu. Kopuły wychodzą z progu rosnącego z wysokością.
-- NIE zrobione: chmury płaskie (widok z góry, dalsze planety) mają dawny wygląd; warstwy cienkie nie rzucają cienia
-  na grunt i nie są cieniowane przez wieże; z najbliższej odległości kłęby są miękkie (tekstura szumu 64³ = ~4 km
-  na teksel) i zostaje lekkie ziarno; rodzaj chmur nie wynika z klimatu mapy (poza tropikami).
+- Demo: bryła domyślnie w OBU widokach; `?bryla=0` albo przycisk „chmury bryłą” — płaska maska (~2× tańsza).
+  NIE zrobione: chmury płaskie (dalsze planety) mają dawny wygląd i inny układ chmur (maska z samej mapy pokrycia);
+  warstwy cienkie bez cienia na gruncie; lekkie ziarno na granicach cienia; rodzaj chmur nie wynika z klimatu mapy.
 - Jasność chmur w jednostkach grafu gry: oświetlony wierzchołek ~0,9 (pod progiem bloomu), faza pod słońce
   przycięta (Henyey–Greenstein bez przycięcia to ×5 — prześwietlona cała ława), słońce bez mnożenia przez jasność
   ponad 1. Zorza i krawędź atmosfery to emitery HDR — jasność dobieraj na kadrze, w którym leżą na krawędzi tarczy
@@ -501,7 +497,7 @@ paths:
 - Czasy i pamięć: `node scripts/webgpu/generator-planet-pomiar.mjs [--roz 1024,2048,4096 --uklad terran,rocky,…]`.
 - Testy: `node --test tests/planetGen.test.mjs`.
 - Planeta z bliska: demo `dema/planeta-zblizenie.html` (`?styl=popiol|lawa|siarka|terran`, `?wycinek=2048|4096`,
-  `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `?widok=orbita|gora`, `?bryla=0|1`, `?chmury=0…1`, `window.__zbl`: `setView`,
+  `?wycinki=0`, `?erupcja=0`, `?gpu=1`, `?widok=orbita|gora`, `?bryla=0` (chmury płaskie w obu widokach), `?chmury=0…1`, `window.__zbl`: `setView`,
   `goVent`, `setViewMode`, `orbitAt`, `advance(s)`, `measureGpu(n, pre)`, `snapshot()`), zrzuty
   `node scripts/webgpu/planeta-zblizenie-demo.mjs --styl terran --kadry planeta,daleko,wulkan,blisko,bez-wycinka`
   (demo: `?ultra=1|0`, `?mapa=2048|4096|8192`, `?rzeki=1024|2048|4096`, `?wycinek=2048|4096|6144|8192`,
