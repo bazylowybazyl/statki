@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { normalizeHullDesign, expandHullDesign } from '../src/game/hullDesign/hullDesignSchema.js';
 import { buildHullField, sampleHullField, hullFrameIntegrity } from '../src/game/hullDesign/hullDesignGeometry.js';
 import { hullDesignPreset, HD_PRESET_KEYS } from '../src/game/hullDesign/hullDesignPresets.js';
-import { HD_PRESET_CLASS, HD_NPC_PRESET_MOUNTS } from '../src/game/hullDesign/hullDesignSystemSlots.js';
+import { HD_PRESET_CLASS } from '../src/game/hullDesign/hullDesignSystemSlots.js';
+import dreadnoughtFile from '../src/game/hullDesign/warships/dreadnought.js';
 import { HD_SYSTEM_TYPES } from '../src/game/hullDesign/hullDesignSystems.js';
 import { pipeNetworkCheck, pipeModuleSdf, rasterPipeNetwork, HD_PIPE_TUNE } from '../src/game/hullDesign/hullDesignPipes.js';
 import { isPlayerBuildable, HD_BUILD_LIMITS } from '../src/game/hullDesign/hullDesignBuildable.js';
@@ -32,7 +33,7 @@ test('klasa VII tylko dla NPC: poza drabiną gracza (SHIP_CLASSES, SHIP_CLASS_MA
   assert.equal(SHIP_CLASS_MAX, 6);
   assert.ok(SHIP_CLASSES.every((c) => !c.npcOnly && c.level <= 6), 'drabina gracza bez klasy VII');
   const vii = NPC_SHIP_CLASSES[0];
-  assert.deepEqual([vii.level, vii.roman, vii.areaMax, vii.mountsMax, vii.heavyMax, vii.weaponSize], [7, 'VII', 7000000, 80, 48, 'Capital']);
+  assert.deepEqual([vii.level, vii.roman, vii.areaMax, vii.mountsMax, vii.heavyMax, vii.weaponSize], [7, 'VII', 15000000, 80, 48, 'Capital']);
   assert.ok(vii.npcOnly && vii.superweapon.mw === 1000, 'superlaser osiowy 1 000 MW (brief § 5.1)');
   assert.equal(shipClass(7), vii);
   assert.equal(shipClass(9), vii, 'poziom ponad VII → VII');
@@ -68,7 +69,7 @@ test('gracz nie wybierze klasy VII: projekt bez pola npc — mostek i rdzeń obc
   }
 });
 
-test('drednot TN: z klocków „bez czitowania”, rama w jednym kawałku, ~5 400 j. długości, w limitach klasy VII', () => {
+test('drednot TN: z klocków „bez czitowania”, rama w jednym kawałku, sylwetka wzoru w skali 8 km, w limitach klasy VII', () => {
   const d = hullDesignPreset('dreadnought');
   assert.deepEqual(HD_PRESET_CLASS.dreadnought, [7, 7]);
   const r = isPlayerBuildable(d);
@@ -80,14 +81,15 @@ test('drednot TN: z klocków „bez czitowania”, rama w jednym kawałku, ~5 40
   assert.equal(pieces.length, 1, 'rama w jednym kawałku');
   assert.equal(holes.length, 0, 'bez szpar na wylot');
   const len = f.bounds.maxX - f.bounds.minX, wid = f.bounds.maxY - f.bounds.minY;
-  assert.ok(len > 5300 && len < 5560, `długość ${len}`);
-  assert.ok(wid > 1500 && wid <= 1800, `szerokość ${wid}`);
-  assert.ok(f.area > 5.5e6 && f.area < 7e6, `powierzchnia ${f.area}`);
+  // wzór użytkownika (2026-11-12) w skali 8 km (decyzja 2026-11-13): szerokość ≈ 0,48 długości, ~13 mln j²
+  assert.ok(len > 7900 && len < 8100, `długość ${len}`);
+  assert.ok(wid > 3700 && wid < 3900, `szerokość ${wid}`);
+  assert.ok(f.area > 12e6 && f.area < 14e6, `powierzchnia ${f.area}`);
   const cls = hullDesignClass(f);
   assert.deepEqual([cls.levels.bridge, cls.levels.core], [7, 7]);
   assert.deepEqual(cls.check.issues, []);
   // detal w skali floty TN (nie długość / 1700), siatka klocków stała
-  assert.equal(d.detail, 1.25);
+  assert.equal(d.detail, 1.5);
   assert.equal(d.grid, 4);
 });
 
@@ -102,8 +104,10 @@ test('drednot TN: gniazda na typ wg briefu § 4.2 (67, ciężkich 47) i broń z 
     'builtin:—': 1, 'special:special_yamato_cannon': 12, 'main:helios_lance_l': 8, 'main:heavy_autocannon_l': 8,
     'special:—': 10, 'aux:ciws_mk2': 8, 'aux:flak_l': 6, 'missile:siege_torpedo': 4, 'missile:missile_rack': 2, 'hangar:—': 8
   });
-  // dane gniazd: pary w lustrze (y < 0) i oś
-  for (const g of HD_NPC_PRESET_MOUNTS.dreadnought) assert.ok(g.y <= 0, `(${g.x}, ${g.y})`);
+  // okręt z pliku (warships/): klasa VII w pliku i w HD_PRESET_CLASS; gniazda w parach burt albo na osi
+  assert.deepEqual(dreadnoughtFile.cls, [7, 7]);
+  const mods = expandHullDesign(hullDesignPreset('dreadnought')).modules.filter((m) => m.type === 'mount' || m.type === 'hangar');
+  for (const m of mods) if (Math.abs(m.y) > 0.5) assert.ok(mods.some((q) => q !== m && q.type === m.type && q.x === m.x && q.y === -m.y), `bez pary (${m.x}, ${m.y})`);
 });
 
 test('drednot TN: systemy na stałych miejscach — 2 rdzenie w obudowach, 3 mostki, 4 zbiorniki, 8 MAIN, 12 SIDE, 4 generatory tarczy, 2 projektory studni', () => {
@@ -112,7 +116,8 @@ test('drednot TN: systemy na stałych miejscach — 2 rdzenie w obudowach, 3 mos
   assert.deepEqual(n, { reactor: 2, bridge: 3, fuel_tank: 4, engine: 8, thruster_side: 12, shield_gen: 4, grav_proj: 2 });
   assert.ok(mods.filter((m) => HD_SYSTEM_TYPES.includes(m.type)).every((m) => m.lock), 'systemy presetu zablokowane');
   assert.ok(mods.filter((m) => m.type === 'reactor').every((m) => m.v === 2 && m.r > 30), 'gniazda obudowy R7');
-  assert.deepEqual(mods.filter((m) => m.type === 'bridge' && m.y === 0).map((m) => m.x), [-1790], 'mostek główny na rufie, na osi');
+  assert.deepEqual(mods.filter((m) => m.type === 'bridge' && m.y === 0).map((m) => [m.x, m.lv]), [[-1900, 6]], 'mostek główny na grzbiecie rufowym, poziom VI');
+  assert.ok(mods.filter((m) => m.type === 'bridge' && m.y !== 0).every((m) => m.lv === 5), 'pomocnicze w skrzydłach, poziom V');
   assert.deepEqual(mods.filter((m) => m.type === 'grav_proj').map((m) => m.y), [0, 0], 'projektory na grzbiecie');
   // dysze: MAIN + SIDE = sufit 20 stref dysz na kadłub w grze (src/3d/hullLacquer.js)
   assert.equal(n.engine + n.thruster_side, 20);

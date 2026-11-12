@@ -23,6 +23,10 @@ Poza zakresem:
 ## 2. Decyzje i kontekst
 
 - 2026-10-21 — skala 5–6 km (3× Atlas), brief w `docs/`.
+- 2026-11-12 / 13 — sylwetka ze wzoru użytkownika (grot z zębami: długie ostrze, skrzydła, dwa zęby i kolec rufy,
+  silniki w wycięciach, rów maszynowni wzdłuż osi) w skali **8 km** (kanon wzoru 17 km odrzucony: 45% promienia Ziemi
+  gry, 8× limit klasy). Klasa VII: limit powierzchni 15 mln j², R7 6 000 MW. Liczby § 3–4 niżej dotyczą jeszcze
+  wariantu 5,4 km; kadłub 8 km — `docs/KREATOR-KADLUBA.md` § „Drednoty”.
 - 2026-10-21 — drabina klas z mostka i rdzenia I–VI przyjęta (`docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md`) i wdrożona
   w kreatorze (`src/data/shipClasses.js`). Drednot to **klasa VII ponad drabiną, tylko NPC** (tak jak Atlas jest
   unikatem klasy VI).
@@ -378,10 +382,11 @@ cień SDF) i jednorazowe skoki czasu klatki.
   planu kreatora (`docs/PLAN-KREATOR-STOCZNIA.md`; kreator nie jest wpięty do gry, lista integracji
   w `docs/KREATOR-KADLUBA.md`). Format kreatora nie ma limitu długości, ale kompozytor obrazu ma sufit 4 096 px
   (~0,76 teksela/j. przy 5,4 km) — do podniesienia przy B. Rekomendacja: A teraz, B jako przebudowa później.
-  **Stan 2026-10-21 (wariant B w kreatorze, do oceny):** preset `dreadnought` — drednot TN z klocków, klasa VII
-  (`NPC_SHIP_CLASSES`, R7 = 5 100 MW na dwa rdzenie), 67 gniazd wg § 4.2, systemy wg § 4.4, sieć bez wolnych końców;
-  sufit kompozytora podniesiony do 8 192 px (obraz 6 539 × 2 056, 1,2 teksela/j.), detal 1,25 j./jd, wypiek ~1,5 s,
-  cele kompozytora 462 MB. Opis i pomiary: `docs/KREATOR-KADLUBA.md` § „Drednoty”. Do gry — nadal etap E1.
+  **Stan 2026-11-13 (wariant B w kreatorze, do oceny):** preset `dreadnought` (`src/game/hullDesign/warships/
+  dreadnought.js`) — drednot TN z klocków w sylwetce wzoru użytkownika, 8 000 × 3 816 j., ~13 mln j², klasa VII
+  (`NPC_SHIP_CLASSES`: 15 mln j², R7 = 6 000 MW na dwa rdzenie), 67 gniazd wg § 4.2, systemy wg § 4.4, sieć bez wolnych
+  końców; sufit kompozytora 8 192 px (1,02 teksela/j.), detal 1,5 j./jd. Opis i pomiary: `docs/KREATOR-KADLUBA.md`
+  § „Drednoty”. Do gry — nadal etap E1.
 - Model 3D: automat ze sprite'a (`autoHull3D.js`, obrysy z `node scripts/webgpu/obrysy-floty.mjs`), bronie 3D w partiach.
 - Mostki × 3 wg `docs/BRIEF-mostek-nowego-kadluba.md`.
 - Wieżyczki-dekoracje (setki „dział” Eclipse'a) w sprite'cie i modelu, bez gniazd.

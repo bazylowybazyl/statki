@@ -70,12 +70,13 @@ export const SHIP_CLASSES = Object.freeze([
 export const SHIP_CLASS_MAX = SHIP_CLASSES.length;
 
 /**
- * KLASY TYLKO DLA NPC ponad drabiną (poziom 7 — drednot, docs/BRIEF-drednot.md § 3): limit powierzchni, gniazd
- * (ciężkich), broń do Capital i wbudowana superbroń (`superweapon`: planowana broń, pobór [MW] — § 5.1 briefu).
+ * KLASY TYLKO DLA NPC ponad drabiną (poziom 7 — drednot, docs/BRIEF-drednot.md § 3): limit powierzchni (15 mln j² —
+ * drednot TN 8 km ze wzoru użytkownika, decyzja 2026-11-13), gniazd (ciężkich), broń do Capital i wbudowana superbroń
+ * (`superweapon`: planowana broń, pobór [MW] — § 5.1 briefu).
  */
 export const NPC_SHIP_CLASSES = Object.freeze([
   Object.freeze({
-    level: 7, roman: 'VII', id: 'dreadnought', label: 'Drednot', areaMax: 7000000, mountsMax: 80, heavyMax: 48, weaponSize: 'Capital',
+    level: 7, roman: 'VII', id: 'dreadnought', label: 'Drednot', areaMax: 15000000, mountsMax: 80, heavyMax: 48, weaponSize: 'Capital',
     npcOnly: true, example: 'Drednot TN',
     superweapon: Object.freeze({ id: 'superlaser_axis', label: 'superlaser osiowy', mw: 1000 })
   })
@@ -122,7 +123,7 @@ export const CORE_LEVELS = Object.freeze([
  * typowa broń specjalna L, superlaser 1 000) + projektory studni = pobór, moc = pobór / 0,8. `proposal` — szacunek briefu.
  */
 export const NPC_CORE_LEVELS = Object.freeze([
-  Object.freeze({ level: 7, mw: 5100, proposal: 4800, cores: 2, example: 'Drednot TN' })
+  Object.freeze({ level: 7, mw: 6000, proposal: 4800, cores: 2, example: 'Drednot TN' })
 ]);
 
 /** Utrzymanie kadłuba [MW] = k · powierzchnia^exp (Custos ~13, Bellator ~95, Colossus ~229). */

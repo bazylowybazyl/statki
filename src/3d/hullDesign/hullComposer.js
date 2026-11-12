@@ -1687,7 +1687,7 @@ export class HullComposer {
           const domeC = mix(steel, hullC, 0.3).mul(float(0.62).add(sph.mul(0.45)));
           col.assign(mix(col, mix(domeC, engC.mul(1.25), max(rib, ring)), domeK));
           modCol.assign(glowSafeNode(col));
-          emis.addAssign(vec3(0.25, 0.75, 1.0).mul(slotK).mul(0.35));
+          emis.addAssign(vec3(0.25, 0.75, 1.0).mul(slotK).mul(0.2));
         });
       }).ElseIf(type.lessThan(22.5), () => {
         // PROJEKTOR STUDNI GRAWITACYJNEJ (drednot, grzbiet): ośmiokątna podstawa z nitami, gruby pierścień cewki

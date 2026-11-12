@@ -283,20 +283,20 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Urządzenia spoza gniazd: kategoria mocy `device` (`DEVICE_MW`, `hullDesignDeviceList`) — projektor studni
   grawitacyjnej `grav_proj`; generator tarczy `shield_gen` to źródło tarczy (bierze pobór tarczy; tarcza bez prądu →
   generatory martwe). Oba są systemami presetu (`HD_SYSTEM_TYPES`, `lock`) i urządzeniami sieci (`HD_POWER_LOAD`);
-  wygląd TN w kompozytorze (kody 15, 16 — gałęzie po ładowni).
-- Gniazda drednotów to dane briefu (`HD_NPC_PRESET_MOUNTS`: typ, rozmiar, promień [j.] i broń na gniazdo, wrota hangarów)
-  POZA blokiem `@gniazda` narzędzia TN (`kreator-gniazda-tn.mjs` ich nie liczy). Gniazdo o promieniu > ~41 j. nie
-  przejdzie testu głębokości: pole ramy jest obcięte do pasma 48 j. (`bandMax`).
-- SKALA DETALU: drednot TN ma `detail` 1,25 j./jd (nie długość / 1700 ≈ 3,2 — płyty, nity i rowy 3,5× większe niż
-  u Colossusa, „powiększony Colossus”); sekcje płyt w skali floty, więc okręt 3,5× dłuższy ma ich więcej. Przy
-  1,2 teksela/j. (`HD_TEX.min`) daje to ~1,5 teksela/jd — jak Colossus. Obraz drednota (6 539 × 2 056) mieści się
-  dopiero pod sufitem `HD_COMPOSER_LIMITS.maxSide` = 8 192 (gwarantowane minimum WebGPU; 4 096 dawało 0,76 teksela/j.).
-  Pomiary wypieku i pamięci: `docs/KREATOR-KADLUBA.md` § „Drednoty”.
+  wygląd TN w kompozytorze (kody 21, 22 — ostatnie gałęzie łańcucha modułów).
+- Drednot TN to okręt z pliku (`src/game/hullDesign/warships/dreadnought.js`, `{ key, label, cls: [7, 7], make }`):
+  sylwetka ze wzoru użytkownika (grot z zębami, 2026-11-12) w skali 8 km (decyzja 2026-11-13; kanon wzoru 17 km to 45%
+  promienia Ziemi gry i 8× limit klasy) — 8 000 × 3 816 j., ~13 mln j² (limit klasy VII 15 mln). Systemy i gniazda
+  stoją w pliku (jak Hyperion), nie w slotach. Gniazdo o promieniu > ~41 j. nie przejdzie testu głębokości: pole ramy
+  jest obcięte do pasma 48 j. (`bandMax`).
+- SKALA DETALU: przy 8 km obraz kompozytora dochodzi do sufitu `HD_COMPOSER_LIMITS.maxSide` = 8 192 (gwarantowane
+  minimum WebGPU) — 1,02 teksela/j.; `detail` 1,5 j./jd daje ~1,5 teksela/jd jak Colossus (długość / 1700 ≈ 4,7 to
+  „powiększony Colossus”: płyty, nity i rury 3× większe). Pomiary wypieku i pamięci: `docs/KREATOR-KADLUBA.md` § „Drednoty”.
 - Osprzęt sieci ma numer 16-bitowy w rastrze (`pipeB`: G + 256 · A; `HD_PIPE_TUNE.maxFits` 511, kompozytor `pipeFits`
-  512) — drednot ma ~430 elementów, Colossus ~290 (8 bitów obcinało nadmiar od najniższego priorytetu). Biegi zostają
+  512) — drednot ma ~470 elementów, Colossus ~290 (8 bitów obcinało nadmiar od najniższego priorytetu). Biegi zostają
   8-bitowe (`maxRuns` 255; drednot ~130).
-- Ostrze z pasów równoległych do burty: trapez obrócony o 90° (lewy bok klocka = zewnętrzna krawędź pasa), skos 1 : 3,
-  x co 12 j. — wierzchołki na siatce 4 j. (`band` / `bandIn` w `dreadnought()`).
+- Skosy z dowolnym nachyleniem na siatce: trapez obrócony o ±90° (`trapX`, `plateAft` / `plateFwd` w pliku drednota —
+  podstawa od rufy albo od dziobu); ostrze 1 : 4 ma x ≡ 4 000 (mod 16), żeby burta wypadała na siatce 4 j.
 
 ## Rdzeń: gniazdo obudowy reaktora (v 2)
 

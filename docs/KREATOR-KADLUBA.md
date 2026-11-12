@@ -391,7 +391,7 @@ powierzchnia i gniazda) i `coreLevel` (0 — jak mostek; najwyżej mostek + 1 �
 | IV Pancernik | 200 000 | 38 (22) | L | Bellator 165 292 (83%), 31 (13) |
 | V Kapitał | 420 000 | 44 (26) | L | Citadella 352 131 (84%), 35 (20) |
 | VI Superkapitał | 900 000 | 60 (32) | Capital | Colossus 721 631 (80%), 56 (24) |
-| VII Drednot — tylko NPC (§ „Drednoty”) | 7 000 000 | 80 (48) | Capital + superbroń | Drednot TN 6 114 150 (87%), 67 (47) |
+| VII Drednot — tylko NPC (§ „Drednoty”) | 15 000 000 | 80 (48) | Capital + superbroń | Drednot TN 13 130 399 (88%), 67 (47) |
 
 **Rdzeń = moc [MW]** — limit miękki. Pobór: utrzymanie kadłuba `0,07 · powierzchnia^0,6`, tarcza, broń, hangary.
 Urządzenia ponad moc gasną według kolejki priorytetów (gracz ją zmienia), zapas mocy idzie w napęd: przyspieszenie
@@ -405,7 +405,7 @@ Urządzenia ponad moc gasną według kolejki priorytetów (gracz ją zmienia), z
 | R4 | 330 | 450 | Bellator 94,6 + 47,3 + 122,0 = 264,0 (20%) |
 | R5 | 450 | 700 | Citadella 149,0 + 74,5 + 138,0 = 361,5 (20%) |
 | R6 | 1 150 | 1 500 | Colossus 229,1 + 114,6 + 558,0 = 901,7 (22%; promień śmierci 400 MW, bez niego 44% mocy) |
-| R7 (NPC, 2 rdzenie) | 5 100 | 4 800 (brief) | Drednot TN 825,8 + 412,9 + 240 (projektory) + 2 592 = 4 070,8 (20%) |
+| R7 (NPC, 2 rdzenie) | 6 000 | 4 800 (brief, 5,4 km) | Drednot TN 1 306 + 653 + 240 (projektory) + 2 592 = 4 791,5 (20%) |
 
 Kalibracja na PRAWDZIWYM domyślnym uzbrojeniu NPC (`equipNpcWeapons` w `index.html`: gniazda z edytora gry, najwyżej
 `SHIPS[rama].spec` na typ, wybór po kącie; Terra Nova — `railgun_mk2` 8 MW, `laser_pd_mk1` 3 MW, rakiety, promień śmierci;
@@ -497,39 +497,56 @@ już typ, rozmiar i broń); NPC — wybór gniazd po `spec` zostaje albo przecho
 
 ## Drednoty (klasa VII, tylko NPC — `docs/BRIEF-drednot.md`)
 
-Preset `dreadnought` (2026-10-21): drednot Terra Novy z klocków, do oceny użytkownika; gra go jeszcze nie zna (etap E1
-briefu). Stan i zasady — reguła `kreator-kadlubow` § „Drednoty: klasa VII tylko dla NPC”.
+Preset `dreadnought` — okręt z pliku `src/game/hullDesign/warships/dreadnought.js` (2026-11-13), do oceny użytkownika;
+gra go jeszcze nie zna (etap E1 briefu). Stan i zasady — reguła `kreator-kadlubow` § „Drednoty: klasa VII tylko dla NPC”.
 
-**Kadłub**: 5 420 × 1 684 j., 6 114 150 j.² (87% limitu klasy VII), 27 384 węzły belek. Sztylet: rufa ±460 z 8 gondolami
-MAIN (beczki TN) i wieżą mostka głównego między kasztelami, rozszerzenie 45° do ±720, śródokręcie z 6 sponsonami ciężkich
-baterii na burtę, ostrze 1 920 j. (skos 1 : 3) do emitera na osi. Pasy płyt śródokręcia (burtowy, środkowy, wewnętrzny)
-skręcają w ostrzu równolegle do burty (środkowy podniesiony — szewron). 79 klocków na połowę (5 ramy, reszta płyty
-i nadbudówki), 2 kasztele, `isPlayerBuildable` i rama w jednym kawałku — tak.
+**Skala (decyzje użytkownika).** 2026-10-21: drednot 5–6 km (pierwsza wersja — sztylet 5 420 × 1 684 j.). 2026-11-12:
+sylwetka ze wzoru użytkownika (grot z zębami: długie ostrze, skrzydła z kolanem, dwa zęby wygięte ku rufie, kolec
+rufy, silniki w wycięciach, rów maszynowni wzdłuż osi). Przed budową porównanie skali w grze (planety ringów
+w płaszczyźnie gry są ściśnięte — Ziemia r 37 800 j.): kanon wzoru 17 km = 45% promienia Ziemi, 59 mln j², ~262 tys.
+węzłów belek, 8× limit klasy VII, tekstura ponad sufit 8 192 px. 2026-11-13: **8 km** — limit klasy VII podniesiony do
+15 mln j².
 
-**Gniazda (brief § 4.2)**: 67 (ciężkich 47) — wbudowane Capital 1 (emiter, bez broni — superbroń klasy 1 000 MW),
-specjalne Capital 12 (Yamato), główne L 16 (Helios × 8, ciężkie autodziała × 8, w tym 4 w rufę), specjalne L 10 (jony
-× 6, promienie ściągające × 4 — bez broni, typowe 40 MW), pomocnicze L 14 (CIWS Mk II × 8, flak L × 6), rakietowe L 6
-(torpedy oblężnicze × 4 w dziobie, wyrzutnie rakiet × 2), hangary 8 (wrota w pasie środkowym). **Systemy (§ 4.4)**:
-2 rdzenie w obudowach R7 (r 48 j.), 3 mostki — gniazda poziomu z gałęzi mostków (`v: 2`, `lv`; główny VI 150 × 76 j. na
-osi −1 790, pomocnicze V 108 × 54 j. w 820, ±248; modelu VII nie ma), 4 zbiorniki we wnęce
-rufy, 12 dysz SIDE (8 MAIN + 12 SIDE = sufit 20 stref dysz gry), 4 generatory tarczy sektorów, 2 projektory studni
-na grzbiecie. Sieć: 127 biegów, ~430 elementów osprzętu, 0 wolnych końców i wiązek poza obrysem.
-
-**Skala detalu** — `detail` 1,25 j./jd, obraz przy `HD_TEX.min` 1,2 teksela/j. (≈ 1,5 teksela/jd jak Colossus):
-
-| detail [j./jd] | Pole (teksele) | Pole + sieć | w tym sieć (A*) | Kompozytor | Razem z kadłubem gry | Wygląd |
+| Długość | Wymiary [j.] | Powierzchnia | Węzły belek | Teksele / j. | Kadr Atlasa 9 km | Promień Ziemi |
 |---|---|---|---|---|---|---|
-| 1,0 | 3 839 × 1 216 | 937 ms | 335 ms | 721 ms | 2 005 ms | panele i nity jak Colossus (1,2 teksela/jd — na granicy) |
-| **1,25 (wybór)** | 3 071 × 973 | 673–740 ms | 218–251 ms | 451–523 ms (GPU 184–195) | 1 455–1 549 ms | ~1,4× Colossusa |
-| 3,2 (= długość / 1 700) | 1 920 × 608 | 409 ms | 201 ms | 266 ms | 931 ms | „powiększony Colossus”: panele, nity, rury 3,5× |
+| 5 400 | 5 400 × 2 570 | 6,0 mln j² | 26 tys. | 1,2 | 60% | 14% |
+| **8 000 (wybór)** | 8 000 × 3 816 | 13,1 mln j² | 59 tys. | 1,02 | 89% | 21% |
+| 17 000 (kanon wzoru) | 17 000 × 8 100 | 59 mln j² | 262 tys. | 0,48 przy 8 192 px | 189% | 45% |
 
-(RTX, headless 1600 × 900, `kreator-kadluba-demo.mjs --etapy drednot --detale 1,1.25,3.2`; zrzuty
-`dreadnought-detal-*.png` — ten sam kadr burty.) Obraz 6 539 × 2 056 (sufit kompozytora podniesiony z 4 096 do 8 192 —
-minimum WebGPU; przy 4 096 drednot dostawał 0,76 teksela/j., czyli przy detalu 1,25 ~0,95 teksela/jd i nity znikały).
-**Pamięć** (detal 1,25): cele kompozytora 462 MB (36 B/teksel: GEO, BASE, EMIS RGBA16F + SURF, ALB, EOUT RGBA8; Colossus
-95 MB), tekstury pola i sieci ~103 MB, odczyt CPU (albedo, mapa powierzchni, emisja) 154 MB, sterta JS dema 657–827 MB
-(z ciałem 27 tys. węzłów). W grze (E1) zostaje sprite 6 539 × 2 056 RGBA8 ~54 MB (+ mipmapy ~72 MB) i mapa powierzchni
-— w widełkach briefu § 7.1 (65–120 MB). Pipeline'y synchroniczne: 0, błędy strony: 0.
+**Kadłub** (8 001 × 3 819 j., 13 130 399 j.² — 88% limitu, 58 808 węzłów): rama z 12 klocków (ostrze — trójkąt obrócony
+o 90°, burta 1 : 4; skrzydło z trzech pasów; tył za skrzydłem, zęby i kolec rufy — trapezy obrócone o ±90° z dowolnym
+skosem na siatce 4 j.), płyty: szpic i dziób od burty do burty, pas burtowy ostrza (równoległoboki) i schodkowy pas
+wewnętrzny nad rowem osi, w rowie grzbiet dziobu, pokład-klin i grzbiet rufowy, skrzydła (nasada, zasobnik z
+nadbudówką), płyty tyłu, zęby z poprzecznym rowem przy dyszy SIDE. 57 klocków na połowę, 1 kasztel, `isPlayerBuildable`
+i rama w jednym kawałku — tak. Zgodność ze wzorem: obrys w podglądzie (`.tmp`, nakładka wzoru) różni się pasmami
+1–2% wzdłuż burt.
+
+**Gniazda (brief § 4.2)**: 67 (ciężkich 47) — wbudowane Capital 1 (emiter na osi przed rowem; bez broni — superbroń klasy
+1 000 MW), specjalne Capital 12 (Yamato, pas burtowy ostrza), główne L 16 (Helios × 8 w pasie wewnętrznym, ciężkie
+autodziała × 8 — w tym 4 na zębach w rufę), specjalne L 10 (jony × 6 na zasobnikach skrzydeł, promienie ściągające × 4),
+pomocnicze L 14 (CIWS Mk II × 8, flak L × 6), rakietowe L 6 (torpedy oblężnicze × 4 w szpicu, wyrzutnie rakiet × 2 na
+grzbiecie), hangary 8 (wrota w płytach tyłu). **Systemy (§ 4.4)**: 2 rdzenie w obudowach R7 (r 64 j.) na pokładzie-klinie,
+mostek główny poziomu VI na grzbiecie rufowym, 2 pomocnicze V w skrzydłach, 4 zbiorniki przy wycięciach, 8 gondol MAIN
+w wycięciach (4 na wycięcie), 12 dysz SIDE (burta ostrza, krawędź natarcia skrzydła, burta za skrzydłem, ząb — dysze
+obrócone wzdłuż normalnej skośnej burty), 4 generatory tarczy (dziób i rufa na osi, nasady skrzydeł), 2 projektory studni
+w rowie osi. Sieć: 129 biegów, 468 elementów osprzętu (numer 16-bitowy), 0 wolnych końców i wiązek poza obrysem,
+przyłącza paliwa widoczne. R7 = 6 000 MW: utrzymanie 1 306 + tarcza 653 + projektory 240 + broń 2 592 = 4 792 MW (20%).
+
+**Skala detalu** — `detail` 1,5 j./jd; obraz 8 192 × 3 925 (sufit kompozytora, 1,02 teksela/j. → ~1,5 teksela/jd jak
+Colossus). Budowa (worker kreatora, RTX, headless 1600 × 900, `kreator-kadluba-demo.mjs --etapy drednot --detale
+1.2,1.5,4.7`; zrzuty `dreadnought-detal-*.png` — ten sam kadr burty):
+
+| detail [j./jd] | Pole (teksele) | Worker: geometria / sieć / fizyka / razem | Kompozytor z odczytem | Ciało gry | Razem |
+|---|---|---|---|---|---|
+| 1,2 | 4 700 × 2 259 | 1 065 / 605 / 294 / 2 409 ms | 423 ms | 436 ms | 3 412 ms |
+| **1,5 (wybór)** | 3 760 × 1 807 | 805 / 464 / 297 / 1 915 ms | 403 ms | 469 ms | 2 841 ms |
+| 4,7 (= długość / 1 700) | 2 820 × 1 356 | 411 / 348 / 324 / 1 297 ms | 209 ms | 566 ms | 2 105 ms |
+
+**Pamięć** (detal 1,5): cele kompozytora 1 104 MB (36 B/teksel: GEO, BASE, EMIS RGBA16F + SURF, ALB, EOUT RGBA8; Colossus
+95 MB), tekstury pola i sieci ~233 MB, odczyt CPU (albedo, mapa powierzchni, emisja) 368 MB, sterta JS dema ~1,3 GB
+(z ciałem 59 tys. węzłów). W grze (E1) zostaje sprite 8 192 × 3 925 RGBA8 ~123 MB (+ mipmapy ~164 MB) i mapa powierzchni
+— ponad widełki briefu § 7.1 (65–120 MB): do rozważenia wypiek w niższej rozdzielczości dla gry albo mapa w kafelkach.
+Pipeline'y synchroniczne: 0, błędy strony: 0.
 
 ## Płynność edycji i malowanie barwami nacji (2026-10-23)
 

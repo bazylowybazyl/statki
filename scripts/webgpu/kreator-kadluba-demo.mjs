@@ -594,17 +594,20 @@ try {
       await ev(`${k}.setAb(false)`);
       // dziób (emiter na osi), rufa (mostek główny, gondole MAIN), burta śródokręcia (sponsony baterii), zbliżenie sponsonu
       const crop = (x, y, wj) => `${k}.setCamera(${x}, ${y}, innerWidth * 0.92 / ${wj})`;
-      await ev(crop(im.maxX - 420, 0, 900));
-      await shot(`${key}-dziob`, `${key}: dziób z emiterem superlasera na osi`);
-      await ev(crop(im.minX + 520, 0, 1100));
-      await shot(`${key}-rufa`, `${key}: rufa — wieża mostka głównego, gondole MAIN, zbiorniki`);
-      await ev(crop(-400, im.minY * 0.62, 1500));
-      await shot(`${key}-burta`, `${key}: burta śródokręcia — sponsony ciężkich baterii, hangary, rzędy baterii`);
-      await ev(crop(-896, -700, 420));
-      await shot(`${key}-sponson`, `${key}: zbliżenie sponsonu baterii (gniazdo Capital, obrona punktowa, rowy z kablami)`);
+      // kadry drednota TN 8 km (src/game/hullDesign/warships/dreadnought.js): x ku dziobowi, burta y < 0
+      await ev(crop(im.maxX - 900, 0, 1800));
+      await shot(`${key}-dziob`, `${key}: szpic i dziób — emiter superlasera na osi, wyrzutnie torped, początek rowu osi`);
+      await ev(crop(-2700, 0, 2900));
+      await shot(`${key}-rufa`, `${key}: rufa — wycięcia z gondolami MAIN, zęby, kolec rufy, grzbiet z mostkiem głównym`);
+      await ev(crop(1250, -560, 2300));
+      await shot(`${key}-burta`, `${key}: burta ostrza — pas burtowy z ciężkimi bateriami, schodkowy pas wewnętrzny, rów osi`);
+      await ev(crop(-1300, -1450, 1500));
+      await shot(`${key}-skrzydlo`, `${key}: skrzydło — baterie jonowe, mostek pomocniczy, generator tarczy, promień ściągający, hangary`);
+      await ev(crop(1360, -470, 560));
+      await shot(`${key}-sponson`, `${key}: zbliżenie ciężkiej baterii na pasie burtowym (gniazdo Capital, rowy z kablami)`);
       await ev(`${k}.setNetGraph(true); ${k}.fit()`);
       await shot(`${key}-siec`, `${key}: sieć systemów (I) — kable z dwóch rdzeni, rury paliwa zbiorniki → rdzenie → MAIN / SIDE`);
-      await ev(crop(im.minX + 900, im.minY * 0.4, 1700));
+      await ev(crop(-1900, -700, 2400));
       await shot(`${key}-siec-rufa`, `${key}: sieć systemów przy rufie (zbiorniki, rdzenie, gondole)`);
       await ev(`${k}.setNetGraph(false); ${k}.act("v"); ${panelOn}; (() => { const z = ${fitZ} * 0.72; ${k}.setCamera(${k}.S.field.image.cx + 170 / z, ${k}.S.field.image.cy, z); })()`);
       await shot(`${key}-klasa`, `${key}: panel klasy — mostek VII (tylko NPC), rdzeń R7, gniazda, bilans mocy`);
@@ -617,7 +620,7 @@ try {
           // + sieć (RGBA16F + RGBA8); odczyt CPU: albedo, mapa powierzchni, emisja (RGBA8)
           gpuMB: Math.round(px * 36 / 1048576), poleMB: Math.round(g.w * g.h * (8 * 4 + 4) / 1048576), odczytMB: Math.round(px * 12 / 1048576),
           pole: [g.w, g.h], heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
-          czas: { poleISiec: Math.round(t.field), siec: Math.round(S.field.pipeNet?.stats?.ms || 0), kompozytor: Math.round(t.bake), gpu: Math.round(t.gpu), kadlub: Math.round(t.hull), razem: Math.round(t.total) },
+          czas: JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'number' ? Math.round(v) : v))), siecMs: Math.round(S.field.pipeNet?.stats?.ms || 0),
           wezly: ${k}.ship?.beamHull?.body?.activeNodes ?? 0, siecStat: S.netCheck ? { wolne: S.netCheck.freeEnds, poza: S.netCheck.outside, bezPradu: S.netCheck.unpowered.length, bezPaliwa: S.netCheck.unfueled.length } : null,
           klasa: ${k}.klasa.state()
         };
@@ -632,9 +635,9 @@ try {
         for (const dv of detale) {
           await ev(`${k}.edit((d) => { d.detail = ${dv}; })`, 600000);
           await ev(`${k}.built()`, 600000);
-          await ev(crop(-560, -560, 760));
+          await ev(crop(1300, -480, 900));
           await shot(`${key}-detal-${String(dv).replace('.', '_')}`, `${key}: detal ${dv} j./jd — burta śródokręcia`);
-          drednot[`${key}-detale`][dv] = await ev(`(() => { const S = ${k}.S, t = S.timing, g = S.field.grid; return { img: [S.bake.width, S.bake.height], pole: [g.w, g.h], czas: { poleISiec: Math.round(t.field), siec: Math.round(S.field.pipeNet?.stats?.ms || 0), kompozytor: Math.round(t.bake), razem: Math.round(t.total) }, siec: S.netCheck ? [S.netCheck.freeEnds, S.netCheck.outside] : null }; })()`);
+          drednot[`${key}-detale`][dv] = await ev(`(() => { const S = ${k}.S, t = S.timing, g = S.field.grid; return { img: [S.bake.width, S.bake.height], pole: [g.w, g.h], czas: JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'number' ? Math.round(v) : v))), siecMs: Math.round(S.field.pipeNet?.stats?.ms || 0), siec: S.netCheck ? [S.netCheck.freeEnds, S.netCheck.outside] : null }; })()`);
         }
         await ev(`${k}.edit((d) => { d.detail = ${d0}; })`, 600000);
         await ev(`${k}.built()`, 600000);
