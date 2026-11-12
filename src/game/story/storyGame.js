@@ -1008,11 +1008,11 @@ export const StoryGame = {
       });
       at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: falling ? 170 : 60, dir: 'out' }));
       if (!falling) this._habitatImplosion(site, H, place, at);
-      H.quadrants.forEach((q, i) => {
-        const a = (q.a0 + q.a1) / 2;
-        const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
-        // Przy upadku bez wybuchu: pęknięcie ćwiartki pokazują woksele, a dym tylko zakrywałby początek upadku.
-        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); if (!fallStarted) d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
+      // wieżowce miasta pękają po kolei; wybuch co szósty (po jednym na dzielnicę). Przy upadku bez wybuchu: pęknięcie
+      // pokazują woksele, a dym tylko zakrywałby początek upadku.
+      (H.buildings || []).forEach((b, i) => {
+        const p = place.toGame(b.x, b.z);
+        at(0.25 + i * 0.05, () => { d.baseBreak?.(b.id, { power: 2.2, speed: 110, dir: 'out' }); if (!fallStarted && i % 6 === 0) d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
       });
       // winda kosmiczna spod dysku mieszkalnego puszcza: lina i głowica spadają na planetoidę, osada wybucha po kolei
       // (scenariusz — src/3d/portBuildings/pirateRockSite3D.js; prośba użytkownika 2026-10-15)

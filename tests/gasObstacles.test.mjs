@@ -473,7 +473,7 @@ test('wejście gry: bryły bazy piratów — koła (podstawa wieży, zbiorniki) 
   const kinds = { miasto: 0, koło: 0 };
   const r = rng(11);
   for (const hs of place.hitShapes) {
-    if (hs.pts.length === 4) { if (/^H-[ESWN]$/.test(hs.chunk)) kinds.miasto++; continue; }
+    if (hs.pts.length === 4) { if (/^B-\d\d$/.test(hs.chunk)) kinds.miasto++; continue; }
     kinds.koło++;
     const size = Math.max(hs.x1 - hs.x0, hs.y1 - hs.y0);
     for (let t = 0; t < 1500; t++) {

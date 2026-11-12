@@ -12,7 +12,7 @@
 //   przed      — habitat cały, kamera nad habitatem (--zoom);
 //   ostrzal-N  — serie 20 strzałów bronią gry (fireWeaponCore, jak baza-zniszczenie-gra.mjs) po ETAPACH finału habitatu
 //                (od 2026-11-03 punkty habitatu = maks. × etapy do zrobienia, src/game/story/pirateBaseIntegrity.js —
-//                habitatStages): wyłom (ćwiartka miasta od strony Atlasa, H-S), wieża (podstawa H-C przez wyłom — szyja
+//                habitatStages): wyłom (dwa wieżowce miasta od strony Atlasa: zewnętrzny i wewnętrzny), wieża (podstawa H-C przez wyłom — szyja
 //                zrywa się, wieża pada), reaktory antygrawitacyjne (antigrav1, antigrav2); po każdej serii okno 2 s; pierwsze okno =
 //                pierwsze trafienia. Komplet etapów = habitat ginie SAM (syncBaseStages w grze) = finał misji — w trakcie
 //                serii, więc pierwsze sekundy upadku są w ostatnim oknie ostrzal-N (kolumna `upadek`, `ft`).
@@ -475,7 +475,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
 
 // Seria 20 strzałów w 2 s (lufa 1,6 km za celem, kierunki na zmianę) — jak gracz, po etapach finału habitatu
 // (cel misji: „wyłom w bębnie, szyb pod wieżą (zwal ją), wieżowce na pomostach”); cel wybierany przy każdym strzale:
-//   wyłom   — stojąca ćwiartka miasta (najpierw H-S, od strony Atlasa), środek pasa wieżowców ćwiartki, lufa na jej osi;
+//   wyłom   — stojący wieżowiec miasta najbliżej kierunku S (od strony Atlasa; zewnętrzny przed wewnętrznym), środek bryły, lufa na jego promieniu;
 //   wieża   — podstawa wieży H-C (środek habitatu) przez wyłom: lufa w kącie pękniętej ćwiartki (tor promienisty — przez lukę);
 //   reaktory — pierwszy stojący reaktor antygrawitacyjny (antigrav1, antigrav2), środek bryły, cztery kierunki;
 // habitat bez etapów (gra sprzed 2026-11-03) — stojące kawałki habitatu na zmianę, jak dawniej.
@@ -491,19 +491,20 @@ const SERIA = `new Promise((res) => {
     return !(p && p.state === 'lost') && (!gone.has(id) || (p && p.state === 'live'));
   });
   const ids = stoi.length ? stoi : l.structures.habitat;
-  const quads = [...Hb.quadrants].sort((a, b) => (b.id === 'H-S') - (a.id === 'H-S'));
-  const ringR = (Hb.stemR + Hb.drumR) / 2;
+  const kat = (b) => Math.abs(Math.atan2(Math.sin(b.a - Math.PI / 2), Math.cos(b.a - Math.PI / 2)));
+  const wiez = [...Hb.buildings].sort((p, q) => kat(p) - kat(q) || q.ring - p.ring);
   let k = 0;
   const aim = () => {
     const s = site.habitatStages ? site.habitatStages() : null;
     const jit = ((k % 5) - 2) * 0.12;
     if (s && s.breach < s.breachNeed) {
-      const q = quads.find((qd) => !broken(qd.id)) || quads[0], c = (q.a0 + q.a1) / 2;
-      return { tx: Math.cos(c) * ringR, tz: Math.sin(c) * ringR, a: c + jit, cel: q.id };
+      const b = wiez.find((q) => !broken(q.id)) || wiez[0];
+      return { tx: b.x, tz: b.z, a: b.a + jit * 0.3, cel: b.id };
     }
     if (s && !s.tower) {
-      const q = quads.find((qd) => broken(qd.id)) || quads[0], c = (q.a0 + q.a1) / 2;
-      return { tx: 0, tz: 0, a: c + jit, cel: 'H-C' };
+      // przez wyłom: po promieniu zniszczonego wieżowca wewnętrznego pierścienia (lufa 1600 j. od osi, za zewnętrznym pierścieniem)
+      const b = wiez.find((q) => broken(q.id) && q.ring === 0) || wiez.find((q) => broken(q.id)) || wiez[0];
+      return { tx: 0, tz: 0, a: b.a + jit * 0.2, cel: 'H-C' };
     }
     const hr = s ? (l.antigravs || []).find((h) => !site.structureDestroyed(h.structure)) : null;
     if (hr) {

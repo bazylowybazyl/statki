@@ -19,7 +19,7 @@ import { SHIPYARD_SPEC, shipyardPadTower } from './portShipyardLayout.js';
 
 export const PB_MAT = K7_MAT;
 export const PB_STRIDE = 20;
-export const PB_MAX_GROUPS = 48;
+export const PB_MAX_GROUPS = 64;   // baza piratów od 2026-11-12: 52 kawałki (24 wieżowce miasta osobno)
 export const PB_CHANNELS = 16;
 export const PB_MAX_LAMPS = 8;
 

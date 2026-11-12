@@ -20,7 +20,7 @@
 // Decyzje użytkownika (2026-10-11):
 //  - HABITAT (2026-11-11, prośba użytkownika — zastępuje bęben z głową na szyi): MIASTO wieżowców w dwóch pierścieniach
 //    wokół dużej WIEŻY pośrodku, na DYSKU MIESZKALNYM (dolna warstwa pod płaszczyzną gry, większa od miasta). Gracz
-//    przestrzeliwuje wieżowce z jednej strony (ćwiartka = kawałek z pulą), trafia w podstawę wieży, a wieża pada na
+//    przestrzeliwuje wieżowce z jednej strony (każdy to kawałek z pulą), trafia w podstawę wieży, a wieża pada na
 //    wieżowce i przebija dysk. W miejscu dwóch wieżowców na pomostach stoją REAKTORY ANTYGRAWITACYJNE (trzymają bazę
 //    nad planetoidą; osobne budowle — etap finału).
 //  - POMOSTY z okrętami po obu stronach (także na ramionach Y); większość okrętów w remoncie (bez załogi), kilkanaście
@@ -55,7 +55,11 @@ export function pirateBaseShipClass(key) {
 // dolną warstwę”). W płaszczyźnie gry: WIEŻOWCE w dwóch pierścieniach (city.rings) wokół PODSTAWY WIEŻY (kawałek H-C,
 // koło coreR do coreTop); pierścienie przesunięte o pół kroku — żaden strzał z zewnątrz nie dochodzi do wieży bez
 // przejścia przez wieżowiec (test). Wieżowce stoją na tarasach dysku mieszkalnego (dolna warstwa: tier2 — pierścień
-// wewnętrzny, tier1 — zewnętrzny), wieża na cokole trzonu (stemR, plac na floorY). Nad podstawą TRZON WIEŻY (część
+// wewnętrzny, tier1 — zewnętrzny), wieża na cokole trzonu (stemR, plac na floorY). TARASY SĄ WYSOKIE (2026-11-12, uwaga
+// użytkownika: „trzeba przesunąć wieżowce wyżej, żeby statkiem ścinać je niżej”): wierzch tarasu leży 300–400 j. pod
+// płaszczyzną gry, więc statek i pociski tną wieżowiec tuż nad podstawą, a prawie cała bryła pada. KAŻDY WIEŻOWIEC TO
+// OSOBNY KAWAŁEK z własną pulą punktów (jak dawne wieżowce na pomostach): w pierwszej wersji sześć wieżowców było jednym
+// kawałkiem-ćwiartką i wieżowiec zniszczony w grze stał w obrazie do pęknięcia całej ćwiartki („zostaje dach”). Nad podstawą TRZON WIEŻY (część
 // techniczna, FG) — rura neckR od neckY0 do neckY1, KORONA — pierścień ringR0..ringR1 (ringY0..ringY1), głowica do
 // headTop, iglice do mastTop. Wysokości K-7 (nad płaszczyzną gry ×0,42: trzon ~1,4 km, szczyt iglic ~2,3 km; wieżowce
 // 0,3–0,95 km). Nazwy pól sprzed miasta zostają tam, gdzie znaczą to samo miejsce: drumR — promień miasta (krawędź
@@ -63,10 +67,10 @@ export function pirateBaseShipClass(key) {
 export const PIRATE_BASE_SPEC = Object.freeze({
   habitat: Object.freeze({
     drumR: 1640, wall: 40, coreR: 340,
-    floorY: -170,
+    floorY: -20,
     coreTop: 640, neckR: 240, neckY0: 560, neckY1: 3500,
     ringR0: 340, ringR1: 560, ringY0: 3550, ringY1: 4080, headR: 320, headTop: 4360, mastTop: 5600,
-    stemR: 560, discR: 1950, discY0: -940, discY1: -720, tier1R: 1680, tier1Y: -620, tier2R: 1120, tier2Y: -540,
+    stemR: 560, discR: 1950, discY0: -940, discY1: -720, tier1R: 1680, tier1Y: -290, tier2R: 1120, tier2Y: -200,
     discSectors: 8
   }),
   // Wieżowce miasta: pierścień = { r — promień osi, n — liczba, a0 — kąt pierwszego, w — dłuższy bok (wzdłuż tej osi
@@ -76,8 +80,8 @@ export const PIRATE_BASE_SPEC = Object.freeze({
   // ściana zewnętrzna w płaszczyźnie gry, coreW — rdzeń (kotwice ciała), fgY — od tej wysokości bryły idą do FG.
   city: Object.freeze({
     rings: Object.freeze([
-      Object.freeze({ r: 930, n: 12, a0: Math.PI / 8, w: 320, d: 280, roofY0: 1500, roofY1: 2350, tier: 2 }),
-      Object.freeze({ r: 1350, n: 12, a0: Math.PI / 24, w: 480, d: 320, roofY0: 900, roofY1: 1750, tier: 1 })
+      Object.freeze({ r: 930, n: 12, a0: Math.PI / 8, w: 320, d: 280, roofY0: 2000, roofY1: 3100, tier: 2 }),
+      Object.freeze({ r: 1350, n: 12, a0: Math.PI / 24, w: 480, d: 320, roofY0: 1400, roofY1: 2400, tier: 1 })
     ]),
     wall: 46, coreW: 120, fgY: 600, grid: 40
   }),
@@ -185,7 +189,7 @@ export function pirateBaseShipCorners(b) {
 /**
  * Układ bazy. opts: { id }. Wynik:
  *   nodes, habitat { drumR…, quadrants [{ id, a0, a1 }], bays [{ id, x, z, angle }], buildings [{ id, ring, index,
- *            quadrant, chunk (= ćwiartka), quadIndex, a, r, x, z, angle, u/n (styczna / promień), w, d, wall, coreW, fgY,
+ *            quadrant, chunk (= id — osobny kawałek), quadIndex, a, r, x, z, angle, u/n (styczna / promień), w, d, wall, coreW, fgY,
  *            baseY, roofY, setbackY | null, spireTop | null, seed }] },
  *   piers [{ id, letter, ax… (pirateBaseSegment), halfW, pipe, chunks, label }],
  *   berths [{ id, index, pier, chunk, side, s, cls, length, beam, slot, x, z, angle, tapX, tapZ, bowX, bowZ,
@@ -221,7 +225,8 @@ export function createPirateBaseLayout(opts = {}) {
     return 'H-W';
   };
   // Wieżowce: prostokąt w × d równoległy do osi układu (u — oś boku w: ta oś układu, która jest bliżej stycznej do
-  // pierścienia; n — prostopadła, zwrócona na zewnątrz miasta), kawałek = ćwiartka pod środkiem. Środek na siatce
+  // pierścienia; n — prostopadła, zwrócona na zewnątrz miasta), każdy osobnym kawałkiem (chunk = id); quadrant / quadIndex
+  // — dzielnica (kanał świateł drumQ, moduł powietrza). Środek na siatce
   // wokseli (bok o parzystej liczbie komórek — między węzłami, o nieparzystej — w węźle: ściany schodzą się z komórkami).
   // Podstawa na wierzchu tarasu dysku, dach z losu numeru; wyższe mają zwężenie (setbackY) i iglicę (spireTop).
   const C = S.city;
@@ -238,7 +243,7 @@ export function createPirateBaseLayout(opts = {}) {
       const snap = (v, len) => { const n = Math.round(len / C.grid); return (Math.round(v / C.grid - (n - 1) / 2) + (n - 1) / 2) * C.grid; };
       hab.buildings.push({
         id: `B-${String(hab.buildings.length + 1).padStart(2, '0')}`, ring: ri, index: hab.buildings.length,
-        quadrant, chunk: quadrant, quadIndex: hab.quadrants.findIndex((e) => e.id === quadrant),
+        quadrant, quadIndex: hab.quadrants.findIndex((e) => e.id === quadrant),
         a, r: rg.r, x: snap(ca * rg.r, alongX ? rg.w : rg.d), z: snap(sa * rg.r, alongX ? rg.d : rg.w),
         angle: alongX ? 0 : Math.PI / 2, ux: alongX ? 1 : 0, uz: alongX ? 0 : 1,
         nx: alongX ? 0 : Math.sign(ca), nz: alongX ? Math.sign(sa) : 0,
@@ -248,6 +253,7 @@ export function createPirateBaseLayout(opts = {}) {
         spireTop: h > 0.6 ? roofY + 420 : null,
         seed: ri * 100 + k
       });
+      hab.buildings[hab.buildings.length - 1].chunk = hab.buildings[hab.buildings.length - 1].id;
     }
   });
   l.habitat = hab;
@@ -366,7 +372,10 @@ export function createPirateBaseLayout(opts = {}) {
   const mast = (id, x, z, chunk, aimX, aimZ, range = 1800, color = warm) => ({ id, x, y: S.heights.mastTop, z, kind: 'flood', color, range, chunk, aim: { x: aimX, z: aimZ } });
   const habMast = (a, id) => {
     const r = Hs.drumR - Hs.wall / 2;
-    return mast(id, Math.cos(a) * r, Math.sin(a) * r, hab.quadrantAt(a), Math.cos(a) * (r + 1300), Math.sin(a) * (r + 1300), 1900);
+    // maszt obrzeża należy do najbliższego wieżowca zewnętrznego pierścienia (pada razem z nim)
+    const mx = Math.cos(a) * r, mz = Math.sin(a) * r;
+    const near = hab.buildings.filter((b) => b.ring === 1).sort((p, q) => ((p.x - mx) ** 2 + (p.z - mz) ** 2) - ((q.x - mx) ** 2 + (q.z - mz) ** 2))[0];
+    return mast(id, mx, mz, near.id, Math.cos(a) * (r + 1300), Math.sin(a) * (r + 1300), 1900);
   };
   l.lights = [
     mast('L-F', nodes.F.x, nodes.F.z - 140, 'NP', nodes.F.x - 900, 0, 2000),
@@ -389,26 +398,15 @@ export function createPirateBaseLayout(opts = {}) {
     chunks.push({ id, kind, structure, label, box, anchors, weight, ghost, group: chunks.length + 1 });
   };
   const R = Hs.drumR;
-  // ćwiartka miasta = jej wieżowce (pudło z rogów prostokątów; maszt obrzeża stoi w nim na krawędzi miasta)
-  for (const qd of hab.quadrants) {
-    const xs = [];
-    const zs = [];
-    let yTop = -Infinity;
-    let yBase = Infinity;
-    for (const b of hab.buildings) {
-      if (b.chunk !== qd.id) continue;
-      for (const p of boxPoly(b.x, b.z, b.w, b.d, b.angle)) { xs.push(p.x); zs.push(p.z); }
-      yTop = Math.max(yTop, b.spireTop || b.roofY);
-      yBase = Math.min(yBase, b.baseY);
-    }
-    const am = (qd.a0 + qd.a1) / 2;
-    xs.push(Math.cos(am) * R);
-    zs.push(Math.sin(am) * R);
-    add(qd.id, 'city', 'habitat', `miasto habitatu ${qd.id.slice(2)}`,
-      { x0: Math.min(...xs) - 40, x1: Math.max(...xs) + 40, y0: yBase, y1: yTop + 60, z0: Math.min(...zs) - 40, z1: Math.max(...zs) + 40 }, ['H-C'], 2);
+  // wieżowce miasta: każdy osobnym kawałkiem (pudło z rogów prostokąta, od tarasu po iglicę)
+  for (const b of hab.buildings) {
+    const pts = boxPoly(b.x, b.z, b.w, b.d, b.angle);
+    add(b.id, 'highrise', 'habitat', `wieżowiec ${b.id.slice(2)}`,
+      { x0: Math.min(...pts.map((v) => v.x)) - 40, x1: Math.max(...pts.map((v) => v.x)) + 40, y0: b.baseY, y1: (b.spireTop || b.roofY) + 60,
+        z0: Math.min(...pts.map((v) => v.z)) - 40, z1: Math.max(...pts.map((v) => v.z)) + 40 }, ['H-C'], 1.2);
   }
   add('H-C', 'core', 'habitat', 'podstawa wieży habitatu', { x0: -Hs.stemR, x1: Hs.stemR, y0: Hs.discY1, y1: Hs.coreTop, z0: -Hs.stemR, z1: Hs.stemR },
-    hab.quadrants.map((qd) => qd.id), 3);
+    hab.buildings.filter((b) => b.ring === 0).map((b) => b.id), 3);
   add('H-T', 'tech', 'habitat', 'wieża habitatu', { x0: -Hs.ringR1 - 200, x1: Hs.ringR1 + 200, y0: Hs.neckY0, y1: Hs.mastTop, z0: -Hs.ringR1 - 200, z1: Hs.ringR1 + 200 },
     ['H-C'], 1, true);
   const ds = Hs.discSectors;
@@ -481,8 +479,8 @@ export function createPirateBaseLayout(opts = {}) {
   for (const h of l.antigravs) l.structures[h.structure] = [];
   for (const c of chunks) l.structures[c.structure].push(c.id);
 
-  // ---- bryły w płaszczyźnie gry (pociski, Hexlance, radar, przeszkody gazu): miasto — prostokąty wieżowców (kawałek =
-  // ćwiartka; między wieżowcami pocisk leci dalej i trafia następny pierścień), podstawa wieży — koło, reaktory —
+  // ---- bryły w płaszczyźnie gry (pociski, Hexlance, radar, przeszkody gazu): miasto — prostokąt na wieżowiec (każdy
+  // swoim kawałkiem; między wieżowcami pocisk leci dalej i trafia następny pierścień), podstawa wieży — koło, reaktory —
   // prostokąty (przed pomostami: test odcinka bierze pierwszą bryłę z listy), pomosty — prostokąty, zbiorniki — koła,
   // kolektor i magazyn — prostokąty
   const hits = [];

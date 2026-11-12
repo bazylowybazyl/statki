@@ -90,9 +90,9 @@ function ringBoxes(f, r, d, y, h, a0, a1, step, mat, cb = null) {
 // ---------------------------------------------------------------------------
 // Habitat
 
-// Wieżowiec miasta (2026-11-11): stoi na tarasie dysku mieszkalnego (b.baseY), przecina płaszczyznę gry (bryła trafień
-// i ciało ćwiartki: ściany, rdzeń, słupy narożne), nad fgY idzie do FG (nad statkami). Pasy okien na zasilaniu swojej
-// ćwiartki (kanał drumQ — gasną i migają z powietrzem dzielnicy), zwężenie od setbackY, dach z kolcami, włazem
+// Wieżowiec miasta (2026-11-11; od 11-12 osobny kawałek): stoi na tarasie dysku mieszkalnego (b.baseY), przecina
+// płaszczyznę gry (bryła trafień i ciało kawałka: ściany, rdzeń, słupy narożne), nad fgY idzie do FG (nad statkami). Pasy
+// okien na zasilaniu swojej dzielnicy (kanał drumQ — gasną i migają z powietrzem dzielnicy), zwężenie od setbackY, dach z kolcami, włazem
 // i kratką, na wyższych iglica ze światłem przeszkodowym. Osie: u — styczna do pierścienia, n — promień na zewnątrz.
 function cityBuilding(f, l, b, qi) {
   const rot = -b.angle;
@@ -184,12 +184,11 @@ function cityBuilding(f, l, b, qi) {
   f.set = 'bg';
 }
 
-// Ćwiartka miasta (kawałek z pulą): wieżowce, lampy ulic na tarasach dysku (światła dzielnicy — kanał drumQ), lądowisko
-// dronów na obrzeżu dysku (start — kanał bays), kogut alarmu. W płaszczyźnie gry tylko wieżowce (ciało ćwiartki).
-function cityQuadrant(f, l, qd, qi) {
+// Ulice dzielnicy (ćwiartki miasta) — w grupie sektora dysku pod nią, pod płaszczyzną gry: lampy ulic na tarasach
+// (światła dzielnicy — kanał drumQ), lądowisko dronów na obrzeżu dysku (start — kanał bays), kogut alarmu.
+function cityStreets(f, l, qd, qi) {
   const H = l.habitat;
   const [inner, outer] = l.spec.city.rings;
-  for (const b of H.buildings) if (b.chunk === qd.id) cityBuilding(f, l, b, qi);
   // ulice: lampy wzdłuż obwodnic (przy cokole wieży, między pierścieniami wieżowców, na krawędzi miasta)
   const midR = (inner.r + inner.d / 2 + outer.r - outer.d / 2) / 2;
   for (const [r, y, n] of [[H.stemR + 110, H.tier2Y, 7], [midR, H.tier1Y, 10], [H.drumR - 20, H.tier1Y, 12]]) {
@@ -256,8 +255,9 @@ function habitatCore(f, l) {
     boxAt(f, ang(a, H.coreR + 30), (H.floorY + 60) / 2, 90, 60 - H.floorY, 60, M.dark, -a);
     if (i % 2 === 0) {
       const g = a + TAU / 16;
-      boxAt(f, ang(g, H.coreR + 4), H.floorY + 110, 12, 200, 150, M.yellow, -g);
-      boxAt(f, ang(g, H.coreR + 8), H.floorY + 100, 12, 170, 120, M.black, -g);
+      // bramy kończą się pod płaszczyzną gry: w ciele podstawy (H-C) zostaje sam walec
+      boxAt(f, ang(g, H.coreR + 4), H.floorY + 60, 12, 100, 150, M.yellow, -g);
+      boxAt(f, ang(g, H.coreR + 8), H.floorY + 55, 12, 90, 120, M.black, -g);
     }
   }
   for (let i = 0; i < 12; i++) {
@@ -921,10 +921,17 @@ export function buildPirateBaseScene(l, style) {
   const G = (id) => l.chunkById.get(id).group;
   if (l.chunks.length + 1 > PB_MAX_GROUPS) throw new Error(`baza piratów: ${l.chunks.length} kawałków > ${PB_MAX_GROUPS - 1}`);
   void style;
-  // ---- habitat: ćwiartki miasta (wieżowce), podstawa wieży z cokołem, wieża (duch), dysk mieszkalny (duch)
+  // ---- habitat: wieżowce miasta (każdy swoim kawałkiem), ulice dzielnic (grupa sektora dysku pod środkiem dzielnicy),
+  // podstawa wieży z cokołem, wieża (duch), dysk mieszkalny (duch)
+  for (const b of l.habitat.buildings) {
+    f.group = G(b.id);
+    cityBuilding(f, l, b, b.quadIndex);
+  }
+  const dsN = l.habitat.discSectors;
   l.habitat.quadrants.forEach((qd, qi) => {
-    f.group = G(qd.id);
-    cityQuadrant(f, l, qd, qi);
+    const k = Math.round(((qd.a0 + qd.a1) / 2) / (TAU / dsN));
+    f.group = G(`D-${((k % dsN) + dsN) % dsN + 1}`);
+    cityStreets(f, l, qd, qi);
   });
   f.group = G('H-C');
   habitatCore(f, l);
@@ -965,10 +972,10 @@ export function buildPirateBaseScene(l, style) {
     antigravReactor(f, l, h, k);
   });
   // ---- maszty reflektorów (kawałek masztu) i lampy budowli. Maszt miasta stoi na pylonie z tarasu dysku: pylon kończy
-  // się pod płaszczyzną gry, maszt zaczyna nad nią — żadna z tych brył nie wchodzi do ciała ćwiartki (same wieżowce).
+  // się pod płaszczyzną gry, maszt zaczyna nad nią — żadna z tych brył nie wchodzi do ciała wieżowca, przy którym stoi.
   l.lights.forEach((L, k) => {
     f.group = G(L.chunk);
-    const city = L.chunk.startsWith('H-');
+    const city = L.chunk.startsWith('B-');
     if (city) f.box(L.x, (l.habitat.tier1Y + 100) / 2, L.z, 50, 100 - l.habitat.tier1Y, 50, M.steel);
     const baseY = city ? 130 : l.spec.pier.deckY1;
     floodMast(f, L, baseY, k);

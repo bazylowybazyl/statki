@@ -127,23 +127,34 @@ export function piecePinCount(piece) {
 
 const pieceOf = (site, id) => site?.pieces?.find((p) => p.id === id) || null;
 
+// Wieżowce w pasie upadku wieży: kąt środka wieżowca od kierunku upadku najwyżej tyle [rad] (trzon r 240 i korona r 560
+// kładą się na pasie ~±570 j. przy wewnętrznym pierścieniu i ~±830 j. przy zewnętrznym).
+export const TOWER_FALL_HALF_ANGLE = 0.62;
+const inFallBand = (b, a) => Math.abs(Math.atan2(Math.sin(b.a - a), Math.cos(b.a - a))) <= TOWER_FALL_HALF_ANGLE;
+
 /**
  * Wieża pada na STOJĄCE wieżowce (prośba użytkownika 2026-11-11: „gracz przestrzeli wieżowce z jakiejś strony i walnie
  * w wieżę — wieża upadnie na wieżowce i przebije dolną warstwę”): znak kierunku upadku (hx, hz — kierunek w układzie
- * bazy). −1 = odwróć: ćwiartka miasta po stronie upadku już leży (wyłom), a przeciwna stoi; inaczej 1 (kierunek z taranu
- * albo strzałów zostaje — także gdy obie stoją albo obie leżą). isDown(id) → ćwiartka pęknięta / schowana.
+ * bazy). −1 = odwróć: w pasie upadku po tej stronie stoi mniej wieżowców niż po przeciwnej (wyłom); inaczej 1 (kierunek
+ * z taranu albo strzałów zostaje — także przy równej liczbie). isDown(id) → wieżowiec zniszczony.
  */
 export function towerFallSign(layout, hx, hz, isDown) {
-  const H = layout?.habitat;
-  if (!H?.quadrantAt || typeof isDown !== 'function') return 1;
+  const list = layout?.habitat?.buildings;
+  if (!list || typeof isDown !== 'function') return 1;
   const a = Math.atan2(hz, hx);
-  return isDown(H.quadrantAt(a)) && !isDown(H.quadrantAt(a + Math.PI)) ? -1 : 1;
+  let here = 0, opp = 0;
+  for (const b of list) {
+    if (isDown(b.id)) continue;
+    if (inFallBand(b, a)) here++;
+    else if (inFallBand(b, a + Math.PI)) opp++;
+  }
+  return here < opp ? -1 : 1;
 }
 
 /**
- * Co wieża miażdży przy uderzeniu: ćwiartka miasta po stronie upadku i sektory dysku mieszkalnego pod torem wieży
- * (sektor pod kierunkiem upadku i sąsiad od strony, na którą kierunek się odchyla). dir — { x, z } kierunek upadku
- * w układzie bazy. Zwraca { quadrant, sectors: ['D-k', …] }.
+ * Co wieża miażdży przy uderzeniu: wieżowce w pasie upadku (od wewnętrznego pierścienia) i sektory dysku mieszkalnego
+ * pod torem wieży (sektor pod kierunkiem upadku i sąsiad od strony, na którą kierunek się odchyla). dir — { x, z }
+ * kierunek upadku w układzie bazy. Zwraca { buildings: ['B-nn', …], sectors: ['D-k', …] }.
  */
 export function towerCrushChunks(layout, dir) {
   const H = layout.habitat;
@@ -153,7 +164,8 @@ export function towerCrushChunks(layout, dir) {
   const k = Math.round(a / step);
   const side = a - k * step >= 0 ? 1 : -1;
   const id = (i) => `D-${((i % n) + n) % n + 1}`;
-  return { quadrant: H.quadrantAt(a), sectors: [id(k), id(k + side)] };
+  const buildings = H.buildings.filter((b) => inFallBand(b, a)).sort((p, q) => p.ring - q.ring || p.index - q.index).map((b) => b.id);
+  return { buildings, sectors: [id(k), id(k + side)] };
 }
 
 // Najniższa wysokość żywych węzłów ciała 3D (świat silnika) — nasada wieży.

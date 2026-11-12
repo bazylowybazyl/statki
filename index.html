@@ -36846,21 +36846,24 @@
       }
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'city' || c.kind === 'tank' ? 520 : 360, profile: c.kind === 'tank' ? 'capital' : 'baza' }, true);
+      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'tank' ? 520 : 360, profile: c.kind === 'tank' ? 'capital' : 'baza' }, true);
       // wybuch przy pęknięciu — zapłon powietrza modułu (zwarcia i ogień w wylatującym tlenie)
-      noteBaseBlast(p.x, p.y, c.kind === 'city' || c.kind === 'tank' ? 520 : 360);
+      noteBaseBlast(p.x, p.y, c.kind === 'tank' ? 520 : 360);
       camera.addShake(12, 0.5);
     }
 
     // Trafienie budowli z pulami kawałków (habitat): punkty zdejmuje kawałek trafiony wprost (`lastHitChunk` — gałąź
     // pocisków, taran), inaczej kawałek pod miejscem trafienia, inaczej najbliższy stojący (poolPieceAt). Pusta pula —
-    // kawałek pęka (ćwiartka miasta = wyłom; podstawa wieży = wieża zerwana w stepPirateBaseNeck — pada na stojące wieżowce,
-    // _neckCtx.pickFall).
+    // kawałek pęka (wieżowiec miasta pada — `breachNeed` wieżowców = wyłom; podstawa wieży = wieża zerwana w
+    // stepPirateBaseNeck — pada na stojące wieżowce, _neckCtx.pickFall).
     function onBasePieceDamage(st, dmg) {
       const place = st.dryDock;
       const l = place?.layout;
       const hint = st.lastHitChunk || null;
       st.lastHitChunk = null;
+      // trafienie z taranu (hak pieceDamage): kawałek przecięty statkiem pada w obrazie od razu (voxBreak z flagą 2)
+      const byRam = !!st.lastHitRam;
+      st.lastHitRam = false;
       if (!l || !st.piecePools) return 0;
       const hx = Number.isFinite(st.lastHitX) ? st.lastHitX : st.x;
       const hy = Number.isFinite(st.lastHitY) ? st.lastHitY : st.y;
@@ -36870,35 +36873,38 @@
       st.hitFlash = 0.18;
       if (!damagePool(st.piecePools, id, dmg) || pirateBaseChunkDown(id)) return dmg;
       const c = l.chunkById.get(id);
-      const size = c.kind === 'city' ? 520 : 400;
+      const size = 400;
       // Szyb: wybuch 560 przyjdzie zaraz z zerwania szyi w tym samym punkcie (onSnap). Bez niego, gdy szyję zerwał wcześniej taran.
       const czekaSzyja = c.kind === 'core' && (pirateBaseSites()?.habitat?.neck?.phase ?? 'attached') === 'attached';
-      storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } });
+      storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy }, fast: byRam });
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (!czekaSzyja) GameBlasts.blast({ x: p.x, y: p.y, size, profile: 'baza' }, true);
       noteBaseBlast(p.x, p.y, size);
       camera.addShake(12, 0.5);
-      if (c.kind === 'city') pushZoneMessage('WYŁOM W MIEŚCIE HABITATU — WIEŻA ODSŁONIĘTA', 3);
       syncBaseStages();
+      if (c.kind === 'highrise') {
+        const s = pirateBaseStages();
+        if (s && s.breach >= s.breachNeed && !st.__breachSaid) { st.__breachSaid = true; pushZoneMessage('WYŁOM W MIEŚCIE HABITATU — WIEŻA ODSŁONIĘTA', 3); }
+      }
       return dmg;
     }
 
-    // Etapy finału habitatu (src/game/story/pirateBaseIntegrity.js — habitatStages): wyłom (pęknięte ćwiartki miasta),
+    // Etapy finału habitatu (src/game/story/pirateBaseIntegrity.js — habitatStages): wyłom (zniszczone wieżowce miasta),
     // wieża (zerwana), reaktory antygrawitacyjne (budowle martwe). null — misja bez bazy albo habitat bez etapów.
     function pirateBaseStages() {
       const site = StoryGame.site;
       const hab = site?.structures?.habitat;
       const l = site?.dock?.layout;
       if (!hab?.stageGoal || !l) return null;
-      let quadrantsDown = 0;
-      for (const qd of l.habitat.quadrants) if (pirateBaseChunkDown(qd.id)) quadrantsDown++;
+      let buildingsDown = 0;
+      for (const b of l.habitat.buildings) if (pirateBaseChunkDown(b.id)) buildingsDown++;
       const ags = l.antigravs || [];
       let reactorsDown = 0;
       for (const h of ags) {
         const s = site.structures[h.structure];
         if (!s || s._destroyed3D || !(s.hp > 0)) reactorsDown++;
       }
-      return habitatStages({ quadrantsDown, breachNeed: hab.breachNeed, towerDown: !!site.neckSnapped, reactorsDown, reactorsTotal: ags.length });
+      return habitatStages({ buildingsDown, breachNeed: hab.breachNeed, towerDown: !!site.neckSnapped, reactorsDown, reactorsTotal: ags.length });
     }
     // Punkty habitatu = maks. × ułamek etapów do zrobienia (krok fizyki i każdy etap); komplet — habitat ginie (finał misji:
     // StoryGame._chainExplosion). Ostatni etap: wszystkie kawałki habitatu ciałami, skóry pieką się w tle — rozpad nie buduje
@@ -36928,8 +36934,9 @@
       // z kawałka nic nie zostało na miejscu (np. głowa habitatu spadła po zerwaniu szyi — pirateBaseNeck.js): finał
       // rozpadu nie łamie go drugi raz i nie animuje schowanej bryły
       if (wPiece?.lost) return true;
-      // opts.crush — wieża położyła się na ćwiartce miasta: w obrazie jej wieżowce tracą kotwice (wGrze, voxBreak z flagą)
-      pirateBaseVoxEvent('voxBreak', id, opts.crush ? 1 : 0);
+      // opts.crush — wieża położyła się na wieżowcu: w obrazie traci on kotwice i leci z wieżą (wGrze, voxBreak z flagą 1);
+      // opts.fast — kawałek przecięty taranem: przekrój w obrazie od razu (flaga 2)
+      pirateBaseVoxEvent('voxBreak', id, opts.crush ? 1 : opts.fast ? 2 : 0);
       // Upadek na wokselach: ciał już nie ma, a kawałek tylko dostaje kratery w obrazie (bez wyrw powietrza i dryfu w miejscu, z którego baza spada).
       if (_baseFall.voxFall) return true;
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
@@ -37053,7 +37060,9 @@
       pieceDamage(owner, id, hp, x, y) {
         if (Number.isFinite(x) && Number.isFinite(y)) { owner.lastHitX = x; owner.lastHitY = y; }
         owner.lastHitChunk = id;
+        owner.lastHitRam = true;
         applyDamageToStation(owner, hp);
+        owner.lastHitRam = false;
       },
       kill(owner) { applyDamageToStation(owner, (Number(owner.hp) || 0) + 1, true); }
     };
@@ -37099,8 +37108,8 @@
         // (drainVoxBaseDrop). Inaczej zostawał kikut na kotwicach pierścienia szyi: statek pchany ciągiem stał na nim bez końca.
         if (VOX_OBRAZ_BAZY) storyBaseBreak('H-C', { power: 2.2, speed: 70 });
       },
-      // Wieża pada na STOJĄCE wieżowce (prośba użytkownika 2026-11-11): kierunek z taranu / strzałów odwraca się, gdy ćwiartka
-      // po tamtej stronie już leży (wyłom), a przeciwna stoi (towerFallSign, src/game/story/pirateBaseNeck.js).
+      // Wieża pada na STOJĄCE wieżowce (prośba użytkownika 2026-11-11): kierunek z taranu / strzałów odwraca się, gdy w pasie
+      // upadku po tamtej stronie stoi mniej wieżowców niż po przeciwnej (towerFallSign, src/game/story/pirateBaseNeck.js).
       pickFall(fx, fy) {
         const place = StoryGame.site?.dock;
         if (!place?.layout) return null;
@@ -37113,15 +37122,17 @@
         // powietrze: bok wieży gniecie się o wieżowce / dysk — wyrwa w wieży (z bryłą) i zapłon
         pirateBaseBreach({ module: 'H-T', x: st.impactX, y: st.impactY, z: st.impactZ, size: 180, entity: st.tower, kind: 'break' });
         noteBaseBlast(st.impactX, st.impactY, 620);
-        // Wieża miażdży wieżowce ćwiartki, na którą padła, i przebija dysk pod nimi (prośba użytkownika 2026-11-11: „wieża
-        // upadnie na wieżowce i przebije dolną warstwę”): ćwiartka pęka w grze (kolizje, wyłom), a w obrazie jej wieżowce
-        // tracą kotwice (crush) i lecą z wieżą przez wycięte sektory dysku.
+        // Wieża miażdży wieżowce w pasie upadku i przebija dysk pod nimi (prośba użytkownika 2026-11-11: „wieża upadnie na
+        // wieżowce i przebije dolną warstwę”): każdy z nich pęka w grze (kolizje, wyłom), a w obrazie traci kotwice (crush)
+        // i leci z wieżą przez wycięte sektory dysku. Wieżowiec zniszczony wcześniej: jego resztki też tracą kotwice.
         const place = StoryGame.site?.dock;
         const l = place?.layout;
         if (l && !_baseFall.voxFall) {
           const crush = towerCrushChunks(l, place.dirToHub(st.fallX, st.fallY, {}));
-          if (pirateBaseChunkDown(crush.quadrant)) pirateBaseVoxEvent('voxBreak', crush.quadrant, 1);
-          else storyBaseBreak(crush.quadrant, { power: 1.6, speed: 90, at: { x: st.impactX, y: st.impactY }, crush: true });
+          for (const id of crush.buildings) {
+            if (pirateBaseChunkDown(id)) pirateBaseVoxEvent('voxBreak', id, 1);
+            else storyBaseBreak(id, { power: 1.6, speed: 90, at: { x: st.impactX, y: st.impactY }, crush: true });
+          }
           for (const id of crush.sectors) storyBaseBreak(id, { power: 1.4, speed: 60, at: { x: st.impactX, y: st.impactY } });
           pushZoneMessage('WIEŻA MIAŻDŻY WIEŻOWCE I PRZEBIJA DYSK', 3.5);
           syncBaseStages();

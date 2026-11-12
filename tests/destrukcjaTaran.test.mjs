@@ -26,7 +26,7 @@ const szyja = (hz, v) => rows.find((r) => r.hz === hz && r.v === v && r.phase);
 const RING_FACE = (() => {
   const H = createPirateBaseLayout().habitat;
   const box = (b) => { const hx = (b.ux ? b.w : b.d) / 2, hz = (b.ux ? b.d : b.w) / 2; return { x0: b.x - hx, x1: b.x + hx, z1: b.z + hz, ring: b.ring }; };
-  const S = H.buildings.filter((b) => b.chunk === 'H-S').map(box);
+  const S = H.buildings.filter((b) => b.quadrant === 'H-S').map(box);
   const face = Math.max(...S.filter((q) => q.ring === 1 && q.x0 <= 0 && q.x1 >= 0).map((q) => q.z1));
   const inner = Math.max(...S.filter((q) => q.ring === 0 && q.x0 <= 280 && q.x1 >= -280).map((q) => q.z1));
   return face - inner;

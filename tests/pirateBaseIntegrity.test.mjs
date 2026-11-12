@@ -51,11 +51,11 @@ test('progi punktów: każda budowla do zera ma w co trafić (ostatni kawałek z
 });
 
 test('progi punktów: kawałek pod trafieniem, duchy i pęknięte pomijane', () => {
-  const at = center(L.chunkById.get('H-S'));
-  assert.equal(baseStepChunk(L, 'habitat', at.x, at.z, () => false), 'H-S');
-  // H-S już pękł — najbliższy stojący (nie duch dysku / części technicznej)
-  const id = baseStepChunk(L, 'habitat', at.x, at.z, (q) => q === 'H-S');
-  assert.ok(id && id !== 'H-S' && !L.chunkById.get(id).ghost);
+  const at = center(L.chunkById.get('B-16'));
+  assert.equal(baseStepChunk(L, 'habitat', at.x, at.z, () => false), 'B-16');
+  // B-16 już pękł — najbliższy stojący (nie duch dysku / wieży)
+  const id = baseStepChunk(L, 'habitat', at.x, at.z, (q) => q === 'B-16');
+  assert.ok(id && id !== 'B-16' && !L.chunkById.get(id).ghost);
   // magazyn: dwa kawałki — pęka jeden, drugi zostaje do zera punktów
   const m = center(L.chunkById.get('M-1'));
   assert.equal(baseStepChunk(L, 'warehouse', m.x, m.z, () => false), 'M-1');
@@ -143,10 +143,11 @@ test('bezpiecznik: budowla bez stojącego kawałka ginie; duch się nie liczy', 
 // Decyzje użytkownika 2026-11-03 („punkty stają, ciężko zbić, nienaturalnie się ostrzeliwuje”): kawałek habitatu pęka od
 // trafień w niego (pula), habitat ginie z etapów — wyłom (1 ćwiartka miasta), wieża, reaktory antygrawitacyjne
 // (2026-11-11; do tego dnia bęben i dwa wieżowce).
-test('pule kawałków: habitat — ćwiartki miasta i podstawa wieży (bez duchów), inne budowle bez pul', () => {
+test('pule kawałków: habitat — wieżowce miasta i podstawa wieży (bez duchów), inne budowle bez pul', () => {
   const T = PIRATE_BASE_TUNE.hp.habitat;
   const pools = createPiecePools(L, 'habitat', T.pieces);
-  assert.deepEqual(Object.keys(pools).sort(), ['H-C', 'H-E', 'H-N', 'H-S', 'H-W']);
+  assert.deepEqual(Object.keys(pools).sort(), [...L.habitat.buildings.map((b) => b.id), 'H-C'].sort());
+  assert.equal(Object.keys(pools).length, 25, '24 wieżowce i podstawa wieży');
   for (const [id, p] of Object.entries(pools)) {
     assert.equal(p.hp, p.max);
     assert.equal(p.max, T.pieces[L.chunkById.get(id).kind]);
@@ -156,43 +157,43 @@ test('pule kawałków: habitat — ćwiartki miasta i podstawa wieży (bez duch�
 });
 
 test('pule kawałków: trafienie zdejmuje punkty kawałka trafionego, nie przechodzi na inny', () => {
-  const pools = createPiecePools(L, 'habitat', { city: 100, core: 100 });
+  const pools = createPiecePools(L, 'habitat', { highrise: 100, core: 100 });
   const gone = new Set();
   const isGone = (id) => gone.has(id);
-  const at = center(L.chunkById.get('H-S'));
+  const at = center(L.chunkById.get('B-16'));
   // pod punktem
-  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone), 'H-S');
+  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone), 'B-16');
   // kawałek trafiony wprost (ciało) ma pierwszeństwo przed miejscem
   assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone, 'H-C'), 'H-C');
   // pusta pula: trafienie zostaje przy kawałku (bez przenoszenia punktów na drugi koniec habitatu)
-  assert.equal(damagePool(pools, 'H-S', 60), false);
-  assert.equal(damagePool(pools, 'H-S', 60), true, 'pula do zera — kawałek ma pęknąć');
-  assert.equal(damagePool(pools, 'H-S', 60), false, 'pęka raz');
-  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone, 'H-S'), 'H-S');
+  assert.equal(damagePool(pools, 'B-16', 60), false);
+  assert.equal(damagePool(pools, 'B-16', 60), true, 'pula do zera — kawałek ma pęknąć');
+  assert.equal(damagePool(pools, 'B-16', 60), false, 'pęka raz');
+  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone, 'B-16'), 'B-16');
   // kawałek pęknięty (bez brył): trafienie poza bryłami — najbliższy stojący z pulą
-  gone.add('H-S');
+  gone.add('B-16');
   const id = poolPieceAt(L, pools, at.x * 3, at.z * 3, isGone);
-  assert.ok(id && id !== 'H-S' && pools[id].hp > 0, id);
+  assert.ok(id && id !== 'B-16' && pools[id].hp > 0, id);
   // budowla bez pul
   assert.equal(poolPieceAt(L, null, at.x, at.z, isGone), null);
 });
 
-test('etapy habitatu: wyłom 1 ćwiartki + wieża + reaktory, kolejność dowolna; punkty = maks. × reszta', () => {
+test('etapy habitatu: wyłom (2 wieżowce) + wieża + reaktory, kolejność dowolna; punkty = maks. × reszta', () => {
   const need = PIRATE_BASE_TUNE.hp.habitat.breachNeed;
-  assert.equal(need, 1);
+  assert.equal(need, 2, 'wieżowiec zewnętrzny i wewnętrzny otwierają tor do wieży');
   const total = L.antigravs.length;
   assert.equal(total, 2, 'dwa reaktory antygrawitacyjne');
   let s = habitatStages({ breachNeed: need, reactorsTotal: total });
-  assert.deepEqual([s.done, s.total, s.left], [0, 4, 1]);
-  s = habitatStages({ quadrantsDown: 3, breachNeed: need, reactorsTotal: total });
-  assert.equal(s.breach, 1, 'więcej ćwiartek nie liczy się ponad potrzebę');
-  assert.equal(s.left, 0.75);
-  s = habitatStages({ quadrantsDown: 1, breachNeed: need, towerDown: true, reactorsDown: 1, reactorsTotal: total });
-  assert.equal(s.left, 0.25);
-  s = habitatStages({ quadrantsDown: 0, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
+  assert.deepEqual([s.done, s.total, s.left], [0, 5, 1]);
+  s = habitatStages({ buildingsDown: 7, breachNeed: need, reactorsTotal: total });
+  assert.equal(s.breach, 2, 'więcej wieżowców nie liczy się ponad potrzebę');
+  assert.equal(s.left, 0.6);
+  s = habitatStages({ buildingsDown: 1, breachNeed: need, towerDown: true, reactorsDown: 1, reactorsTotal: total });
+  assert.equal(s.left, 0.4);
+  s = habitatStages({ buildingsDown: 0, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
   assert.ok(s.left > 0, 'bez wyłomu habitat żyje');
-  s = habitatStages({ quadrantsDown: 1, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
-  assert.deepEqual([s.done, s.left], [4, 0], 'komplet — finał');
+  s = habitatStages({ buildingsDown: 2, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
+  assert.deepEqual([s.done, s.left], [5, 0], 'komplet — finał');
 });
 
 test('taran w kawałek z pulą: punkty z puli kawałka; budowla z noFuse nie ginie bez stojących kawałków', () => {

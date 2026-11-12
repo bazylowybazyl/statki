@@ -45,20 +45,26 @@ test('dryDockSegmentHit: najbliższa bryła mimo kolejności, skip, punkt na lic
   assert.equal(dryDockSegmentHit([near], 0, 0, 500, 0, out), out);
 });
 
-test('miasto habitatu (2026-11-11): wieżowce na siatce wokseli, bryły trafień to ich prostokąty, ulica między nimi wolna', () => {
+test('miasto habitatu (2026-11-11): wieżowce na siatce wokseli, każdy osobnym kawałkiem z własną bryłą trafień, ulica między nimi wolna', () => {
   const place = placePirateBase({ x: 0, y: 0 }, 0);
   const H = L.habitat;
   const G = L.spec.city.grid;
   assert.equal(H.buildings.length, 24);
   const boxOf = (b) => { const hx = (b.ux ? b.w : b.d) / 2, hz = (b.ux ? b.d : b.w) / 2; return { x0: b.x - hx, x1: b.x + hx, z0: b.z - hz, z1: b.z + hz }; };
   for (const qd of H.quadrants) {
-    const mine = H.buildings.filter((b) => b.chunk === qd.id);
-    assert.equal(mine.length, 6, `${qd.id}: sześć wieżowców`);
+    const mine = H.buildings.filter((b) => b.quadrant === qd.id);
+    assert.equal(mine.length, 6, `${qd.id}: sześć wieżowców w dzielnicy`);
     assert.equal(mine.filter((b) => b.ring === 0).length, 3, `${qd.id}: trzy w pierścieniu wewnętrznym`);
-    const shapes = place.hitShapes.filter((h) => h.chunk === qd.id);
-    assert.equal(shapes.length, 6, `${qd.id}: bryła trafień na wieżowiec`);
-    for (const sh of shapes) assert.equal(sh.pts.length, 4);
-    assert.equal(L.chunkById.get(qd.id).kind, 'city');
+    assert.ok(!L.chunkById.has(qd.id), `${qd.id}: dzielnica nie jest kawałkiem`);
+  }
+  // każdy wieżowiec = kawałek habitatu (jak dawne wieżowce na pomostach): własna bryła trafień, nie duch
+  for (const b of H.buildings) {
+    const c = L.chunkById.get(b.id);
+    assert.ok(c && c.kind === 'highrise' && c.structure === 'habitat' && !c.ghost, `${b.id}: kawałek`);
+    assert.equal(b.chunk, b.id);
+    const shapes = place.hitShapes.filter((h) => h.chunk === b.id);
+    assert.equal(shapes.length, 1, `${b.id}: jedna bryła trafień`);
+    assert.equal(shapes[0].pts.length, 4);
   }
   for (const b of H.buildings) {
     const q = boxOf(b);
@@ -68,7 +74,9 @@ test('miasto habitatu (2026-11-11): wieżowce na siatce wokseli, bryły trafień
     const near = Math.hypot(Math.max(q.x0, Math.min(0, q.x1)), Math.max(q.z0, Math.min(0, q.z1)));
     assert.ok(near > H.stemR + 40, `${b.id}: ${near} od osi`);
     for (const [x, z] of [[q.x0, q.z0], [q.x1, q.z0], [q.x1, q.z1], [q.x0, q.z1]]) assert.ok(Math.hypot(x, z) <= H.drumR, `${b.id}: róg w mieście`);
-    assert.ok(b.baseY < -500 && b.roofY > b.fgY + 200, `${b.id}: od tarasu dysku ponad granicę FG`);
+    // podstawa tuż pod płaszczyzną gry (y 116): statek i pociski tną wieżowiec nisko, prawie cała bryła jest nad cięciem
+    assert.ok(b.baseY < -150 && b.baseY > -450 && b.roofY > b.fgY + 600, `${b.id}: podstawa ${b.baseY}, dach ${b.roofY}`);
+    assert.ok((b.roofY - 116) > 3 * (116 - b.baseY), `${b.id}: nad płaszczyzną ponad trzy razy więcej niż pod nią`);
   }
   for (let i = 0; i < H.buildings.length; i++) for (let j = i + 1; j < H.buildings.length; j++) {
     const a = boxOf(H.buildings[i]), b = boxOf(H.buildings[j]);
@@ -81,7 +89,7 @@ test('miasto habitatu (2026-11-11): wieżowce na siatce wokseli, bryły trafień
     const g = place.toGame(b.x, b.z, {});
     const o = place.toGame(b.x * 2.2, b.z * 2.2, {});
     const hit = dryDockSegmentHit(habShapes, o.x, o.y, g.x, g.y);
-    assert.ok(hit && hit.chunk.startsWith('H-') && hit.chunk !== 'H-C', `${b.id}: trafienie w miasto`);
+    assert.ok(hit && hit.chunk.startsWith('B-'), `${b.id}: trafienie w wieżowiec`);
   }
   const r = (H.coreR + H.stemR) / 2;
   const p0 = place.toGame(r, -60, {}), p1 = place.toGame(r, 60, {});

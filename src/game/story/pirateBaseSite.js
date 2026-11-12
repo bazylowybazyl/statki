@@ -28,12 +28,12 @@ export const PIRATE_BASE_TUNE = Object.freeze({
   // miały nic do roboty.
   droneBays: 4, droneSquad: 4, droneWaves: 3, droneWaveGap: 35, droneRoles: ['strike', 'multirole'],
   // Punkty budowli (habitat = finał misji; pozostałe — cele dodatkowe): punkty, osłona, progi rozpadu kawałków.
-  // Habitat (decyzje użytkownika 2026-11-03): bez progów — kawałki z PULAMI (`pieces` wg rodzaju: ćwiartka miasta,
+  // Habitat (decyzje użytkownika 2026-11-03): bez progów — kawałki z PULAMI (`pieces` wg rodzaju: wieżowiec miasta,
   // podstawa wieży) pękają od trafień w nie; punkty habitatu = maks. × ułamek etapów do zrobienia (wyłom `breachNeed`
-  // ćwiartek, wieża, reaktory), zero — finał. Reaktory antygrawitacyjne (2026-11-11, w miejscu dawnych wieżowców) —
+  // wieżowców — jeden zewnętrzny i jeden wewnętrzny otwierają tor do wieży, wieża, reaktory), zero — finał. Reaktory antygrawitacyjne (2026-11-11, w miejscu dawnych wieżowców) —
   // osobne budowle (cel finału), progi = sam wybuch w miejscu trafienia.
   hp: Object.freeze({
-    habitat: Object.freeze({ hp: 36000, shield: 4000, steps: 0, pieces: Object.freeze({ city: 6000, core: 6000 }), breachNeed: 1 }),
+    habitat: Object.freeze({ hp: 36000, shield: 4000, steps: 0, pieces: Object.freeze({ highrise: 2500, core: 6000 }), breachNeed: 2 }),
     antigrav1: Object.freeze({ hp: 8000, shield: 0, steps: 3 }),
     antigrav2: Object.freeze({ hp: 8000, shield: 0, steps: 3 }),
     fuel: Object.freeze({ hp: 7000, shield: 0, steps: 3 }),

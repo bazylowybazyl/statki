@@ -44,19 +44,23 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     if (nos >= 0) lista.push(krater({ f: F(t), nos, ...o }));
   };
 
-  /** Budynek o rzucie wx × wy (osie węzłów) ze środkiem (cx, cy): salwy po obwodzie tuż nad płaszczyzną gry, na końcu przekrój przez oś (bez niego trzon stoi na rdzeniu, jak kula wieży w S5). t0: opóźnienie, serie: ile salw. */
-  function budynek(lista, cx, cy, wx, wy, t0, serie, naSerie) {
+  /**
+   * Budynek o rzucie wx × wy (osie węzłów) ze środkiem (cx, cy): salwy po obwodzie tuż nad płaszczyzną gry, na końcu przekrój przez oś (bez niego trzon stoi na rdzeniu, jak kula wieży w S5). t0: opóźnienie, serie: ile salw.
+   * szybko (taran): statek właśnie przeciął budynek w płaszczyźnie gry, więc przekrój idzie od razu i na wysokości kadłuba, a salwy w 0,3 s. Zwykłe 2,4 s nadgryzania zostawiało dach w powietrzu długo po przelocie statku (uwaga użytkownika 2026-11-12).
+   */
+  function budynek(lista, cx, cy, wx, wy, t0, serie, naSerie, szybko = false) {
     const zNad = k7HeightToZ(l.spec.pier.deckY1);
+    const tSalw = szybko ? 0.3 : 2.2, tCiecia = szybko ? 0.05 : 2.4;
     for (let s = 0; s < serie; s++) {
-      const t = t0 + (2.2 * s) / serie;
+      const t = t0 + (tSalw * s) / serie;
       for (let q = 0; q < naSerie; q++) {
         const a = TAU * los();
         const ax = Math.cos(a), ay = Math.sin(a), sk = 0.5 / Math.max(Math.abs(ax) / wx, Math.abs(ay) / wy);
-        dodaj(lista, t + 0.22 * los(), cx + ax * sk, cy + ay * sk, zNad + 100 + 160 * los(), { r: rMin, J: 120, rP: 170, rodz: q === 0 ? 'glowna' : 'mala' });
+        dodaj(lista, t + (szybko ? 0.05 : 0.22) * los(), cx + ax * sk, cy + ay * sk, zNad + 100 + 160 * los(), { r: rMin, J: 120, rP: 170, rodz: q === 0 ? 'glowna' : 'mala' });
       }
     }
     const R = 0.5 * Math.sqrt(wx * wx + wy * wy) + 20;
-    for (const [dt, dz] of [[0, 120], [0.12, 300]]) dodaj(lista, t0 + 2.4 + dt, cx, cy, zNad + dz, { r: R, rdzen: 0.08, rS: 0.3, J: 80, rP: 320, rodz: 'wieza' });
+    for (const [dt, dz] of (szybko ? [[0, 20], [0.08, 180]] : [[0, 120], [0.12, 300]])) dodaj(lista, t0 + tCiecia + dt, cx, cy, zNad + dz, { r: R, rdzen: 0.08, rS: 0.3, J: 80, rP: 320, rodz: 'wieza' });
     return lista;
   }
 
@@ -68,15 +72,11 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     return budynek([], h.x, -h.z, wzdluzX ? h.w : h.d, wzdluzX ? h.d : h.w, 0, 6, 3);
   }
 
-  /** Wieżowce ćwiartki miasta (kawałek gry = ćwiartka): nazwy części wokseli. */
-  const wiezowce = (id) => (Hs.buildings || []).filter((q) => q.chunk === id);
-
-  /** Ćwiartka miasta pęka (pula do zera albo rozpad): jej wieżowce składają się po kolei, od zewnętrznego pierścienia do wewnętrznego. */
-  function cwiartka(id) {
-    const lista = [];
-    const hs = wiezowce(id).slice().sort((p, q) => q.ring - p.ring || p.index - q.index);
-    hs.forEach((h, e) => budynek(lista, h.x, -h.z, h.ux ? h.w : h.d, h.ux ? h.d : h.w, 0.35 * e, 4, 2));
-    return lista;
+  /** Wieżowiec miasta pęka (pula do zera, taran, rozpad): salwy po obwodzie tuż nad płaszczyzną gry i przekrój przez oś, jak dawny wieżowiec na pomoście. Kawałek gry = jeden wieżowiec = jedna część wokseli o tym samym id. */
+  function wiezowiec(id, szybko = false) {
+    const h = (Hs.buildings || []).find((q) => q.id === id);
+    if (!h) return [];
+    return budynek([], h.x, -h.z, h.ux ? h.w : h.d, h.ux ? h.d : h.w, 0, szybko ? 2 : 6, 3, szybko);
   }
 
   const szyjaZ = k7HeightToZ(Hs.coreTop) + 2 * dx + 130;
@@ -138,12 +138,16 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     return lista;
   }
 
-  /** Kratery na pęknięcie kawałka gry o tym id. Pusta: kawałek bez obrazu w wokselach. zgniot: wieża położyła się na ćwiartce miasta, wtedy bez kraterów (wieżowce tracą kotwice w wGrze i rozbija je sama wieża). */
-  function kawalek(id, zgniot = false) {
+  /**
+   * Kratery na pęknięcie kawałka gry o tym id. Pusta: kawałek bez obrazu w wokselach. tryb (drugi argument voxBreak): 0 zwykłe pęknięcie (ostrzał, rozpad),
+   * 1 zgniot (wieża położyła się na wieżowcu: bez kraterów, wieżowiec traci kotwice w wGrze i rozbija go sama wieża), 2 taran (statek przeciął wieżowiec: przekrój od razu).
+   */
+  function kawalek(id, tryb = 0) {
     const c = l.chunkById?.get(id);
     if (!c) return [];
+    const t = Number(tryb) | 0;
     if (c.kind === 'antigrav') return reaktor(id);
-    if (c.kind === 'city') return zgniot ? [] : cwiartka(id);
+    if (c.kind === 'highrise') return t === 1 ? [] : wiezowiec(id, t === 2);
     // Szyb i głowę prowadzi szyja (zdarzenie voxNeck, a bez niego voxFall): szyja tnie szyb dopiero po przechyle. Cięcie szybu przy pęknięciu H-C wyrzucało płytę pod wieżą, rura szyi wysuwała się w szyb i wieża spadała pionowo.
     if (c.kind === 'core' || c.kind === 'tech') return [];
     if (c.kind === 'disc') {
@@ -165,8 +169,8 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     return { lista };
   }
 
-  /** Nazwy części wokseli, które przy zgniocie kawałka tracą kotwice: wieżowce ćwiartki miasta. Inne kawałki: nic. */
-  const czesciZgniotu = (id) => (l.chunkById?.get(id)?.kind === 'city' ? wiezowce(id).map((h) => h.id) : []);
+  /** Nazwy części wokseli, które przy zgniocie kawałka tracą kotwice: wieżowiec miasta (część o tym samym id). Inne kawałki: nic. */
+  const czesciZgniotu = (id) => (l.chunkById?.get(id)?.kind === 'highrise' ? [id] : []);
 
   return { szukaj, kawalek, czesciZgniotu, szyja, kikut, upadek, szyjaZ, szyjaR: Hs.neckR };
 }

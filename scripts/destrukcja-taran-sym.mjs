@@ -1,5 +1,5 @@
 // Taran silnika belek w Node na PRAWDZIWYM HullBodies + worldBodies (audyt 2026-10-14, docs/AUDYT-destruktor-3d-2026-10-14.md):
-// Atlas kontra bęben habitatu bazy piratów (kawałek H-S, ciała świata w bańce) i kontra niszczyciel. Bez przeglądarki — A/B
+// Atlas kontra wieżowce miasta habitatu bazy piratów (zewnętrzny wieżowiec ćwiartki S na osi — FACE, ciała świata w bańce) i kontra niszczyciel. Bez przeglądarki — A/B
 // zmian silnika „przed / po” w kilka sekund.
 //
 //   node scripts/destrukcja-taran-sym.mjs [--tryb kotwice,czolo,pchanie,musniecie,wycof,statek] [--dt 60,120] [--v 900,1500,3000] [--czas 3]
@@ -222,8 +222,8 @@ const wrecksOf = () => window.wrecks.filter((w) => w.worldDebris).length;
 const ATLAS_MASS = 800000;
 // Zewnętrzne lico wieżowca ćwiartki S na osi x habitatu (gra: y w dół → +y = +z hubu). Do 2026-11-11 tu stała ściana bębna (r 1000);
 // od miasta tor czołowy trafia zewnętrzny wieżowiec, za nim wewnętrzny (RING — głębokość jego lica od lica zewnętrznego).
-const boxB = (b) => { const hx = (b.ux ? b.w : b.d) / 2, hz = (b.ux ? b.d : b.w) / 2; return { x0: b.x - hx, x1: b.x + hx, z0: b.z - hz, z1: b.z + hz, ring: b.ring }; };
-const S_BOXES = H.buildings.filter((b) => b.chunk === 'H-S').map(boxB);
+const boxB = (b) => { const hx = (b.ux ? b.w : b.d) / 2, hz = (b.ux ? b.d : b.w) / 2; return { x0: b.x - hx, x1: b.x + hx, z0: b.z - hz, z1: b.z + hz, ring: b.ring, id: b.id }; };
+const S_BOXES = H.buildings.filter((b) => b.quadrant === 'H-S').map(boxB);
 const FACE = S_BOXES.filter((q) => q.ring === 1 && q.x0 <= 0 && q.x1 >= 0).sort((a, b) => b.z1 - a.z1)[0];
 const wallY = HAB.y + FACE.z1;
 const atlasImg = hullImage('atlas');
@@ -254,7 +254,7 @@ if (TRYBY.includes('czolo')) {
   console.log('\n=== CZOŁOWO w ścianę bębna (koasting, bez ciągu) ===');
   for (const dt of DTS) for (const v of SPEEDS) {
     const site = freshHabitat();
-    const piece = site.pieces.find((p) => p.id === 'H-S');
+    const piece = site.pieces.find((p) => p.id === FACE.id);
     const n0 = liveNodes(bodiesOfPiece(piece));
     const atlas = ship('atlas', HAB.x, wallY + 300 + EXT.nose, -Math.PI / 2, ATLAS_MASS);
     const a0 = atlas.beamHull.body.activeNodes;
@@ -294,7 +294,7 @@ if (TRYBY.includes('pchanie')) {
   console.log('\n=== PCHANIE: start 900 j/s, ciąg ku ścianie przez 4 s, potem 2 s bez ciągu ===');
   for (const dt of DTS) for (const mode of [{ n: 'W+Shift', acc: 150, cap: 1500 }, { n: 'szarża', acc: 1100, cap: 3000 }]) {
     const site = freshHabitat();
-    const piece = site.pieces.find((p) => p.id === 'H-S');
+    const piece = site.pieces.find((p) => p.id === FACE.id);
     const core = site.pieces.find((p) => p.id === 'H-C');
     const n0 = liveNodes(bodiesOfPiece(piece)), c0 = liveNodes(bodiesOfPiece(core));
     const atlas = ship('atlas', HAB.x, wallY + 300 + EXT.nose, -Math.PI / 2, ATLAS_MASS);
@@ -338,7 +338,7 @@ if (TRYBY.includes('musniecie')) {
   console.log('\n=== MUŚNIĘCIE: Atlas wzdłuż stycznej do ściany, burta 25 j. w ścianie w punkcie styczności (kurs +x) ===');
   for (const dt of DTS) for (const v of [300, 600, 1200]) {
     const site = freshHabitat();
-    const piece = site.pieces.find((p) => p.id === 'H-S');
+    const piece = site.pieces.find((p) => p.id === FACE.id);
     const n0 = liveNodes(bodiesOfPiece(piece));
     // angle 0: burta od strony −y gry leży w y = e.y − halfW; lico wieżowca w y = wallY → e.y = wallY − 25 + halfW. Start nosem 300 j.
     // przed narożnikiem wieżowca (ściana bębna była łukiem — kadłub stykał się z nią dopiero przy osi; lico wieżowca jest płaskie).
@@ -376,7 +376,7 @@ if (TRYBY.includes('wycof')) {
   console.log('\n=== WYCOFANIE: taran 900 j/s, po zatrzymaniu (albo 1,5 s) ciąg wsteczny 300 j/s² ===');
   for (const dt of DTS) {
     const site = freshHabitat();
-    const piece = site.pieces.find((p) => p.id === 'H-S');
+    const piece = site.pieces.find((p) => p.id === FACE.id);
     const n0 = liveNodes(bodiesOfPiece(piece));
     const atlas = ship('atlas', HAB.x, wallY + 300 + EXT.nose, -Math.PI / 2, ATLAS_MASS);
     atlas.vy = -900;
@@ -492,7 +492,7 @@ if (TRYBY.includes('szyja')) {
     CollisionFX.on('impact', onFx); CollisionFX.on('grind', onFx);
     const piece = (id) => site.pieces.find((p) => p.id === id);
     const discs = site.pieces.filter((p) => p.kind === 'disc');
-    const drums = site.pieces.filter((p) => p.kind === 'city');
+    const drums = site.pieces.filter((p) => p.kind === 'highrise');
     const atlas = ship('atlas', HAB.x + H.drumR + 300 + EXT.nose, HAB.y + 60, Math.PI, ATLAS_MASS);
     atlas.vx = -v;
     atlasRef = atlas; t0Sim = HullBodies.simTime;

@@ -19,7 +19,7 @@ const run = (sec, fn = null) => { for (let t = 0; t < sec; t += DT) { stepPirate
 const ventById = (id) => S().vents.find((v) => v.id === id) || null;
 const fresh = () => attachPirateBaseAtmosphere(place);
 
-test('moduły z układu: bęben, szyb, wieża, dysk, magazyn — objętości dodatnie, przejścia symetryczne', () => {
+test('moduły z układu: dzielnice miasta, podstawa wieży, wieża, dysk, magazyn — objętości dodatnie, przejścia symetryczne', () => {
   const mods = pirateBaseAtmoModules(place.layout);
   const ids = mods.map((m) => m.id);
   for (const id of ['H-E', 'H-S', 'H-W', 'H-N', 'H-C', 'H-T', 'D-1', 'D-8', 'M-1']) assert.ok(ids.includes(id), id);
@@ -362,4 +362,20 @@ test('blok migawki bazy: światła wnętrza (głowa wieży, ćwiartki bębna) w 
   const m2 = applyPirateBaseBlock(B, createPirateBaseMirror());
   assert.equal(m2.state.tech, 0.9);
   assert.deepEqual(m2.state.drumQ, [0.9, 0.9, 0.9, 0.9]);
+});
+
+// 2026-11-12: wieżowiec miasta jest osobnym kawałkiem gry, a powietrze ma wspólne z dzielnicą (moduł H-E / H-S / H-W / H-N).
+test('wieżowiec miasta rozszczelnia swoją dzielnicę: pierwszy pęknięty wieje, kolejny z tej samej dzielnicy już nie', () => {
+  fresh();
+  const B = place.layout.habitat.buildings;
+  const a = B.find((b) => b.quadrant === 'H-E' && b.ring === 1), a2 = B.find((b) => b.quadrant === 'H-E' && b.ring === 0);
+  const s = B.find((b) => b.quadrant === 'H-S');
+  assert.ok(!place.layout.chunkById.has('H-E'), 'dzielnica nie jest kawałkiem');
+  const id = noteBaseChunkBreak(a.id, null, {});
+  assert.ok(id > 0, `${a.id}: wyrwa dzielnicy`);
+  assert.equal(ventById(id).module.id, 'H-E');
+  run(30);
+  assert.ok(mod('H-E').spent, 'dzielnica bez powietrza');
+  assert.equal(noteBaseChunkBreak(a2.id, null, {}), -1, 'drugi wieżowiec tej dzielnicy nie wieje');
+  assert.ok(noteBaseChunkBreak(s.id, null, {}) > 0, 'inna dzielnica ma swoje powietrze');
 });

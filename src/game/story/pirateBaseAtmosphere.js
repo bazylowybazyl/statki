@@ -128,16 +128,18 @@ export function pirateBaseAtmoModules(layout) {
   const out = [];
   const add = (id, kind, V, hx, hz, zc, z0, z1, r, extra = {}) => {
     const c = layout.chunkById.get(id);
-    if (!c) return;
-    out.push({ id, kind, structure: c.structure, V: Math.max(1e5, V), hx, hz, z: zc, z0, z1, r, ...extra });
+    // dzielnica miasta (H-E…) nie ma własnego kawałka — jej kawałkami są wieżowce (moduleOf: wieżowiec → dzielnica)
+    if (!c && kind !== 'city') return;
+    out.push({ id, kind, structure: c ? c.structure : 'habitat', V: Math.max(1e5, V), hx, hz, z: zc, z0, z1, r, ...extra });
   };
-  // miasto: ćwiartka = powietrze jej wieżowców (od tarasu dysku do dachów); w płaszczyźnie wycinek pierścienia stemR..drumR,
-  // wyrwy na wysokości płaszczyzny gry (tam trafia broń i taran)
+  // miasto: dzielnica (ćwiartka) = powietrze jej wieżowców (od tarasu dysku do dachów), jeden moduł na dzielnicę — pęknięty
+  // wieżowiec rozszczelnia dzielnicę raz; w płaszczyźnie wycinek pierścienia stemR..drumR, wyrwy na wysokości płaszczyzny
+  // gry (tam trafia broń i taran)
   H.quadrants.forEach((q, qi) => {
     const a = (q.a0 + q.a1) / 2;
     let V = 0, rs = 0, n = 0, top = 0;
     for (const b of H.buildings) {
-      if (b.chunk !== q.id) continue;
+      if (b.quadrant !== q.id) continue;
       // piąta część kubatury wieżowca to powietrze jednej dzielnicy (reszta: konstrukcja i przedziały za grodziami) — objętość
       // jak dawna ćwiartka bębna, więc wypływ trwa tyle samo
       V += 0.2 * b.w * b.d * (z(b.roofY) - z(b.baseY));
@@ -199,6 +201,7 @@ const S = {
   place: null,
   modules: [],
   byId: new Map(),
+  alias: new Map(),
   vents: [],
   nextId: 1,
   time: 0,
@@ -231,6 +234,7 @@ export function attachPirateBaseAtmosphere(place) {
   S.place = place || null;
   S.modules = [];
   S.byId.clear();
+  S.alias.clear();
   S.vents.length = 0;
   S.tears.clear();
   S.time = 0;
@@ -244,6 +248,7 @@ export function attachPirateBaseAtmosphere(place) {
     S.modules.push(m);
     S.byId.set(m.id, m);
   });
+  for (const b of place.layout.habitat?.buildings || []) S.alias.set(b.id, b.quadrant);
   return S;
 }
 
@@ -251,6 +256,7 @@ export function detachPirateBaseAtmosphere() {
   S.place = null;
   S.modules = [];
   S.byId.clear();
+  S.alias.clear();
   S.vents.length = 0;
   S.tears.clear();
   S.frame.has = false;
@@ -364,9 +370,11 @@ function follow(v, dt) {
 
 // ------------------------------------------------------------------ wyrwy
 
+// Moduł kawałka: id modułu albo wieżowiec miasta → moduł jego dzielnicy (S.alias; dzielnica ma wspólne powietrze).
 function moduleOf(id) {
   if (!id) return null;
-  return S.byId.get(String(id)) || null;
+  const k = String(id);
+  return S.byId.get(k) || S.byId.get(S.alias.get(k)) || null;
 }
 
 function cabinTau(size) {

@@ -14,9 +14,9 @@
 // (3) BEZPIECZNIK: budowla bez stojącego kawałka (pęknięte, schowane albo zjedzone ogniem do zera) ginie — punkty
 //     nie mogą zostać bez bryły, w którą da się trafić. Budowla z `noFuse` (habitat — śmierć z etapów) go nie ma.
 // (4) PULE KAWAŁKÓW I ETAPY HABITATU (decyzje użytkownika 2026-11-03, zgłoszenie „punkty stają, ciężko zbić,
-//     nienaturalnie się ostrzeliwuje”): kawałek z pulą (ćwiartki miasta, podstawa wieży) pęka od trafień W NIEGO (taran — od
+//     nienaturalnie się ostrzeliwuje”): kawałek z pulą (wieżowce miasta, podstawa wieży) pęka od trafień W NIEGO (taran — od
 //     zgniotu jego węzłów), nie od progu „kawałek najbliżej ostatniego trafienia”. Habitat ginie z ETAPÓW: wyłom
-//     (`breachNeed` ćwiartek), wieża (zerwana — podstawa pęknięta z puli albo taran) i reaktory antygrawitacyjne na
+//     (`breachNeed` wieżowców), wieża (zerwana — podstawa pęknięta z puli albo taran) i reaktory antygrawitacyjne na
 //     pomostach (2026-11-11; do tego dnia dwa wieżowce).
 // ============================================================
 import { pirateBaseChunkAt, pirateBaseNearestChunk } from '../../3d/portBuildings/pirateBaseLayout.js';
@@ -59,7 +59,7 @@ export function baseStepChunk(layout, structure, hx, hz, isGone) {
 }
 
 /**
- * Pule punktów kawałków budowli `structure`: kawałki bez duchów, których rodzaj ma wpis w `byKind` ({ city: 6000, … }).
+ * Pule punktów kawałków budowli `structure`: kawałki bez duchów, których rodzaj ma wpis w `byKind` ({ highrise: 2500, … }).
  * Zwraca { id: { hp, max } } (pusty obiekt — budowla bez pul).
  */
 export function createPiecePools(layout, structure, byKind) {
@@ -98,13 +98,13 @@ export function damagePool(pools, id, dmg) {
 }
 
 /**
- * Etapy finału habitatu: wyłom (pęknięte ćwiartki miasta, potrzeba `breachNeed`), wieża (zerwana), reaktory
+ * Etapy finału habitatu: wyłom (zniszczone wieżowce miasta, potrzeba `breachNeed`), wieża (zerwana), reaktory
  * antygrawitacyjne (zniszczone z wszystkich). Kolejność dowolna. Zwraca { breach, breachNeed, tower, reactors,
  * reactorsTotal, done, total, left } — `left`: ułamek etapów do zrobienia (punkty habitatu = maks. × left; 0 — habitat
  * ginie).
  */
-export function habitatStages({ quadrantsDown = 0, breachNeed = 1, towerDown = false, reactorsDown = 0, reactorsTotal = 0 } = {}) {
-  const breach = Math.min(Math.max(0, quadrantsDown | 0), breachNeed);
+export function habitatStages({ buildingsDown = 0, breachNeed = 1, towerDown = false, reactorsDown = 0, reactorsTotal = 0 } = {}) {
+  const breach = Math.min(Math.max(0, buildingsDown | 0), breachNeed);
   const reactors = Math.min(Math.max(0, reactorsDown | 0), reactorsTotal);
   const total = breachNeed + 1 + reactorsTotal;
   const done = breach + (towerDown ? 1 : 0) + reactors;

@@ -77,7 +77,7 @@ function emit(type, a, b, c) {
 }
 
 /**
- * Zdarzenia dla obrazu wiązanych wokseli (src/3d/woksele/wGrze.js): 'voxHit' (x, y, obrażenia), 'voxBreak' (id kawałka, 1 = zgniot pod wieżą), 'voxNeck' i 'voxFall' (kierunek upadku w grze).
+ * Zdarzenia dla obrazu wiązanych wokseli (src/3d/woksele/wGrze.js): 'voxHit' (x, y, obrażenia), 'voxBreak' (id kawałka, 1 = zgniot pod wieżą, 2 = przecięty taranem), 'voxNeck' i 'voxFall' (kierunek upadku w grze).
  * Sam obraz: gra nie czeka na odpowiedź, a ruch wokseli nie wraca do rozgrywki.
  */
 export function pirateBaseVoxEvent(type, a, b, c) { emit(type, a, b, c); }

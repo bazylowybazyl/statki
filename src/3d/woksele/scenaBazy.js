@@ -15,7 +15,7 @@ export const DX_BAZY = 40;
 /** Pojemność solvera na dx: ?maxWez i ?nKom strony. Węzły z testu tests/wokseleBaza.test.mjs. */
 export const POJEMNOSC_BAZY = Object.freeze({
   40: { maxWez: 140000, nKom: 262144 },
-  80: { maxWez: 26000, nKom: 65536 },
+  80: { maxWez: 32000, nKom: 65536 },
 });
 
 const TAU = Math.PI * 2;
@@ -62,7 +62,7 @@ const rura = (cx, cy, R, sc, z0, z1, plyta, kSc, kPl) => (x, y, z) => {
 
 /**
  * Wieżowce miasta habitatu (układ: l.habitat.buildings, 2026-11-11): każdy osobną częścią, wieza() na siatce świata. Boki są równoległe do osi układu, a środek z układu leży na siatce (pirateBaseLayout, city.grid), więc ściany schodzą się z bryłą starej bazy, z której piecze się skóra.
- * Podstawa nad wierzchem tarasu dysku (dysk powstaje po wieżowcach i nie dzieli z nimi komórek). Kotwice w dolnej warstwie: przy uderzeniu wieży puszcza je wGrze (voxBreak z flagą), inaczej resztki stałyby w powietrzu nad wyciętym sektorem dysku.
+ * Podstawa nad wierzchem tarasu dysku (dysk powstaje po wieżowcach i nie dzieli z nimi komórek). Kotwice w dolnej warstwie: przy uderzeniu wieży puszcza je wGrze (voxBreak z flagą), inaczej resztki stałyby w powietrzu nad wyciętym sektorem dysku. Każdy wieżowiec to też osobny kawałek gry o tym samym id (pula, pęknięcie, kratery).
  */
 function budujMiasto(b, l) {
   const dx = b.dx;
@@ -70,9 +70,10 @@ function budujMiasto(b, l) {
     const zB = k7HeightToZ(h.baseY), zD = k7HeightToZ(h.roofY);
     const g = wieza({ dx, w: h.ux ? h.w : h.d, d: h.ux ? h.d : h.w, h: zD - zB });
     const c = b.nowa(h.id, TON.wiezowiec);
-    const a0 = Math.round(h.x / dx - (g.meta.nx - 1) / 2), b0 = Math.round(-h.z / dx - (g.meta.ny - 1) / 2), k0 = Math.ceil(zB / dx);
+    // Dolna warstwa: pierwsza komórka ze środkiem nad wierzchem tarasu, czyli tuż nad pokładem dysku (bez pustej warstwy pod budynkiem).
+    const a0 = Math.round(h.x / dx - (g.meta.nx - 1) / 2), b0 = Math.round(-h.z / dx - (g.meta.ny - 1) / 2), k0 = Math.floor(zB / dx - 0.5) + 1;
     for (let q = 0; q < g.n; q++) b.dodaj(c, a0 + g.ijk[3 * q], b0 + g.ijk[3 * q + 1], k0 + g.ijk[3 * q + 2], g.kind[q]);
-    c.wiezowiec = { x: a0 * dx + 0.5 * (g.meta.nx - 1) * dx, y: b0 * dx + 0.5 * (g.meta.ny - 1) * dx, w: g.meta.nx * dx, d: g.meta.ny * dx, zB, zD, cwiartka: h.chunk };
+    c.wiezowiec = { x: a0 * dx + 0.5 * (g.meta.nx - 1) * dx, y: b0 * dx + 0.5 * (g.meta.ny - 1) * dx, w: g.meta.nx * dx, d: g.meta.ny * dx, zB, zD, dzielnica: h.quadrant };
   }
 }
 
@@ -253,8 +254,11 @@ function budujDysk(b, Hs, o) {
     if (r > R - szerW) return KIND.DYSK; // wieniec
     if (Math.floor(z / dx) === k0 || z > zG - dx) return KIND.DYSK; // pokłady
     if (Math.abs(r - Hs.tier1R) < 0.75 * dx || Math.abs(r - Hs.tier2R) < 0.75 * dx) return KIND.DYSK; // stopnie
-    const f = Math.atan2(y, x), dF = f - Math.round(f / krokZ) * krokZ;
-    if (r * Math.abs(Math.sin(dF)) < polZ) return KIND.DYSK;
+    // Tarasy miasta (nad płytą dysku, od 2026-11-12 wysokie): co drugie żebro promieniowe i bez żeber obwodowych, niosą je ściany stopni i pokład. Pełna kratownica w tarasach to kilkanaście tysięcy węzłów więcej.
+    const taras = z > zT0;
+    const f = Math.atan2(y, x), nrZ = Math.round(f / krokZ), dF = f - nrZ * krokZ;
+    if (r * Math.abs(Math.sin(dF)) < polZ && (!taras || nrZ % 2 === 0)) return KIND.DYSK;
+    if (taras) return -1;
     const rr = r / krokO;
     return Math.abs(rr - Math.round(rr)) * krokO < polZ ? KIND.DYSK : -1;
   });
@@ -398,7 +402,7 @@ function planSekwencji(sc, cz, l, o, los) {
   };
   // Ćwiartka H-S miasta: najpierw wieżowiec zewnętrzny i wewnętrzny na osi, potem reszta (wyłom), tak jak ostrzał z jednej strony w misji.
   const zPokladu = k7HeightToZ(l.spec.pier.deckY1);
-  const hs = l.habitat.buildings.filter((q) => q.chunk === 'H-S');
+  const hs = l.habitat.buildings.filter((q) => q.quadrant === 'H-S');
   const zewn = hs.filter((q) => q.ring === 1), wewn = hs.filter((q) => q.ring === 0);
   const pierwsze = [zewn[zewn.length >> 1], wewn[wewn.length >> 1]];
   salwy(cz.get(pierwsze[0].id), T.w1, zPokladu);

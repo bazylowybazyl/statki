@@ -92,6 +92,10 @@ test('miasto: 24 wieżowce jako osobne części na siatce układu; bezMiasta zos
     const hx = (h.ux ? h.w : h.d) / 2, hy = (h.ux ? h.d : h.w) / 2;
     assert.deepEqual([x0 - 20, x1 + 20, y0 - 20, y1 + 20], [h.x - hx, h.x + hx, -h.z - hy, -h.z + hy], `${h.id}: rzut`);
     assert.ok(z1 > 150, `${h.id}: sięga nad płaszczyznę gry`);
+    // podstawa tuż nad tarasem dysku, 300–450 j. pod płaszczyzną gry: cięcie w płaszczyźnie zostawia niski kikut
+    let z0 = Infinity;
+    for (let i = c.start; i < c.start + c.n; i++) z0 = Math.min(z0, pos[3 * i + 2]);
+    assert.ok(z0 - 20 > -460 && z0 - 20 < -250, `${h.id}: spód ${z0 - 20}`);
   }
   // Trzon wieży: węzły w połowie wysokości wieży, najdalszy od osi.
   const promienSzyi = (p) => {
@@ -119,26 +123,25 @@ test('wnętrze szyi i szybu (szyjaWnetrze): 0 pusta rura, 1 stropy, 2 pełne —
   assert.equal(scenaB1({ dx: 80 }).scena.n, scenaB1({ dx: 80, szyjaWnetrze: 1 }).scena.n);
 });
 
-test('kratery misji (grupyGry): ćwiartka miasta składa swoje wieżowce, zgniot pod wieżą puszcza ich części bez kraterów, reaktor pęka jak budynek', () => {
+test('kratery misji (grupyGry): wieżowiec miasta pęka sam (kratery tylko w jego części), zgniot pod wieżą puszcza jego część bez kraterów, reaktor pęka jak budynek', () => {
   const plan = plany[80];
   const grupy = createGrupyGry({ w: plan.scena, l: L0, dx: 80 });
   const nazwy = new Set(plan.miasto.budynki.map((b) => b.nazwa));
   const czesc = (i) => plan.miasto.budynki.find((b) => i >= b.start && i < b.start + b.n)?.nazwa;
-  // ćwiartka z puli: kratery w jej sześciu wieżowcach (nosiciel = węzeł wieżowca tej ćwiartki), rozłożone w czasie
-  const lista = grupy.kawalek('H-S');
-  assert.ok(lista.length >= 36, `kraterów ${lista.length}`);
-  const moje = new Set(L0.habitat.buildings.filter((b) => b.chunk === 'H-S').map((b) => b.id));
-  const trafione = new Set();
-  for (const k of lista) { const n = czesc(k.nos); assert.ok(moje.has(n), `krater w ${n}`); trafione.add(n); }
-  assert.equal(trafione.size, 6, 'każdy wieżowiec ćwiartki dostaje kratery');
-  assert.ok(Math.max(...lista.map((k) => k.f)) - Math.min(...lista.map((k) => k.f)) > 60, 'wieżowce padają po kolei, nie w jednej klatce');
-  // zgniot pod wieżą: bez kraterów, za to lista części do puszczenia kotwic (istnieją w wypieku)
-  assert.deepEqual(grupy.kawalek('H-S', true), []);
-  const pusc = grupy.czesciZgniotu('H-S');
-  assert.equal(pusc.length, 6);
-  for (const n of pusc) assert.ok(nazwy.has(n) && moje.has(n), n);
+  for (const id of ['B-03', 'B-16']) {
+    // kawałek gry = wieżowiec = część wokseli o tym samym id: salwy po obwodzie i przekrój przez oś, jak dawny wieżowiec na pomoście
+    const lista = grupy.kawalek(id);
+    assert.ok(lista.length >= 12, `${id}: kraterów ${lista.length}`);
+    for (const k of lista) assert.equal(czesc(k.nos), id, `${id}: krater w ${czesc(k.nos)}`);
+    assert.ok(lista.some((k) => k.rodz === 'wieza'), `${id}: przekrój przez oś`);
+    // zgniot pod wieżą: bez kraterów, sama część do puszczenia kotwic
+    assert.deepEqual(grupy.kawalek(id, true), []);
+    assert.deepEqual(grupy.czesciZgniotu(id), [id]);
+    assert.ok(nazwy.has(id));
+  }
   assert.deepEqual(grupy.czesciZgniotu('H-C'), []);
   assert.deepEqual(grupy.czesciZgniotu('AG-1'), []);
+  assert.deepEqual(grupy.kawalek('H-S'), [], 'dzielnica nie jest kawałkiem');
   // reaktor: kratery w jego części; podstawę i wieżę prowadzi zerwanie (voxNeck), nie pęknięcie kawałka
   const r = grupy.kawalek('AG-2');
   assert.ok(r.length >= 10);
@@ -146,4 +149,20 @@ test('kratery misji (grupyGry): ćwiartka miasta składa swoje wieżowce, zgniot
   assert.deepEqual(grupy.kawalek('H-C'), []);
   assert.ok(grupy.kawalek('D-3').length > 0, 'sektor dysku pod wieżą ma kratery');
   assert.equal(grupy.szyjaR, L0.habitat.neckR);
+});
+
+test('taran: wieżowiec przecięty statkiem dostaje przekrój od razu i na wysokości kadłuba (voxBreak z flagą 2), ostrzał — po salwach', () => {
+  const plan = plany[80];
+  const grupy = createGrupyGry({ w: plan.scena, l: L0, dx: 80 });
+  const zwykle = grupy.kawalek('B-16'), szybko = grupy.kawalek('B-16', 2);
+  const ciecie = (lista) => lista.filter((k) => k.rodz === 'wieza');
+  assert.equal(ciecie(zwykle).length, 2);
+  assert.equal(ciecie(szybko).length, 2);
+  assert.ok(Math.min(...ciecie(zwykle).map((k) => k.f)) >= 120, 'ostrzał: przekrój po ~2,4 s nadgryzania');
+  assert.ok(Math.max(...ciecie(szybko).map((k) => k.f)) <= 12, 'taran: przekrój w pierwszych klatkach');
+  assert.ok(Math.max(...szybko.map((k) => k.f)) <= 30, 'taran: wszystkie kratery w pół sekundy');
+  // przekrój taranu niżej (wysokość kadłuba w płaszczyźnie gry) niż przekrój po ostrzale
+  const z = (k) => plan.scena.pos[3 * k.nos + 2];
+  assert.ok(Math.min(...ciecie(szybko).map(z)) < Math.min(...ciecie(zwykle).map(z)));
+  assert.deepEqual(grupy.kawalek('B-16', 1), [], 'zgniot dalej bez kraterów');
 });

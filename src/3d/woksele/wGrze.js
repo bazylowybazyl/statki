@@ -439,7 +439,7 @@ export function createWokseleGry({ Core3D }) {
       s.solver.puscCzesc(renderer, stan.wiezaPusc);
       stan.wiezaPusc = null;
     }
-    // Wieżowce ćwiartki, na którą padła wieża (voxBreak z flagą zgniotu): tracą kotwice całe, jak części w fali upadku.
+    // Wieżowce, na które padła wieża (voxBreak z flagą zgniotu): tracą kotwice całe, jak części w fali upadku.
     while (stan.puscCzesci.length) s.solver.puscCzesc(renderer, stan.puscCzesci.shift());
     // Fala puszczania kotwic od habitatu: środek uderza pierwszy, końce pomostów kilka sekund później, każda część w całości.
     if (stan.upadekT >= FALA_START_S && !stan.falaKoniec) {
@@ -616,7 +616,7 @@ export function createWokseleGry({ Core3D }) {
       }
     },
 
-    /** Zdarzenia z gry: voxHit (x, y, obrażenia), voxBreak (id kawałka, 1 = zgniot pod wieżą), voxNeck (kierunek upadku), voxFall (kierunek upadku albo nic). */
+    /** Zdarzenia z gry: voxHit (x, y, obrażenia), voxBreak (id kawałka, 1 = zgniot pod wieżą, 2 = przecięty taranem), voxNeck (kierunek upadku), voxFall (kierunek upadku albo nic). */
     zdarzenie(typ, a, b, c) {
       if (!stan.gotowe) return;
       if (stan.zgaszony) return;
@@ -641,10 +641,11 @@ export function createWokseleGry({ Core3D }) {
       if (typ === 'voxBreak') {
         // W locie nic się nie tnie (uwaga użytkownika 2026-11-07: „sam fakt, że leci, nie powinien sprawiać, że się rozczłonkowuje”): bryła rozbija się dopiero, gdy w coś uderzy. Kratery ćwiartek bębna przy HP 0 rozbijały go, zanim ruszył.
         if (stan.upadekT >= 0) return;
-        // b > 0: zgniot. Wieża położyła się na ćwiartce miasta (index.html, _neckCtx.onImpact): jej wieżowce tracą kotwice i lecą z wieżą przez wycięte sektory dysku.
+        // b > 0: zgniot. Wieża położyła się na wieżowcu (index.html, _neckCtx.onImpact): wieżowiec traci kotwice i leci z wieżą przez wycięte sektory dysku.
         // Bez tego ich dolne warstwy zostają w powietrzu jako nieruchome płyty i wieża na nich leży (prośba użytkownika 2026-11-11: „przebije dolną warstwę”).
-        const zgniot = Number(b) > 0;
-        const lista = s.grupy.kawalek(String(a), zgniot);
+        // b = 2: taran. Statek właśnie przeciął wieżowiec, więc przekrój idzie od razu (grupyGry.budynek, szybko).
+        const tryb = Number(b) | 0, zgniot = tryb === 1;
+        const lista = s.grupy.kawalek(String(a), tryb);
         const nazwy = zgniot ? s.grupy.czesciZgniotu(String(a)) : [];
         if (!lista.length && !nazwy.length) return;
         aktywuj();

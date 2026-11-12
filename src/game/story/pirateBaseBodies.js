@@ -2,8 +2,8 @@
  * Baza piratów jako CIAŁA ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F2): kawałki bazy
  * (pirateBaseLayout.chunks) w bańce gracza stają się PŁASKIMI, ZAKOTWICZONYMI ciałami silnika belek
  * (src/game/worldBodies.js). Osobne MIEJSCE na budowlę (habitat, paliwo, magazyn, pomosty) — trafienia liczą punkty
- * swojej budowli (byt stacji ma `_worldSite`). Taran = zderzenie kadłubów: ćwiartka miasta habitatu to jej wieżowce
- * (ściany, rdzeń, słupy narożne) — ściany gną się i pękają pod Atlasem; pomosty pękają między rzadkimi kotwicami.
+ * swojej budowli (byt stacji ma `_worldSite`). Taran = zderzenie kadłubów: wieżowiec miasta habitatu to ściany, rdzeń
+ * i słupy narożne — ściany gną się i pękają pod Atlasem; pomosty pękają między rzadkimi kotwicami.
  *
  * Kawałek = raster z góry brył przecinających płaszczyznę gry (buildingChunkSolids.js — narzędzia brył
  * budowli Z7, wiersze odwrócone), kotwice wg rodzaju, materiał. Wieża nad podstawą i dysk
@@ -37,8 +37,9 @@ const DISC_PIN_GRID = 6;
 
 /** Materiał kawałków (gęstość × kadłuba 1,19; pancerz zderzeń — Atlas 16, fregata 1). */
 export const PIRATE_BASE_BODY_MATERIAL = Object.freeze({
-  // ćwiartka miasta (2026-11-11): wieżowce — ściany i rdzeń jak magazyn, trochę lżejsze (dawny wieżowiec na pomoście)
-  city: Object.freeze({ density: 1.8, armor: 3.5 }),
+  // wieżowiec miasta (2026-11-11; osobny kawałek od 11-12): ściany i rdzeń jak magazyn, trochę lżejsze (jak dawny
+  // wieżowiec na pomoście)
+  highrise: Object.freeze({ density: 1.8, armor: 3.5 }),
   core: Object.freeze({ density: 3.2, armor: 10 }),
   pier: Object.freeze({ density: 2.2, armor: 3 }),
   tank: Object.freeze({ density: 1.6, armor: 2 }),
@@ -67,7 +68,7 @@ export function pirateBaseMaterial(kind) {
 const GHOST_CELL = 30;
 const GHOST_UPP = 15;
 // Podział skóry (najdłuższa krawędź trójkąta w rzucie [komórki]): wieżowce i pomosty gną się przy taranie — gęsto.
-const SKIN_EDGE_CELLS = Object.freeze({ city: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4, antigrav: 3 });
+const SKIN_EDGE_CELLS = Object.freeze({ highrise: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4, antigrav: 3 });
 // Rzadkie fundamenty: kotwica co tyle komórek kratownicy (worldBodies.anchorComponents). Szyb habitatu (H-C) bez
 // siatki (audyt destruktora 2026-10-14, R8): trzymają go tylko kotwice osi (szyja do dysku i głowy) o skończonej
 // wytrzymałości — szarża Atlasa je zrywa.
@@ -79,19 +80,15 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
   const H = layout.habitat;
   const near = 1.6 * cs;
   switch (chunk.kind) {
-    case 'city': {
-      // każdy wieżowiec ćwiartki stoi na rdzeniu i czterech słupach narożnych (ściany między nimi swobodne — taran je
-      // gnie i rwie); wyspa bez kotwic nie powstaje, bo rdzeń ma każdy
-      const list = H.buildings.filter((b) => b.chunk === chunk.id);
+    case 'highrise': {
+      // wieżowiec stoi na rdzeniu i czterech słupach narożnych (ściany między nimi swobodne — taran je gnie i rwie)
+      const b = H.buildings.find((q) => q.chunk === chunk.id);
+      if (!b) return () => false;
       return (x, z) => {
-        for (const b of list) {
-          const s = Math.abs((x - b.x) * b.ux + (z - b.z) * b.uz);
-          const o = Math.abs((x - b.x) * b.nx + (z - b.z) * b.nz);
-          if (s > b.w / 2 + near || o > b.d / 2 + near) continue;
-          if (s <= b.coreW / 2 && o <= b.coreW / 2) return true;
-          if (s >= b.w / 2 - 60 && o >= b.d / 2 - 60) return true;
-        }
-        return false;
+        const s = Math.abs((x - b.x) * b.ux + (z - b.z) * b.uz);
+        const o = Math.abs((x - b.x) * b.nx + (z - b.z) * b.nz);
+        if (s > b.w / 2 + near || o > b.d / 2 + near) return false;
+        return (s <= b.coreW / 2 && o <= b.coreW / 2) || (s >= b.w / 2 - 60 && o >= b.d / 2 - 60);
       };
     }
     case 'core':
