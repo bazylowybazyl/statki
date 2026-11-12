@@ -14,7 +14,7 @@ import { createWokseleObraz } from './obraz.js';
 import { OPCJE_PYLU } from './pyl.js';
 import { PARAMETRY } from './budowa.js';
 import { POJEMNOSC_BAZY, kolaHabitatu } from './scenaBazy.js';
-import { createGrupyGry } from './grupyGry.js';
+import { createGrupyGry, UPADEK_FALA } from './grupyGry.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { sunShadowUniforms } from '../sunShadowMask.js';
 import { createPirateBaseLayout } from '../portBuildings/pirateBaseLayout.js';
@@ -40,8 +40,8 @@ const KRATER_J = 48; // r = KRATER_J · ∛węzłów: bok bryły przy komórce 4
 const KRATER_R_MAX = 1500;
 const KRATEROW_MAX = 300;
 const KRATER_WZROST = 1.2; // uderzenie w istniejący krater dosypuje masę, a stempel idzie dopiero, gdy promień urósł o tyle
-const FALA_START_S = 3; // kotwice zaczynają puszczać tyle po HP 0, od habitatu na zewnątrz
-const FALA_J_S = 1500; // części puszczają całe, po kolei według odległości ich środka od osi habitatu (kPuscCzesc): węzeł po węźle bryła pękała w locie
+const FALA_START_S = UPADEK_FALA.start; // kotwice zaczynają puszczać tyle po HP 0, od habitatu na zewnątrz
+const FALA_J_S = UPADEK_FALA.v; // części puszczają całe, po kolei według odległości ich środka od osi habitatu (kPuscCzesc): węzeł po węźle bryła pękała w locie
 const ZGAS_PO_S = 44; // po tylu sekundach od upadku ruiny leżą: solver stoi, a siatki rysują je dalej w ostatniej pozie
 const LATA_KRATEROW = 14000; // połowa boku mapy kraterów [j.]: pole rozbieżne rozrzuca gruz szerzej niż pole ku środkowi skały
 const WYS_POL_J = 16000; // połowa boku mapy kształtu skały [j.]: dalej kształt z brzegu mapy
@@ -173,13 +173,9 @@ export function createWokseleGry({ Core3D }) {
     renderer.initRenderTarget?.(obraz.rtSkora);
     renderer.initRenderTarget?.(obraz.rtSkoraCien);
 
-    // Części bazy (zakresy węzłów z wypieku) z czasem puszczenia: od osi habitatu na zewnątrz, cała część naraz.
-    const czesci = (miasto?.budynki || []).map((c) => {
-      let sx = 0, sy = 0;
-      for (let i = c.start; i < c.start + c.n; i++) { sx += w.pos[3 * i]; sy += w.pos[3 * i + 1]; }
-      const r = c.n ? Math.sqrt((sx / c.n) ** 2 + (sy / c.n) ** 2) : 0;
-      return { od: c.start, n: c.n, nazwa: c.nazwa, t: FALA_START_S + r / FALA_J_S };
-    }).sort((a, b) => a.t - b.t);
+    // Części bazy (zakresy węzłów z wypieku) z czasem puszczenia: od osi habitatu na zewnątrz, cała część naraz; boki spoza miasta ciągnięte przez środek
+    // (prędkość startowa obrotu ku osi, grupyGry.czesciUpadku, UPADEK_ZWIN). Te same rekordy szuka voxBreak (zgniot, przewrót) po nazwie części.
+    const czesci = grupy.czesciUpadku(miasto?.budynki, { start: FALA_START_S, v: FALA_J_S });
 
     const zaladuj = () => {
       solver.wczytaj(w);

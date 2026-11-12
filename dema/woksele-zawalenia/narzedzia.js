@@ -6,7 +6,7 @@
 //    według odległości środka części od osi habitatu, 1500 j./s, jak wGrze.js. Węzeł po węźle (puscKolo) bryła pękała w locie.
 // Czas narzędzi to klatki solvera, więc pauza i tempo działają. Siatki statku i pocisków są w scenie obrazu przed rozgrzewką (zero pipeline'ów w biegu).
 import * as THREE from 'three/webgpu';
-import { createGrupyGry } from '../../src/3d/woksele/grupyGry.js';
+import { createGrupyGry, UPADEK_FALA, UPADEK_ZWIN } from '../../src/3d/woksele/grupyGry.js';
 import { createPirateBaseLayout } from '../../src/3d/portBuildings/pirateBaseLayout.js';
 
 const Z_GRY = 150; // płaszczyzna gry nad bazą jak w wGrze.js (Z_PROMIENIA)
@@ -14,7 +14,10 @@ const POCISKI = 24;
 const V_POCISKU = 7000; // j./s
 const V_TARANU = 1300; // j./s
 const NURT = (22 * Math.PI) / 180; // kąt nurkowania taranu
-const FALA_START = 3, FALA_V = 1500;
+const FALA_START = UPADEK_FALA.start, FALA_V = UPADEK_FALA.v;
+// ?zwin=0: upadek bez ciągnięcia boków przez środek (A/B), ?zwin=0.1: inny obrót startowy boków [rad/s] (grupyGry.czesciUpadku).
+const ZWIN_ADRES = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('zwin') : null;
+const ZWIN = ZWIN_ADRES === null ? UPADEK_ZWIN : Number(ZWIN_ADRES) > 0 ? { ...UPADEK_ZWIN, om: Number(ZWIN_ADRES) } : null;
 
 export const NARZEDZIA = Object.freeze([
   ['patrz', 'Patrz'], ['krater', 'Krater'], ['dzialo', 'Działo'], ['ciezkie', 'Ciężkie działo'], ['taran', 'Taran (statek)'],
@@ -140,13 +143,8 @@ export function createNarzedzia({ solver, obraz, camera, kanwa, budynki = () => 
       if (!stan.grupy) stan.grupy = createGrupyGry({ w, l: createPirateBaseLayout({ id: 'B1' }), dx: w.dx });
       const { lista } = stan.grupy.upadek(0, -1);
       if (lista.length) solver.dodajKratery(lista);
-      // Części bazy z wypieku (miasto.budynki) z czasem puszczenia: od osi habitatu na zewnątrz, cała część naraz (wzór wGrze.js).
-      const czesci = (budynki() || []).map((c) => {
-        let sx = 0, sy = 0;
-        for (let i = c.start; i < c.start + c.n; i++) { sx += w.pos[3 * i]; sy += w.pos[3 * i + 1]; }
-        const r = c.n ? Math.sqrt((sx / c.n) ** 2 + (sy / c.n) ** 2) : 0;
-        return { od: c.start, n: c.n, nazwa: c.nazwa, t: FALA_START + r / FALA_V };
-      }).sort((a, b) => a.t - b.t);
+      // Części bazy z wypieku (miasto.budynki) z czasem puszczenia i bokami ciągniętymi przez środek: ten sam plan co gra (grupyGry.czesciUpadku).
+      const czesci = stan.grupy.czesciUpadku(budynki(), { start: FALA_START, v: FALA_V, zwin: ZWIN });
       stan.upadek = { f0: solver.fKlatka, czesci, idx: 0 };
       return true;
     }

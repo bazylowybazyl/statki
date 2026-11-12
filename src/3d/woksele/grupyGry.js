@@ -10,6 +10,17 @@ const F = (t) => Math.round(60 * t);
 const krater = (o) => ({ rdzen: 0.4, rS: 1, tau: 0.03, dz: 0, usunStojace: true, ...o });
 /** Obrót startowy przewracanego wieżowca miasta [rad/s] (przewrot): 0,3 jak wieża przy zerwaniu szyi (WIEZA_OM w wGrze.js), 0,5 kładzie go szybciej. */
 export const PRZEWROT_OM = 0.3;
+/** Upadek bazy (HP 0, voxFall, w demie U): kotwice puszczają CAŁE części falą od osi habitatu, start [s] i prędkość fali [j./s] (czesciUpadku). */
+export const UPADEK_FALA = Object.freeze({ start: 3, v: 1500 });
+/**
+ * Boki ciągnięte przez środek przy upadku (prośba użytkownika 2026-11-12: „środkowy habitat jako najcięższy ma widocznie pociągnąć za sobą lewą i prawą stronę,
+ * zwinąć je trochę do środka, a one mają polecieć w dół za centrum”). Fala puszcza środek pierwszy, a boki kilka sekund później, czyli boki trzyma jeszcze
+ * gasnąca antygrawitacja, a środek już spada. Części nie mają między sobą wiązań, więc ciągnięcie daje prędkość startowa części spoza miasta: obrót om
+ * [rad/s] wokół osi poziomej na skraju bazy (R_dal) na wysokości zOsi [j.], wspólnej dla wszystkich części, więc reaktor jedzie razem z pomostem pod nim.
+ * Wewnętrzny koniec idzie w dół szybciej niż zewnętrzny (om · (R_dal − r)), cała część jedzie ku osi habitatu (om · (z − zOsi)) i przechyla się w „V”.
+ * Swobodny spadek sam niczego nie ciągnie (ciężkie i lekkie spada tak samo): pociągnięcie bierze się z tego, że boki puszczają później.
+ */
+export const UPADEK_ZWIN = Object.freeze({ om: 0.06, zOsi: -2500 });
 
 /** w: { n, pos } wypieku, l: createPirateBaseLayout, dx: bok komórki, ziarno: los miejsc, tylko wygląd. */
 export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
@@ -108,6 +119,36 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     const zMin = k7HeightToZ(h.baseY) + 2 * dx;
     const sk = 0.5 / Math.max(Math.abs(f.x) / wx, Math.abs(f.y) / wy, 1e-9);
     return { zMin, piv: [h.x + f.x * sk, -h.z + f.y * sk, zMin], om: [-f.y * om, f.x * om, 0] };
+  }
+
+  /**
+   * Plan upadku bazy: części z wypieku (budynki: start, n, nazwa) z czasem puszczenia t (fala od osi habitatu, środek części) i dla części spoza miasta
+   * (pomosty, reaktory, zbiorniki, magazyn) prędkością startową piv, om dla solver.puscCzesc (UPADEK_ZWIN). Posortowane po t. Wspólne dla gry (wGrze) i dema (U).
+   */
+  function czesciUpadku(budynki, { start = UPADEK_FALA.start, v = UPADEK_FALA.v, zwin = UPADEK_ZWIN } = {}) {
+    const p = w.pos;
+    let rDal2 = 0;
+    const lista = (budynki || []).map((c) => {
+      let sx = 0, sy = 0;
+      for (let i = c.start; i < c.start + c.n; i++) {
+        const x = p[3 * i], y = p[3 * i + 1];
+        sx += x; sy += y;
+        if (x * x + y * y > rDal2) rDal2 = x * x + y * y;
+      }
+      const n = Math.max(1, c.n), x = sx / n, y = sy / n;
+      return { od: c.start, n: c.n, nazwa: c.nazwa, t: start + Math.sqrt(x * x + y * y) / v, x, y };
+    });
+    const rDal = Math.sqrt(rDal2);
+    for (const c of lista) {
+      const r = Math.sqrt(c.x * c.x + c.y * c.y);
+      if (zwin?.om > 0 && r > Hs.drumR) {
+        const ux = c.x / r, uy = c.y / r;
+        c.piv = [rDal * ux, rDal * uy, zwin.zOsi];
+        c.om = [zwin.om * uy, -zwin.om * ux, 0];
+      }
+      delete c.x; delete c.y;
+    }
+    return lista.sort((a, b) => a.t - b.t);
   }
 
   /** Kierunek upadku wieżowca bez danych z gry: na zewnątrz od osi habitatu (układ węzłów). */
@@ -211,5 +252,5 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
   /** Nazwy części wokseli, które przy zgniocie kawałka tracą kotwice: wieżowiec miasta (część o tym samym id). Inne kawałki: nic. */
   const czesciZgniotu = (id) => (l.chunkById?.get(id)?.kind === 'highrise' ? [id] : []);
 
-  return { szukaj, kawalek, czesciZgniotu, przewrot, naZewnatrz, szyja, kikut, upadek, szyjaZ, szyjaR: Hs.neckR };
+  return { szukaj, kawalek, czesciZgniotu, przewrot, naZewnatrz, czesciUpadku, szyja, kikut, upadek, szyjaZ, szyjaR: Hs.neckR };
 }

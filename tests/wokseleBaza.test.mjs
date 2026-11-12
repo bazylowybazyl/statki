@@ -216,3 +216,35 @@ test('limit oderwania (capEtyk): bez wysp pokładu w obudowach reaktorów, siero
     assert.equal(w.info.grupy.dysk.sieroty, 0, `${nazwa}: węzły dysku bez drogi do kotwicy`);
   }
 });
+
+test('upadek bazy (czesciUpadku): środek puszcza pierwszy, boki spoza miasta ciągnięte ku osi — wewnętrzny koniec w dół szybciej, reaktor jedzie z pomostem', () => {
+  // Prośba użytkownika 2026-11-12: środkowy habitat ma pociągnąć za sobą lewą i prawą stronę (zwinąć je do środka), a one mają lecieć w dół za centrum.
+  const plan = plany[80];
+  const w = plan.scena;
+  const grupy = createGrupyGry({ w, l: L0, dx: 80 });
+  const cz = grupy.czesciUpadku(plan.miasto.budynki);
+  assert.equal(cz.length, plan.miasto.budynki.length);
+  for (let k = 1; k < cz.length; k++) assert.ok(cz[k].t >= cz[k - 1].t, 'posortowane po czasie');
+  const po = (n) => cz.find((c) => c.nazwa === n);
+  for (const n of ['H-C + H-T', 'trzon', 'dysk D-1…8', 'B-01', 'B-16']) assert.ok(!po(n).om, `${n}: środek bez obrotu`);
+  const tSrodka = Math.max(...['H-C + H-T', 'trzon', 'dysk D-1…8'].map((n) => po(n).t));
+  const v = (c, x, y, z) => { const p = [x - c.piv[0], y - c.piv[1], z - c.piv[2]], o = c.om; return [o[1] * p[2] - o[2] * p[1], o[2] * p[0] - o[0] * p[2], o[0] * p[1] - o[1] * p[0]]; };
+  for (const n of ['N-P', 'F-P', 'AG-1', 'P-2']) {
+    const c = po(n);
+    assert.ok(c.om && c.piv, `${n}: bok z obrotem`);
+    assert.ok(c.t > tSrodka, `${n}: puszcza po środku`);
+    let iMin = c.od, iMax = c.od, rMin = 1e9, rMax = 0;
+    for (let i = c.od; i < c.od + c.n; i++) { const r = Math.hypot(w.pos[3 * i], w.pos[3 * i + 1]); if (r < rMin) { rMin = r; iMin = i; } if (r > rMax) { rMax = r; iMax = i; } }
+    const vi = v(c, w.pos[3 * iMin], w.pos[3 * iMin + 1], w.pos[3 * iMin + 2]), vo = v(c, w.pos[3 * iMax], w.pos[3 * iMax + 1], w.pos[3 * iMax + 2]);
+    assert.ok(vi[2] < vo[2] && vo[2] <= 1e-6, `${n}: wewnętrzny koniec w dół szybciej (${vi[2].toFixed(0)} wobec ${vo[2].toFixed(0)})`);
+    const ku = -(vi[0] * w.pos[3 * iMin] + vi[1] * w.pos[3 * iMin + 1]) / rMin;
+    assert.ok(ku > 50, `${n}: ku osi ${ku.toFixed(0)} j./s`);
+  }
+  // Reaktor stoi na pomoście: to samo pole prędkości w tym samym punkcie (wspólna wysokość osi obrotu).
+  const ag = po('AG-1'), np = po('N-P');
+  const [x, y] = [L0.antigravs[0].x, -L0.antigravs[0].z];
+  const a = v(ag, x, y, 0), b = v(np, x, y, 0);
+  assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1, 'AG-1 jedzie razem z N-P');
+  // bez ciągnięcia (zwin: null) jak dawniej: same czasy fali
+  assert.ok(grupy.czesciUpadku(plan.miasto.budynki, { zwin: null }).every((c) => !c.om));
+});
