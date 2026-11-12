@@ -10,22 +10,30 @@ import {
     computeStarParallaxFactor,
     pickStarParallaxLayer,
     starZoomCompensation,
-    advanceStarCamera
+    advanceStarCamera,
+    advanceStarCameraMid,
+    starClockDt
 } from './starParallax.js';
 import { resolveRingPlanetWorldRadius } from './ringScale.js';
 import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
 import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { WARP_STAR_CAMERA } from './warp/stars.js';
-import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
-import { WARP_WORLD_LENS, WarpWorldLens, newLensBody, warpRingLensSlot } from './warp/worldLens.js';
+import { createSky3D, getSky3D, SKY3D_TUNE, SkySphere } from './sky3D.js';
+import {
+    WARP_WORLD_LENS, WARP_LENS_SHARED, WARP_LENS_EXTRA, newLensBody, warpLensAnchorSlot, writeLensAnchor, clearWarpLensAnchors,
+    lensImageToWorld
+} from './warp/worldLens.js';
 import { cameraRoll } from './viewRoll.js';
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { warpSkyBendCount } from './warp/skyBend.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
-import { createEarthPitMesh, earthPitUniforms } from './earthPit3D.js';
+import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector, earthBiteCenterIn } from './earthBite3D.js';
+import { EARTH_SPIN, earthSpinAxis, earthSpinBase, earthSpinQuaternion } from './earthSpin.js';
+import { EarthBitePlant } from './earthBitePlant.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
+import { MOON_TUNE, JUPITER_MOONS_TUNE, moonGameNode, moonStartAngle, moonOrbitRadius, moonBodyRadius, moonOrbits, moonOrbitSpeed, moonPlaceInto } from './moonOrbit.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
 import {
@@ -38,6 +46,8 @@ import {
     createPlanetAtmosphereMaterial,
     createRingAtmosphereMaterial,
     createSunMaterial,
+    createSunCoronaMaterial,
+    SUN_CORONA,
     createJupiterSurfaceMaterial,
     createSaturnSurfaceMaterial
 } from './planet3d.assets.tsl.js';
@@ -74,33 +84,13 @@ function isSphereInFreeCamera(x, y, z, r) {
 // ortho przy ringu, w promieniu świata z ringScale.js. Jowisz od Z6 (2026-09-26).
 const RING_PLANET_NAMES = new Set(['earth', 'mars', 'jupiter']);
 const RING_PLANET_VISUAL_Z = 0;
-const SUN_SIZE_MULTIPLIER = 6.0;
 // The old tuning expanded the atmosphere shell to 121% of the planet radius.
 // At ring scale its transparent sphere edge became a visible dotted arc.
 const HALO_DEFAULTS = Object.freeze({ sizeMul: 0.985, coefMul: 1.08, coefAdd: 0.12, powerMul: 1.0, powerAdd: 1.5, sunMul: 1.0 });
 const MOON_HALO_DEFAULTS = Object.freeze({ size: 1.075, coef: 0.52, power: 9.5, sunMul: 0.62 });
 const SUN_SHADOW_TUNE = Object.freeze({ color: 0xffeedd, intensity: 1.45, mapSize: 4096, near: 1, far: 10000, lightHeight: 120000, offsetMin: 70000, frustumMul: 1.45, frustumPad: 560, frustumMin: 2800, frustumMax: 22000, bias: -0.0003, normalBias: 0.08 });
-const MOON_TUNE = Object.freeze({
-    orbitRadiusMul: 3.0,
-    orbitRadiusMin: 30000,
-    orbitPeriodSec: 220,
-    spinPeriodSec: 72,
-    sizeRatioToParent: 0.24,
-    z: -50020
-});
-// Dekoracyjne księżyce Jowisza. Od Z6 (2026-09-26) Jowisz ma ring „Halo”
-// (promień 48 000, ring do ~54 750, port z redą do ~70 tys.): dawne orbity
-// 20–48 tys. leżały w planecie i ringu. Orbity = promienie księżyców mapy
-// (systemMap.js: Io 60 tys. — pod ringiem, więc 86 tys.; Europa 105,
-// Ganimedes 165, Kallisto 250 tys.), okresy wydłużone proporcjonalnie
-// (prędkość liniowa jak dawniej). Rozmiar: ułamek promienia planety przy ringu.
-// Mapy (dzień, noc, normalne) — MOON_MAPS w planetMaps.js po `id` (Luna: 'moon').
-const JUPITER_MOONS_TUNE = Object.freeze([
-    Object.freeze({ id: 'io', orbitRadius: 86000, orbitPeriodSec: 352, spinPeriodSec: 48, sizeRatioToParent: 0.05, phase: 0.0, haloColor: 0xffb16f }),
-    Object.freeze({ id: 'europa', orbitRadius: 105000, orbitPeriodSec: 412, spinPeriodSec: 58, sizeRatioToParent: 0.042, phase: 1.4, haloColor: 0x9fc8ff }),
-    Object.freeze({ id: 'ganymede', orbitRadius: 165000, orbitPeriodSec: 669, spinPeriodSec: 74, sizeRatioToParent: 0.06, phase: 2.2, haloColor: 0xb6c3d6 }),
-    Object.freeze({ id: 'callisto', orbitRadius: 250000, orbitPeriodSec: 1016, spinPeriodSec: 92, sizeRatioToParent: 0.055, phase: 3.1, haloColor: 0x91a7c4 })
-]);
+// Księżyce z bryłą (Luna, księżyce Jowisza): strojenie i MIEJSCE — src/3d/moonOrbit.js (węzły gry SYSTEM_MAP_MOONS,
+// bez Math.random — etap W nowego warpa, 2026-10-25; czyste funkcje sprawdza tests/warpWorkerMirror.test.mjs).
 const SATURN_VISUAL_RING = Object.freeze({
     innerRadius: 1.22,
     outerRadius: 1.77,
@@ -123,7 +113,8 @@ const SATURN_VISUAL_RING = Object.freeze({
 // zostaje twarzą do kamery), słońce obrócone razem z bryłą. Rulon gnie siatki sam (hak w materiałach);
 // tu tylko powiększenie w lejku (rulonBoostCpu) i kadr po rulonie. Planeta z ringiem „Halo” zostaje na
 // swoim miejscu, póki jej prawdziwy ring (z portem K-7) jest w kadrze — bramka `gate`.
-const _warpLens = new WarpWorldLens();
+// Jedna soczewka gry (worldLens.js: WARP_LENS_SHARED) — punkty flot i wraków mapuje po niej hexShips3D (mapPoint).
+const _warpLens = WARP_LENS_SHARED;
 const _lensList = [];
 const _lensQ = new THREE.Quaternion();
 const _lensQa = new THREE.Quaternion();
@@ -328,7 +319,9 @@ function createRingAtmosphere(key, planetRadius) {
         uDayColor: { value: new THREE.Vector3(...tune.day) },
         uSunsetColor: { value: new THREE.Vector3(...tune.sunset) },
         uGain: { value: new THREE.Vector3(1.02, 0.985, 0.933).multiplyScalar(tune.gain) },
-        uSunShadowRecv: { value: 1.0 }
+        uSunShadowRecv: { value: 1.0 },
+        // wcięcie gryzu w tarczy (tylko Ziemia — DirectPlanet._orient włącza i podaje środek w układzie dysku)
+        uPitMode: { value: 0.0 }, uBite: { value: new THREE.Vector4() }, uBiteEast: { value: new THREE.Vector3(1, 0, 0) }
     });
     const mesh = new THREE.Mesh(new THREE.CircleGeometry(ra, 256), material);
     mesh.name = 'RingPlanetAtmosphere';
@@ -338,6 +331,20 @@ function createRingAtmosphere(key, planetRadius) {
 // Pamięć nieba: przesunięcie obrazu płaszczyzny mgławicy [px bufora], od którego niebo liczy się od nowa — gwiazdy
 // mają profil σ ≈ 0,5–0,75 px; ćwierć piksela przez kilka klatek (wstrząs kamery, dryf paralaksy) jest niewidoczne.
 const SKY_CACHE_PX = 0.25;
+// Niebo-sfera (sky3D.js): poza i prędkość okrętu z encji gry albo lustra (x / y albo pos; vx / vy albo vel).
+function skyShipPose(e) {
+    if (!e || e.dead) return null;
+    if (Number.isFinite(e.x) && Number.isFinite(e.y)) return e;
+    if (e.pos && Number.isFinite(e.pos.x) && Number.isFinite(e.pos.y)) return e.pos;
+    return null;
+}
+function skyShipSpeed(e) {
+    if (!e) return 0;
+    const vx = Number(Number.isFinite(e.vx) ? e.vx : e.vel?.x) || 0;
+    const vy = Number(Number.isFinite(e.vy) ? e.vy : e.vel?.y) || 0;
+    return Math.sqrt(vx * vx + vy * vy);
+}
+const _skyP2 = { cam: null, x: 0, y: 0, v: 0 };
 const NebulaSystem = {
     mesh: null, uniforms: null, parallaxFactor: 0.98, baseScale: 800000, aspectRatio: 1.6,
     // Jasność wg strefy gry (src/game/skyRegion.js): cel z index.html (window.setSkyZone), dojście płynne.
@@ -373,6 +380,9 @@ const NebulaSystem = {
         Core3D.scene.add(this.mesh);
         Core3D.enableBackground3D(this.mesh);
         Core3D.addPassHook('bg', (camera) => this.skyCacheHook(camera));
+        // Niebo-sfera (sky3D.js: SkySphere, DECYZJE-2 N1–N3): `?niebo=sfera` — sfera w nieskończoności obracana z drogi statku
+        // zamiast tej płaszczyzny (płaszczyzna zostaje w scenie schowana — tło menu pożycza jej teksturę).
+        SkySphere.init(Core3D, RenderWorld.pageSearch);
         Core3D.skyCacheStats = this.cacheStats;   // narzędzia (licznik przeliczeń / odczytów pamięci nieba)
         // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry; pamięć
         // działa dopiero z gotowym pipeline'em (skyCacheHook — do tego czasu niebo wprost)
@@ -454,6 +464,27 @@ const NebulaSystem = {
         const sky = getSky3D();
         if (sky) sky.u.nebula.value = SKY3D_TUNE.nebulaGain * this.region;
         const flat = !Core3D.isFreePerspectiveCamera(gameCamera);
+        if (SkySphere.active) {
+            // Sfera nieba zamiast płaszczyzny: obrót z drogi statku (poza renderu gracza — RenderWorld.playerPose, jak warp
+            // „Nurt”; bez niej encja), prędkość do cięcia przy teleporcie. Przy sterach fregaty zwiadu kamera prowadzi
+            // fregatę — niebo jedzie z JEJ drogi (RenderWorld.cameraLead, waga przejazdu kamery). Podzielony ekran: gracz 2
+            // z własnym niebem (droga RenderWorld.player2Ship, kamera RenderWorld.camera2).
+            if (this.mesh.visible) this.mesh.visible = false;
+            const ship = RenderWorld.ship;
+            const ip = ship && !ship.dead ? RenderWorld.playerPose : null;
+            const pose = (ip && Number.isFinite(ip.x) && Number.isFinite(ip.y)) ? ip : skyShipPose(ship);
+            let p2 = null;
+            const cam2 = RenderWorld.splitScreenMode ? RenderWorld.camera2 : null;
+            const ship2 = cam2 ? RenderWorld.player2Ship : null;
+            const pose2 = ship2 && !ship2.destroyed ? skyShipPose(ship2) : null;
+            if (pose2) {
+                p2 = _skyP2;
+                p2.cam = cam2; p2.x = pose2.x; p2.y = pose2.y; p2.v = skyShipSpeed(ship2);
+            } else _skyP2.cam = null;
+            SkySphere.update(dt, gameCamera, pose, skyShipSpeed(ship), this.region, flat, RenderWorld.cameraLead || null, p2,
+                RenderWorld.frameClock);
+            return;
+        }
         if (this.mesh.visible !== flat) this.mesh.visible = flat;
         if (!flat) return;
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
@@ -470,6 +501,10 @@ const NebulaSystem = {
 const StarSystem = {
     mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250,
     starCam: { x: 0, y: 0, lx: NaN, ly: NaN },
+    // Niebo-sfera z nowym prawem tempa (SkySphere.midSphere): kamera warstwy mid na drodze nieba (advanceStarCameraMid)
+    starCamMid: { x: 0, y: 0, lx: NaN, ly: NaN },
+    _skyUpdatesSeen: -1,
+    _clock: { clockLast: 0, clockHas: false },   // zegar stron do sufitu kroku kamery gwiazd (starClockDt)
     init: function () {
         if (!Core3D.isInitialized) return;
         const positions = new Float32Array(this.count * 3); const sizes = new Float32Array(this.count);
@@ -505,6 +540,12 @@ const StarSystem = {
             exitWhipFactor: uniform(0.0), exitWhipStrength: uniform(1.75),
             viewportSize: uniform(new THREE.Vector2(RenderWorld.viewWidth || 1, RenderWorld.viewHeight || 1)),
             thinningStrength: uniform(38.0), baseSizeMul: uniform(1.65),
+            // Niebo-sfera (sky3D.js) zastępuje warstwę deep: jej gwiazdy zwinięte w wierzchołku (DECYZJE-2 N3)
+            hideDeep: uniform(SkySphere.active ? 1.0 : 0.0),
+            // Nowe prawo tempa nieba (skyScroll.js, `?nieboTempo` ≠ stare): warstwa mid na drodze nieba z paralaksą
+            // STAR_MID_SPHERE (W0: niebo < mid) — przesunięcie wzoru `cameraOffsetMid` (advanceStarCameraMid)
+            midSphere: uniform(SkySphere.midSphere ? 1.0 : 0.0),
+            cameraOffsetMid: uniform(new THREE.Vector2(0, 0)),
             planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)), 'vec4')
         });
         const mat = createStarMaterial(this.uniforms);
@@ -531,8 +572,22 @@ const StarSystem = {
         const zoomComp = starZoomCompensation(gameCamera.zoom);
         this.uniforms.zoomComp.value = zoomComp;
         const speedCap = Number(WARP_STAR_CAMERA.speedCap) || 0;
-        advanceStarCamera(this.starCam, cx, cy, zoomComp, speedCap > 0 ? speedCap * Math.max(0, dt) : 0);
+        // sufit kroku z przyrostu zegara stron (worker pomija strony — dt jednej strony zwalniał warstwę speed N razy)
+        const stepDt = starClockDt(this._clock, RenderWorld.frameClock, dt);
+        const maxStep = speedCap > 0 ? speedCap * stepDt : 0;
+        advanceStarCamera(this.starCam, cx, cy, zoomComp, maxStep);
         this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
+        if (SkySphere.midSphere) {
+            // Warstwa mid na drodze nieba (W0): ruch kamery względem okrętu prowadzącego + droga nieba tej klatki
+            // (SkySphere.update liczy ją wcześniej w tej samej klatce — NebulaSystem.update przed StarSystem.update).
+            // Droga nieba liczona raz na klatkę nieba — bez nowej klatki nieba (licznik `updates`) nie dokładamy jej drugi raz.
+            const sk = SkySphere.scroll;
+            const fresh = SkySphere.updates !== this._skyUpdatesSeen;
+            this._skyUpdatesSeen = SkySphere.updates;
+            advanceStarCameraMid(this.starCamMid, cx, cy, zoomComp, maxStep,
+                fresh ? sk.dispX : 0, fresh ? sk.dispY : 0, fresh ? sk.driveX : 0, fresh ? sk.driveY : 0, SkySphere.midMul);
+            this.uniforms.cameraOffsetMid.value.set(this.starCamMid.x, -this.starCamMid.y);
+        }
         this.uniforms.viewportSize.value.set(Core3D.width || RenderWorld.viewWidth || 1, Core3D.height || RenderWorld.viewHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
         if (Array.isArray(planetMasks) && planetMasks.length && RenderWorld.planets) {
@@ -559,18 +614,9 @@ const StarSystem = {
 const _planetCullCenter = new THREE.Vector3();
 const _planetCullEdgeX = new THREE.Vector3();
 const _planetCullEdgeY = new THREE.Vector3();
-// Soczewka świata (worldLens.js) liczy w osiach EKRANU: przesunięcie (u, v) [j.] od środka kadru → świat =
-// kamera + R(roll)·(u, v) (obrót kadru — viewRoll.js; bez obrotu: kamera + (u, v)). Jeden obiekt wyniku (bez alokacji).
-const _lensWorld = { x: 0, y: 0 };
-function lensToWorld(L, u, v) {
-    const roll = Number(L.roll) || 0;
-    if (!roll) { _lensWorld.x = L.camX + u; _lensWorld.y = L.camY + v; return _lensWorld; }
-    const c = Math.cos(roll);
-    const s = Math.sin(roll);
-    _lensWorld.x = L.camX + c * u - s * v;
-    _lensWorld.y = L.camY + s * u + c * v;
-    return _lensWorld;
-}
+// Soczewka świata (worldLens.js) liczy w osiach EKRANU: obraz → świat w głębokości ciała — lensImageToWorld (worldLens.js,
+// czysta funkcja z testem; j. świata na px w `k`). Jeden obiekt wyniku (bez alokacji).
+const _lensWorld = { x: 0, y: 0, k: 1 };
 function isCircleVisibleInGameCamera(x, y, radius, cam, viewportWidth, viewportHeight) {
     if (!cam) return false;
     const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
@@ -645,7 +691,8 @@ class DirectPlanet {
         this.isRingAnchored = RING_PLANET_NAMES.has(this.name);
         this._visibilityCulled = false;
         this.mesh = null; this.clouds = null; this.cloudUniforms = null; this.atmosphere = null; this.saturnRing = null;
-        this.pit = null; this.pitUniforms = null;
+        this.pit = null;
+        this.plant = null;
         this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0; this.visibleRadiusMul = 1.0;
         this.uniforms = {
             uPlanetBloom: { value: 0.0 }, dayTexture: { value: null }, nightTexture: { value: null }, specularTexture: { value: null },
@@ -658,8 +705,9 @@ class DirectPlanet {
             // Planety tła siedzą na z = −50 000 w perspektywie — maska liczona
             // w płaszczyźnie gry trafiałaby w nie obok (własna smuga na tarczy).
             uSunShadowRecv: { value: this.isRingAnchored ? 1.0 : 0.0 },
-            // Wielka kopalnia ringu (tylko Ziemia): 1 = kula z wycięciem, łata ma 2 (earthPit3D.js).
-            uPitMode: { value: 0.0 }
+            // Wielki gryz (tylko Ziemia): 1 = kula z wycięciem, łata ma 2 (earthBite3D.js);
+            // uBite = środek gryzu w układzie obiektu kuli + promień bazowy.
+            uPitMode: { value: 0.0 }, uBite: { value: earthBiteVector() }
         };
         // Analityczny cień ringu na tarczy planety (dzienny łuk od nawietrznej,
         // czyli słonecznej, strony) — parametry ustawia init() dla ciał na ringu.
@@ -671,8 +719,15 @@ class DirectPlanet {
         this._cloudSpinY = 0;
         this._ringSpinZ = 0;
         this._ringTilt = 0;
+        // Ziemia: doba wokół OSI RINGU (earthSpin.js — ring w jej układzie równikowy, windy elektrowni do ringu na stałe);
+        // reszta planet — wokół osi Y sceny.
+        this._spinAxis = this.name === 'earth' ? earthSpinAxis() : null;
+        this._spinBase = this._spinAxis ? earthSpinBase() : null;
         // Soczewka świata w skoku gracza (rekord worldLens.js) i obwiednia ringu „Halo” (bramka soczewki).
-        this.lensBody = newLensBody(this.name);
+        // rodzaj 'planet' — kropka minDot w soczewce (worldLens.js: M5); rExt — ring „Halo” / pierścień Saturna (_lensPrepare)
+        this.lensBody = newLensBody(this.name, 'planet');
+        // Kotwica soczewki (worldLens.js: WARP_LENS_ANCHORS, klucz = id planety) — ring „Halo”, stacja, dok portu.
+        this._anchor = warpLensAnchorSlot(this.data?.id || this.name);
         this._lensed = false;
         this._ringOuter = 0;
         // Ustawienie tarczy celu soczewki (lensFaceQuat): bieżące w skoku (_lensFaceNow, wchodzi z β) i własna orientacja
@@ -735,11 +790,15 @@ class DirectPlanet {
             : (this.saturnAtm ? createSaturnSurfaceMaterial(this.uniforms) : createPlanetSurfaceMaterial(this.uniforms));
         this.mesh = new THREE.Mesh(geometry, material); this.group.add(this.mesh);
         if (maps?.pit) {
-            // Wielka kopalnia ringu: kula bez obszaru dziury, w nim bryła łaty (ten sam graf i mapy).
+            // Wielki gryz: kula bez obszaru gryzu, w nim łata (ściany, dno, kołnierz) — ten sam graf i mapy.
             this.uniforms.uPitMode.value = 1.0;
-            this.pitUniforms = earthPitUniforms(this.uniforms);
-            this.pit = createEarthPitMesh(createPlanetSurfaceMaterial(this.pitUniforms));
+            this.pit = createEarthBiteMesh(createPlanetSurfaceMaterial(earthBiteUniforms(this.uniforms, 2)));
             this.mesh.add(this.pit);
+            // Elektrownia „KOREK” w gryzie (earthBitePlant.js): bryły (~0,5 s CPU) buduje rozgrzewka ekranu ładowania —
+            // menu (Ziemia z gry nie jest w jego kadrze) nie czeka; bez rejestru rozgrzewki — przy pierwszej klatce.
+            if (this._spinAxis && Core3D.warmup) {
+                Core3D.warmup.add({ name: 'elektrownia KOREK (gryz Ziemi)', objects: () => this._ensurePlant()?.warmupMeshes() ?? [], layer: 6, phase: 'loading' });
+            }
         }
         if (name === 'saturn') {
             const tilt = THREE.MathUtils.degToRad(SATURN_VISUAL_RING.tiltDeg);
@@ -791,7 +850,9 @@ class DirectPlanet {
 
         if (maps?.clouds) {
             const cloudTex = loadTex(maps.clouds); cloudTex.colorSpace = THREE.SRGBColorSpace;
-            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: maps.cloudOpacity ?? 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv };
+            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: maps.cloudOpacity ?? 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv,
+                // gryz: chmury nad otworem wycięte (środek gryzu w układzie chmur — _orient)
+                uPitMode: { value: this.pit ? 1.0 : 0.0 }, uBite: { value: earthBiteVector() } };
             // Przezroczyste DoubleSide w jednym rysunku (jak ShaderMaterial), blend normalny.
             const cloudMat = createPlanetCloudMaterial(this.cloudUniforms);
             this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, 128, 128), cloudMat); this.group.add(this.clouds);
@@ -872,7 +933,7 @@ class DirectPlanet {
         // Skok gracza: kadr i rozstawienie robi soczewka świata (applyWarpWorldLens) po wszystkich ciałach.
         if (lensOn) { this._lensPrepare(dt, scale, visualZ); return; }
         if (this._lensed) this._lensRestore();
-        if (this._ringLens) this._ringLens.on = false;   // ring „Halo” na prawdziwym miejscu
+        // (kotwica soczewki — ring „Halo”, stacje, doki na prawdziwym miejscu: clearWarpLensAnchors w updatePlanets3D)
         let offScreen = false;
         const renderCamera = anchoredToRing ? Core3D.cameraOrtho : Core3D.cameraPersp;
         if (Core3D.isFreePerspectiveCamera(cam)) {
@@ -977,9 +1038,11 @@ class DirectPlanet {
     }
     _spin(dt) {
         const d = Math.max(0, Number(dt) || 0);
-        this._spinY = (this._spinY + 0.02 * d) % TAU;
-        this._cloudSpinY = (this._cloudSpinY + 0.027 * d) % TAU;
+        this._spinY = (this._spinY + (this._spinAxis ? EARTH_SPIN.rate : 0.02) * d) % TAU;
+        this._cloudSpinY = (this._cloudSpinY + (this._spinAxis ? EARTH_SPIN.cloudRate : 0.027) * d) % TAU;
         this._ringSpinZ = (this._ringSpinZ + 0.00035 * d) % TAU;
+        if (this.plant) this.plant.update(d);
+        else if (this.pit && this._spinAxis && !Core3D.warmup) this._ensurePlant();
         // Atmosfera Jowisza w czasie GRY (SimClock — w pauzie stoi; dt tu to czas klatki).
         if (this.jupiterAtm) this.jupiterAtm.step();
         if (this.saturnAtm) this.saturnAtm.step();
@@ -990,21 +1053,30 @@ class DirectPlanet {
         const turn = q || base;
         if (this.mesh) {
             if (turn) {
-                _lensQa.setFromAxisAngle(_lensYAxis, this._spinY);
+                this._spinQuat(this._spinY, _lensQa);
                 this.mesh.quaternion.identity();
                 if (q) this.mesh.quaternion.copy(q);
                 if (base) this.mesh.quaternion.multiply(base);
                 this.mesh.quaternion.multiply(_lensQa);
-            } else this.mesh.rotation.set(0, this._spinY, 0);
+            } else if (this._spinAxis) this._spinQuat(this._spinY, this.mesh.quaternion);
+            else this.mesh.rotation.set(0, this._spinY, 0);
         }
         if (this.clouds) {
             if (turn) {
-                _lensQa.setFromAxisAngle(_lensYAxis, this._cloudSpinY);
+                this._spinQuat(this._cloudSpinY, _lensQa);
                 this.clouds.quaternion.identity();
                 if (q) this.clouds.quaternion.copy(q);
                 if (base) this.clouds.quaternion.multiply(base);
                 this.clouds.quaternion.multiply(_lensQa);
-            } else this.clouds.rotation.set(0, this._cloudSpinY, 0);
+            } else if (this._spinAxis) this._spinQuat(this._cloudSpinY, this.clouds.quaternion);
+            else this.clouds.rotation.set(0, this._cloudSpinY, 0);
+            // Chmury obracają się szybciej niż grunt: środek gryzu w układzie chmur.
+            if (this.pit) earthBiteCenterIn(this.mesh, this.clouds, this.cloudUniforms.uBite.value);
+        }
+        if (this.pit && this.atmosphere?.material?.uniforms?.uBite) {
+            const au = this.atmosphere.material.uniforms;
+            au.uPitMode.value = 1.0;
+            earthBiteCenterIn(this.mesh, this.atmosphere, au.uBite.value, au.uBiteEast.value);
         }
         if (this.saturnRing) {
             if (q) {
@@ -1014,6 +1086,31 @@ class DirectPlanet {
             } else this.saturnRing.rotation.set(this._ringTilt, 0, this._ringSpinZ);
         }
     }
+    // Kąt doby i chmur z zewnątrz — tło menu przy cięciu na grę (menuBackdrop3D.js stop()): to ta sama Ziemia (doba wokół
+    // osi ringu, ta sama baza), więc gryz i lądy nie przeskakują w przenikaniu ostatniej klatki lotu intro.
+    setSpin(spin, cloudSpin = spin) {
+        if (!this._spinAxis || !Number.isFinite(spin)) return;
+        const c = Number.isFinite(cloudSpin) ? cloudSpin : spin;
+        this._spinY = ((spin % TAU) + TAU) % TAU;
+        this._cloudSpinY = ((c % TAU) + TAU) % TAU;
+    }
+    // Elektrownia „KOREK” na dnie gryzu: dziecko kuli (doba, soczewka), uniformy słońca / gryzu / maski słońca dzielone
+    // z kulą. Ring „Halo” w układzie Ziemi jest równikowy (earthSpin.js), więc przekaźnik odbiornik → ring i liny wind
+    // są stałe (attachRing). Warstwa passa ring-planet jak reszta bryły (grupa dostała ją w init przed elektrownią).
+    _ensurePlant() {
+        if (this.plant || !this.pit || !this._spinAxis || !this.mesh) return this.plant;
+        this.plant = new EarthBitePlant(this.uniforms);
+        this.plant.attachRing(this._spinAxis);
+        this.mesh.add(this.plant.group);
+        if (this.isRingAnchored) enableRingPlanetLayer(this.plant.group);
+        else enablePlanetLayer(this.plant.group);
+        return this.plant;
+    }
+    // Obrót doby o kąt `angle` (oś Y sceny albo — Ziemia — oś ringu, earthSpin.js) do kwaternionu `out`.
+    _spinQuat(angle, out) {
+        if (this._spinAxis) return earthSpinQuaternion(angle, this._spinAxis, this._spinBase, out);
+        return out.setFromAxisAngle(_lensYAxis, angle);
+    }
     // Soczewka: rekord ciała w tej klatce (prawdziwy środek, promień kuli, skala prawdziwego widoku, bramka ringu).
     _lensPrepare(dt, scale, visualZ) {
         this._spin(dt);
@@ -1022,6 +1119,11 @@ class DirectPlanet {
         b.x = Number(this.data.x) || 0;
         b.y = Number(this.data.y) || 0;
         b.r = scale;
+        // Promień z ringiem „Halo” (obwiednia ringu) albo z pierścieniem Saturna (ring jedzie w kotwicy skalą obrazu planety):
+        // cięciwa kursu przy przelocie nad ciałem (worldLens.js: warpLensChordAlong — tarcza z ringiem pod statkiem) i kieszeń
+        // kadłuba ciała blisko statku na starcie (worldLens.js: pocket).
+        b.rExt = this.isRingAnchored ? Math.max(scale, this._ringOuter || 0)
+            : (this.saturnRing ? scale * SATURN_VISUAL_RING.outerRadius : 0);
         b.z = visualZ;
         b.flat = this.isRingAnchored ? L.zoom : L.focal / Math.max(1, L.camZ - visualZ);
         let gate = 1;
@@ -1058,8 +1160,8 @@ class DirectPlanet {
         this._lensed = true;
         this._visibilityCulled = fit.off;
         // j. świata na px w głębokości ciała (płaszczyzna gry: 1 / zoom; tło: perspektywa kamery passa).
-        const k = anchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
-        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lw = lensImageToWorld(L, o.x, o.y, b.z, anchored, _lensWorld);
+        const k = lw.k;
         const lwx = lw.x;
         const lwy = lw.y;
         // Maska słońca i cień ringu czytają płaszczyznę gry pod pikselem — w soczewce to nie punkt ciała.
@@ -1072,20 +1174,12 @@ class DirectPlanet {
         }
         const turned = o.angle > 1e-5;
         if (turned) { _lensAxis.set(o.ax, o.ay, 0); _lensQ.setFromAxisAngle(_lensAxis, o.angle); }
-        // Ring „Halo” planety jedzie w soczewce razem z nią (worldLens.js: WARP_RING_LENS → haloRingGame.js): środek
-        // obrazu, skala obrazu do prawdziwego promienia kuli (b.r), obrót przelotu, udział prawdziwego widoku.
-        if (anchored) {
-            if (!this._ringLens) this._ringLens = warpRingLensSlot(this.data?.id || this.name);
-            const rl = this._ringLens;
-            rl.on = true;
-            rl.x = lwx;
-            rl.y = lwy;
-            rl.k = Math.max(1e-6, fit.size * k) / Math.max(1e-6, b.r);
-            rl.real = real;
-            rl.vis = !fit.off;
-            rl.turned = turned;
-            if (turned) { if (!rl.q) rl.q = new THREE.Quaternion(); rl.q.copy(_lensQ); }
-        }
+        // Kotwica soczewki planety (worldLens.js: WARP_LENS_ANCHORS — writeLensAnchor): ring „Halo” jedzie z nią
+        // (haloRingGame.js: środek obrazu, skala obrazu do prawdziwego promienia kuli, obrót przelotu, udział prawdziwego
+        // widoku), stacje (stations3D.js) i doki portu (portDocks3D.js) — ta sama skala w płaszczyźnie gry.
+        const an = writeLensAnchor(this._anchor, L, b, fit.size, !fit.off);
+        an.turned = anchored && turned;
+        if (an.turned) { if (!an.q) an.q = new THREE.Quaternion(); an.q.copy(_lensQ); }
         if (fit.off) {
             if (this.group.visible) this.group.visible = false;
             return;
@@ -1150,6 +1244,7 @@ class DirectPlanet {
     dispose() { if (this.group && this.group.parent) this.group.parent.remove(this.group); }
 }
 
+const _moonPlace = { x: 0, y: 0 };
 class DirectMoon {
     constructor(parentData, tune = MOON_TUNE) {
         this.parentData = parentData || null;
@@ -1164,11 +1259,16 @@ class DirectMoon {
         this.halo = null;
         const spinPeriodSec = Math.max(1, Number(this.tune?.spinPeriodSec) || MOON_TUNE.spinPeriodSec);
         this.spinSpeed = (Math.PI * 2) / spinPeriodSec;
-        this.orbitAngle = Number(this.tune?.phase);
-        if (!Number.isFinite(this.orbitAngle)) this.orbitAngle = Math.random() * Math.PI * 2;
+        // Węzeł gry (systemMap) — kąt i promień orbity; bez wpisu: faza strojenia albo 0 (deterministycznie) — moonOrbit.js.
+        this.gameNode = moonGameNode(this.tune);
+        this.orbitAngle = moonStartAngle(this.tune, this.gameNode);
+        // A/B: dawny obieg (`?ksiezyce=orbita`) — od kąta węzła, całkowany z dt klatki (adres strony — też w workerze).
+        this.orbits = moonOrbits(this.gameNode, RenderWorld.pageSearch);
         this._spinAngle = 0;
         // Soczewka świata w skoku gracza (worldLens.js): rekord ciała; `parent` = rekord planety (initPlanets3D).
-        this.lensBody = newLensBody(this.tune?.id || 'moon');
+        this.lensBody = newLensBody(this.tune?.id || 'moon', 'moon');
+        // Kotwica soczewki (klucz = węzeł gry księżyca: 'luna', 'io', 'ganimedes'… — id portu ruchu v2 i doku E14).
+        this._anchor = warpLensAnchorSlot(this.tune?.mapId || this.tune?.id || 'moon');
         this._lensed = false;
         this.init();
     }
@@ -1247,16 +1347,14 @@ class DirectMoon {
         const parentR = this.isRingAnchored
             ? resolveRingPlanetWorldRadius(this.parentData)
             : Math.max(100, Number(this.parentData.r) || 2800);
-        const orbitRadiusMin = Math.max(0, Number(this.tune?.orbitRadiusMin) || 0);
-        const orbitRadiusAbs = Math.max(0, Number(this.tune?.orbitRadius) || 0);
-        const orbitRadiusMul = Math.max(0, Number(this.tune?.orbitRadiusMul) || 0);
-        const orbitRadius = Math.max(orbitRadiusAbs, orbitRadiusMin, parentR * orbitRadiusMul);
-        const orbitPeriodSec = Math.max(1, Number(this.tune?.orbitPeriodSec) || MOON_TUNE.orbitPeriodSec);
-        const orbitSpeed = (Math.PI * 2) / orbitPeriodSec;
-        this.orbitAngle = (this.orbitAngle + orbitSpeed * Math.max(0, Number(dt) || 0)) % (Math.PI * 2);
-
-        const mx = parentX + Math.cos(this.orbitAngle) * orbitRadius;
-        const my = parentY + Math.sin(this.orbitAngle) * orbitRadius;
+        // Miejsce = węzeł gry (moonOrbit.js; strojenie tylko odsuwa — Io spod ringu Jowisza), obieg tylko bez węzła / A/B.
+        const orbitRadius = moonOrbitRadius(this.tune, this.gameNode, parentR);
+        if (this.orbits) {
+            this.orbitAngle = (this.orbitAngle + moonOrbitSpeed(this.tune) * Math.max(0, Number(dt) || 0)) % (Math.PI * 2);
+        }
+        const place = moonPlaceInto(_moonPlace, parentX, parentY, this.orbitAngle, orbitRadius);
+        const mx = place.x;
+        const my = place.y;
         const z = this.isRingAnchored
             ? RING_PLANET_VISUAL_Z
             : (Number(this.tune?.z ?? MOON_TUNE.z) || MOON_TUNE.z);
@@ -1266,9 +1364,8 @@ class DirectMoon {
             // Słońce księżyca w płaszczyźnie gry, jak planet (moonSurface.tsl.js: dzień i zmrok świateł nocnych
             // z kierunku Słońce − środek, z = 0) — ciemna połowa przechodzi prosto w smugę cienia za ciałem.
             if (RenderWorld.sun) setMoonSunDirection(this.mesh.material, RenderWorld.sun.x - mx, -(RenderWorld.sun.y - my), 0);
-            const sizeRatio = Math.max(0.01, Number(this.tune?.sizeRatioToParent) || MOON_TUNE.sizeRatioToParent);
-            const moonR = parentR * sizeRatio;
-            const scale = Math.max(900, moonR * (this.isRingAnchored ? 1 : PLANET_SIZE_MULTIPLIER));
+            // promień bryły (src/data/moonBodies.js — ten sam liczy gra: zwolnienie skoku przy mijanym księżycu)
+            const scale = moonBodyRadius(this.tune, parentR, this.isRingAnchored);
             this.mesh.scale.set(scale, scale, scale);
             // Z głębokością (księżyc tła — tam, gdzie go widać); w soczewce tarczę zgłasza _lensPlace.
             if (!lensOn && typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(mx, my, scale, 1, z);
@@ -1310,10 +1407,11 @@ class DirectMoon {
         const o = b.out;
         const fit = lensFitView(o, MOON_HALO_DEFAULTS.size);
         this._lensed = true;
+        writeLensAnchor(this._anchor, L, b, fit.size, !fit.off);
         // Księżyc w soczewce stoi przy statku w płaszczyźnie gry — nie rzuca cienia (mapa cienia słońca).
         if (this.mesh) this.mesh.castShadow = false;
-        const k = this.isRingAnchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
-        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lw = lensImageToWorld(L, o.x, o.y, b.z, this.isRingAnchored, _lensWorld);
+        const k = lw.k;
         const lwx = lw.x;
         const lwy = lw.y;
         // Tarcza w smugach słońca za ciałem w kadrze skoku, gaśnie z β (jak planety — DirectPlanet._lensPlace).
@@ -1396,7 +1494,9 @@ class DirectSmallBody {
         this._spinAngle = (Number(this.def.angle) || 0) * 3.1;
         this._extent = 1;          // promień obwiedni / promień średni (po kształcie)
         this._inner = 1;           // najmniejszy promień bryły / promień średni (tarcza w masce słońca)
-        this.lensBody = newLensBody(this.id);
+        this.lensBody = newLensBody(this.id, 'small');
+        // Kotwica soczewki (klucz = id ciała: stacja Unii i dok portu przy Ceres / Weście jadą z obrazem ciała).
+        this._anchor = warpLensAnchorSlot(this.id);
         this._lensed = false;
         this.init();
     }
@@ -1503,8 +1603,9 @@ class DirectSmallBody {
         const o = b.out;
         const fit = lensFitView(o, 1.1);
         this._lensed = true;
-        const k = 1 / L.zoom;
-        const lw = lensToWorld(L, o.x * k, o.y * k);
+        writeLensAnchor(this._anchor, L, b, fit.size, !fit.off);
+        const lw = lensImageToWorld(L, o.x, o.y, 0, true, _lensWorld);
+        const k = lw.k;
         const lwx = lw.x;
         const lwy = lw.y;
         const real = 1 - o.beta;
@@ -1557,23 +1658,57 @@ function registerSmallBodiesWarmup() {
     });
 }
 
+// SŁOŃCE. GIGANTYCZNE (2026-10-27, prośba użytkownika: „proporcjonalnie jest za małe”): kula w PŁASZCZYŹNIE GRY jak ciała
+// przy ringu i małe ciała — pass ring-planet (warstwa 6, ortho, bez paralaksy), promień tarczy = SUN.r
+// (SYSTEM_MAP_CONSTANTS.sunRadius: 200 tys. j. ≈ 5 × Ziemia z ringiem, 4 × Jowisz; dawniej kula r3D 399 × 6 w tle
+// z = −60 000 — mniejsza od Merkurego), szczyt pod płaszczyzną gry (SUN_TOP_Z), bieguny siatki na osi kamery — sylwetka z
+// góry = równik siatki (SUN_SEGMENTS.w odcinków: przy zoomie 1 strzałka łuku < 4 px, kąt załamania 0,7°). Korona
+// i płomienie — płaski pierścień nad kulą (graf 'sunCorona', ONE/ONE). Rozgrywka: studnia = tarcza × sunWellMul
+// (index.html: sunWellRadius); kolizji z tarczą nie ma (jak planety). Światło, maska słońca i smugi — z PRAWDZIWEGO
+// środka (kierunek oświetlenia gry), jak dawniej.
+// SOCZEWKA ŚWIATA (DECYZJE M5): rekord rodzaju 'sun' w płaszczyźnie gry (z = 0, skala prawdziwego widoku = zoom — jak małe
+// ciała), sizeBoost 1 (worldLens.js: sunBoost — słońce jest już ogromne).
+const SUN_TOP_Z = -400;            // [j.] szczyt kuli pod płaszczyzną gry (jak małe ciała)
+const SUN_MIN_CENTER_Z = -245000;  // [j.] kamera ortho (z = 150 000, far 400 000) widzi z ≥ −250 000 — równik kuli przed tym
+const SUN_SEGMENTS = Object.freeze({ w: 512, h: 160 });
+const SUN_SPIN = 3e-5;             // [rad/s] obrót tarczy wokół osi kamery (brzeg 200 tys. j. → 6 j./s)
+// Nastawy obrazu (uniformy materiałów — DevTools / harness w biegu): powierzchnia (SUN_SURFACE w grafie) i korona.
+const SUN_LOOK = Object.freeze({ brightness: 1.0, detail: 1.0, lanes: 1.0, limb: 1.0 });
+const SUN_CORONA_LOOK = Object.freeze({ brightness: 1.0, flames: 1.0, streamers: 1.0 });
+
+function sunDiscRadius(data) {
+    return Math.max(1000, Number(data?.r) || 0);
+}
+
 class DirectSun {
     constructor(data) {
-        this.data = data; this.group = new THREE.Group(); this.group.position.z = -60000;
-        this.ambientLight = null; this.uniforms = { uTime: { value: 0.0 }, uIsOcclusion: { value: 0 } };
+        this.data = data; this.group = new THREE.Group();
+        this.ambientLight = null;
+        const L = SUN_LOOK;
+        const C = SUN_CORONA_LOOK;
+        this.uniforms = { uTime: { value: 0.0 }, uIsOcclusion: { value: 0 },
+            uSunLook: { value: new THREE.Vector4(L.brightness, L.detail, L.lanes, L.limb) } };
+        // ten sam zegar co kula (obiekt { value } wspólny)
+        this.coronaUniforms = { uTime: this.uniforms.uTime,
+            uCoronaLook: { value: new THREE.Vector4(C.brightness, SUN_CORONA.outer, C.flames, C.streamers) } };
+        this.mesh = null;
+        this.corona = null;
+        this.lensBody = newLensBody('sun', 'sun');
+        this._lensed = false;
         this.init();
     }
     init() {
         if (!Core3D.isInitialized) return;
-        // Kula z szumem fbm (HDR do 4,0 — bloom), graf w planet3d.assets.tsl.js.
-        const material = createSunMaterial(this.uniforms);
-        this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), material);
-        this.mesh.name = 'SunMesh'; // <---
-
-        // Dawny sprite blasku (assets/effects/glow.png — pliku nigdy nie było, 404: addytywny sprite
-        // bez tekstury nic nie dokładał) usunięty w zadaniu 24 portu; blask słońca = bloom kuli HDR.
-        this.group.add(this.mesh);
-        Core3D.scene.add(this.group); enablePlanetLayer(this.group);
+        // Kula: plazma wielu skal (HDR — bloom), graf w planet3d.assets.tsl.js. Bieguny na osi kamery (±Z).
+        const geometry = new THREE.SphereGeometry(1, SUN_SEGMENTS.w, SUN_SEGMENTS.h);
+        geometry.rotateX(Math.PI / 2);
+        this.mesh = new THREE.Mesh(geometry, createSunMaterial(this.uniforms));
+        this.mesh.name = 'SunMesh';
+        this.corona = new THREE.Mesh(new THREE.RingGeometry(SUN_CORONA.inner, SUN_CORONA.outer, SUN_SEGMENTS.w, 6),
+            createSunCoronaMaterial(this.coronaUniforms));
+        this.corona.name = 'SunCorona';
+        this.group.add(this.mesh, this.corona);
+        Core3D.scene.add(this.group); enableRingPlanetLayer(this.group);
 
         this.sunLight = new THREE.DirectionalLight(SUN_SHADOW_TUNE.color, SUN_SHADOW_TUNE.intensity);
         this.sunLight.castShadow = true; this.sunLight.shadow.camera.layers.enableAll(); this.sunLight.layers.enableAll();
@@ -1586,28 +1721,31 @@ class DirectSun {
         Core3D.setSunShadowLight?.(this.sunLight);
         this.ambientLight = new THREE.AmbientLight(0xffffff, 0.02); this.ambientLight.layers.enableAll(); Core3D.scene.add(this.ambientLight);
     }
-    update(dt, cam) {
-        if (!cam) return;
-        if (this.uniforms) this.uniforms.uTime.value += dt;
-        const x = this.data.x; const y = -this.data.y;
-        this.group.position.set(x, y, -60000);
+    update(dt, cam, lensOn = false) {
+        if (!cam || !this.mesh) return;
+        this.uniforms.uTime.value += dt;
+        const gx = Number(this.data.x) || 0;
+        const gy = Number(this.data.y) || 0;
+        const x = gx; const y = -gy;
         if (this.sunLight) {
             const targetX = (typeof cam.x === 'number') ? cam.x : x; const targetY = (typeof cam.y === 'number') ? -cam.y : y;
             const dirX = x - targetX; const dirY = y - targetY; const len = Math.hypot(dirX, dirY) || 1;
             this.sunLight.position.set(targetX + (dirX / len) * 2600, targetY + (dirY / len) * 2600, 3000);
             if (this.sunTarget) { this.sunTarget.position.set(targetX, targetY, 0); this.sunTarget.updateMatrixWorld(); }
         }
-        const scale = (this.data.r3D || this.data.r || 200) * SUN_SIZE_MULTIPLIER;
-        this.mesh.scale.set(scale, scale, scale);
-        // Słońce nie ma cullingu w grze; flaga warstwy planet z promieniem poświaty bloomu
-        // (1,3× promienia — margines dawnego sprite'a blasku 2,6× skali), bez halo.
-        if (typeof Core3D.markPlanetLayersActive === 'function'
-            && isBodyLikelyOnScreen(this.data.x, this.data.y, -60000, scale * 1.3, false, cam)) {
-            Core3D.markPlanetLayersActive(false, false);
+        const R = sunDiscRadius(this.data);
+        this.mesh.rotation.z -= SUN_SPIN * dt;
+        if (lensOn) {
+            this._lensPrepare(gx, gy, R);
+        } else {
+            if (this._lensed) this._lensRestore();
+            this._place(gx, gy, R);
+            // Pass ring-planet ma pracę, gdy tarcza albo korona jest w kadrze. W soczewce — _lensPlace.
+            if (typeof Core3D.markPlanetLayersActive === 'function'
+                && isBodyLikelyOnScreen(gx, gy, 0, R * SUN_CORONA.outer, true, cam)) {
+                Core3D.markPlanetLayersActive(true, true);
+            }
         }
-        
-        // Zamiast pushGodRayWorld używamy uIsOcclusion, pushGodRayWorld wywoływane w core3d.js
-        this.mesh.rotation.z -= 0.002 * dt;
 
         if (this.sunLight && this.sunLight.castShadow) {
             const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
@@ -1626,6 +1764,50 @@ class DirectSun {
             shadowCam.left = -halfSpan; shadowCam.right = halfSpan; shadowCam.top = halfSpan; shadowCam.bottom = -halfSpan;
             shadowCam.updateProjectionMatrix(); this.sunLight.shadow.needsUpdate = true;
         }
+    }
+    // Kula o promieniu s ze środkiem (x, y) gry: szczyt pod płaszczyzną (SUN_TOP_Z), równik przed dalekim brzegiem kamery
+    // ortho (SUN_MIN_CENTER_Z — obraz w soczewce większy od ~245 tys. j. wystaje szczytem ponad płaszczyznę: pass
+    // ring-planet rysuje się pod passem gry, więc niczego nie zasłania), korona tuż nad szczytem kuli.
+    _place(x, y, s) {
+        const zc = Math.max(SUN_TOP_Z - s, SUN_MIN_CENTER_Z);
+        this.group.position.set(x, -y, zc);
+        this.mesh.scale.set(s, s, s);
+        this.corona.scale.set(s, s, 1);
+        this.corona.position.z = s + 100;
+    }
+    // Soczewka: rekord słońca (prawdziwy środek, promień tarczy, płaszczyzna gry — skala prawdziwego widoku = zoom).
+    _lensPrepare(x, y, R) {
+        const L = WARP_WORLD_LENS;
+        const b = this.lensBody;
+        b.x = x;
+        b.y = y;
+        b.r = R;
+        b.z = 0;
+        b.flat = L.zoom;
+        b.gate = 1;
+        b.ready = !!this.mesh;
+    }
+    // Soczewka: kula w kadrze skoku (jak małe ciała — j. świata na px w płaszczyźnie gry), z koroną.
+    _lensPlace() {
+        const L = WARP_WORLD_LENS;
+        const b = this.lensBody;
+        const o = b.out;
+        const fit = lensFitView(o, SUN_CORONA.outer);
+        this._lensed = true;
+        if (!this.mesh) return;
+        if (fit.off) {
+            if (this.group.visible) this.group.visible = false;
+            return;
+        }
+        if (!this.group.visible) this.group.visible = true;
+        if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(true, true);
+        const lw = lensImageToWorld(L, o.x, o.y, 0, true, _lensWorld);
+        const k = lw.k;
+        this._place(lw.x, lw.y, Math.max(1e-3, fit.size * k));
+    }
+    _lensRestore() {
+        this._lensed = false;
+        if (!this.group.visible) this.group.visible = true;
     }
     dispose() {
         if (this.group && this.group.parent) this.group.parent.remove(this.group);
@@ -1710,29 +1892,63 @@ window.updatePlanets3D = function (dt, cam) {
     NebulaSystem.update(dt, cam); StarSystem.update(dt, cam, RenderWorld.ship);
     // Skok gracza: planety i księżyce w soczewce świata (warpNurt.js pisze WARP_WORLD_LENS przed tym krokiem).
     const lensOn = WARP_WORLD_LENS.active === true;
+    // Zasięg rzeczy przypiętych (kotwica: reach — stacje, doki; piszą ich moduły po planetach) → decyzja wejścia ciała.
+    for (let i = 0; i < _entities.length; i++) {
+        const ent = _entities[i];
+        if (ent._anchor && ent.lensBody) { ent.lensBody.attachR = ent._anchor.reach; ent._anchor.reach = 0; }
+    }
     if (window._entities) window._entities.forEach(ent => { if (ent.update) ent.update(dt, cam, lensOn); });
     if (lensOn) applyWarpWorldLens();
-    else _warpLens.reset();
+    else {
+        _warpLens.reset();
+        clearWarpLensAnchors();
+        for (let i = 0; i < WARP_LENS_EXTRA.length; i++) WARP_LENS_EXTRA[i].alive = false;
+    }
 };
 
 // Soczewka świata: rekordy wszystkich ciał tej klatki → jeden przebieg (cel pierwszy, jego księżyce wokół
 // jego obrazu) → rozstawienie na scenie.
 function applyWarpWorldLens() {
     const L = WARP_WORLD_LENS;
+    // Kotwice od nowa (ciało bez rekordu w tej klatce — rzeczy przypięte na prawdziwym miejscu).
+    clearWarpLensAnchors();
     let n = 0;
     let target = null;
+    let origin = null;
     for (const ent of _entities) {
         const b = ent.lensBody;
         if (!b || !b.ready) continue;
         _lensList[n++] = b;
         if (L.target && ent.data === L.target) target = b;
+        if (L.originBody && ent.data === L.originBody) origin = b;
     }
+    // Rekordy dodatkowe (worldLens.js: WARP_LENS_EXTRA — komety, olbrzymy, Hidalgo, doki bez ciała): miejsce z modułu
+    // obiektu (poprzednia klatka), skala prawdziwego widoku z kadru tej klatki.
+    const nBodies = n;
+    for (let i = 0; i < WARP_LENS_EXTRA.length; i++) {
+        const b = WARP_LENS_EXTRA[i];
+        if (!b.alive) continue;
+        b.flat = b.plane ? L.zoom : L.focal / Math.max(1, L.camZ - b.z);
+        b.gate = 1;
+        b.ready = true;
+        _lensList[n++] = b;
+    }
+    // Ciało startu skoku (warp.originBody — sterownik: originBody) → rekord soczewki (A/B originMove, worldLens.js).
+    L.origin = origin;
     _warpLens.update(_lensList, n, L, target, lensDiscVisible);
     for (const ent of _entities) {
         const b = ent.lensBody;
         if (!b || !b.ready) continue;
         ent._lensPlace();
         b.ready = false;
+    }
+    // Kotwice rekordów dodatkowych (klucz rekordu) — moduły obiektów rozstawiają je same (po planetach).
+    for (let i = nBodies; i < n; i++) {
+        const b = _lensList[i];
+        const fit = lensFitView(b.out, 1);
+        writeLensAnchor(b.anchor || warpLensAnchorSlot(b.id), L, b, fit.size, !fit.off);
+        b.ready = false;
+        b.alive = false;
     }
 }
 window.__warpWorldLens = { state: WARP_WORLD_LENS, lens: _warpLens, bodies: () => _entities.filter((e) => e.lensBody).map((e) => ({ id: e.lensBody.id, x: Math.round(e.lensBody.out.x), y: Math.round(e.lensBody.out.y), size: +e.lensBody.out.size.toFixed(1), beta: +e.lensBody.out.beta.toFixed(3), gate: +e.lensBody.gate.toFixed(3), entry: e.lensBody.entry, visible: !!e.group?.visible, target: e.lensBody.out.isTarget })) };

@@ -14,7 +14,8 @@ import { createShipMaterial } from '../src/3d/ships3d/shipMaterials3D.tsl.js';
 import { SHIP3D_MAT, SHIP3D_MAT_COUNT } from '../src/3d/ships3d/meshBuilder3D.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { getHullRenderSize, HULL_RENDER_PROFILES } from '../src/data/ships.js';
-import { BRIDGE3D_KINDS } from '../src/3d/bridge3DShapes.js';
+import { BRIDGE3D_KINDS, resolveBridgeModelKind } from '../src/3d/bridge3DShapes.js';
+import { BRIDGE_LAYOUT_PROPOSALS } from '../src/game/shipBridge.js';
 
 const hulls = Object.fromEntries(FLEET3D_IDS.map((id) => [id, buildFleetHull3D(id)]));
 
@@ -132,7 +133,9 @@ test('gniazda, dysze, RCS, światła i mostek z danych edytora i gry', () => {
     assert.equal(h.rcs.length, (ed.engines?.side || []).length, `${id}: RCS`);
     assert.equal(h.lights.length, (ed.lights?.position || []).length + (ed.lights?.road || []).length, `${id}: światła`);
     assert.equal(h.bridges.length, 1, `${id}: mostek`);
-    assert.equal(BRIDGE3D_KINDS[h.bridges[0].kind].hull, spec.editor, `${id}: mostek innego kadłuba`);
+    const kb = BRIDGE3D_KINDS[h.bridges[0].kind];
+    // flota TN — model poziomu klasy (strefa kadłuba z `level`), piraci — model własnego kadłuba
+    assert.equal(kb.level ? resolveBridgeModelKind(spec.editor, BRIDGE_LAYOUT_PROPOSALS[spec.editor].variants.standard[0]) : kb.hull, kb.level ? h.bridges[0].kind : spec.editor, `${id}: mostek innego kadłuba`);
   }
 });
 

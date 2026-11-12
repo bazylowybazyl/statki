@@ -30,6 +30,8 @@
 // pancerz strefy. Bellator + Iron Skull: 3/0,6 → mediana 2,6× pocisków puli HP
 // (mostek pierwszy 4/72), 1,5/0,35 → 1,7× (17/72); z pulą ×0,5 → 0,85× (40/72).
 // Niżej (0,25) pojedyncza torpeda/Yamato w strefie potrafi zdecydować.
+import { workHullRows } from '../data/workHulls.js';
+
 export const BRIDGE_DEFAULTS = Object.freeze({
   armorMul: 1.5,        // mnożnik HP komórek mostka (pancerz nadbudówki)
   killFrac: 0.35,       // ułamek komórek strefy, którego utrata niszczy mostek
@@ -86,14 +88,29 @@ export function bridgeZoneMargin(renderPerPng, tier = 'L') {
 // Strefa leży na namalowanej nadbudówce (model 3D ją zastępuje), poza
 // zapasem bridgeZoneMargin od hardpointów i silników (pilnuje tego
 // tests/shipBridge.test.mjs). Nowy kadłub: docs/BRIEF-mostek-nowego-kadluba.md.
+// FLOTA TERRA NOVY: mostek na POZIOM klasy (`level`, src/data/bridgeLevels.js — Custos I, Hasta II, Bellator IV,
+// Citadella V, Colossus VI). Jedno źródło z kreatorem kadłubów: środek = moduł `bridge` presetu TN (x, y = 0)
+// przeliczony ramą sprite'a HD_TN_SPRITE_FRAMES (px = x / s − dx, py = −dy), wymiary = obrys modelu poziomu / s
+// — strefa zabicia to dokładnie obrys modelu 3D (tests/bridgeLevels.test.mjs). Przesuwasz mostek presetu TN albo
+// zmieniasz obrys poziomu → ten sam ruch tutaj. Zmiany stref z 2026-10-21: docs/PORT-mostki.md § 10.
+// Strefa mostka kadłuba ruchu v2 (jedna, `primary`, model poziomu `level`).
+const trafficBridge = (label, windowColor, zone) => Object.freeze({
+  label,
+  windowColor,
+  variants: Object.freeze({
+    standard: Object.freeze([Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', ...zone, rot: 0 })])
+  }),
+  defaultVariant: 'standard'
+});
+
 export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   battleship: Object.freeze({
     label: 'Bellator',
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Blok z kwadratową wieżą i kopułą w osi, rufowa połowa kadłuba.
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -282, y: 0, w: 236, h: 92, rot: 0 })
+        // Mostek IV na rufowym bloku (kreator −217 j.: między gniazdem PD rufy a zbiornikiem paliwa).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -403.2, y: -1, w: 144.7, h: 74.2, rot: 0, level: 4 })
       ])
     }),
     defaultVariant: 'standard'
@@ -137,9 +154,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Rufowy blok dowodzenia: kwadratowa wieża i okrągły właz, między
-        // działami burtowymi a dyszami (PNG 2400 × 1792, render 192 × 143).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -552, y: -5, w: 430, h: 220, rot: 0 })
+        // Mostek I za zbiornikiem paliwa, przed komorą reaktora (kreator −42 j.; PNG 2400 × 1792, render 192 × 143).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -489.5, y: 6, w: 350, h: 200, rot: 0, level: 1 })
       ])
     }),
     defaultVariant: 'standard'
@@ -149,8 +165,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Ten sam układ co Custos: wieża i właz w osi, rufowa część (768 × 573).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -193, y: 0, w: 150, h: 76, rot: 0 })
+        // Mostek II w osi rufowej części, przed komorą reaktora (kreator −64 j.; 768 × 573).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -183.2, y: -0.5, w: 112, h: 58.7, rot: 0, level: 2 })
       ])
     }),
     defaultVariant: 'standard'
@@ -160,9 +176,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Cytadela na rufowym bloku: poprzeczna płyta z dwoma okrągłymi
-        // kopułami i mechanizmem w osi (1672 × 941).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -552.5, y: -14.5, w: 95, h: 161, rot: 0 })
+        // Mostek V na środku rufowego kasztelu (cytadela: kopuły i mechanizm sprite'a; kreator −339 j.; 1672 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -526.3, y: -12, w: 167.2, h: 83.6, rot: 0, level: 5 })
       ])
     }),
     defaultVariant: 'standard'
@@ -172,9 +187,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Centralna nadbudówka: ośmiokątna wieża z kratą, długi blok z napisem
-        // TERRA NOVA i kapsuła czujników przed nim (1672 × 941).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -81.5, y: 0, w: 347, h: 124, rot: 0 })
+        // Mostek VI na centralnej nadbudówce (wieża z kratą i rufowa część bloku TERRA NOVA; kreator −150 j.; 1672 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -160.3, y: -2, w: 160.8, h: 81.5, rot: 0, level: 6 })
       ])
     }),
     defaultVariant: 'standard'
@@ -223,10 +237,46 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
         // Blok „C” z włazem za dziobem, sterówka przed nim i kapsuły po bokach
         // (1672 × 941, render 2760 × 1553 — sprite powiększony ×1,65).
         Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: 456, y: -6, w: 222, h: 212, rot: 0 })
+      ]),
+      // Cały skład jednym sprite'em (TRAFFIC_HULLS.megafreighter — awans statku ruchu, 1774 × 887, render 2760 × 1380):
+      // ten sam blok „C” dziobu (dziób ×1,19 w px względem lokomotywy, czubek w x 1758), strefa w świecie jak
+      // w lokomotywie (model `megafreighter` bez skalowania). Wybór: `resolveBridgeVariant` (typ `megafreighter`).
+      sklad: Object.freeze([
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: 431, y: -23, w: 235, h: 225, rot: 0 })
       ])
     }),
     defaultVariant: 'standard'
-  })
+  }),
+  // --- Kadłuby ruchu v2 (E13, 2026-10-22): statki bańki awansowane do pełnego NPC (src/game/trafficPromotion.js) ---
+  // Poziom mostka = klasa z pola kadłuba (alfa sprite'a × skala renderu², progi `areaMax` w src/data/shipClasses.js),
+  // strefa = obrys modelu poziomu / s jak u floty TN (model `tn_<poziom>` z bridge3DShapes — jeden język brył), na
+  // namalowanej sterówce / nadbudówce. Wahadłowiec i dron naprawczy: obrys I nie mieści się między dyszami SIDE —
+  // strefa pomniejszona (× 0,93 i × 0,8, proporcje te same, model skaluje się do strefy). Zapas od dysz i gniazd:
+  // tests/trafficHullData.test.mjs. Okna: cywile #ffe0b0, piraci #ff9a4a, łowca i policja #e4f3ff.
+  inter_station_shuttle: trafficBridge('Wahadłowiec międzystacyjny', '#ffe0b0', { x: 140, y: -5, w: 385, h: 206.2, level: 1 }),
+  container_ship: trafficBridge('Kontenerowiec', '#ffe0b0', { x: 395, y: -12, w: 238.8, h: 125.1, level: 2 }),
+  long_haul_freighter: trafficBridge('Frachtowiec dalekiego zasięgu', '#ffe0b0', { x: 290, y: -20, w: 190.5, h: 98.6, level: 3 }),
+  heavy_freighter: trafficBridge('Ciężki frachtowiec', '#ffe0b0', { x: 420, y: -20, w: 147.8, h: 74.9, level: 6 }),
+  heavy_harvester: trafficBridge('Ciężki kombajn górniczy', '#ffe0b0', { x: 260, y: -10, w: 207, h: 108.4, level: 2 }),
+  belter: trafficBridge('Belter', '#ffe0b0', { x: 340, y: -20, w: 276, h: 157.7, level: 1 }),
+  surveyor: trafficBridge('Zwiadowca złóż', '#ffe0b0', { x: 330, y: -20, w: 258.7, h: 147.8, level: 1 }),
+  refinery_tender: trafficBridge('Mobilna rafineria', '#ffe0b0', { x: 310, y: -20, w: 214.4, h: 110.9, level: 3 }),
+  tanker: trafficBridge('Tankowiec', '#ffe0b0', { x: 520, y: -20, w: 191.2, h: 99, level: 3 }),
+  salvage_hauler: trafficBridge('Złomiarz', '#ffe0b0', { x: 300, y: -20, w: 245, h: 126.7, level: 3 }),
+  // Statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js — plik generowany z presetów).
+  ...workHullRows((v) => (v.bridge ? trafficBridge(v.label, '#ffdca6', v.bridge) : null)),
+  construction_tug: trafficBridge('Holownik budowlany', '#ffe0b0', { x: 400, y: -15, w: 230, h: 131.4, level: 1 }),
+  smuggler: trafficBridge('Przemytnik', '#ff9a4a', { x: 320, y: -15, w: 230, h: 131.4, level: 1 }),
+  pirate_raider: trafficBridge('Rajder piratów', '#ff9a4a', { x: 340, y: -15, w: 258.7, h: 135.5, level: 2 }),
+  distress_beacon_ship: trafficBridge('Statek z boją alarmową', '#ffe0b0', { x: 270, y: -10, w: 207, h: 118.3, level: 1 }),
+  repair_drone: trafficBridge('Dron naprawczy', '#ffe0b0', { x: 130, y: -40, w: 358.4, h: 204.8, level: 1 }),
+  bounty_hunter: trafficBridge('Łowca nagród', '#e4f3ff', { x: 70, y: -5, w: 282.2, h: 147.8, level: 2 }),
+  police_cutter: trafficBridge('Kuter policji', '#e4f3ff', { x: 190, y: -5, w: 276, h: 157.7, level: 1 }),
+  rescue_ship: trafficBridge('Statek ratunkowy', '#ffe0b0', { x: 220, y: -5, w: 310.4, h: 162.6, level: 2 }),
+  // Promy z ludźmi (workforce W7): mostek cywilny kadłuba bazowego (ten sam sprite do PNG z generatora — AGENT: potem ustawić na nowo).
+  crew_shuttle: trafficBridge('Prom rotacyjny', '#ffe0b0', { x: 140, y: -5, w: 385, h: 206.2, level: 1 }),
+  crew_liner: trafficBridge('Liniowiec kontraktowy', '#ffe0b0', { x: 395, y: -12, w: 238.8, h: 125.1, level: 2 }),
+  colony_liner: trafficBridge('Liniowiec dalekiego zasięgu', '#ffe0b0', { x: 290, y: -20, w: 190.5, h: 98.6, level: 3 })
 });
 
 // ---------------------------------------------------------------------------
@@ -306,7 +356,9 @@ export function normalizeBridgeDef(raw, index = 0) {
     armorMul: clamp(positive(src.armorMul, BRIDGE_DEFAULTS.armorMul), 0.1, 50),
     killFrac: clamp(finite(src.killFrac, BRIDGE_DEFAULTS.killFrac), 0.05, 1),
     poly,
-    windowColor: typeof src.windowColor === 'string' ? src.windowColor : null
+    windowColor: typeof src.windowColor === 'string' ? src.windowColor : null,
+    // poziom mostka I–VI (src/data/bridgeLevels.js): model 3D poziomu, obrys modelu = strefa; 0 — model kadłuba
+    level: Number.isFinite(Number(src.level)) && Number(src.level) >= 1 ? Math.min(6, Math.round(Number(src.level))) : 0
   };
   if (poly) {
     // Prostokąt opisujący wielokąt: środek i rozmiar do HUD-u i celowania.
@@ -351,6 +403,7 @@ export function compactBridgeDef(raw) {
   }
   out.armorMul = round2(def.armorMul);
   out.killFrac = round2(def.killFrac);
+  if (def.level) out.level = def.level;
   return out;
 }
 
@@ -871,13 +924,11 @@ export function applyCommandLossVisuals(entity, nowSec, opts = {}) {
   mask += roadOn ? 'R' : 'r';
   if (mask === st.navMask) return;
   st.navMask = mask;
-  // Reflektory otoczenia gasną z drogowymi; `autoFlood: false`, bo lista bez
-  // reflektorów dostałaby w shipLightRuntime automatyczne z obrysu lamp.
+  // Reflektory otoczenia gasną z drogowymi.
   entity.editorLights = {
     position: lit,
     road: roadOn ? orig.road : [],
-    flood: roadOn && orig.flood ? orig.flood : [],
-    autoFlood: roadOn
+    flood: roadOn && orig.flood ? orig.flood : []
   };
 }
 

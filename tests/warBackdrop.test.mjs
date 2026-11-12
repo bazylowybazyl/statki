@@ -9,7 +9,7 @@ import {
 } from '../src/render/warBackdropPlan.js';
 import { createWarBackdropSim, WB_SHIP_CAP, WB_MODE, WB_STEP } from '../src/3d/warBackdrop/warBackdropSim.js';
 import { createWarBackdropFrame, createWarBackdropBlock, applyWarBackdropBlock, WB_HERO_MAX } from '../src/render/blocks/warBackdropBlock.js';
-import { WarBackdrop3D } from '../src/3d/warBackdrop/warBackdrop3D.js';
+import { WarBackdrop3D, WB_LOOK } from '../src/3d/warBackdrop/warBackdrop3D.js';
 
 const countingSink = () => {
   const c = { shot: 0, flash: 0, ring: 0, debris: 0, beam: 0, streak: 0, bad: 0 };
@@ -183,7 +183,8 @@ test('obraz: WGSL grafów buduje się w Node; siatki na warstwach tła i FG; jed
   assert.equal(wb.evBg.mesh.material, wb.evFg.mesh.material);
 });
 
-test('obraz: klatka sceny — rozbieg, pakowanie w kadrze, zdarzenia w pierścieniu, liczby skończone', () => {
+// Obraz sceny bez GPU (atlas i planeta bez wczytywania): rozbieg 4 s = 120 kroków WB_STEP.
+function sceneFrame() {
   const wb = new WarBackdrop3D(fakeCore());
   wb._loadAtlas = () => {};
   wb._loadPlanet = () => {};
@@ -191,8 +192,36 @@ test('obraz: klatka sceny — rozbieg, pakowanie w kadrze, zdarzenia w pierście
   Object.assign(f, { has: true, id: 1, t: 0, cx: 2.7e6, cy: 1e5, axis: 0.3, seed: 11, density: 1, prewarm: 4, fade: 1, sunX: 0, sunY: 0, heroN: 1 });
   Object.assign(f.planet, { on: 1, maps: 0, r: 165000, z: -385000, dx: 150000, dy: 0, spin: 0 });
   Object.assign(f.heroes[0], { kind: WB_HERO.COMBO, t0: 1, x: 2000, y: 1000, z: 9000, heading: 0.2, seed: 3 });
-  const cam = { x: f.cx, y: f.cy, zoom: 0.05 };
-  const prevBudget = 6;
+  return { wb, f, cam: { x: f.cx, y: f.cy, zoom: 0.05 } };
+}
+
+test('obraz: rozbieg w porcjach — budżet czasu tnie porcję, ale każda klatka robi co najmniej jeden krok', () => {
+  // Budżet 0 ms = wątek zagłodzony od pierwszego odczytu zegara (każde wywłaszczenie ≥ budżetu): dokładnie jeden krok
+  // na klatkę, niezależnie od szybkości maszyny. Bez gwarancji kroku rozbieg stoi; bez budżetu kończy się w klatce.
+  const prev = WB_LOOK.prewarmBudgetMs;
+  WB_LOOK.prewarmBudgetMs = 0;
+  try {
+    const { wb, f, cam } = sceneFrame();
+    // kroki rozbiegu tą samą arytmetyką co obraz (4 − 120 · 1/30 zostawia ułamek > 0 — krok 121.)
+    let total = 0;
+    for (let left = f.prewarm; left > 0; left -= WB_STEP) total++;
+    for (let k = 1; k <= 3; k++) {
+      wb.update(f, cam);
+      assert.ok(Math.abs(wb.prewarmLeft - (f.prewarm - k * WB_STEP)) < 1e-9, `klatka ${k}: zostało ${wb.prewarmLeft}`);
+      assert.equal(wb.root.visible, false, 'w rozbiegu obraz schowany');
+    }
+    let frames = 3;
+    while (wb.prewarmLeft > 0 && frames < total + 5) { wb.update(f, cam); frames++; }
+    assert.equal(frames, total, 'rozbieg = jedna klatka na krok');
+    assert.equal(wb.root.visible, true, 'po rozbiegu obraz widać');
+  } finally {
+    WB_LOOK.prewarmBudgetMs = prev;
+  }
+});
+
+test('obraz: klatka sceny — rozbieg, pakowanie w kadrze, zdarzenia w pierścieniu, liczby skończone', () => {
+  const { wb, f, cam } = sceneFrame();
+  // co najmniej jeden krok rozbiegu na klatkę: 120 kroków mieści się w 400 klatkach przy każdym obciążeniu
   for (let k = 0; k < 400 && wb.prewarmLeft > 0 || k === 0; k++) wb.update(f, cam);
   assert.ok(wb.prewarmLeft <= 0, 'rozbieg skończony');
   for (let k = 0; k < 600; k++) { f.t += 1 / 60; wb.update(f, cam); }
@@ -209,7 +238,6 @@ test('obraz: klatka sceny — rozbieg, pakowanie w kadrze, zdarzenia w pierście
     if (t0 < 1e8) { live++; assert.ok(Array.from(wb.evBg.arr.subarray(i * 16, i * 16 + 16)).every(Number.isFinite)); }
   }
   assert.ok(live > 100 && now > 10, `zdarzenia ${live}, czas ${now}`);
-  void prevBudget;
   f.has = false;
   wb.update(f, cam);
   assert.equal(wb.root.visible, false);

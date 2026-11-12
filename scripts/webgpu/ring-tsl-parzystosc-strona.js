@@ -240,12 +240,11 @@ const TESTS = [
       haloHash12(vec2(fma(f.z, 31.7, f.x), fma(f.w, 57.0, f.y))), haloHash12(vec2(floor(f.y.div(12.0)), fma(f.z, 7.3, f.w.mul(13.0)))))],
   // ---- zadanie 10: ringi-archetypy (archTSL.js). Ziarno instancji floor(aInst.y · 1000 + 0,5) (e.w, f.w — [0, 1));
   // hasze archHash(p) = haloHash12(p · 0,7071 + (13,17, 71,3)) z wejść: s = ziarno całkowite (d.x / 64 → 0…1023),
-  // komórka c = f.xy − 200 (−200…199), ściana fz = f.z − 1 (0…3), rodzaj budynku k = floor(d.w · 9).
-  // Kanały archEcuWin: 0 okno ECUMENE c + (s·0,37, s·1,91), 1 odcień płyty c + s·0,13, 2 kratka c + 3,7, 3 dach Fable
-  // c + s·0,1. archFabWin: 0 okno Fable c + (s·0,97 + fz·7, s·0,31), 1 barwa okien (s·0,31 + fz, k), 2 średnia
-  // floor(c / 3) + s·0,011, 3 panel c + s·0,013. Warianty: Naive — mnożenie i dodawanie wprost (DXC: dwa zaokrąglenia),
-  // Fma — wariant materiału (a·b + c przez fma WGSL, haloFma / haloFmaVec2), HashFma / SeedFma — fma tylko w haszu /
-  // tylko w ziarnie·k, FmaB — okno Fable z fma(ściana, 7, s·0,97).
+  // komórka c = f.xy − 200 (−200…199).
+  // Kanały archEcuWin: 0 okno ECUMENE c + (s·0,37, s·1,91), 1 odcień płyty c + s·0,13, 2 kratka c + 3,7, 3 hasz
+  // c + s·0,1 (dawny dach Fable — archetyp usunięty 2026-10-23, kanał zostaje dla porównań z bazą). Warianty: Naive —
+  // mnożenie i dodawanie wprost (DXC: dwa zaokrąglenia), Fma — wariant materiału (a·b + c przez fma WGSL, haloFma /
+  // haloFmaVec2), HashFma / SeedFma — fma tylko w haszu / tylko w ziarnie·k.
   ['archSeed', 'vec4(floor(f.w * 1000.0 + 0.5), floor(e.w * 1000.0 + 0.5), fract(f.w * 1000.0 + 0.5), fract(e.w * 1000.0 + 0.5))',
     (a, b, d, e, f) => vec4(floor(f.w.mul(1000.0).add(0.5)), floor(e.w.mul(1000.0).add(0.5)), fract(f.w.mul(1000.0).add(0.5)), fract(e.w.mul(1000.0).add(0.5)))],
   ['archSeedFma', 'vec4(floor(f.w * 1000.0 + 0.5), floor(e.w * 1000.0 + 0.5), fract(f.w * 1000.0 + 0.5), fract(e.w * 1000.0 + 0.5))',
@@ -256,7 +255,6 @@ const TESTS = [
 // Wiersze haszy archetypów (zadanie 10) — patrz komentarz przy archSeed.
 function archRows() {
   const glslEcu = 'vec4(archHash((f.xy - 200.0) + vec2(floor(d.x / 64.0) * 0.37, floor(d.x / 64.0) * 1.91)), archHash((f.xy - 200.0) + floor(d.x / 64.0) * 0.13), archHash((f.xy - 200.0) + 3.7), archHash((f.xy - 200.0) + floor(d.x / 64.0) * 0.1))';
-  const glslFab = 'vec4(archHash((f.xy - 200.0) + vec2(floor(d.x / 64.0) * 0.97 + (f.z - 1.0) * 7.0, floor(d.x / 64.0) * 0.31)), archHash(vec2(floor(d.x / 64.0) * 0.31 + (f.z - 1.0), floor(d.w * 9.0))), archHash(floor((f.xy - 200.0) / 3.0) + floor(d.x / 64.0) * 0.011), archHash((f.xy - 200.0) + floor(d.x / 64.0) * 0.013))';
   const hashN = (p) => haloHash12(p.mul(0.7071).add(vec2(13.17, 71.3)));
   const hashF = (p) => haloHash12(haloFmaVec2(p, [0.7071, 0.7071], [13.17, 71.3]));
   const seedN = (s, k, c) => c.add(vec2(s.mul(k[0]), s.mul(k[1])));
@@ -266,25 +264,11 @@ function archRows() {
     const c = f.xy.sub(200.0);
     return vec4(hash(seed(s, [0.37, 1.91], c)), hash(seed(s, [0.13, 0.13], c)), hash(c.add(3.7)), hash(seed(s, [0.1, 0.1], c)));
   };
-  const fab = (hash, seed, win) => (a, b, d, e, f) => {
-    const s = d.x.div(64.0).floor();
-    const c = f.xy.sub(200.0);
-    const fz = f.z.sub(1.0);
-    return vec4(hash(win(s, fz, c)), hash(vec2(seed === seedF ? fma(s, 0.31, fz) : s.mul(0.31).add(fz), d.w.mul(9.0).floor())),
-      hash(seed(s, [0.011, 0.011], c.div(3.0).floor())), hash(seed(s, [0.013, 0.013], c)));
-  };
-  const winN = (s, fz, c) => c.add(vec2(s.mul(0.97).add(fz.mul(7.0)), s.mul(0.31)));
-  const winF = (s, fz, c) => vec2(c.x.add(fma(s, 0.97, fz.mul(7.0))), fma(s, 0.31, c.y));
-  const winB = (s, fz, c) => vec2(c.x.add(fma(fz, 7.0, s.mul(0.97))), fma(s, 0.31, c.y));
   return [
     ['archEcuWinNaive', glslEcu, ecu(hashN, seedN)],
     ['archEcuWinFma', glslEcu, ecu(hashF, seedF)],
     ['archEcuWinHashFma', glslEcu, ecu(hashF, seedN)],
     ['archEcuWinSeedFma', glslEcu, ecu(hashN, seedF)],
-    ['archFabWinNaive', glslFab, fab(hashN, seedN, winN)],
-    ['archFabWinFma', glslFab, fab(hashF, seedF, winF)],
-    ['archFabWinFmaB', glslFab, fab(hashF, seedF, winB)],
-    ['archFabWinHashFma', glslFab, fab(hashF, seedN, winN)],
     // kratka płyt archHash(id + 3,7) z id = floor(…) jak w materiale (w wierszu archEcuWin kanał 2 baza zwijała
     // stałe (f.xy − 200) + 3,7 = f.xy − 196,3 — nie jak w materiale): fma w haszu / wprost / stała zwinięta
     // ((id + 3,7)·0,7071 + k = id·0,7071 + (3,7·0,7071 + k), float32)
@@ -526,9 +510,8 @@ async function main() {
   };
   for (const name of Object.keys(state.results)) {
     if (/^megaHash/.test(name)) state.results[name].flipsPct = { okno055: flips(glsl[name], tsl[name], 1, 0.55) };
-    // zadanie 10: okno ECUMENE świeci przy haszu ≥ 0,61; okno Fable przy haszu ≥ progu 0,55…0,85 (tu 0,7), barwa ≥ 0,62
+    // zadanie 10: okno ECUMENE świeci przy haszu ≥ 0,61
     if (/^archEcuWin/.test(name)) state.results[name].flipsPct = { okno061: flips(glsl[name], tsl[name], 0, 0.61), kratka072: flips(glsl[name], tsl[name], 2, 0.72) };
-    if (/^archFabWin/.test(name)) state.results[name].flipsPct = { okno07: flips(glsl[name], tsl[name], 0, 0.7), barwa062: flips(glsl[name], tsl[name], 1, 0.62) };
     if (/^megaFacade/.test(name)) {
       state.results[name].flipsPct = {
         grupa03: flips(glsl[name], tsl[name], 1, 0.3), okno08: flips(glsl[name], tsl[name], 2, 0.8), okno006: flips(glsl[name], tsl[name], 2, 0.06)

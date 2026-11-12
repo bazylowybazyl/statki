@@ -6,11 +6,17 @@
 // myszą), sieć rur (etap `rury`: rufa z gondolami A/B, sieć wyłączona, rura ręczna), pipeline'y synchroniczne
 // w klatkach (ma być 0), błędy konsoli. Etap `klocki` (poza domyślnymi): fregata z klocków, arkusz palety, edycja myszą
 // (`--etapy klocki --tylko klocki` — bez floty). Etap `klasa` (poza domyślnymi): panel klasy, gniazda Bellatora
-// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka. Etap `drednot` (poza domyślnymi):
-// drednoty klasy VII (cały okręt, A/B z Colossusem, dziób, rufa, burta, sieć, panel klasy, czasy wypieku i pamięć).
+// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka. Etap `mostek` (poza domyślnymi):
+// gniazdo mostka v 2 floty TN z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze, galeria poziomów I–VI
+// (sześć gniazd na jednym kadłubie, z modelami i bez). Etap `stocznia` (poza domyślnymi): przyjazny edytor prawdziwą
+// myszą — paleta z miniaturami, przeciągnij i upuść, stempel z rzędem, Ctrl+D, Shift+przeciągnij, usunięcie na paletę,
+// moduł poza kadłubem odrzucony, kadłub od zera, statki cywilne (grupy presetów, frachtowiec od zera, stelaż kontenerów
+// z karty Ładunek, suwak załadunku, przełącznik roli, barwy cywilne) (`--etapy stocznia --tylko stocznia`). Etap `drednot`
+// (poza domyślnymi): drednoty klasy VII (cały okręt, A/B z Colossusem, dziób, rufa, burta, sieć, panel klasy, czasy
+// wypieku i pamięć). Pozostałe etapy — w interfejsie warsztatu (`?ui=warsztat`).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,drednot] [--drednoty dreadnought]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,mostek,stocznia,drednot] [--drednoty dreadnought]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -43,7 +49,8 @@ async function shot(name, opis, frames = 4) {
 const PRESETS = ['custos', 'hasta', 'bellator', 'citadella', 'colossus', 'orbis', 'atlas2', 'pirate'];
 const TN = new Set(['custos', 'hasta', 'bellator', 'citadella', 'colossus']);
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/kreator-kadluba-webgpu.html?test=1` });
+  // zrzuty paneli warsztatu: interfejs 'warsztat' (domyślny jest przyjazny edytor — etap `stocznia` przełącza go sam)
+  await cdp.send('Page.navigate', { url: `${base}/dema/kreator-kadluba-webgpu.html?test=1&ui=warsztat` });
   if (!await waitFor(cdp, '!!(window.__kreator && (window.__kreator.ready || window.__kreator.error))', 240000, 400)) throw new Error('demo nie wstało');
   const err = await ev('window.__kreator.error || null');
   if (err) throw new Error(`demo: ${err}`);
@@ -125,6 +132,24 @@ try {
         await ev(`window.__kreator.setCamera(${rc.x}, ${rc.y}, ${z * 0.3})`);
         await ev('window.__kreator.runFrames(4)');
         await shot(`${key}-reaktor-okret`, `${key}: obudowa reaktora na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
+      }
+    }
+    if (stages.has('mostek') && TN.has(key)) {
+      // gniazdo mostka (moduł bridge v 2, poziom klasy) z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze
+      await ev('window.__kreator.built()');
+      const br = await ev('(() => { const k = window.__kreator, m = k.S.field.expanded.modules.find((q) => q.type === "bridge"); return m ? { x: m.x, y: m.y, w: m.w, h: m.h, lv: m.lv, v: m.v, rim: m.rim, poziomProjektu: k.S.field.expanded.design.bridgeLevel } : null; })()');
+      if (br) {
+        const z = Math.min(24, 1600 * 0.42 / (2 * (br.w + br.rim)));
+        await ev(`window.__kreator.setAb(false); window.__kreator.setBridge3D(true); window.__kreator.setCamera(${br.x}, ${br.y}, ${z})`);
+        await ev('window.__kreator.runFrames(6)');
+        report.mostek = report.mostek || {};
+        report.mostek[key] = { ...br, b3: await ev('JSON.stringify({ records: window.__kreator.bridge3D.stats.records, visible: window.__kreator.bridge3D.stats.visible, emitters: window.__kreator.bridge3D.stats.emitters })') };
+        await shot(`${key}-mostek-3d`, `${key}: mostek ${br.lv} (model 3D gry) w gnieździe v ${br.v}, zoom ${z.toFixed(2)}`);
+        await ev('window.__kreator.setBridge3D(false); window.__kreator.runFrames(2)');
+        await shot(`${key}-mostek-gniazdo`, `${key}: samo gniazdo mostka ${br.lv} w poszyciu (bez modelu 3D)`);
+        await ev(`window.__kreator.setBridge3D(true); window.__kreator.setCamera(${br.x}, ${br.y}, ${z * 0.3})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-mostek-okret`, `${key}: mostek na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
       }
     }
     if (stages.has('style') && key === 'orbis') {
@@ -300,6 +325,195 @@ try {
     rama.po = await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`);
     report.rama_klocki = rama;
     console.log('klocki rama', JSON.stringify(rama));
+  }
+  if (stages.has('stocznia')) {
+    // STOCZNIA (--etapy stocznia): przyjazny edytor — paleta z miniaturami z kompozytora, przeciągnij i upuść kartę
+    // (duch nad okrętem, kopia lustra), stempel z rzędem kopii, powielanie Ctrl+D z powtórzeniem przesunięcia, kopia
+    // Shift+przeciągnij, usunięcie upuszczeniem na paletę, moduł poza kadłubem odrzucony, nowy kadłub od zera
+    const k = 'window.__kreator', y = `${k}.stocznia`;
+    const mouse = async (type, x, yy, button = 'left', buttons = 1, modifiers = 0) => cdp.send('Input.dispatchMouseEvent', { type, x, y: yy, button, buttons, clickCount: 1, modifiers });
+    const keyDown = async (key, code, vk, modifiers = 0) => {
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, modifiers, windowsVirtualKeyCode: vk });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, modifiers, windowsVirtualKeyCode: vk });
+    };
+    const scr = (x, yy) => ev(`${k}.toScreen(${x}, ${yy})`);
+    const card = (key) => ev(`(() => { const c = document.querySelector('.ycard[data-key="${key}"]'); if (!c) return null; c.scrollIntoView({ block: 'nearest' }); const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const count = () => ev(`({ shapes: ${k}.design.shapes.length, modules: ${k}.design.modules.length, sel: ${y}.state().sel, hist: ${k}.blk.hist().idx })`);
+    const drag = async (a, b, steps = 10, mods = 0, before = null) => {
+      await mouse('mouseMoved', a.x, a.y, 'none', 0, mods);
+      await mouse('mousePressed', a.x, a.y, 'left', 1, mods);
+      for (let i = 1; i <= steps; i++) await mouse('mouseMoved', a.x + (b.x - a.x) * i / steps, a.y + (b.y - a.y) * i / steps, 'left', 1, mods);
+      if (before) await before();
+      await mouse('mouseReleased', b.x, b.y, 'left', 0, mods);
+      await ev(`${k}.built()`);
+    };
+    const st = {};
+    await ev(`${k}.setUi('stocznia')`);
+    await ev(`${k}.preset("hasta")`);
+    await ev(`${y}.cat('ksztalty')`);
+    st.miniatury = await ev(`${y}.thumbsDone()`);
+    await shot('stocznia-1-paleta', 'Stocznia: paleta kształtów z miniaturami z kompozytora, karta okrętu (klasa, rozmiar, gniazda, moc, lista kontrolna), sam okręt bez siatki');
+    // karta → okręt: sześciokąt nad burtą (lustro: druga burta), duch w trakcie przeciągania
+    const im = await ev(`(() => { const f = ${k}.S.field; return { cx: f.image.cx, minX: f.bounds.minX, maxX: f.bounds.maxX, minY: f.bounds.minY, w: f.bounds.maxX - f.bounds.minX }; })()`);
+    st.przed = await count();
+    // sześciokąt kilka j. nad burtą (magnes dosuwa go do kadłuba)
+    const hx = im.cx - im.w * 0.08;
+    const top = await ev(`${y}.edge(${hx}, -1)`);
+    let a = await card('blk:hex');
+    let b = await scr(hx, top - 8);
+    await drag(a, b, 12, 0, () => shot('stocznia-2-przeciaganie', 'Przeciąganie karty sześciokąta nad burtę: duch klocka dosunięty magnesem do kadłuba, kopia lustra, oś symetrii'));
+    st.upuszczony = await count();
+    st.ramaPoSzesciokacie = await ev(`document.querySelector('#yard-card .ycheck li:nth-child(5)')?.className || null`);
+    await shot('stocznia-3-upuszczony', 'Sześciokąt postawiony: zaznaczenie z paskiem narzędzi (obrót, odbicie, warstwa, wycięcie, rozmiar, powiel, usuń)');
+    // stempel: klik w kartę prostokąta, przeciągnięcie wzdłuż burty — rząd stykających się płyt
+    a = await card('blk:rect');
+    await mouse('mouseMoved', a.x, a.y, 'none', 0); await mouse('mousePressed', a.x, a.y); await mouse('mouseReleased', a.x, a.y, 'left', 0);
+    st.stempel = (await ev(`${y}.state()`)).armed;
+    // rząd od środka okrętu ku dziobowi, tuż nad burtą
+    const rx0 = im.minX + im.w * 0.45, rx1 = im.minX + im.w * 0.75;
+    const ry = Math.min(await ev(`${y}.edge(${rx0}, -1)`), await ev(`${y}.edge(${rx1}, -1)`)) - 6;
+    a = await scr(rx0, ry);
+    b = await scr(rx1, ry);
+    await drag(a, b, 14, 0, () => shot('stocznia-4-rzad', 'Stempel: przeciągnięcie układa rząd stykających się płyt (podgląd) — drugą burtę stawia lustro'));
+    st.rzad = await count();
+    await keyDown('Escape', 'Escape', 27);
+    // powiel: ostatni klocek, Ctrl+D dwa razy (drugie powtarza przesunięcie)
+    await ev(`${y}.selectLast('shape')`);
+    await keyDown('d', 'KeyD', 68, 2); await ev(`${k}.built()`);
+    await keyDown('d', 'KeyD', 68, 2); await ev(`${k}.built()`);
+    st.powiel = await count();
+    await shot('stocznia-5-powiel', 'Powiel (Ctrl+D) dwa razy: kopie obok, drugie powielenie powtarza przesunięcie pierwszego');
+    // przeciągnięcie zaznaczonego klocka na paletę — usunięcie
+    const last = await ev(`(() => { const s = ${k}.design.shapes.at(-1); return { x: s.x, y: s.y }; })()`);
+    a = await scr(last.x, last.y);
+    b = await card('blk:square');
+    await drag(a, b, 10);
+    st.usuniety = await count();
+    // wieża M z karty na pancerz; ta sama karta upuszczona daleko poza kadłubem — odmowa
+    await ev(`${y}.cat('bron')`);
+    const plate = await ev(`(() => { const s = ${k}.design.shapes.filter((q) => q.kind === 'block' && q.level >= 1 && q.op !== 'cut').sort((p, q) => q.w * q.h - p.w * p.h)[0]; return { x: s.x, y: s.y }; })()`);
+    a = await card('mod:turret_m');
+    b = await scr(plate.x, plate.y);
+    await drag(a, b, 10);
+    st.wieza = await count();
+    a = await card('mod:turret_m');
+    b = await scr(im.cx, im.minY - im.w * 0.3);
+    await drag(a, b, 10);
+    st.wiezaPoza = await count();
+    // Shift+przeciągnij wieżę — kopia obok
+    const tur = await ev(`(() => { const m = ${k}.design.modules.at(-1); return { x: m.x, y: m.y, r: m.r }; })()`);
+    a = await scr(tur.x, tur.y);
+    b = await scr(tur.x - tur.r * 3, tur.y);
+    await drag(a, b, 8, 8);
+    st.kopiaShift = await count();
+    await shot('stocznia-6-uzbrojenie', 'Uzbrojenie: wieża M z karty na pancerzu i jej kopia Shift+przeciągnij; rozmiar gniazd nad kartami');
+    // malowanie i karty pozostałych kategorii
+    await ev(`${y}.cat('systemy')`); st.miniatury2 = await ev(`${y}.thumbsDone()`);
+    await shot('stocznia-7-systemy', 'Karty systemów: reaktor, mostek, silnik, dysza, zbiornik, ładownia, hangar');
+    await ev(`${y}.cat('farba')`);
+    await shot('stocznia-8-malowanie', 'Malowanie: barwy kadłuba, krawędzie, naklejki, kolor, wykończenie');
+    // od zera: niszczyciel — płyta startowa, potem klocki, reaktor, mostek, silniki i zbiornik z palety
+    await ev(`${y}.newShip(2)`);
+    await ev(`${k}.built()`);
+    await shot('stocznia-9-od-zera', 'Nowy kadłub od zera (II · niszczyciel): płyta startowa, lista kontrolna podpowiada brakujące systemy');
+    st.odZera = await ev(`(() => {
+      const s = ${y}, b0 = ${k}.design.shapes[0], W = b0.w, H = b0.h;
+      return [s.drop('blk:bow', b0.x + W / 2 + W / 8, 0), s.drop('blk:trap_r', b0.x - W / 2 - W / 8, -H / 2), s.drop('blk:rect', b0.x, -H / 2 - H / 4)];
+    })()`);
+    await ev(`${k}.built()`);
+    st.odZeraSys = await ev(`(() => {
+      const s = ${y}, d = ${k}.design, b0 = d.shapes[0];
+      return [s.drop('mod:reactor', b0.x, 0), s.drop('mod:bridge', b0.x + b0.w * 0.3, 0), s.drop('mod:engine', b0.x - b0.w * 0.38, -b0.h * 0.25), s.drop('mod:fuel_tank', b0.x - b0.w * 0.12, -b0.h * 0.3)];
+    })()`);
+    await ev(`${k}.built(); ${k}.fit()`);
+    await shot('stocznia-10-od-zera-zbudowany', 'Od zera: grot na dziobie, trapez na rufie, płyta nad burtą (lustro), reaktor, mostek, silniki, zbiornik — lista kontrolna');
+    st.klasa = await ev(`${k}.klasa.state()`);
+    // STATKI CYWILNE: lista presetów w grupach, okno „Od zera” z wierszem klas cywilnych, frachtowiec III od zera,
+    // karta „Ładunek” (stelaż kontenerów upuszczony prawdziwą myszą), suwak załadunku 50% / 0% (ścieżka wyglądu, jeden
+    // wpis cofania), przełącznik roli na karcie okrętu, barwy cywilne w malowaniu
+    const cyw = {};
+    cyw.presety = await ev(`[...document.querySelectorAll('#yard-preset optgroup')].map((g) => ({ grupa: g.label, n: g.children.length, pierwszy: g.children[0]?.textContent || null }))`);
+    cyw.presetyWarsztat = await ev(`[...document.querySelectorAll('#sel-preset optgroup')].map((g) => ({ grupa: g.label, n: g.children.length }))`);
+    a = await ev(`(() => { const r = document.getElementById('yard-new').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    await mouse('mouseMoved', a.x, a.y, 'none', 0); await mouse('mousePressed', a.x, a.y); await mouse('mouseReleased', a.x, a.y, 'left', 0);
+    await shot('stocznia-11-nowy-dialog', 'Okno „Nowy kadłub”: wiersz okrętów wojennych i wiersz statków cywilnych (prom … megafrachtowiec)');
+    b = await ev(`(() => { const e = document.querySelector('#yard-new-dlg button[data-role="civil"][data-lv="3"]'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    cyw.dialogCywilne = await ev(`document.querySelectorAll('#yard-new-dlg button[data-role="civil"]').length`);
+    if (b) { await mouse('mouseMoved', b.x, b.y, 'none', 0); await mouse('mousePressed', b.x, b.y); await mouse('mouseReleased', b.x, b.y, 'left', 0); }
+    await waitFor(cdp, `${k}.design.role === 'civil' && ${k}.design.shapes.length === 1`, 60000, 200);
+    await ev(`${k}.built()`);
+    cyw.frachtowiec = await ev(`(() => { const d = ${k}.design, b0 = d.shapes[0]; return { name: d.name, role: d.role, palette: d.palette, detail: d.detail, grid: d.grid, bridgeLevel: d.bridgeLevel, kil: [b0.w, b0.h] }; })()`);
+    await shot('stocznia-12-frachtowiec-od-zera', 'Od zera: frachtowiec (III · cywilny) — długi wąski kil, barwy frachtowca, karta okrętu z rolą Cywilny i ładownością');
+    cyw.kartaPrzed = await ev(`${y}.card()`);
+    await ev(`${y}.cat('ladunek')`);
+    cyw.miniatury = await ev(`${y}.thumbsDone()`);
+    cyw.karty = await ev(`[...document.querySelectorAll('#yard-cards .ycard')].map((c) => c.dataset.key)`);
+    // stelaż kontenerów prawdziwą myszą: karta → środek kilu (za śródokręciem)
+    const kil = await ev(`(() => { const b0 = ${k}.design.shapes[0]; return { x: b0.x - b0.w * 0.12, y: 0 }; })()`);
+    a = await card('mod:cargo:v2');
+    b = await scr(kil.x, kil.y);
+    cyw.przedStelazem = await count();
+    await drag(a, b, 12);
+    cyw.stelaz = await count();
+    cyw.stelazModul = await ev(`(() => { const m = ${k}.design.modules.at(-1); return m ? { type: m.type, v: m.v, n: m.n ?? null, w: m.w, h: m.h } : null; })()`);
+    await ev(`${k}.built()`);
+    cyw.ladunek = await ev(`${k}.S.recipe?.cargo || null`);
+    await ev(`${k}.fit()`);
+    await shot('stocznia-13-stelaz', 'Karta „Ładunek”: miniatury (wrota, klapa, stelaż, zasobniki, zbiorniki), stelaż kontenerów na kilu frachtowca, ładowność na karcie okrętu');
+    // suwak Załadunek: input w trakcie (ścieżka wyglądu, S.drag), change na końcu — jeden wpis cofania
+    const suwak = (v) => ev(`(async () => {
+      const r = document.querySelector('#yard-opts input[data-k="load"]'); if (!r) return null;
+      const h0 = ${k}.blk.hist().idx, b0 = ${k}.S.builtRev;
+      for (const q of [Math.round((Number(r.value) + ${v}) / 2), ${v}]) { r.value = String(q); r.dispatchEvent(new Event('input', { bubbles: true })); }
+      r.dispatchEvent(new Event('change', { bubbles: true }));
+      await ${k}.built();
+      return { load: ${k}.design.cargoLoad, wpisyCofania: ${k}.blk.hist().idx - h0, rewizjeObrazu: ${k}.S.builtRev - b0, czasBudowy: ${k}.stats().timing?.total ?? null, etykieta: document.querySelector('#yard-opts .yload')?.textContent || null };
+    })()`);
+    cyw.zaladunek50 = await suwak(50);
+    await shot('stocznia-14-zaladunek-50', 'Suwak Załadunek 50%: część komórek stelaża pusta (wygląd, bez przebudowy kadłuba)');
+    cyw.zaladunek0 = await suwak(0);
+    await shot('stocznia-15-zaladunek-0', 'Suwak Załadunek 0%: pusty stelaż (rama i pokład)');
+    await suwak(100);
+    // przełącznik roli prawdziwą myszą: Wojskowy (nazwy klas wojenne, gniazda broni), potem z powrotem Cywilny
+    const rola = async (r) => {
+      const p = await ev(`(() => { const e = document.querySelector('#yard-card button[data-role="${r}"]'); if (!e) return null; const q = e.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+      if (p) { await mouse('mouseMoved', p.x, p.y, 'none', 0); await mouse('mousePressed', p.x, p.y); await mouse('mouseReleased', p.x, p.y, 'left', 0); }
+      await ev(`${k}.built()`); await ev(`${k}.runFrames(2, 60)`);
+      return { role: await ev(`${k}.design.role`), klasa: await ev(`document.querySelector('#yard-card .yclass b')?.textContent || null`), mostek: await ev(`[...document.querySelectorAll('#yard-card select[data-k="bridge"] option')].map((o) => o.textContent).slice(1, 4)`) };
+    };
+    cyw.rolaWojskowy = await rola('military');
+    await shot('stocznia-16-rola-wojskowy', 'Ten sam kadłub przełączony na rolę Wojskowy: klasy wojenne, gniazda broni zamiast ładowności');
+    cyw.rolaCywilny = await rola('civil');
+    cyw.kartaPo = await ev(`${y}.card()`);
+    await ev(`${y}.cat('farba')`);
+    cyw.malowanieGrupy = await ev(`[...document.querySelectorAll('#yard-cards .ygroup')].map((g) => g.textContent)`);
+    await shot('stocznia-17-barwy-cywilne', 'Malowanie: grupa „Barwy cywilne” (Cywilny, Frachtowiec — bez emblematu) obok barw nacji');
+    st.cywilne = cyw;
+    report.stocznia = st;
+    console.log('stocznia', JSON.stringify(st));
+  }
+  if (stages.has('mostek') && (!only || only.has('mostki'))) {
+    // GALERIA POZIOMÓW: sześć gniazd mostka (I–VI, poziom projektu 0 — poziom modułu) na jednym prostym kadłubie
+    await ev('window.__kreator.preset("empty")');
+    await ev(`(() => { const k = window.__kreator; k.S.classValid = null; k.edit((d) => {
+      d.name = 'Galeria mostków I–VI'; d.bridgeLevel = 0; d.detail = 0.36; d.palette = 'terra';
+      d.shapes = [{ kind: 'rect', op: 'add', x: 0, y: 0, w: 330, h: 54, r: 0, ch: 24, level: 1 }];
+      d.blocks = []; d.parts = []; d.castles = []; d.decals = []; d.grooves = []; d.pipes = [];
+      const W = [28, 42, 58, 78, 108, 150];
+      let x = -318;
+      d.modules = W.map((w, i) => { x += w / 2; const m = { type: 'bridge', v: 2, lv: i + 1, x, y: 0, rot: 0 }; x += w / 2 + 22; return m; });
+    }); return true; })()`);
+    await ev('window.__kreator.built()');
+    await ev('document.body.classList.add("clean"); window.__kreator.setAb(false); window.__kreator.setBridge3D(true); window.__kreator.setCamera(0, 0, 2.35)');
+    await ev('window.__kreator.runFrames(6)');
+    report.mostkiGaleria = await ev('JSON.stringify({ moduly: window.__kreator.S.field.expanded.modules.filter((m) => m.type === "bridge").map((m) => [m.lv, m.x, m.w * 2, m.h * 2]), b3: { records: window.__kreator.bridge3D.stats.records, visible: window.__kreator.bridge3D.stats.visible, emitters: window.__kreator.bridge3D.stats.emitters } })');
+    await shot('mostki-galeria-3d', 'Galeria: mostki I–VI (modele 3D gry) w gniazdach poziomów, ta sama skala');
+    await ev('window.__kreator.setBridge3D(false); window.__kreator.runFrames(2)');
+    await shot('mostki-galeria-gniazda', 'Galeria: same gniazda I–VI (belki poziomu przy dziobowym brzegu, mocowania lv + 1 na burtę)');
+    await ev('window.__kreator.setBridge3D(true); window.__kreator.setCamera(-175, 0, 5)');
+    await ev('window.__kreator.runFrames(4)');
+    await shot('mostki-galeria-3d-male', 'Galeria: zbliżenie I–IV');
+    console.log('galeria', report.mostkiGaleria);
   }
   if (stages.has('klasa')) {
     // KLASA OKRĘTU (--etapy klasa, etap 2): panel klasy przy Bellatorze (limity, bilans mocy, priorytety), Bellator

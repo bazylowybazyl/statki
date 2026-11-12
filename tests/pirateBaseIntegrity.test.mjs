@@ -7,7 +7,21 @@ import { readFileSync } from 'node:fs';
 
 import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
 import { PIRATE_BASE_TUNE } from '../src/game/story/pirateBaseSite.js';
-import { BASE_INTEGRITY_TUNE, baseStepChunk, markBaseBroken, noteBaseRam, stepBaseIntegrity } from '../src/game/story/pirateBaseIntegrity.js';
+import { BASE_INTEGRITY_TUNE, baseStepChunk, chargeRamMassAt, createPiecePools, damagePool, habitatStages, markBaseBroken, noteBaseRam, poolPieceAt, stepBaseIntegrity } from '../src/game/story/pirateBaseIntegrity.js';
+import { placePirateBase } from '../src/game/story/pirateBaseSite.js';
+
+// Prośba użytkownika 2026-11-08: „Atlas musi mieć większą siłę taranowania w tej misji” — stawał na drugiej ścianie bębna.
+test('siła taranu szarży: mnożnik masy tylko w szarży i przy bazie', () => {
+  const place = placePirateBase({ x: 5e6, y: 4e6 }, 0);
+  const h = place.habitat;
+  assert.ok(BASE_INTEGRITY_TUNE.chargeRamMass > 1);
+  assert.equal(chargeRamMassAt(place, h.x, h.y, true), BASE_INTEGRITY_TUNE.chargeRamMass, 'szarża w habitacie');
+  assert.equal(chargeRamMassAt(place, h.x, h.y, false), 1, 'bez szarży');
+  assert.equal(chargeRamMassAt(null, h.x, h.y, true), 1, 'misja bez bazy');
+  const far = place.radius + BASE_INTEGRITY_TUNE.chargeRamPad + 5000;
+  assert.equal(chargeRamMassAt(place, h.x + far * place.u.x, h.y + far * place.u.y, true), 1, 'daleko od bazy');
+  assert.equal(chargeRamMassAt(place, h.x, h.y, true, { chargeRamMass: 1, chargeRamPad: 1500 }), 1, 'wyłączone strojeniem');
+});
 
 const L = createPirateBaseLayout();
 const center = (c) => ({ x: (c.box.x0 + c.box.x1) / 2, z: (c.box.z0 + c.box.z1) / 2 });
@@ -37,11 +51,11 @@ test('progi punktów: każda budowla do zera ma w co trafić (ostatni kawałek z
 });
 
 test('progi punktów: kawałek pod trafieniem, duchy i pęknięte pomijane', () => {
-  const at = center(L.chunkById.get('H-S'));
-  assert.equal(baseStepChunk(L, 'habitat', at.x, at.z, () => false), 'H-S');
-  // H-S już pękł — najbliższy stojący (nie duch dysku / części technicznej)
-  const id = baseStepChunk(L, 'habitat', at.x, at.z, (q) => q === 'H-S');
-  assert.ok(id && id !== 'H-S' && !L.chunkById.get(id).ghost);
+  const at = center(L.chunkById.get('B-16'));
+  assert.equal(baseStepChunk(L, 'habitat', at.x, at.z, () => false), 'B-16');
+  // B-16 już pękł — najbliższy stojący (nie duch dysku / wieży)
+  const id = baseStepChunk(L, 'habitat', at.x, at.z, (q) => q === 'B-16');
+  assert.ok(id && id !== 'B-16' && !L.chunkById.get(id).ghost);
   // magazyn: dwa kawałki — pęka jeden, drugi zostaje do zera punktów
   const m = center(L.chunkById.get('M-1'));
   assert.equal(baseStepChunk(L, 'warehouse', m.x, m.z, () => false), 'M-1');
@@ -124,6 +138,101 @@ test('bezpiecznik: budowla bez stojącego kawałka ginie; duch się nie liczy', 
   // martwa budowla — bez dalszych wywołań
   stepBaseIntegrity(sites, 1, hooks);
   assert.equal(log.kill.length, 1);
+});
+
+// Decyzje użytkownika 2026-11-03 („punkty stają, ciężko zbić, nienaturalnie się ostrzeliwuje”): kawałek habitatu pęka od
+// trafień w niego (pula), habitat ginie z etapów — wyłom (1 ćwiartka miasta), wieża, reaktory antygrawitacyjne
+// (2026-11-11; do tego dnia bęben i dwa wieżowce).
+test('pule kawałków: habitat — wieżowce miasta i podstawa wieży (bez duchów), inne budowle bez pul', () => {
+  const T = PIRATE_BASE_TUNE.hp.habitat;
+  const pools = createPiecePools(L, 'habitat', T.pieces);
+  assert.deepEqual(Object.keys(pools).sort(), [...L.habitat.buildings.map((b) => b.id), 'H-C'].sort());
+  assert.equal(Object.keys(pools).length, 25, '24 wieżowce i podstawa wieży');
+  for (const [id, p] of Object.entries(pools)) {
+    assert.equal(p.hp, p.max);
+    assert.equal(p.max, T.pieces[L.chunkById.get(id).kind]);
+  }
+  assert.equal(T.steps, 0, 'habitat bez progów „kawałek najbliżej trafienia”');
+  assert.deepEqual(createPiecePools(L, 'warehouse', T.pieces), {});
+});
+
+test('pule kawałków: trafienie zdejmuje punkty kawałka trafionego, nie przechodzi na inny', () => {
+  const pools = createPiecePools(L, 'habitat', { highrise: 100, core: 100 });
+  const gone = new Set();
+  const isGone = (id) => gone.has(id);
+  const at = center(L.chunkById.get('B-16'));
+  // pod punktem
+  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone), 'B-16');
+  // kawałek trafiony wprost (ciało) ma pierwszeństwo przed miejscem
+  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone, 'H-C'), 'H-C');
+  // pusta pula: trafienie zostaje przy kawałku (bez przenoszenia punktów na drugi koniec habitatu)
+  assert.equal(damagePool(pools, 'B-16', 60), false);
+  assert.equal(damagePool(pools, 'B-16', 60), true, 'pula do zera — kawałek ma pęknąć');
+  assert.equal(damagePool(pools, 'B-16', 60), false, 'pęka raz');
+  assert.equal(poolPieceAt(L, pools, at.x, at.z, isGone, 'B-16'), 'B-16');
+  // kawałek pęknięty (bez brył): trafienie poza bryłami — najbliższy stojący z pulą
+  gone.add('B-16');
+  const id = poolPieceAt(L, pools, at.x * 3, at.z * 3, isGone);
+  assert.ok(id && id !== 'B-16' && pools[id].hp > 0, id);
+  // budowla bez pul
+  assert.equal(poolPieceAt(L, null, at.x, at.z, isGone), null);
+});
+
+test('etapy habitatu: wyłom (2 wieżowce) + wieża + reaktory, kolejność dowolna; punkty = maks. × reszta', () => {
+  const need = PIRATE_BASE_TUNE.hp.habitat.breachNeed;
+  assert.equal(need, 2, 'wieżowiec zewnętrzny i wewnętrzny otwierają tor do wieży');
+  const total = L.antigravs.length;
+  assert.equal(total, 2, 'dwa reaktory antygrawitacyjne');
+  let s = habitatStages({ breachNeed: need, reactorsTotal: total });
+  assert.deepEqual([s.done, s.total, s.left], [0, 5, 1]);
+  s = habitatStages({ buildingsDown: 7, breachNeed: need, reactorsTotal: total });
+  assert.equal(s.breach, 2, 'więcej wieżowców nie liczy się ponad potrzebę');
+  assert.equal(s.left, 0.6);
+  s = habitatStages({ buildingsDown: 1, breachNeed: need, towerDown: true, reactorsDown: 1, reactorsTotal: total });
+  assert.equal(s.left, 0.4);
+  s = habitatStages({ buildingsDown: 0, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
+  assert.ok(s.left > 0, 'bez wyłomu habitat żyje');
+  s = habitatStages({ buildingsDown: 2, breachNeed: need, towerDown: true, reactorsDown: 2, reactorsTotal: total });
+  assert.deepEqual([s.done, s.left], [5, 0], 'komplet — finał');
+});
+
+test('taran w kawałek z pulą: punkty z puli kawałka; budowla z noFuse nie ginie bez stojących kawałków', () => {
+  const { sites, owner, pieces } = fakeSite(40000, [1000, 1000]);
+  owner.piecePools = { P0: { hp: 5000, max: 5000 } };
+  owner.noFuse = true;
+  const log = { dmg: [], kill: [], piece: [] };
+  const hooks = { ...hooksFor(log), pieceDamage: (o, id, hp, x, y) => log.piece.push({ id, hp, x, y }) };
+  stepBaseIntegrity(sites, 0, hooks);
+  noteBaseRam(pieces[0], 1, 5, 6);
+  noteBaseRam(pieces[1], 1, 7, 8);
+  pieces[0].entity.beamHull.body.activeNodes = 900;
+  pieces[1].entity.beamHull.body.activeNodes = 800;
+  stepBaseIntegrity(sites, 1.1, hooks);
+  assert.equal(log.piece.length, 1);
+  assert.equal(log.piece[0].id, 'P0');
+  assert.ok(Math.abs(log.piece[0].hp - 100 / 1000 * 5000 * BASE_INTEGRITY_TUNE.ramHpMul) < 1e-6);
+  // kawałek bez puli — punkty budowli jak dawniej (ubytek / węzły budowli)
+  assert.equal(log.dmg.length, 1);
+  assert.ok(Math.abs(log.dmg[0].hp - 200 / 2000 * 40000 * BASE_INTEGRITY_TUNE.ramHpMul) < 1e-6);
+  // wszystkie kawałki pęknięte — bezpiecznik wyłączony (habitat ginie z etapów)
+  for (const p of pieces) markBaseBroken(p);
+  stepBaseIntegrity(sites, 2, hooks);
+  assert.equal(log.kill.length, 0);
+});
+
+test('klej: obrażenia budowli przez pule, ogień w rurach i finał z etapów wprost', () => {
+  const src = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const apply = src.slice(src.indexOf('function applyDamageToStation('), src.indexOf('window.applyDamageToStation = applyDamageToStation;'));
+  assert.ok(/if \(!direct && station\.pieceDamage\) return station\.pieceDamage\(station, dmg\);/.test(apply), 'applyDamageToStation → pule kawałków');
+  const piece = src.slice(src.indexOf('function onBasePieceDamage('), src.indexOf('function syncBaseStages('));
+  assert.ok(piece.includes('poolPieceAt(') && piece.includes('damagePool(') && piece.includes('storyBaseBreak('), 'kawałek z pulą pęka przez storyBaseBreak');
+  const sync = src.slice(src.indexOf('function syncBaseStages('), src.indexOf('function syncBaseStages(') + 1200);
+  assert.ok(/applyDamageToStation\(hab, [^\n]*, true\)/.test(sync), 'finał z etapów — punkty wprost');
+  const step = src.slice(src.indexOf('function stepPirateBaseIntegrity('), src.indexOf('function stepPirateBaseIntegrity(') + 400);
+  assert.ok(step.includes('syncBaseStages();'), 'etapy co krok fizyki');
+  assert.ok(/damageStation: \(st, dmg, direct\) => applyDamageToStation\(st, dmg, !!direct\)/.test(src), 'zależność fabuły przekazuje direct');
+  const game = readFileSync(new URL('../src/game/story/storyGame.js', import.meta.url), 'utf8');
+  assert.ok(/d\.damageStation\(s, dmg, true\)/.test(game), 'ogień w rurach zabija habitat od razu (bez pul)');
 });
 
 test('klej w index.html: progi przez baseStepChunk, pęknięcie oznacza kawałek, krok po silniku', () => {

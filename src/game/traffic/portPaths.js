@@ -11,8 +11,11 @@
  * Geometria bierze się z tych samych szablonów, z których rysowany jest port:
  * `createK7Layout` (hala K-7) i `createBayLayout` (zatoka), osadzonych przez
  * doki układu ruchu (`buildHaloPortTrafficLayout`: dok = początek huba i kąt
- * osi x huba w grze). Pomosty stacji bez ringu (`buildStationDocks`) i nieznane
- * rodzaje doków dostają ścieżkę ogólną: oś stanowiska od punktu podejścia.
+ * osi x huba w grze). Budowle doków portów bez ringu (E14: krzyż, okrąg, koło —
+ * `src/3d/portDocks/portDockLayout.js`) dają gotowe ścieżki wejścia i wyjścia
+ * stanowiska (wpis `model`). Pomosty bez budowli (`buildStationDocks` bez
+ * `model`) i nieznane rodzaje doków dostają ścieżkę ogólną: oś stanowiska od
+ * punktu podejścia.
  *
  * Korytarz portu (pas capital / MEGA — jedno stanowisko; aleja grzebienia —
  * wiele) ma jedno UJŚCIE (brama, wylot zatoki). Przed nim leży punkt czekania
@@ -31,6 +34,7 @@
 import { createK7Layout } from '../../3d/haloRing/haloPortK7Layout.js';
 import { createBayLayout } from '../../3d/haloRing/haloPortBays.js';
 import { PORT_SEQUENCE } from '../../3d/haloRing/haloPortDocking.js';
+import { buildPortDockGeometry, DOCK_PATH_ROLE } from '../../3d/portDocks/portDockLayout.js';
 
 // ============================================================
 // Format ścieżki
@@ -268,6 +272,20 @@ const WAIT_CLEARANCE = 300;
 // Indeks portów
 // ============================================================
 
+/**
+ * Rola punktu ścieżki budowli doku (`DOCK_PATH_ROLE`) → sufit prędkości i flagi.
+ * Pierścienie koła lecą prędkością podejścia (długie łuki), aleje i pasy — alei.
+ */
+const MODEL_ROLE_SPEED = [
+  PORT_PATH_SPEED.approach, PORT_PATH_SPEED.gate, PORT_PATH_SPEED.aisle, PORT_PATH_SPEED.corner,
+  PORT_PATH_SPEED.berth, PORT_PATH_SPEED.reverse, PORT_PATH_SPEED.approach, PORT_PATH_SPEED.approach
+];
+const MODEL_ROLE_FLAGS = [
+  WP.PORT, WP.PORT | WP.GATE, WP.PORT, WP.PORT | WP.PRECISE,
+  WP.PORT | WP.BERTH | WP.STOP, WP.PORT | WP.REVERSE, WP.PORT, WP.PORT
+];
+if (MODEL_ROLE_SPEED.length !== Object.keys(DOCK_PATH_ROLE).length) throw new Error('portPaths: role ścieżek doku');
+
 const K7_TEMPLATE = createK7Layout();
 const K7_BERTHS = new Map(K7_TEMPLATE.berths.map(b => [b.id, b]));
 const K7_GATES = new Map(K7_TEMPLATE.gates.map(g => [g.id, g]));
@@ -301,7 +319,12 @@ export function createPortIndex(docks = null) {
     /** berthId → { berth, dock, stationId } — z układów, bez liczenia ścieżek */
     berths: new Map(),
     /** klucz korytarza → liczba (porównania na krok bez napisów) */
-    corridors: new Map()
+    corridors: new Map(),
+    /**
+     * Korytarze budowli doków (E14): id korytarza → stacja. Kolejność „gęsiego” po kierunku jazdy, nie po osi
+     * ujścia (w kole statki jadą pierścieniem), a wychodzący ustępuje wchodzącym tej samej budowli.
+     */
+    modelCorridors: new Map()
   };
   if (docks) {
     const iterable = docks instanceof Map ? docks.entries() : Object.entries(docks);
@@ -452,6 +475,11 @@ function buildEntry(index, berth, dock, stationId) {
     sequence: PORT_SEQUENCE.clamp,
     capture: null,
     corridor: 0,
+    /** Korytarz wyjścia (koło: jeden wylot dla wszystkich stanowisk); 0 = ten sam co wejścia. */
+    corridorOut: 0,
+    /** Budowla doku (E14): punkt za dyskiem zapasu, z którego trasa z przestrzeni wchodzi na oś podejścia. */
+    funnelX: NaN,
+    funnelY: NaN,
     /** Szkielet wejścia: [x, y, vmax, flagi] × n, od podejścia do stanowiska. */
     inbound: new Float64Array(8 * 4),
     inboundCount: 0,
@@ -568,6 +596,9 @@ function buildEntry(index, berth, dock, stationId) {
       setSide(1, 0);
       entry.corridor = corridorId(index, `${dock.id}|comb`);
     }
+  } else if (dock?.model && Number.isFinite(Number(berth.modelIndex))
+    && buildPortDockGeometry(dock.model).berths[berth.modelIndex]) {
+    buildModelEntry(index, entry, dock.model, buildPortDockGeometry(dock.model).berths[berth.modelIndex]);
   } else {
     // Pomost stacji bez ringu albo nieznany dok: oś stanowiska od punktu podejścia.
     entry.kind = 'pier';
@@ -607,7 +638,7 @@ function buildEntry(index, berth, dock, stationId) {
     entry.corridor = corridorId(index, `${entry.stationId}|pier|${entry.berthId || `${bx},${by}`}`);
   }
 
-  if (entry.kind !== 'pier') {
+  if (entry.kind !== 'pier' && entry.kind !== 'model') {
     // Oś wyjścia: od stanowiska do poprzedniego punktu szkieletu (aleja / pas).
     const k = entry.inboundCount - 2;
     const px = entry.inbound[k * 4];
@@ -627,6 +658,68 @@ function buildEntry(index, berth, dock, stationId) {
   }
   if (entry.berthId && index) index.entries.set(entry.berthId, entry);
   return entry;
+}
+
+/**
+ * Wpis stanowiska na budowli doku (E14). Ścieżki z geometrii (układ lokalny →
+ * gra przez ramkę `model`: środek x, y i kąt osi +u), role → prędkości i flagi.
+ * Punkt czekania = pierwszy punkt wejścia; `funnelX/Y` — punkt za dyskiem zapasu
+ * na osi podejścia (NaN, gdy punkt czekania leży poza dyskiem). Korytarz wejścia
+ * i wyjścia może być różny (koło: wloty dla połów, jeden wylot).
+ */
+function buildModelEntry(index, entry, model, g) {
+  const c = Math.cos(model.angle);
+  const s = Math.sin(model.angle);
+  const toGame = (from, n) => {
+    const out = new Float64Array(n * 4);
+    for (let k = 0; k < n; k++) {
+      const u = from[k * 3];
+      const v = from[k * 3 + 1];
+      const role = from[k * 3 + 2];
+      out[k * 4] = model.x + u * c - v * s;
+      out[k * 4 + 1] = model.y + u * s + v * c;
+      out[k * 4 + 2] = MODEL_ROLE_SPEED[role];
+      out[k * 4 + 3] = MODEL_ROLE_FLAGS[role];
+    }
+    return out;
+  };
+  const nIn = g.inbound.length / 3;
+  const nOut = g.outbound.length / 3;
+  entry.kind = 'model';
+  entry.model = model.kind;
+  entry.capture = captureFor(null, entry.cls);
+  entry.inbound = toGame(g.inbound, nIn);
+  entry.inboundCount = nIn;
+  entry.outbound = toGame(g.outbound, nOut);
+  entry.outboundCount = nOut;
+  if (g.funnel) {
+    entry.funnelX = model.x + g.funnel[0] * c - g.funnel[1] * s;
+    entry.funnelY = model.y + g.funnel[0] * s + g.funnel[1] * c;
+  }
+  entry.gateX = model.x + g.gate[0] * c - g.gate[1] * s;
+  entry.gateY = model.y + g.gate[0] * s + g.gate[1] * c;
+  entry.outX = g.out[0] * c - g.out[1] * s;
+  entry.outY = g.out[0] * s + g.out[1] * c;
+  entry.sideX = g.side[0] * c - g.side[1] * s;
+  entry.sideY = g.side[0] * s + g.side[1] * c;
+  // Oś wyjścia z pola: od stanowiska do punktu przed nim na ścieżce wejścia.
+  const k = nIn - 2;
+  const px = entry.inbound[k * 4];
+  const py = entry.inbound[k * 4 + 1];
+  const len = Math.hypot(px - entry.x, py - entry.y) || 1;
+  entry.axisX = (px - entry.x) / len;
+  entry.axisY = (py - entry.y) / len;
+  entry.reverseTo = Math.hypot(entry.outbound[0] - entry.x, entry.outbound[1] - entry.y);
+  entry.approachDist = Math.hypot(entry.inbound[0] - entry.gateX, entry.inbound[1] - entry.gateY);
+  const sid = entry.stationId;
+  entry.corridor = corridorId(index, `${sid}|${model.kind}|${g.corridor}`);
+  entry.corridorOut = g.corridorOut && g.corridorOut !== g.corridor
+    ? corridorId(index, `${sid}|${model.kind}|${g.corridorOut}`)
+    : entry.corridor;
+  if (index?.modelCorridors) {
+    index.modelCorridors.set(entry.corridor, sid);
+    index.modelCorridors.set(entry.corridorOut, sid);
+  }
 }
 
 function pierReach(entry, hull) {
@@ -649,6 +742,11 @@ function laneBeyondGate(entry, length) {
  * wnętrza — capital K-7 wysuwa rufę ~2,3 tys. j. za bramę G-01).
  */
 export function portApproachPoint(entry, hull, out) {
+  if (entry.kind === 'model') {
+    out.x = entry.inbound[0];
+    out.y = entry.inbound[1];
+    return out;
+  }
   if (entry.kind === 'pier') {
     const reach = pierReach(entry, hull);
     out.x = entry.x + entry.axisX * reach;
@@ -707,6 +805,14 @@ export function writeOutbound(entry, path, hull) {
   const beam = Math.max(20, Number(hull?.width) || 0);
   const S = PORT_PATH_SPEED;
   const side = entry.corridorBeam * 0.5 + beam * 0.5 + SIDE_CLEARANCE;
+  if (entry.kind === 'model') {
+    // Budowla doku: gotowa ścieżka wyjścia (tyłem z pola, aleją / pierścieniem, za dysk zapasu).
+    for (let k = 0; k < entry.outboundCount; k++) {
+      const o = k * 4;
+      pathPush(path, entry.outbound[o], entry.outbound[o + 1], Math.min(entry.outbound[o + 2], cap), entry.outbound[o + 3]);
+    }
+    return path.count - before;
+  }
   if (entry.lane) {
     // Wylot pasa: dziób (skierowany do wnętrza) musi minąć bramę / wylot zatoki.
     const clear = Math.max(entry.laneEndDepth, entry.mouthDepth + length * 0.5 + 260);

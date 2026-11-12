@@ -30,7 +30,7 @@ export const VENT_REC = Object.freeze({
 });
 
 /** Rodzaje modułów ciśnieniowych (paleta obrazu: szczątki, barwa dymu, światło wnętrza). */
-export const VENT_KIND = Object.freeze({ drum: 0, core: 1, tech: 2, disc: 3, warehouse: 4, annex: 5, tank: 6 });
+export const VENT_KIND = Object.freeze({ city: 0, core: 1, tech: 2, disc: 3, warehouse: 4, annex: 5, tank: 6 });
 
 const HEAD = Object.freeze({ HAS: 0, N: 1, TIME: 2, DT: 3, STRIDE: 4 });
 export const PIRATE_VENTS_BLOCK = Object.freeze({ HEAD });
@@ -48,11 +48,12 @@ export function createPirateVentsBlock() {
       const F = blk.f64;
       const s = frame.pirateVents || null;
       F[HEAD.HAS] = s && s.has ? 1 : 0;
+      // Czas także bez wyrw: po odpięciu bazy żywe cząstki mają dogasnąć, a nie zamarznąć w miejscu.
+      F[HEAD.TIME] = s ? s.time : 0;
+      F[HEAD.DT] = s ? s.dt : 0;
       if (!s || !s.has) { F[HEAD.N] = 0; return; }
       const n = Math.min(VENT_MAX, s.n | 0);
       F[HEAD.N] = n;
-      F[HEAD.TIME] = s.time;
-      F[HEAD.DT] = s.dt;
       const S = VENT_REC.STRIDE;
       for (let i = 0; i < n * S; i++) F[HEAD.STRIDE + i] = s.rec[i];
     }
@@ -63,11 +64,11 @@ export function createPirateVentsBlock() {
 export function applyPirateVentsBlock(blk, mirror) {
   const F = blk.f64;
   mirror.has = F[HEAD.HAS] === 1;
+  mirror.time = F[HEAD.TIME];
+  mirror.dt = F[HEAD.DT];
   if (!mirror.has) { mirror.n = 0; return mirror; }
   const n = Math.min(VENT_MAX, F[HEAD.N] | 0);
   mirror.n = n;
-  mirror.time = F[HEAD.TIME];
-  mirror.dt = F[HEAD.DT];
   const S = VENT_REC.STRIDE;
   for (let i = 0; i < n * S; i++) mirror.rec[i] = F[HEAD.STRIDE + i];
   return mirror;

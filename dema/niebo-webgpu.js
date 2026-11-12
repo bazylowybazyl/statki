@@ -18,7 +18,9 @@ import { BloomGry } from '../src/3d/tsl/postGry.js';
 import { acesGry, linearDoSrgb } from '../src/3d/tsl/kolorGry.js';
 import { BLOOM_DEFAULTS } from '../src/3d/bloomConfig.js';
 import { resizeRenderTarget } from '../src/3d/renderTargetResize.js';
-import { SkyBaker, SKY_GAME_SIZE } from '../src/3d/skybake/skyBaker.js';
+import { SkyBaker, SKY_GAME_SIZE, SKY_SPHERE_SIZE } from '../src/3d/skybake/skyBaker.js';
+import { createSkySphereUniforms, createSkySphereFlatMaterial } from '../src/3d/skySphere.tsl.js';
+import { SKY_START, createSkyScroll, skyViewMatrix, skyFocalPx } from '../src/3d/skyScroll.js';
 import { createGalaktykaStyle } from '../src/3d/skybake/styleGalaktyka.js';
 import { createMglawicaStyle } from '../src/3d/skybake/styleMglawica.js';
 import { srgbDecodeCpu, srgbEncodeCpu } from '../src/3d/skybake/skyGameColor.js';
@@ -648,8 +650,128 @@ async function composeSheet(spec) {
   return blobToDataUrl(await cv.convertToBlob({ type: 'image/png' }));
 }
 
+// ── TRYB SFERY (DECYZJE-2 N2): equirect całego nieba dla niebo-sfery gry (src/3d/sky3D.js) ─────────────────────
+// Galaktyka na wielkim kole (SkyBaker({ sphere: true }), styl galaktyki z `sphere`) + łaty mgławic z wypiekaczy płaskich
+// (styl „mgławica”, nastawy „gra” i „kolorowa”, bez gwiazd) złożone w passie „laty”. Eksport: WebP bezstratny 6144 × 3072
+// → public/assets/sky-equirect.webp (scripts/webgpu/niebo-sfera.mjs). Podgląd: całość (equirect) i kadr gry (materiał
+// nieba gry — rzut równoodległy, orientacja startowa SKY_START, bez bloomu).
+export const SFERA_DEFAULTS = Object.freeze({
+  // pas na wielkim kole: bez przesunięcia w poprzek (srodekY płaszczyzny kładłby pas na małym kole 8° od równika)
+  res: 1, seed: 1, preset: 'gra', values: Object.freeze({ gwiazdy: 0, srodekX: 0, srodekY: 0 }), patchRes: 0.5,
+  patches: Object.freeze([
+    Object.freeze({ preset: 'gra', seed: 3, lonDeg: 22, latDeg: 38, rollDeg: -20, spanDeg: 48, gain: 1.0 }),
+    Object.freeze({ preset: 'kolorowa', seed: 1, lonDeg: -150, latDeg: -36, rollDeg: 25, spanDeg: 44, gain: 0.75 })
+  ])
+});
+const SFERA = { baker: null, style: null, neb: [], ms: 0, opts: null, rtLin: null, rtOut: null, quads: null };
+
+async function sferaBake(o = {}) {
+  const O = { ...SFERA_DEFAULTS, ...o, values: { ...SFERA_DEFAULTS.values, ...(o.values || {}) } };
+  const patches = o.patches || SFERA_DEFAULTS.patches;
+  const t0 = performance.now();
+  // łaty: wypiekacze płaskie stylu „mgławica” (obraz wyświetlany w celu „obraz”)
+  for (let i = 0; i < patches.length; i++) {
+    const P = patches[i];
+    let nb = SFERA.neb[i];
+    const w = Math.round(SKY_GAME_SIZE.width * O.patchRes);
+    const h = Math.round(SKY_GAME_SIZE.height * O.patchRes);
+    if (!nb || nb.width !== w) {
+      nb?.dispose();
+      nb = SFERA.neb[i] = new SkyBaker(renderer, { width: w, height: h });
+      nb.setStyle(createMglawicaStyle());
+    }
+    const st = nb.style;
+    st.apply({ ...st.defaults, ...(st.presets[P.preset] || {}), gwiazdy: 0, ...(P.values || {}) }, P.seed ?? 1, nb);
+    await nb.bake();
+  }
+  const W = Math.round(SKY_SPHERE_SIZE.width * O.res);
+  if (!SFERA.baker || SFERA.baker.width !== W) {
+    SFERA.baker?.dispose();
+    SFERA.baker = new SkyBaker(renderer, { width: W, height: W / 2, sphere: true });
+  }
+  SFERA.style = createGalaktykaStyle({
+    sphere: true,
+    patches: patches.map((P, i) => ({ ...P, texture: SFERA.neb[i].target('obraz').texture }))
+  });
+  SFERA.baker.setStyle(SFERA.style);
+  SFERA.style.apply({ ...SFERA.style.defaults, ...(SFERA.style.presets[O.preset] || {}), ...O.values }, O.seed, SFERA.baker);
+  await SFERA.baker.bake();
+  SFERA.ms = performance.now() - t0;
+  SFERA.opts = O;
+  return { ms: SFERA.ms, width: SFERA.baker.width, height: SFERA.baker.height, passMs: { ...SFERA.baker.passMs } };
+}
+
+/** Odczyt celu RGBA8 (w × h) → PNG data URL. */
+async function readPng(rt, w, h) {
+  const px = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
+  const stride = Math.ceil(w * 4 / 256) * 256;
+  const img = new ImageData(w, h);
+  for (let y = 0; y < h; y++) img.data.set(px.subarray(y * stride, y * stride + w * 4), y * w * 4);
+  for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255;
+  const cv = new OffscreenCanvas(w, h);
+  cv.getContext('2d').putImageData(img, 0, 0);
+  return blobToDataUrl(await cv.convertToBlob({ type: 'image/png' }));
+}
+
+/**
+ * Podgląd sfery: 'calosc' — equirect (w × w/2), 'gra' — kadr gry w × h (rzut równoodległy, f = (h/2)/tg 17,5°,
+ * o.lonDeg / o.latDeg / o.bandDeg — środek kadru i kąt pasa; domyślnie SKY_START), obraz wyświetlany → sRGB (bez bloomu).
+ */
+async function sferaSnapshot(view, w, h, o = {}) {
+  if (!SFERA.baker) throw new Error('sfera: najpierw sferaBake()');
+  const lin = SFERA.rtLin && SFERA.rtLin.width === w && SFERA.rtLin.height === h ? SFERA.rtLin
+    : (SFERA.rtLin = new THREE.RenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false }));
+  const outRt = SFERA.rtOut && SFERA.rtOut.width === w && SFERA.rtOut.height === h ? SFERA.rtOut
+    : (SFERA.rtOut = new THREE.RenderTarget(w, h, { type: THREE.UnsignedByteType, depthBuffer: false }));
+  if (!SFERA.quads) {
+    const texNode = texture(SFERA.baker.texture, screenUV);
+    const mCal = new THREE.NodeMaterial();
+    mCal.fragmentNode = vec4(acesGry(texNode.rgb), 1.0);
+    const linNode = texture(lin.texture, screenUV);
+    const mOut = new THREE.NodeMaterial();
+    mOut.fragmentNode = vec4(linearDoSrgb(max(linNode.rgb, vec3(0.0))), 1.0);
+    const U = createSkySphereUniforms(SFERA.baker.texture, lin.texture);
+    const mGra = createSkySphereFlatMaterial(U, { cacheWrite: true });
+    SFERA.quads = { cal: new THREE.QuadMesh(mCal), out: new THREE.QuadMesh(mOut), gra: new THREE.QuadMesh(mGra), U, linNode, texNode };
+  }
+  const Q = SFERA.quads;
+  Q.linNode.value = lin.texture;
+  Q.texNode.value = SFERA.baker.texture;
+  Q.U.equirect.value = SFERA.baker.texture;
+  if (view === 'gra') {
+    const s0 = { ...SKY_START, ...(o.lonDeg !== undefined ? { lonDeg: o.lonDeg } : {}), ...(o.latDeg !== undefined ? { latDeg: o.latDeg } : {}),
+      ...(o.bandDeg !== undefined ? { bandDeg: o.bandDeg } : {}) };
+    const sc = createSkyScroll(s0);
+    const m = skyViewMatrix(sc, 0, new Float64Array(9));
+    Q.U.viewMat.value.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    Q.U.focal.value = skyFocalPx(h);
+    Q.U.fineGain.value = o.gwiazdy === false ? 0 : 1;
+    Q.U.starGain.value = 1;
+    renderer.setRenderTarget(lin);
+    Q.gra.render(renderer);
+  } else {
+    renderer.setRenderTarget(lin);
+    Q.cal.render(renderer);
+  }
+  renderer.setRenderTarget(outRt);
+  Q.out.render(renderer);
+  renderer.setRenderTarget(null);
+  return readPng(outRt, w, h);
+}
+
+async function sferaExportPrepare(seed = 1, type = 'image/webp', quality = 1) {
+  const blob = await SFERA.baker.exportBlob(seed, type, quality);
+  const url = await blobToDataUrl(blob);
+  const b64 = url.slice(url.indexOf(',') + 1);
+  const CH = 4 * 1024 * 1024;
+  exportChunks = [];
+  for (let i = 0; i < b64.length; i += CH) exportChunks.push(b64.slice(i, i + CH));
+  return { bytes: blob.size, chunks: exportChunks.length, width: SFERA.baker.width, height: SFERA.baker.height };
+}
+
 window.__demo = {
   ready: false,
+  sfera: { bake: sferaBake, snapshot: sferaSnapshot, exportPrepare: sferaExportPrepare, state: SFERA, defaults: SFERA_DEFAULTS },
   S, baker, renderer, STYLES,
   get style() { return style; },
   params: () => ({ styl: S.styl, preset: S.preset, seed: S.seed, values: { ...S.values } }),

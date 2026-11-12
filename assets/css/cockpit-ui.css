@@ -553,6 +553,23 @@ button:focus-visible,
 .radar-top #rdOrient { color: #e0915a; }
 /* Prędkość i obroty pod kadłubem / tarczą (.flank), jak ich łuki na wewnętrznym pierścieniu.
    Kolor liczby obrotów podpowiada zmianę biegu (zielony = okno, czerwony = za późno). */
+/* Wyłącznik zasilania okrętu pod licznikiem prędkości (stan zasilania — src/game/shipPower.js): zielony w pracy,
+   bursztynowy w rozruchu i gaszeniu (miga), przygaszony czerwony przy wyłączonym. Klik = klawisz −. */
+.power-switch {
+  display: inline-flex; align-items: center; gap: calc(5 * var(--u)); margin-right: calc(40 * var(--u));
+  padding: calc(3 * var(--u)) calc(8 * var(--u)) calc(3 * var(--u)) calc(6 * var(--u));
+  border: 1px solid rgba(255, 255, 255, 0.18); border-radius: calc(12 * var(--u));
+  background: rgba(8, 10, 14, 0.62); color: #8a8f98;
+  font: inherit; font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.14em; white-space: nowrap;
+  text-shadow: 0 1px 3px #000; cursor: pointer; pointer-events: auto;
+  transition: color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.power-switch svg { display: block; width: calc(13 * var(--u)); height: calc(13 * var(--u)); }
+.power-switch:hover { border-color: rgba(255, 255, 255, 0.4); }
+.power-switch.on { color: #5dffa8; border-color: rgba(93, 255, 168, 0.45); box-shadow: 0 0 8px rgba(56, 224, 138, 0.25); }
+.power-switch.busy { color: #ffc24a; border-color: rgba(255, 194, 74, 0.5); animation: power-busy 0.9s ease-in-out infinite; }
+.power-switch.off { color: #ff6b5a; border-color: rgba(255, 107, 90, 0.4); }
+@keyframes power-busy { 50% { box-shadow: 0 0 10px rgba(255, 194, 74, 0.45); } }
 .drive-readout {
   display: flex; flex-direction: column; gap: 1px;
   font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #000, 0 0 10px #000; white-space: nowrap;
@@ -879,6 +896,31 @@ button:focus-visible,
 .mission-faction-terra { --mission-color: #0088ff; }
 .mission-faction-pirates { --mission-color: #e60000; }
 .mission-faction-independent { --mission-color: #ffaa33; }
+
+/* Karta „Ładownia” — komputer handlowy (E23a): lista towarów jak dziennik misji, kupcy w tabeli. */
+.station-tablet.cargo .tablet-frame,
+.station-tablet[data-view="cargo"] .tablet-frame { grid-template-rows: auto minmax(0, 1fr) auto; }
+.tablet-foot-cargo { appearance: none; padding: 1px 7px; border: 1px solid #2a2a2a; border-radius: 4px; color: #aaa; background: rgba(0, 0, 0, 0.35); font: inherit; font-size: 10px; text-transform: uppercase; cursor: pointer; }
+.tablet-foot-cargo:hover { color: #eee; border-color: rgba(255, 102, 0, 0.55); background: rgba(255, 102, 0, 0.08); }
+.tablet-foot-cargo.active { color: var(--orange); border-color: rgba(255, 102, 0, 0.55); }
+.cargo-head { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); color: #aaa; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.cargo-card { --mission-color: #7dd3fc; }
+.cargo-card.cargo-contracts { --mission-color: #fde68a; }
+.cargo-empty { height: auto; padding: 14px; }
+.cargo-wait { padding: 18px 4px; color: var(--orange); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; animation: term-blink 0.9s steps(2) infinite; }
+.cargo-buyers-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.cargo-buyers-table th { padding: 2px 6px 5px; color: #777; font-size: 10px; font-weight: 400; letter-spacing: 0.1em; text-align: right; text-transform: uppercase; white-space: nowrap; }
+.cargo-buyers-table th:first-child { text-align: left; }
+.cargo-buyers-table td { padding: 6px; border-top: 1px solid var(--line-soft); color: #ccc; font-size: 12px; vertical-align: middle; }
+.cargo-buyer-name { display: grid; gap: 1px; }
+.cargo-buyer-name b { color: #eee; font-weight: 700; text-transform: uppercase; }
+.cargo-buyer-name small { color: #888; font-size: 10px; text-transform: uppercase; }
+.cargo-num { text-align: right; white-space: nowrap; }
+.cargo-profit { color: #79d897; }
+.cargo-buyer.is-loss .cargo-profit { color: var(--red); }
+.cargo-buyer.is-closed { opacity: 0.5; }
+.cargo-way { color: #9fd8ff; font-size: 11px; }
+.cargo-note { margin-top: 12px; }
 
 /* Drag feedback. */
 .drag-ghost { position: fixed; top: 0; left: 0; z-index: 100; display: none; width: 124px; padding: 7px; translate: 14px 14px; border: 1px solid var(--cyan); color: #eee; background: rgba(10, 10, 10, 0.92); box-shadow: 0 0 20px rgba(0, 136, 255, 0.22); font-size: 10px; pointer-events: none; }

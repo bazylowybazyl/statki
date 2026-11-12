@@ -150,6 +150,32 @@ export class Rozgrzewka {
     return entry.promise;
   }
 
+  /**
+   * Klatka zero (Core3D.prewarmVisibleNow): reszta kolejki OD RAZU — budowy NodeBuildera teraz, pipeline'y w tle, bez
+   * czekania (rysunek z pipeline'em w budowie pomija osłona Core3D, klatka zero leży pod kurtyną ładowania).
+   * prewarmVisibleNow widzi tylko siatki już widoczne, a moduły z hakiem passa (pył kosmiczny, pył hal K-7, maska słońca)
+   * odsłaniają swoje dopiero w passie: gdy ich wpis jeszcze czekał w kolejce (wolna albo obciążona maszyna, szybki
+   * „Start”), pierwsza klatka kompilowała je synchronicznie. Wpisy 'loading' — klatka zero to już gra; wpisy 'after'
+   * (rzeczy spoza pierwszej klatki) zostają w tle. Zwraca liczbę zadań.
+   */
+  drainNow() {
+    if (!this.ready || !this.core?.renderer) return 0;
+    if (!this._loadingOpen) {
+      this._loadingOpen = true;
+      for (const e of this._waiting.splice(0)) {
+        e.state = 'czeka';
+        (e.urgent ? this._urgent : this._normal).push(e);
+      }
+    }
+    const later = [];
+    this._normal = this._normal.filter((e) => (e.spec.phase === 'after' ? (later.push(e), false) : true));
+    let n = 0;
+    while ((this._urgent.length || this._normal.length) && this._step()) n++;
+    for (const e of later) this._normal.push(e);
+    if (later.length) this._kick();
+    return n;
+  }
+
   /** Urządzenie gotowe (Core3D._initGpu) — start pracy w tle. */
   start() {
     if (this.ready) return;

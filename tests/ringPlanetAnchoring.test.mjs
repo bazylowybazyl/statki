@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+// strojenie księżyców (okresy obrotu, orbity) — src/3d/moonOrbit.js (etap W nowego warpa, 2026-10-25)
+// (dane strojenia — src/data/moonBodies.js, re-eksport w moonOrbit.js; zwolnienie skoku gracza przy księżycu czyta je w grze)
+const moonOrbitSource = readFileSync(new URL('../src/data/moonBodies.js', import.meta.url), 'utf8');
 const planetTslSource = readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -14,8 +17,10 @@ test('ring planets render through their own orthographic pass before world and f
   assert.match(coreSource, /renderPassRingPlanets\s*=\s*makeScenePass\('ringPlanets',\s*'planets',\s*RING_PLANET_RENDER_LAYER,\s*true,\s*false\)/);
   // Runner: kamera ortho albo perspektywa passa z jego warstwą, głębia czyszczona przed passem.
   assert.match(coreSource, /const camera = this\.getPassCamera\(pass\.ortho\);\s*camera\.layers\.set\(pass\.layer\);/);
-  // Kamery 3D (free3d): wspólna głębia passów (sharedDepth) — prawdziwe przesłanianie.
-  assert.match(coreSource, /\} else if \(pass\.clearDepth && !sharedDepth\) \{[\s\S]*?renderer\.clear\(false, true, false\);/);
+  // Kamery 3D (free3d): wspólna głębia passów (sharedDepth) — prawdziwe przesłanianie. Głębia czyszczona w passie sceny
+  // (loadOp clear, 2026-10-29 — tests/czyszczenieWPassie.test.mjs) albo dawnym renderer.clear (A/B clearInPass = false).
+  assert.match(coreSource, /const clearDepth = clearColor \|\| \(pass\.clearDepth === true && !sharedDepth\);/);
+  assert.match(coreSource, /else if \(!inPass && clearDepth\) renderer\.clear\(false, true, false\);/);
 
   const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
   const ringPassIndex = scenePassList.indexOf('this.renderPassRingPlanets');
@@ -69,11 +74,16 @@ test('Earth moon shares the anchored scale and render pass', () => {
   assert.match(planetSource, /this\.isRingAnchored\s*=\s*RING_PLANET_NAMES\.has\(parentKey\)/);
   assert.match(planetSource, /const\s+parentR\s*=\s*this\.isRingAnchored[\s\S]*?resolveRingPlanetWorldRadius\(this\.parentData\)/);
   assert.match(planetSource, /if\s*\(this\.isRingAnchored\)\s*enableRingPlanetLayer\(this\.group\)/);
-  assert.match(planetSource, /moonR\s*\*\s*\(this\.isRingAnchored\s*\?\s*1\s*:\s*PLANET_SIZE_MULTIPLIER\)/);
+  // promień bryły z danych (src/data/moonBodies.js — ten sam liczy gra do zwolnienia skoku): planeta z ringiem × 1,
+  // planeta tła × PLANET_SIZE_MULTIPLIER
+  assert.match(planetSource, /const scale = moonBodyRadius\(this\.tune, parentR, this\.isRingAnchored\);/);
+  assert.match(moonOrbitSource, /\(ringAnchored \? 1 : MOON_BACKDROP_MUL\)/);
+  assert.match(moonOrbitSource, /export const MOON_BACKDROP_MUL = 4\.5;/);
+  assert.match(planetSource, /const PLANET_SIZE_MULTIPLIER = 4\.5;/);
 });
 
 test('moons rotate visibly and receive a correctly layered halo', () => {
-  assert.match(planetSource, /spinPeriodSec:\s*72/);
+  assert.match(moonOrbitSource, /spinPeriodSec:\s*72/);
   assert.match(planetSource, /this\.spinSpeed\s*=\s*\(Math\.PI\s*\*\s*2\)\s*\/\s*spinPeriodSec/);
   // Kąt doby w polu (soczewka świata w skoku składa z nim obrót przelotu — worldLens.js).
   assert.match(planetSource, /this\._spinAngle\s*=\s*\(this\._spinAngle\s*\+\s*this\.spinSpeed/);

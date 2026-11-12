@@ -22,10 +22,13 @@
 // zbierzZakresy, bez wysyłania dziur między kadłubami).
 
 import * as THREE from 'three/webgpu';
-import { zbierzZakresy, zbierzZakresyCaly } from './zakresyWysylki.js';
+import { zbierzZakresy, zbierzZakresyCaly, scalZakresy } from './zakresyWysylki.js';
 
 const V_INIT = 16384;          // wierzchołków na start (4 na węzeł kadłuba)
 const I_INIT = 24576;          // indeksów na start (6 na węzeł)
+// Scalanie zakresów wysyłki partii raz na klatkę (flushRanges): zakresy kadłubów oddalone o mniej niż tyle liczb
+// (~32 KB float32) idą jednym writeBuffer — wywołanie kosztuje tyle, co kopia kilkudziesięciu KB.
+const SKIN_RANGE_GAP = 8192;
 
 export class HullSkinBatch {
   /**
@@ -173,26 +176,43 @@ export class HullSkinBatch {
   /** Czworokąty [qMin, qMax] (włącznie) z tablic kadłuba do buforów partii + zakresy do wysyłki. */
   writeQuads(e, positions, shade, heat, qMin, qMax) {
     if (!e.alive || qMax < qMin) return;
-    const P = this.pos;
     const S = this.sh;
     const T = e.tear;
     const v0 = qMin * 4;
     const v1 = qMax * 4 + 4;
     const base = e.vStart;
-    for (let v = v0; v < v1; v++) {
-      const o = (base + v) * 3;
-      const p = v * 3;
-      P[o] = positions[p];
-      P[o + 1] = positions[p + 1];
-      P[o + 2] = positions[p + 2];
-      const q = (base + v) * 4;
-      S[q] = shade[v];
-      S[q + 1] = heat[v * 2];
-      S[q + 2] = heat[v * 2 + 1];
-      S[q + 3] = T ? T[v] : 0;
+    // pozycje: ten sam układ (3 na wierzchołek) — kopia blokiem; jasność, żar i rozdarcie — przeplot z trzech tablic
+    this.pos.set(positions.subarray(v0 * 3, v1 * 3), (base + v0) * 3);
+    if (T) {
+      for (let v = v0; v < v1; v++) {
+        const q = (base + v) * 4;
+        S[q] = shade[v];
+        S[q + 1] = heat[v * 2];
+        S[q + 2] = heat[v * 2 + 1];
+        S[q + 3] = T[v];
+      }
+    } else {
+      for (let v = v0; v < v1; v++) {
+        const q = (base + v) * 4;
+        S[q] = shade[v];
+        S[q + 1] = heat[v * 2];
+        S[q + 2] = heat[v * 2 + 1];
+        S[q + 3] = 0;
+      }
     }
     zbierzZakresy(this.aPos, (base + v0) * 3, (v1 - v0) * 3);
     zbierzZakresy(this.aSh, (base + v0) * 4, (v1 - v0) * 4);
+  }
+
+  /**
+   * Raz na klatkę po wszystkich zapisach (hexShips3D.syncSkinBatches): zakresy wysyłki czworokątów różnych kadłubów
+   * partii scalone (SKIN_RANGE_GAP) — bez tego każdy zmieniony kadłub to osobny writeBuffer na atrybut.
+   */
+  flushRanges() {
+    scalZakresy(this.aPos, SKIN_RANGE_GAP);
+    scalZakresy(this.aSh, SKIN_RANGE_GAP);
+    scalZakresy(this.aUv, SKIN_RANGE_GAP);
+    scalZakresy(this.aIdx, SKIN_RANGE_GAP);
   }
 
   /** Kadłub znika z partii: indeksy zerowane (trójkąty zdegenerowane), miejsce do przepisania partii. */

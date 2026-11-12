@@ -12,6 +12,7 @@
 import { SHIP_PHYSICS } from './thrusterModel.js';
 import { resolveShipTurnCapability, thrusterGeometrySignature } from './headingControl.js';
 import { playerFlightSpec } from '../../data/shipFlightSpecs.js';
+import { BOOST_DRIVE } from '../../data/driveModes.js';
 
 const freezeGears = (values) => Object.freeze(values.map((maxSpeed, index) => Object.freeze({
   maxSpeed,
@@ -443,8 +444,10 @@ export function createDriveTransmission(options = {}) {
     // i hamowanie napędu przy powrocie do limitu trybu.
     burnLimit: 0,
     burnBrake: 0,
-    // Dopalacz (Shift, 2026-10-05): limit prędkości na czas dopalacza (driveBoostSpeed), 0 = wyłączony.
+    // Dopalacz (Shift, 2026-10-05): limit prędkości na czas dopalacza (driveBoostSpeed), 0 = wyłączony;
+    // boostHold — ponad limitem dopalacza prędkość nie rośnie (applyDriveSpeedGovernor).
     boostLimit: 0,
+    boostHold: 0,
     // Postawa okrętu (src/game/shipModes.js — TARCZE / PRZELOT): mnożnik limitu prędkości regulatora
     // i ciągu głównego. 1 = bojowy.
     stanceLimit: 1,
@@ -590,14 +593,13 @@ export function updateDriveTransmission(state, speed, throttle, dt) {
   return state;
 }
 
-// Limit prędkości dopalacza (Shift): tabela lotu (`boostSpeed` / `cruiseBoostSpeed`, Atlas 1500 / 3000 j/s),
-// bez wpisu — 3× / 6× limitu bojowego. `cruise` = postawa PRZELOT.
-export function driveBoostSpeed(state, cruise = false) {
+// Limit prędkości dopalacza (Shift): tabela lotu (`boostSpeed`, Atlas 1137 j/s — tabela napędów
+// src/data/driveModes.js), bez wpisu — BOOST_DRIVE.boostMul × limit bojowy. Jeden limit (PRZELOTU nie ma od 2026-10-22).
+export function driveBoostSpeed(state) {
   if (!state) return 0;
   const spec = state.flightSpec;
   const base = Math.max(1, Number(state.speedLimit) || 1);
-  if (cruise) return Number(spec?.cruiseBoostSpeed) || base * 6;
-  return Number(spec?.boostSpeed) || base * 3;
+  return Number(spec?.boostSpeed) || base * BOOST_DRIVE.boostMul;
 }
 
 export function applyDriveSpeedGovernor(state, velocity, dt) {
@@ -606,14 +608,25 @@ export function applyDriveSpeedGovernor(state, velocity, dt) {
   const vy = Number(velocity.y) || 0;
   const speed = Math.hypot(vx, vy);
   // Zryw podnosi limit; po nim napęd wraca do limitu trybu hamowaniem zrywu (burnBrake).
+  const boostLimit = Number(state.boostLimit) || 0;
   const limit = Math.max(1, (Number(state.speedLimit) || 1) * (Number(state.stanceLimit) || 1),
-    Number(state.burnLimit) || 0, Number(state.boostLimit) || 0);
-  if (speed <= limit || speed <= 1e-6) return speed;
+    Number(state.burnLimit) || 0, boostLimit);
+  // Dopalacz wiąże limit: ponad nim prędkość nie rośnie i spada tempem regulatora (E5, 2026-10-21). Ciąg dopalacza w PRZELOCIE
+  // (× postawa × dopalacz) jest mocniejszy od hamowania regulatora — dawniej limit był miękki: 3000 → 3061,
+  // a 1800 → 3283 j/s w grze (scripts/webgpu/napedy-gra.mjs).
+  const boostBound = boostLimit > 0 && limit === boostLimit;
+  if (speed <= limit || speed <= 1e-6) {
+    state.boostHold = 0;
+    return speed;
+  }
 
   const overshoot = speed - limit;
   const decel = Math.max(Number(state.governorDeceleration) || 0, Number(state.burnBrake) || 0);
   const maxReduction = Math.max(0, decel) * clamp(dt, 0, 0.12);
-  const nextSpeed = Math.max(limit, speed - Math.min(overshoot, maxReduction));
+  let nextSpeed = Math.max(limit, speed - Math.min(overshoot, maxReduction));
+  const hold = Number(state.boostHold) || 0;
+  if (boostBound && hold > 0) nextSpeed = Math.max(limit, Math.min(nextSpeed, hold - maxReduction));
+  state.boostHold = boostBound ? nextSpeed : 0;
   const scale = nextSpeed / speed;
   velocity.x = vx * scale;
   velocity.y = vy * scale;

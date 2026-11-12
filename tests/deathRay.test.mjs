@@ -329,7 +329,7 @@ test('jeden cel: promień nie leci dalej niż za obwiednię celu strzału (cel p
     assert.equal(far.beamHull.body.activeNodes, n0, 'okręt za celem nietknięty');
     assert.ok(!far.dead);
     // bez celu ten sam strzał doszedłby do niego (kontrola)
-    const ray2 = world.sys.fire(null, DEF, -3000, 0, 1, 0);
+    const ray2 = world.sys.fire(null, DEF, -3000, 0, 1, 0, { range: 12000 });
     run(world, 0.7);
     assert.ok(far.dead && ray2.kills === 1, 'kontrola: bez celu promień sięga dalekiego okrętu');
   } finally {
@@ -347,7 +347,7 @@ test('przebicia (broń bez `singleTarget`): dwa pancerniki na linii przecięte n
   const world = makeWorld({ ships: [a, b, c] });
   try {
     const cNodes = c.beamHull.body.activeNodes;
-    const ray = world.sys.fire(null, MULTI, -3000, 0, 1, 0);
+    const ray = world.sys.fire(null, MULTI, -3000, 0, 1, 0, { range: 12000 });
     run(world, 0.7);
     assert.ok(a.dead && b.dead, 'dwa pierwsze przecięte i martwe');
     assert.ok(!c.dead, 'trzeci żyje');

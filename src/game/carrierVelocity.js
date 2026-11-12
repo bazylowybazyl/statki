@@ -28,6 +28,37 @@ export function isInterpolatedEntity(entity) {
   return e === window.ship || e === window.player2Ship;
 }
 
+// Pozy renderu NPC i wraków (src/game/renderPoses.js — tryby z migawką): byt w pozie interpolowanej między krokami
+// stoi w obrazie w czasie SimClock.render, jak gracz. Hak gry (index.html `npcRenderPosed`) albo null (off, ?npcLerp=0).
+let _renderPosed = null;
+let _renderPosedWorld = false;
+/** `fn(byt)` — byt w pozie renderu; `world` — pozy renderu włączone (świat w obrazie w czasie SimClock.render). */
+export function setRenderPosedEntity(fn, world = false) {
+  _renderPosed = typeof fn === 'function' ? fn : null;
+  _renderPosedWorld = _renderPosed !== null && !!world;
+}
+
+/**
+ * Zegar OBRAZU efektu i pocisku encji (2026-10-28, zgłoszenie „240 kl/s, a pociski, trafienia i strzały klatkują”):
+ * CLOCK_RENDER, gdy encja jest w obrazie w pozie renderu — gracz, P2, NPC i wraki z pozą renderu. Pociski i efekty NPC
+ * szły zegarem kroku (CLOCK_SIM) obok kadłuba interpolowanego do 240 Hz: stały 3 klatki i skakały o v/60, przed
+ * kadłubem. Tylko obraz — rozgrywka pyta `isInterpolatedEntity` (gracz rusza się w kroku przed rakietami).
+ */
+export function isRenderClockEntity(entity) {
+  if (isInterpolatedEntity(entity)) return true;
+  const e = unwrap(entity);
+  return !!(e && _renderPosed !== null && _renderPosed(e));
+}
+
+/**
+ * Zegar OBRAZU pocisku: przy pozach renderu (`setRenderPosedEntity(fn, true)`) każdy pocisk na zegarze renderu — jego lot
+ * nie zależy od ruchu strzelca, a nieruchomy strzelec (okręt w stanowisku, platforma) nie ma „żywej” pozy renderu i jego
+ * pocisk szedłby krokiem 60 Hz; do chwili wystrzału pocisk jedzie z lufą (WeaponFx.sync). Bez póz renderu — zegar strzelca.
+ */
+export function projectileClockOf(shooter) {
+  return _renderPosedWorld || isRenderClockEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
+}
+
 /** Prędkość środka encji (świat gry). */
 export function writeEntityVelocity(entity, out) {
   const e = unwrap(entity);
@@ -61,7 +92,7 @@ export function writeCarrier(entity, x, y, fromRender, out) {
   writePointVelocity(e, x, y, out);
   out.vx = out.x;
   out.vy = out.y;
-  const interpolated = isInterpolatedEntity(e);
+  const interpolated = isRenderClockEntity(e);
   out.clock = interpolated ? CLOCK_RENDER : CLOCK_SIM;
   out.t0 = fromRender
     ? (interpolated ? SimClock.render : SimClock.renderSim)

@@ -6,36 +6,50 @@
 // rekordy ruchu warpa NPC (przyloty, odloty, warp-in piratów — rejestr gry src/game/warpTraffic.js, rekordy WARP_*
 // strumienia rozkazów, RW-28) — i rozdaje efekt do Core3D:
 //   • OŚRODEK (medium.js): krok compute 1/240 s w kroku efektów Core3D (addFxStep — klatka efektów
-//     przed passami), render w passie warstwy 8 (Core3D.renderPassWarp). Bez baniek, szczelin
-//     i wzbudzenia (~4 s po ostatniej) ośrodek ŚPI: zero dispatchy i zero draw calli;
-//   • SZCZELINY, BŁYSKI, SMUGI sylwetki (sprites.js) — warstwa 0 (ortho), jeden draw call na rodzaj;
-//   • GWIAZDY (stars.js: WARP_STARS) i ZGIĘCIE TŁA (skyBend.js — materiał mgławicy);
+//     przed passami), render w passie warstwy 8 (Core3D.renderPassWarp). Bez baniek i wzbudzenia
+//     (~4 s po ostatniej) ośrodek ŚPI: zero dispatchy i zero draw calli; skok gracza go nie budzi
+//     (DECYZJE O1 — A/B `?warpOsrodek=1`), budzą przyloty i odloty NPC oraz hipercruise z `?hcOsrodek=1`;
+//   • BŁYSKI i linie blasku (sprites.js: GlowSprites) — warstwa 0 (ortho), jeden draw call;
+//   • SOCZEWKA ŚWIATA (worldLens.js: WARP_WORLD_LENS — oś β z gry, rozstawia planet3d.assets.js);
+//   • GWIAZDY (stars.js: WARP_STARS) i ZGIĘCIE TŁA (skyBend.js — materiał mgławicy: soczewka bańki);
 //   • FALE — przezroczysta refrakcja, źródła zniekształceń „uber” (Core3D.fxDistortion().shock);
 //   • KADŁUB — odsłanianie, szew, żar brzegu (entity.__warpHullU → materiał kadłuba, 04) i plazma
-//     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13).
+//     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13);
+//   • BOKI KADRU w skoku gracza (warpEdgeFx.js, 2026-10-29 — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`);
+//   • PRZYLOT I WYLOT „jak w Gwiezdnych Wojnach” (warpSW.js, 2026-10-30, domyślnie; dawny wygląd `?warpSW=0`) — smugi za rufą
+//     (kształt GLOW_STREAK duszków) i kadłub ze światła (szew `hullWarp`), bez nowych pipeline'ów i pól migawki;
+//   • DROBINY przylotów i odlotów NPC (sparks.js + sparkRecipes.js, 2026-11-08, domyślnie; dawne przegródki ośrodka
+//     `?warpDrobiny=0`) — własne drobiny każdego okrętu, tor ze wzoru (nic ich nie popycha), jedna siatka w passie gry;
+//     przylot NPC nie budzi wtedy ośrodka.
 // Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji, osie rekordów ruchu warpa — harmonogram,
 // prowadzenie okrętów w tunelu, duch i onGone liczy gra w czasie gry).
 //
-// PRZESTRZEŃ WIDOCZNA. Warp gry leci setki tysięcy j/s (biegi 10–80 tys. × strefa); ośrodek
-// płynie z prędkością WIDOCZNĄ (bieg I 16 tys., wyżej 21 tys. j/s — player.js: WARP_FLOW), jak
+// PRZESTRZEŃ WIDOCZNA. Warp gry leci setki tysięcy j/s (napędy Mk I–III × strefa); ośrodek
+// płynie z prędkością WIDOCZNĄ (21 tys. j/s — player.js: WARP_FLOW), jak
 // w demie. Kamera ośrodka (camM) idzie za kamerą gry z prędkością obciętą do tej granicy; drobiny
 // żyją względem niej (kotwica = kamera — przesunięcie na krok), efekty zawieszone w przestrzeni
 // widocznej (punkt skoku) też. Gwiazdy: limit przesuwu wzoru 14 tys. j/s (demo) w warpie.
 
 import { Core3D } from '../core3d.js';
 import { RenderWorld } from '../../render/renderWorld.js';
-import { getEntityHullSprite } from '../hexShips3D.js';
-import { WarpMedium, BUBBLE_CAP, SEAM_CAP, MEDIUM_COUNT_DEFAULT, RULON_BOX } from './medium.js';
-import { RiftSprites, GlowSprites, SmearPool, GLOW_ROUND, GLOW_LINE } from './sprites.js';
+import { WarpMedium, BUBBLE_CAP, MEDIUM_COUNT_DEFAULT } from './medium.js';
+import { GlowSprites, GLOW_ROUND, GLOW_LINE, GLOW_STREAK } from './sprites.js';
 import { WarpFrame, newWarpSlot, cullWarpFrameToView } from './frame.js';
-import { WarpPlayerFx, WARP_BUBBLE } from './player.js';
+import { WarpPlayerFx } from './player.js';
+import { HyperFlow, hyperFlowEnvelope } from './hyperFlow.js';
 import { warpArrivalFxState, warpDepartureFxState, dressWarpArrival, dressWarpDeparture } from './arrivals.js';
 import { entityWarpHullLength as entityHullLength, entityWarpHullWidth as entityHullWidth } from '../../game/warpTraffic.js';
-import { setRulon, resetRulon, RULON_STATE } from './rulon.js';
-import { WARP_WORLD_LENS, resetWarpWorldLens } from './worldLens.js';
+import { WARP_WORLD_LENS, WARP_LENS_SHARED, WARP_LENS_GAME_HF, resetWarpWorldLens, setWarpLensAnchor, parseWarpLensTilt } from './worldLens.js';
+import { warpLensBeta } from '../../render/warpLensPhase.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
+import { WarpEdgeFx } from './warpEdgeFx.js';
+import { WARP_SW, warpSWOn } from './warpSW.js';
+import { WarpSparks, sparksPerRecord } from './sparks.js';
+import { warpSparksOn } from './sparkRecipes.js';
+import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
+import { isEntityHiddenForRender } from '../hexShips3D.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import * as THREE from 'three/webgpu';
 
@@ -74,9 +88,7 @@ export const WarpNurt = {
   enabled: true,
   time: 0,
   medium: null,
-  rifts: null,
   glow: null,
-  smears: null,
   frame: null,
   player: null,
   count: MEDIUM_COUNT_DEFAULT,
@@ -102,8 +114,6 @@ export const WarpNurt = {
   _packedList: new Array(BUBBLE_CAP).fill(null),
   _releaseStep: new Int32Array(BUBBLE_CAP),
   _rearStep: new Int32Array(BUBBLE_CAP),
-  _seamPacked: Array.from({ length: SEAM_CAP }, () => ({ x: 0, y: 0, dx: 1, dy: 0, halfLen: 0, halfWidth: 0, push: 0, flow: 0 })),
-  _seamCount: 0,
   // plan kroków tej klatki (wykonuje krok efektów Core3D)
   _steps: Array.from({ length: MAX_STEPS_PER_FRAME }, () => ({ sx: 0, sy: 0, t: 0, back: 0 })),
   _stepCount: 0,
@@ -114,25 +124,30 @@ export const WarpNurt = {
   _hullTouched: new Set(),
   _hullTouchedPrev: new Set(),
   _lensPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, a: 1, b: 1, amp: 0, front: 3 })),
-  _seamPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, halfLen: 1, band: 1, amp: 0 })),
   _col: [0, 0, 0],
-  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0 },
+  // topDown — kamera z góry jednego gracza (`o.lensAllowed`; smugi `?warpSW=1` gracza tylko w niej)
+  _playerGame: { state: 'idle', charge: 0, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0, hyper: false, lens: null, topDown: true },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
   // Obrót kadru kamery (cam.roll — src/3d/viewRoll.js) tej klatki i pudło osi świata obróconego kadru [px].
   _roll: 0,
   _rollHalf: { hw: 0, hh: 0 },
-  _rulonArgs: { bend: 0, field: 0, hx: 1, hy: 0, shipX: 0, shipY: 0, bubbleW: 50, bubbleL: 70, W: 1, H: 1, F: 1, strength: 1 },
   _medCtx: { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 },
   _fxStep: null,
-  onShake: null,
-  stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, seams: 0, rifts: 0, glows: 0, smears: 0, waves: 0, arrivals: 0, flow: 0, lens: 0 },
+  // Boki kadru w skoku gracza (warpEdgeFx.js): moduł i rekord wejścia klatki (bez alokacji).
+  edge: null,
+  _edgeCtx: { on: false, t: 0, dt: 0, player: null, zoom: 1, roll: 0, W: 1, H: 1, shipX: 0, shipY: 0, hullWidth: 0, palette: '' },
+  // Wstrząsy skoku gracza i wyrzutów NPC zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości, także
+  // w workerze renderu); dawny hak `onShake` sterownika zniknął (etap W nowego warpa, 2026-10-25).
+  stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, glows: 0, waves: 0, arrivals: 0, flow: 0, lens: 0, sparks: 0 },
 
   // Opcje grafiki („Szczegóły efektów”): liczba drobin ośrodka, najwyżej pojemność z init. setCount losuje
   // wszystkie drobiny od nowa, więc zmiana czeka, aż ośrodek uśnie (update) — w trakcie skoku nic nie skacze.
   _wantCount: 0,
   setMediumCount(n) {
     this._wantCount = Math.max(4096, Math.floor(Number(n) || MEDIUM_COUNT_DEFAULT));
+    // drobiny przylotów: bez stanu — od następnej klatki (ten sam preset: `warpParticles`)
+    this.sparks?.setPerRecord(sparksPerRecord(this._wantCount));
     if (!this.awake) this._applyWantCount();
     return this._wantCount;
   },
@@ -152,26 +167,27 @@ export const WarpNurt = {
     if (this.initialized || !Core3D.isInitialized || !Core3D.scene) return this;
     this.count = Math.max(4096, Math.floor(Number(opts.count) || this.count));
     this.medium = new WarpMedium({ count: this.count });
-    this.rifts = new RiftSprites();
     this.glow = new GlowSprites();
-    this.smears = new SmearPool(8);
     this.frame = new WarpFrame();
     this.player = new WarpPlayerFx();
     this.player.bubble = newWarpSlot();
     this.player.push = newWarpSlot();
-    this.player.onShake = (mag, dur) => this.onShake?.(mag, dur);
     Core3D.scene.add(this.medium.mesh);
-    this.rifts.mesh.layers.set(0);
     this.glow.mesh.layers.set(0);
-    Core3D.scene.add(this.rifts.mesh);
     Core3D.scene.add(this.glow.mesh);
-    for (const it of this.smears.items) { it.mesh.layers.set(0); Core3D.scene.add(it.mesh); }
+    // Drobiny przylotów i odlotów NPC (sparks.js — tor ze wzoru, bez compute): drobin na rekord z opcji grafiki.
+    this.sparks = new WarpSparks();
+    this.sparks.setPerRecord(sparksPerRecord(this._wantCount || this.count));
+    Core3D.scene.add(this.sparks.mesh);
+    Core3D.warmup?.add({ name: 'warp: drobiny przylotu', objects: () => this.sparks.warmupMeshes(), layer: 0, phase: 'loading', variant: WARIANT_INSTANCJI });
     this._fxStep = {
       name: 'warpNurt',
       warm: (ctx) => this._warm(ctx),
       update: (ctx) => this._runSteps(ctx)
     };
     Core3D.addFxStep(this._fxStep);
+    // Boki kadru w skoku gracza: siatki (DIST, pass tła), wpisy rozgrzewki i krok zgłaszający warstwę DIST.
+    this.edge = new WarpEdgeFx().attach(Core3D.scene);
     this.initialized = true;
     if (typeof window !== 'undefined') window.WarpNurt = this;
     return this;
@@ -186,24 +202,21 @@ export const WarpNurt = {
     this.medium.warm(renderer);
     const med = this.medium.mesh;
     Core3D.prewarmPass(med, 8);
-    const touch = [this.rifts, this.glow];
-    for (const s of touch) { s.geo.instanceCount = 1; s.mesh.visible = true; }
-    const sm = this.smears.items[0].mesh;
-    sm.visible = true;
-    Promise.all([Core3D.prewarmPass(this.rifts.mesh, 0), Core3D.prewarmPass(this.glow.mesh, 0), Core3D.prewarmPass(sm, 0)])
-      .finally(() => {
-        for (const s of touch) { if (s.count === 0) { s.geo.instanceCount = 0; s.mesh.visible = false; } }
-        if (this.smears.count === 0) sm.visible = false;
-      });
-    for (const s of touch) { if (s.count === 0) { s.geo.instanceCount = 0; s.mesh.visible = false; } }
-    if (this.smears.count === 0) sm.visible = false;
+    const glow = this.glow;
+    glow.geo.instanceCount = 1;
+    glow.mesh.visible = true;
+    const hide = () => { if (glow.count === 0) { glow.geo.instanceCount = 0; glow.mesh.visible = false; } };
+    Promise.resolve(Core3D.prewarmPass(glow.mesh, 0)).finally(hide);
+    hide();
   },
 
   /**
    * Klatka efektu. o = { dt (czas gry — 0 w pauzie), cam (kamera gry bez wstrząsu: x, y, zoom),
    * camShake (kamera renderu, ze wstrząsem), camFollow (kamera statku bez przejścia — kamera =
-   * statek + offset riga), ship, warp (GameState.warp), trafficTime (zegar rejestru ruchu warpa gry — osie przylotów
-   * i odlotów NPC), zoneWarpMul }.
+   * statek + offset riga), ship, warp (GameState.warp), hyper (GameState.hyper — hipercruise gracza w kształcie
+   * warpa: rozruch = ładowanie, lot = skok; E5 2026-10-22), trafficTime (zegar rejestru ruchu warpa gry — osie
+   * przylotów i odlotów NPC), zoneWarpMul, lensPhase (oś β soczewki świata z gry — src/render/warpLensPhase.js),
+   * anchorSX / anchorSY (kotwica kadru skoku, px CSS — DECYZJE M3), lensAllowed }.
    */
   update(o) {
     if (!this.initialized || !this.enabled) { resetWarpWorldLens(); return; }
@@ -213,13 +226,21 @@ export const WarpNurt = {
     const cam = o.cam;
     const camX = Number(cam?.x) || 0;
     const camY = Number(cam?.y) || 0;
-    // px BUFORA na j. świata (Core3D.viewZoom — skala renderu z opcji grafiki): ośrodek, szczeliny, fale,
-    // gwiazdy, rulon i soczewka liczą położenia w px celu sceny.
+    // px BUFORA na j. świata (Core3D.viewZoom — skala renderu z opcji grafiki): ośrodek, fale,
+    // gwiazdy i soczewka liczą położenia w px celu sceny.
     const zoom = Core3D.viewZoom(cam);
     // Obrót kadru (viewRoll.js): piksele celu liczone w osiach EKRANU — przesunięcia ze świata obracane o −roll.
     this._roll = cameraRoll(cam);
     const frame = this.frame;
     frame.reset();
+    // Smugi (`?warpSW=1`) odcinane do kadru przy zgłoszeniu: pudło osi świata obróconego kadru wokół kamery [j.] (+10% —
+    // wstrząs kamery renderu). Tylko kamera z góry jednego gracza: duszki warstwy 0 rysuje KAŻDY widok (drugi gracz
+    // podzielonego ekranu, kamery 3D) — tam smugi idą bez odcinania.
+    if (o.lensAllowed !== false) {
+      const sv = this._viewParams(zoom);
+      const svh = rolledHalfExtents(sv.bufW * 0.5, sv.bufH * 0.5, this._roll, this._rollHalf);
+      frame.setStreakView(svh.hw * 1.1 / zoom, svh.hh * 1.1 / zoom);
+    }
 
     const player = this.player;
     const map = this._map;
@@ -234,12 +255,46 @@ export const WarpNurt = {
     const warp = o.warp;
     const g = this._playerGame;
     const hasPlayer = !!(ship && !ship.dead && warp);
-    if (hasPlayer) {
+    // Hipercruise (E5, decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”): ten sam efekt
+    // skoku gracza (bańka, ośrodek, smugi, fale, żar), gdy warp stoi; efekt trzyma się hipercruise'u do końca
+    // wyjścia (player.hyper). Warp ma pierwszeństwo — jego wygląd bez zmian.
+    const hyper = o.hyper;
+    const warpBusy = !!warp && (warp.state !== 'idle' || !!(warp.exitRamp && warp.exitRamp.active));
+    const hyperOn = !!hyper && (hyper.state === 'charging' || hyper.state === 'active');
+    const useHyper = hasPlayer && !warpBusy && (hyperOn || (player.hyper && player.mode !== 'idle'));
+    if (hasPlayer && useHyper) {
+      const pose = entityPose(ship, this._pose);
+      g.state = hyperOn ? hyper.state : 'idle';
+      g.charge = Math.min(1, Math.max(0, Number(hyper.charge) || 0));
+      g.chargeTime = Number(hyper.chargeTime) || 4;
+      g.speed = Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy);
+      g.angle = hyper.state === 'active' && Number.isFinite(hyper.dir) ? hyper.dir : pose.angle;
+      g.x = pose.x;
+      g.y = pose.y;
+      g.length = entityHullLength(ship);
+      g.width = entityHullWidth(ship);
+      g.palette = entityWarpPaletteId(ship);
+      g.entity = ship;
+      g.exitRamp = null;
+      g.flyby = 1;
+      g.cruise = Number(hyper.speed) || 0;
+      g.hyper = true;
+      g.lens = null;
+      g.topDown = o.lensAllowed !== false;
+      player.advance(t, dt, g, map, med);
+      // OPŁYW hipercruise'u (hyperFlow.js, 2026-10-29): otoczka wzdłuż burt i strugi dysz na warstwie DIST — siła z fazy
+      // efektu i prędkości prowadzonej; tylko kamera z góry jednego gracza (jak soczewka świata).
+      const env = hyperFlowEnvelope(player.mode, t, player.kickT, player.exitT, player.charge, g.cruise,
+        Number(hyper.vmax) || 0, this._hyperFlowHold || (this._hyperFlowHold = { sheath: 0, wake: 0 }),
+        this._hyperFlowEnv || (this._hyperFlowEnv = { sheath: 0, wake: 0 }));
+      if (o.lensAllowed !== false) {
+        HyperFlow.setShip(pose.x, pose.y, pose.angle, g.length, g.width, env.sheath, env.wake, g.cruise, t, zoom);
+      }
+    } else if (hasPlayer) {
       const pose = entityPose(ship, this._pose);
       g.state = warp.state;
       g.charge = warp.chargeTime > 0 ? Math.min(1, (Number(warp.charge) || 0) / warp.chargeTime) : 0;
       g.chargeTime = Number(warp.chargeTime) || 0.8;
-      g.gear = warp.gear || 1;
       g.speed = Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy);
       g.angle = warp.state === 'active' && warp.dir && (warp.dir.x || warp.dir.y) ? Math.atan2(warp.dir.y, warp.dir.x) : pose.angle;
       g.x = pose.x;
@@ -251,6 +306,10 @@ export const WarpNurt = {
       g.exitRamp = warp.exitRamp || null;
       g.flyby = Number.isFinite(warp.flybyFactor) ? warp.flybyFactor : 1;
       g.cruise = Number(warp.cruise) || Number(warp.speed) || 0;
+      g.hyper = false;
+      // oś β soczewki świata z gry (warpLensPhase.js: rekord strony gry — off: index.html, worker: migawka)
+      g.lens = o.lensPhase || null;
+      g.topDown = o.lensAllowed !== false;
       player.advance(t, dt, g, map, med);
     } else {
       player.reset();
@@ -326,12 +385,12 @@ export const WarpNurt = {
     this._updateArrivals(Number.isFinite(o.trafficTime) ? o.trafficTime : t, frame, camX, camY);
 
     // --- ośrodek: budzenie / sen, plan kroków ---
-    // Tylko przegródki i szczeliny w zasięgu pudła ośrodka wokół kamery (daleki przylot go nie budzi).
+    // Tylko przegródki w zasięgu pudła ośrodka wokół kamery (daleki przylot go nie budzi).
     const view = this._viewParams(zoom);
     this._commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer);
     const vh = rolledHalfExtents(view.bufW * 0.5, view.bufH * 0.5, this._roll, this._rollHalf);
     cullWarpFrameToView(frame, vh.hw, vh.hh, view.focal, view.camZ);
-    const busy = frame.bubbles.length > 0 || frame.seams.count > 0 || frame.warpVis > 0.001;
+    const busy = frame.bubbles.length > 0 || frame.warpVis > 0.001;
     if (busy) {
       this.lastBusyT = t;
       if (!this.awake) this._wake();
@@ -350,24 +409,22 @@ export const WarpNurt = {
 
     // --- rysowane w passie gry, fale, tło, gwiazdy ---
     this._commitSprites(camX, camY, zoom);
+    this._commitSparks(camX, camY, zoom, view);
     this._commitWaves(camX, camY, zoom);
     this._commitSky(o, camX, camY, zoom);
     this._commitStars(o, camX, camY, zoom, ship);
-    this._commitRulon(o, camX, camY, zoom);
     this._finishHulls();
+    this._commitEdge(o, t, dt, camX, camY, zoom, hasPlayer);
 
     const s = this.stats;
     s.awake = drawMedium;
     s.steps = this._stepCount;
     s.bubbles = frame.bubbles.length;
-    s.seams = frame.seams.count;
-    s.rifts = frame.rifts.count;
     s.glows = this.glow.count;
-    s.smears = this.smears.count;
     s.waves = frame.waves.count;
     s.arrivals = this.arrivals.length;
     s.flow = Math.round(this.flow);
-    s.lens = frame.lens.count + frame.seamLens.count;
+    s.lens = frame.lens.count;
   },
 
   _wake() {
@@ -453,21 +510,6 @@ export const WarpNurt = {
       p.rear = false;
       this._packedList[k] = p;
     }
-    const seams = frame.seams;
-    const ns = Math.min(SEAM_CAP, seams.count);
-    for (let j = 0; j < ns; j++) {
-      const s = seams.items[j];
-      const p = this._seamPacked[j];
-      p.x = s.x;
-      p.y = -s.y;
-      p.dx = Math.cos(s.angle);
-      p.dy = -Math.sin(s.angle);
-      p.halfLen = s.halfLen;
-      p.halfWidth = s.halfWidth;
-      p.push = s.push;
-      p.flow = s.flow;
-    }
-    this._seamCount = ns;
     // Kamera ośrodka w krokach tej klatki jedzie liniowo (cx, cy wyżej) — z tą prędkością
     // (scena: y w górę) krok cofa przegródki do swojej chwili (medium.js: bubbleBack).
     this.medium.setBubbleFlow(this.flowX, -this.flowY);
@@ -486,7 +528,6 @@ export const WarpNurt = {
       medium.reset(renderer);
       this._reseed = false;
     }
-    medium.setSeams(this._seamPacked, this._seamCount);
     for (let i = 0; i < n; i++) {
       let flags = false;
       for (let k = 0; k < BUBBLE_CAP; k++) {
@@ -536,22 +577,47 @@ export const WarpNurt = {
   // planet3d.assets.js (updatePlanets3D, po tym kroku) rozstawia na scenie. Kamera bez wstrząsu (tę
   // samą dostają planety), statek w pozie renderu; cel — planeta przy końcu odcinka (index.html:
   // planPlayerWarp). Bez skoku albo poza kamerą z góry jednego gracza (`lensAllowed`) — wyłączona.
+  // Oś β i wyjście z ZEGARA GRY (src/render/warpLensPhase.js — rekord strony gry `o.lensPhase`, w workerze z migawki;
+  // bez niego — rekord własny WarpPlayerFx z zegara efektu, demo): β = warpLensBeta(rekord), wiek wyjścia, koniec
+  // zwolnienia i zatrzymanie rampy, dolot (ślizg), kadr soczewki z kamery gry (zoom odniesienia, kadr skoku, ułamek kadru
+  // przylotu — px CSS → px bufora × Core3D.pxScale), kotwica kadru (o.anchorSX / SY — px CSS), ciało startu.
   _commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer) {
+    // Pochylenie mapy O1: w grze płaskie (WARP_LENS_GAME_HF), z adresu `?warpSoczewka=` (worldLens.js: parseWarpLensTilt);
+    // ustawiane przy zmianie adresu, więc wpis z konsoli (WARP_LENS_SHARED.params.hf) zostaje do następnej zmiany.
+    const search = typeof RenderWorld.pageSearch === 'string' ? RenderWorld.pageSearch : '';
+    if (search !== this._lensTiltSearch) {
+      this._lensTiltSearch = search;
+      const hf = parseWarpLensTilt(search);
+      WARP_LENS_SHARED.params.hf = hf > 0 ? hf : WARP_LENS_GAME_HF;
+    }
     const p = this.player;
-    const lensOk = hasPlayer && o.lensAllowed !== false;
-    const beta = lensOk ? p.lensBeta(t) : 0;
+    const lensOk = hasPlayer && o.lensAllowed !== false && !p.hyper;
+    const ph = lensOk ? p.lensPhase(t) : null;
+    const beta = ph ? warpLensBeta(ph) : 0;
     const L = WARP_WORLD_LENS;
     // Przylot (worldLens.js: WarpWorldLens._arrivalHold): po wyjściu soczewka żyje, póki trzyma cel przy krawędzi
     // (targetHold z poprzedniej klatki), choć β wyjścia już opadło — reszta ciał stoi wtedy na prawdziwych miejscach.
-    const exitAge = lensOk && (p.mode === 'exit' || p.mode === 'idle') ? p.exitAge(t) : -1;
-    const arriving = exitAge >= 0 && exitAge < p.ramp.tHalt + 12;
+    // Wiek wyjścia z gry jest ciągły do zatrzymania + WARP_LENS_EXIT_SPAN (warpLensPhase.js) — rampa gry znika wcześniej.
+    const ea = ph ? Number(ph.exitAge) : -1;
+    const exitAge = ea >= 0 ? ea : -1;
+    const arriving = exitAge >= 0;
     if (!(beta > 0.0005) && !(arriving && L.targetHold > 0.0005)) { resetWarpWorldLens(); return; }
     const g = this._playerGame;
     L.active = true;
     L.beta = beta;
-    L.exitAge = arriving ? exitAge : -1;
-    L.exitHalt = p.ramp.tHalt;
+    L.exitAge = exitAge;
+    L.exitSlow = Number(ph.exitSlow) > 0 ? Number(ph.exitSlow) : 0;
+    L.exitHalt = Math.max(0, Number(ph.exitHalt) || 0);
+    L.arriving = ph.arriving === true || ph.arriving === false ? ph.arriving : null;
+    // px CSS → px bufora (kamera gry i kotwica riga są w px CSS)
+    const pxs = Number(Core3D.pxScale) > 0 ? Number(Core3D.pxScale) : 1;
+    L.arrivalFill = Number(ph.arrivalFill) > 0 ? Number(ph.arrivalFill) : NaN;
+    L.zoomRef = Number(ph.zoomRef) > 0 ? Number(ph.zoomRef) * pxs : NaN;
+    L.zoomJump = Number(ph.zoomJump) > 0 ? Number(ph.zoomJump) * pxs : NaN;
+    setWarpLensAnchor(L, o.anchorSX, o.anchorSY, pxs);
+    L.originBody = o.warp?.originBody || null;
     L.speed = Math.max(1, Number(g.cruise) || 0);
+    L.driveSpeed = Number(o.warp?.speed) > 0 ? Number(o.warp.speed) : NaN;   // napęd Mk I–III (skala mapy O1 — worldLens.js: speedRef)
     L.velAngle = p.angle;
     L.zoom = zoom;
     L.W = view.bufW;
@@ -593,10 +659,10 @@ export const WarpNurt = {
     const medium = this.medium;
     const cam = o.cam;
     const { bufW, bufH, focal, camZ } = this._view;
-    // Zapas pudeł na rulon tylko na czas zwinięcia (poza skokiem gęstość jak przed rulonem). Obrócony kadr
-    // (viewRoll.js) — pudła osi świata obejmują go (rogi kadru nie zostają bez drobin).
+    // Obrócony kadr (viewRoll.js) — pudła osi świata obejmują go (rogi kadru nie zostają bez drobin). Bez zapasu
+    // rulonu (dawne × 1,4 na czas zwinięcia — skok gracza nie zwija świata od sprzątania S1).
     const bh = rolledHalfExtents(bufW * 0.5, bufH * 0.5, this._roll, this._rollHalf);
-    medium.setBoxes(zoom, bh.hw * 2, bh.hh * 2, focal, 1 + (RULON_BOX - 1) * Math.min(1, this.player.rulonBend));
+    medium.setBoxes(zoom, bh.hw * 2, bh.hh * 2, focal, 1);
     const mesh = medium.mesh;
     mesh.position.set(Number(cam.x) || 0, -(Number(cam.y) || 0), 0);
     // Przesunięcie kamery ośrodka względem ostatniego kroku (scena: y w górę).
@@ -605,21 +671,11 @@ export const WarpNurt = {
     medium.setView(this.flowX, -this.flowY, offX, offY, this.stepAcc, bufW * 0.5, bufH * 0.5, zoom, camZ, t - this.wakeT, this.frame.warpVis);
   },
 
-  // Szczeliny, błyski, smugi — scena względem kamery (mesh.position = kamera gry).
+  // Błyski, linie blasku i smugi (`?warpSW=1` — kształt GLOW_STREAK: głowa przy +kierunku, ten sam graf i rysunek) — scena
+  // względem kamery (mesh.position = kamera gry).
   _commitSprites(camX, camY, zoom) {
     const frame = this.frame;
-    const rifts = this.rifts;
     const glow = this.glow;
-    const smears = this.smears;
-    rifts.begin();
-    for (let i = 0; i < frame.rifts.count; i++) {
-      const r = frame.rifts.items[i];
-      // Brzeg cienki (~1–2 px) — jedyny element szczeliny nad progiem bloomu.
-      const edge = Math.max(1.2 / zoom, r.halfWidth * 0.07);
-      rifts.add(r.x, -r.y, Math.cos(r.angle), -Math.sin(r.angle), r.halfLen, r.halfWidth, edge,
-        r.core, 2.6, r.body, 1.0, r.k, r.dirty, r.seed, 1.8, r.fill);
-    }
-    rifts.commit(this.time, camX, -camY);
     glow.begin();
     for (let i = 0; i < frame.flashes.count; i++) {
       const f = frame.flashes.items[i];
@@ -634,43 +690,26 @@ export const WarpNurt = {
       const k = 3.2 * g.k;
       glow.add(g.x, -g.y, 9, thick, col[0] * k, col[1] * k, col[2] * k, GLOW_LINE, Math.cos(g.angle), -Math.sin(g.angle), g.len / thick, 0.5);
     }
-    // Szew poza sylwetką (gracz przy wyjściu): cienka linia w poprzek kursu na linii frontu.
-    this._seamLines(zoom);
-    glow.commit(camX, -camY);
-    smears.begin();
-    for (let i = 0; i < frame.smears.count; i++) {
-      const s = frame.smears.items[i];
-      const tex = getEntityHullSprite(s.entity);
-      if (!tex) continue;
-      const c = Math.cos(s.angle);
-      const sn = Math.sin(s.angle);
-      // Przód smugi przy dziobie, reszta za rufą.
-      const bowX = s.x + c * s.length * 0.5;
-      const bowY = s.y + sn * s.length * 0.5;
-      const cx = bowX - c * s.length * s.total * 0.5;
-      const cy = bowY - sn * s.length * s.total * 0.5;
-      const pc = s.pal.body;
-      smears.add(tex, cx, -cy, -s.angle, s.length * s.total, s.width, pc[0], pc[1], pc[2], 1.4 * s.k);
+    for (let i = 0; i < frame.streaks.count; i++) {
+      const s = frame.streaks.items[i];
+      // środek kwadu: głowa − kierunek · ½ długości; wydłużenie = długość / szerokość (kwad: szerokość × długość)
+      const cx = s.x - s.dirX * s.len * 0.5;
+      const cy = s.y - s.dirY * s.len * 0.5;
+      const width = Math.max(1.2 / zoom, s.width);
+      glow.add(cx, -cy, 7, width, s.r, s.g, s.b, GLOW_STREAK, s.dirX, -s.dirY, Math.max(1, s.len / width), 0.2);
     }
-    smears.commit(camX, -camY);
+    glow.commit(camX, -camY);
   },
 
-  _seamLines(zoom) {
-    const glow = this.glow;
-    const list = this._seamLineSrc;
-    for (let i = 0; i < list.count; i++) {
-      const s = list.items[i];
-      const c = Math.cos(s.angle);
-      const sn = Math.sin(s.angle);
-      const px = s.x + c * s.line;
-      const py = s.y + sn * s.line;
-      const len = s.width * 1.12;
-      const thick = Math.max(1.8 / zoom, s.width * 0.003);
-      const col = s.rgb;
-      const k = 0.2 * s.k;
-      glow.add(px, -py, 6, thick, col[0] * k, col[1] * k, col[2] * k, GLOW_LINE, Math.sin(s.angle), Math.cos(s.angle), len / thick, 0.35);
-    }
-    list.count = 0;
+  // Drobiny przylotów i odlotów NPC (sparks.js): rekordy klatki → blok uniformów; rekord poza kadrem (zasięg od pudła osi
+  // świata obróconego kadru) nie zajmuje miejsca. Kamera gry (bez wstrząsu — jak duszki), px bufora na j. = zoom.
+  _commitSparks(camX, camY, zoom, view) {
+    const sp = this.sparks;
+    if (!sp) return;
+    const vh = rolledHalfExtents(view.bufW * 0.5, view.bufH * 0.5, this._roll, this._rollHalf);
+    const k = 1.1 / Math.max(1e-5, zoom);
+    sp.commit(this.frame, camX, camY, zoom, vh.hw * k, vh.hh * k);
+    this.stats.sparks = sp.count;
   },
 
   _commitWaves(camX, camY, zoom) {
@@ -681,19 +720,17 @@ export const WarpNurt = {
     for (let i = 0; i < frame.waves.count; i++) {
       const w = frame.waves.items[i];
       if (!(w.amp > 0.05)) continue;
-      if (w.kind === 1) D.implode(camX + w.x, camY + w.y, w.r, w.amp, 0.15);
-      else if (w.kind === 2) D.bubble(camX + w.x, camY + w.y, w.r, Math.max(6 / zoom, w.width), w.amp, w.dx, w.dy, w.asp);
       // Demo: szerokość ≥ 6 px, fala bez dyspersji (przesuwa wszystkie kanały razem).
-      else D.shock(camX + w.x, camY + w.y, w.r, Math.max(6 / zoom, w.width), w.amp, 0);
+      D.shock(camX + w.x, camY + w.y, w.r, Math.max(6 / zoom, w.width), w.amp, 0);
     }
   },
 
-  // Zgięcie tła (mgławica): soczewka bańki gracza i szczeliny w pikselach celu (y w dół).
+  // Zgięcie tła (mgławica): soczewka bańki gracza w pikselach celu (y w dół). Blok szczelin materiału mgławicy
+  // (skyBend.js) zostaje pusty — szczeliny usunięte w sprzątaniu S1 (zmiana WGSL mgławicy — C2).
   _commitSky(o, camX, camY, zoom) {
     const frame = this.frame;
     const nl = frame.lens.count;
-    const ns = frame.seamLens.count;
-    if (!nl && !ns) { clearWarpSkyBend(); return; }
+    if (!nl) { clearWarpSkyBend(); return; }
     const rt = Core3D.composerTarget;
     const bufW = Math.max(1, rt?.width || 1);
     const bufH = Math.max(1, rt?.height || 1);
@@ -721,22 +758,7 @@ export const WarpNurt = {
       d.amp = l.amp;
       d.front = l.front;
     }
-    const seams = this._seamPx;
-    let si = 0;
-    for (let j = 0; j < ns && si < seams.length; j++) {
-      const s = frame.seamLens.items[j];
-      const d = seams[si++];
-      const wx = s.x + sx0;
-      const wy = s.y + sy0;
-      d.x = bufW * 0.5 + (rc * wx + rs * wy) * zoom;
-      d.y = bufH * 0.5 + (-rs * wx + rc * wy) * zoom;
-      d.ax = Math.cos(s.angle - roll);
-      d.ay = Math.sin(s.angle - roll);
-      d.halfLen = s.halfLen * zoom;
-      d.band = Math.max(4, s.band * zoom);
-      d.amp = s.amp;
-    }
-    writeWarpSkyBend(lens, li, seams, si);
+    writeWarpSkyBend(lens, li, null, 0);
   },
 
   _commitStars(o, camX, camY, zoom, ship) {
@@ -769,40 +791,28 @@ export const WarpNurt = {
     WARP_STAR_CAMERA.speedCap = cap;
   },
 
-  // RULON (rulon.js): oś = kurs skoku przez statek (y w górę na ekranie), kieszeń = bańka gracza,
-  // piksele = bufor celu sceny, F = ogniskowa kamery perspektywy ośrodka. Bez skoku — płasko.
-  _commitRulon(o, camX, camY, zoom) {
-    const p = this.player;
-    if (!(p.rulonBend > 1e-4) || !p.active) { resetRulon(); return; }
-    const st = this.frame.stars;
-    const shake = o.camShake || o.cam;
-    const scx = Number(shake?.x) || camX;
-    const scy = Number(shake?.y) || camY;
-    const v = this._view;
-    const R = Math.max(40, this._playerGame.length || 1800) * WARP_BUBBLE.radiusK * zoom;
-    const a = this._rulonArgs;
-    a.bend = p.rulonBend;
-    a.field = p.rulonField;
-    // Oś i statek w osiach ekranu (y w górę) — obrót kadru (viewRoll.js): kąt − roll, przesunięcie R(−roll).
-    const roll = this._roll;
-    const rc = roll ? Math.cos(roll) : 1;
-    const rs = roll ? Math.sin(roll) : 0;
-    const wx = st.refX + camX - scx;
-    const wy = st.refY + camY - scy;
-    a.hx = Math.cos(p.angle - roll);
-    a.hy = -Math.sin(p.angle - roll);
-    a.shipX = (rc * wx + rs * wy) * zoom;
-    a.shipY = -(-rs * wx + rc * wy) * zoom;
-    a.bubbleW = R;
-    a.bubbleL = R * WARP_BUBBLE.asp;
-    a.W = v.bufW;
-    a.H = v.bufH;
-    a.F = v.focal;
-    setRulon(a);
-    // Rulon wciąga do kadru świat zza jego brzegu (cała gra się zgina — rulon.js): culling three
-    // z płaszczyznami kadru odsuniętymi o szerokość kadru (dalej świat leży mikroskopijny przy horyzoncie
-    // walca; 3 kadry = ~2× rysunków i kilka ms CPU w skoku — scripts/webgpu/travel-gra.mjs --bezCullingu).
-    RULON_STATE.cullMargin = Math.max(v.bufW, v.bufH) / Math.max(1e-4, zoom);
+  // Boki kadru w skoku gracza (warpEdgeFx.js — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`): przepływ równoległy
+  // do kursu (bez punktu zbiegu soczewki); stan skoku z WarpPlayerFx (fazy, kop, wyjście, przepływ — hipercruise daje 0),
+  // kadr (px bufora, obrót kadru), statek i szerokość kadłuba (czysta kolumna osi kursu), tylko kamera z góry jednego
+  // gracza (`lensAllowed`).
+  _commitEdge(o, t, dt, camX, camY, zoom, hasPlayer) {
+    const e = this.edge;
+    if (!e) return;
+    const c = this._edgeCtx;
+    const g = this._playerGame;
+    c.on = hasPlayer && o.lensAllowed !== false;
+    c.t = t;
+    c.dt = dt;
+    c.player = this.player;
+    c.zoom = zoom;
+    c.roll = this._roll;
+    c.W = this._view.bufW;
+    c.H = this._view.bufH;
+    c.shipX = g.x - camX;
+    c.shipY = g.y - camY;
+    c.hullWidth = Number(g.width) || 0;
+    c.palette = g.palette;
+    e.update(c);
   },
 
   /** Kadłub encji: odsłanianie / szew / żar (fx w j. świata) → Vector4 materiału (px sprite'a). */
@@ -822,20 +832,6 @@ export const WarpNurt = {
     u.b.set(fx.seamRGB[0] * sk, fx.seamRGB[1] * sk, fx.seamRGB[2] * sk, Math.max(0, Math.min(8, Math.log2(rimPx))));
     u.c.set(fx.heatRGB[0], fx.heatRGB[1], fx.heatRGB[2], 1);
     this._hullTouched.add(entity);
-    // Szew poza sylwetką (linia w poprzek kursu) tylko przy wyjściu gracza — jak w demie.
-    if (fx === this.player.hull && sk > 0) {
-      const pose = entityPose(entity, this._pose);
-      const it = this._seamLineSrc.add();
-      if (it) {
-        it.x = pose.x - this._map.camX;
-        it.y = pose.y - this._map.camY;
-        it.angle = pose.angle;
-        it.line = fx.seamLine;
-        it.width = entityHullWidth(entity);
-        it.k = sk;
-        it.rgb[0] = fx.seamRGB[0]; it.rgb[1] = fx.seamRGB[1]; it.rgb[2] = fx.seamRGB[2];
-      }
-    }
   },
 
   // Encje, którym efekt zdjął odsłanianie / żar w tej klatce — trzymacze materiału wracają do „off”.
@@ -857,7 +853,7 @@ export const WarpNurt = {
   warpBegin(id, kind, fx, entity) {
     if (!fx) return null;
     const departure = kind === 'departure';
-    const v = { id, kind, fx, entity: entity || null, burstShaken: false, dress: null };
+    const v = { id, kind, fx, entity: entity || null, dress: null };
     v.dress = departure ? dressWarpDeparture(fx) : dressWarpArrival(fx);
     this.arrivals.push(v);
     return v;
@@ -887,9 +883,25 @@ export const WarpNurt = {
     return null;
   },
 
+  // Widoczność encji dla wyglądu przylotu / odlotu (domyślnego i `?warpSW=1`) — mgła wojny i soczewka skoku (ten sam
+  // predykat co skóra kadłuba: hexShips3D.isEntityHiddenForRender) i maskowanie (widoczność całego okrętu z wyglądu
+  // maskowania): ukryty wróg nie zdradza się zwiastunem, błyskiem, falą ani przegródką ośrodka (arrivals.js).
+  _swVis(e) {
+    if (isEntityHiddenForRender(e)) return 0;
+    const cl = e.__cloakLook;
+    if (cl && cl.active) {
+      const vis = Number(cl.vis);
+      return vis > 0 ? (vis < 1 ? vis : 1) : 0;
+    }
+    return 1;
+  },
+
+  // Wstrząsy wyrzutów zgłasza gra (warpShakes.js: stepWarpBurstShakes) — wynik `shake` osi efektu tu nieczytany.
   _updateArrivals(t, frame, camX, camY) {
     const list = this.arrivals;
-    let shake = 0;
+    const sw = list.length && warpSWOn() ? WARP_SW : null;
+    // drobiny okrętów (domyślnie) albo dawne przegródki ośrodka (`?warpDrobiny=0`)
+    const sparks = list.length > 0 && warpSparksOn();
     for (let i = list.length - 1; i >= 0; i--) {
       const v = list[i];
       const fx = v.fx;
@@ -898,22 +910,21 @@ export const WarpNurt = {
         if (v.entity && v.entity.dead) v.entity = null;
         const en = v.entity;
         const pose = en ? entityPose(en, this._pose) : null;
-        const sh = warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress);
-        shake = Math.max(shake, sh);
+        // widoczność encji (mgła wojny, soczewka, maskowanie) — każdy wygląd; przed attach zostaje 1 (zwiastun planu)
+        if (en) v.dress.swVis = this._swVis(en);
+        warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress, sw, sparks);
         if (en) {
           if (t < fx.tAppear) this._hideHull(en);
           else this._applyHull(en, v.dress.hull);
           en.__warpNurtMode = v.dress.plasmaMode;
         }
-        if (!v.burstShaken && t >= fx.tBrake) {
-          v.burstShaken = true;
-          this._burstShake(fx, camX, camY);
-        }
       } else {
         const e = v.entity;
         const alive = !!(e && !e.dead);
         const pose = alive ? entityPose(e, this._pose) : null;
-        shake = Math.max(shake, warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress));
+        // widoczność encji — każdy wygląd; po zniknięciu encji zostaje ostatnia (błysk i fala w punkcie skoku)
+        if (alive) v.dress.swVis = this._swVis(e);
+        warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress, sw, sparks);
         if (alive) {
           this._applyHull(e, v.dress.hull);
           e.__warpNurtMode = v.dress.plasmaMode;
@@ -923,7 +934,6 @@ export const WarpNurt = {
         if (e && t >= fx.tGone) this._hideHull(e);
       }
     }
-    frame.shake = shake;
   },
 
   _hideHull(e) {
@@ -935,16 +945,6 @@ export const WarpNurt = {
     u.b.set(0, 0, 0, 4);
     u.c.set(0, 0, 0, 1);
     this._hullTouched.add(e);
-  },
-
-  _burstShake(fx, camX, camY) {
-    if (!this.onShake) return;
-    const ddx = fx.x - camX;
-    const ddy = fx.y - camY;
-    const d = Math.sqrt(ddx * ddx + ddy * ddy);
-    const near = Math.max(0, 1 - d / Math.max(4000, fx.hullLength * 6));
-    if (near <= 0) return;
-    this.onShake(12 * (0.4 + 0.8 * fx.sizeScale) * near, 0.35);   // demo: 6 px × (0,4 + 0,8 s)
   },
 
   /** Wygląd do zera (WARP_CLEAR, nowa gra; skok gracza też). */
@@ -961,13 +961,6 @@ export const WarpNurt = {
     for (const v of this.arrivals) if (v.entity) { v.entity.__warpNurtMode = null; v.entity.__warpHullU = null; }
     this.arrivals.length = 0;
   }
-};
-
-// Pula linii szwu (gracz) — obiekty wielokrotnego użytku.
-WarpNurt._seamLineSrc = {
-  items: Array.from({ length: 4 }, () => ({ x: 0, y: 0, angle: 0, line: 0, width: 0, k: 0, rgb: [0, 0, 0] })),
-  count: 0,
-  add() { return this.count < this.items.length ? this.items[this.count++] : null; }
 };
 
 const FLASH_WHITE = Object.freeze([0.55, 0.85, 1.0]);

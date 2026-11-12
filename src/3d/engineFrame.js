@@ -4,6 +4,9 @@
 // pozycje, kierunki i moc, co struga MAIN), czytają efekty, które idą za silnikami — dziś poświata dysz na pyle
 // kosmicznym (src/3d/dust/spaceDust.js: writeDustPlumes). Tylko okręty, których dysze się rysują (kadr
 // z zapasem, bez ukrytych we mgle wojny); moc × widoczność maskowania — ukryty okręt nie świeci.
+// Druga lista płaska: DYSZE SIDE z ciągiem (`side`, `sd*`, 2026-11-03) — wiatr manewrowy w polach gazu (pył i para hal
+// K-7 — src/3d/gasField/hallDust.js, gaz przestrzeni — src/3d/spaceGas/spaceGas.js). Nowe pole gazu, które ma reagować na
+// silniki, czyta obie listy.
 //
 // Układ SCENY (x w prawo, y w GÓRĘ = −y świata gry), pozycje w double (świat 5–10 mln j.). Bez three i DOM.
 
@@ -11,6 +14,10 @@ export const ENGINE_FRAME_CAP = 256;
 const NOZZLE_CAP = 32;
 /** Dysze wszystkich okrętów klatki (lista płaska — dym zapłonu z każdej dyszy: src/3d/explosions/explosionFx.js). */
 export const ENGINE_FRAME_NOZZLE_CAP = 2048;
+/** Dysze SIDE klatki z ciągiem (lista płaska — wiatr manewrowy w polach gazu: hala K-7, gaz przestrzeni). */
+export const ENGINE_FRAME_SIDE_CAP = 1024;
+/** Moc dyszy SIDE, od której wchodzi na listę (płomyk dyżurny i wygasający zawór — bez wiatru). */
+export const ENGINE_FRAME_SIDE_MIN = 0.02;
 
 export const EngineFrame = {
   /** Okrętów w tej klatce. */
@@ -46,6 +53,21 @@ export const EngineFrame = {
   nzDY: new Float32Array(ENGINE_FRAME_NOZZLE_CAP),
   nzR: new Float32Array(ENGINE_FRAME_NOZZLE_CAP),
   nzN: 0,
+  /**
+   * DYSZE SIDE z ciągiem (2026-11-03, zgłoszenie użytkownika: „gazy i pyły nie reagują na silniki boczne”): wylot dzwonu
+   * (scena, double), kierunek wydechu (jednostkowy), promień wylotu [j.], moc strugi (automat dyszy — impulsy PWM i
+   * ciągła struga, 0..1) × widoczność maskowania, prędkość okrętu [j/s] (scena). Wszystkie dysze z mocą
+   * ≥ ENGINE_FRAME_SIDE_MIN, także poniżej progu modelu dyszy (SideNozzleFrame ma tylko dysze z modelem 3D).
+   */
+  sdX: new Float64Array(ENGINE_FRAME_SIDE_CAP),
+  sdY: new Float64Array(ENGINE_FRAME_SIDE_CAP),
+  sdDX: new Float32Array(ENGINE_FRAME_SIDE_CAP),
+  sdDY: new Float32Array(ENGINE_FRAME_SIDE_CAP),
+  sdR: new Float32Array(ENGINE_FRAME_SIDE_CAP),
+  sdP: new Float32Array(ENGINE_FRAME_SIDE_CAP),
+  sdVX: new Float32Array(ENGINE_FRAME_SIDE_CAP),
+  sdVY: new Float32Array(ENGINE_FRAME_SIDE_CAP),
+  sdN: 0,
 
   // bieżący okręt (beginShip … endShip)
   _e: null,
@@ -67,6 +89,7 @@ export const EngineFrame = {
     for (let i = 0; i < this.count; i++) this.entity[i] = null;
     this.count = 0;
     this.nzN = 0;
+    this.sdN = 0;
     this.serial++;
     this._e = null;
     this._n = 0;
@@ -164,6 +187,38 @@ export const EngineFrame = {
     this.nzFrom[k] = from;
     this.nzCount[k] = m > 0 ? m : 0;
     return k;
+  },
+
+  /**
+   * Dysza SIDE z ciągiem: wylot dzwonu i kierunek wydechu (scena), promień wylotu [j.], moc (× maskowanie), prędkość
+   * okrętu (scena). Bez okrętu w toku (beginShip) — dysze SIDE nie należą do gromady MAIN. Zwraca indeks albo −1
+   * (moc poniżej progu, NaN, pełna lista; zdublowany marker edytora — ta sama dysza: wylot bliżej niż pół promienia
+   * od dyszy tego okrętu — łączy moc w jednej).
+   */
+  side(x, y, dirX, dirY, radius, power, vx = 0, vy = 0, from = -1) {
+    if (!(power >= ENGINE_FRAME_SIDE_MIN) || !(radius > 0)) return -1;
+    if (!(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(dirX) && Number.isFinite(dirY))) return -1;
+    if (from >= 0) {
+      const d2 = radius * radius * 0.25;
+      for (let i = from; i < this.sdN; i++) {
+        const dx = this.sdX[i] - x, dy = this.sdY[i] - y;
+        if (dx * dx + dy * dy < d2) {
+          if (power > this.sdP[i]) this.sdP[i] = power > 1 ? 1 : power;
+          return i;
+        }
+      }
+    }
+    if (this.sdN >= ENGINE_FRAME_SIDE_CAP) return -1;
+    const i = this.sdN++;
+    this.sdX[i] = x;
+    this.sdY[i] = y;
+    this.sdDX[i] = dirX;
+    this.sdDY[i] = dirY;
+    this.sdR[i] = radius;
+    this.sdP[i] = power > 1 ? 1 : power;
+    this.sdVX[i] = Number.isFinite(vx) ? vx : 0;
+    this.sdVY[i] = Number.isFinite(vy) ? vy : 0;
+    return i;
   },
 
   /** Indeks okrętu w tej klatce albo −1. */

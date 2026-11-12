@@ -10,7 +10,7 @@
 // META_REFRESH zebrań, rozłożone w czasie; w dużej bitwie dawniej liczone dla każdego okrętu co 100 ms.
 
 import { RADAR_TUNE, radarClassCode } from './radarConfig.js';
-import { RADAR_SRC } from './radarTracker.js';
+import { RADAR_KIND, RADAR_SRC } from './radarTracker.js';
 
 const FIGHTER_RE = /fighter|interceptor|bomber/;
 // Co tyle zebrań (~1,6 s przy 10 Hz) dane bytu liczone od nowa (nazwa, wymiary kadłuba po budowie ciała).
@@ -310,6 +310,44 @@ export function createRadarFeed(tune = RADAR_TUNE) {
             r.length = meta.length; r.width = meta.width;
             r.sprite = meta.sprite; r.spriteRot = meta.spriteRot;
           }
+        }
+      }
+
+      // ---- kontenery-łup (paczki po zniszczonych statkach ruchu; bez strony, bursztyn jak lampka-boja) — env.loot:
+      //      ramka obrazu łupu (src/render/blocks/lootBlock.js — createLootFrame), już bez paczek ukrytych przez mgłę;
+      //      klucz śladu = stały numer paczki (uid), pozycja z rekordu (STATIC) ----
+      const loot = env.loot;
+      if (loot && loot.count > 0) {
+        let m = 0;
+        for (let i = 0; i < loot.count && n < tune.maxTracks && m < 32; i++) {
+          const dx = loot.x[i] - ox;
+          const dy = loot.y[i] - oy;
+          if (dx * dx + dy * dy > prSq) continue;
+          const r = rec(n++);
+          m++;
+          r.key = loot.uid[i]; r.src = RADAR_SRC.STATIC; r.kind = RADAR_KIND.LOOT; r.aff = 'neutral';
+          r.x = loot.x[i]; r.y = loot.y[i]; r.vx = 0; r.vy = 0; r.angle = loot.ang[i];
+          r.cls = 'LT'; r.name = 'KONTENER'; r.idKnown = true; r.length = 16; r.width = 8;
+        }
+      }
+
+      // ---- kapsuły ratunkowe (lecą do stacji po zniszczeniu statku; bez strony, biel kadłubka) — env.pods: ramka
+      //      obrazu kapsuł (src/render/blocks/escapePodBlock.js — createEscapePodFrame), już bez kapsuł ukrytych przez
+      //      mgłę i maskowanie; klucz śladu = stały numer kapsuły (uid), pozycja z rekordu (STATIC) ----
+      const pods = env.pods;
+      if (pods && pods.count > 0) {
+        let m = 0;
+        for (let i = 0; i < pods.count && n < tune.maxTracks && m < 32; i++) {
+          // zatoka (flaga 2 — POD_BLOCK.BAY): kapsuła jeszcze w kadłubie — lampa na wraku, nie ślad na radarze
+          if (pods.flags && (pods.flags[i] & 2) !== 0) continue;
+          const dx = pods.x[i] - ox;
+          const dy = pods.y[i] - oy;
+          if (dx * dx + dy * dy > prSq) continue;
+          const r = rec(n++);
+          m++;
+          r.key = pods.uid[i]; r.src = RADAR_SRC.STATIC; r.kind = RADAR_KIND.POD; r.aff = 'neutral';
+          r.x = pods.x[i]; r.y = pods.y[i]; r.vx = 0; r.vy = 0; r.angle = pods.ang[i];
+          r.cls = 'EP'; r.name = 'KAPSUŁA'; r.idKnown = true; r.length = 20; r.width = 8;
         }
       }
 

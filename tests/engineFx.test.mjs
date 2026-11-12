@@ -69,7 +69,7 @@ test('resolveEngineFx: zapis nadpisuje domyślne pole po polu', () => {
 });
 
 test('kadłub bez wpisu: brak dyszy w pikselach, palety z zapasu', () => {
-  const fx = resolveEngineFx('container_ship');
+  const fx = resolveEngineFx('megafreighter');
   assert.equal(fx.mainNozzle, null);
   assert.ok(mainExhaustPaletteIndex(fx.mainPalette) >= 0);
   assert.ok(warpPlasmaPaletteIndex(fx.warpPalette) >= 0);
@@ -91,7 +91,7 @@ test('buildEntityEngineFx: dysza w pikselach PNG przez skalę markerów, indeksy
   assert.equal(WARP_PLASMA_PALETTES[fx.warpPaletteIndex].id, ENGINE_FX_DEFAULTS.terran_carrier.warpPalette);
   const noScale = buildEntityEngineFx('atlas', null, 0);
   assert.equal(noScale.nozzleRadius, ENGINE_FX_DEFAULTS.atlas.mainNozzle * 0.5, 'skala ≤ 0 = 1');
-  assert.equal(buildEntityEngineFx('container_ship').nozzleRadius, null);
+  assert.equal(buildEntityEngineFx('megafreighter').nozzleRadius, null);
 });
 
 test('zapasowy promień dyszy rośnie z długością kadłuba', () => {

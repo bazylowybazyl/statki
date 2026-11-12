@@ -7,6 +7,8 @@ import {
 } from '../config/units.js';
 import { drawWreckFieldMarkers } from './wreckFieldMarkers.js';
 import { CicBeltLayer, CIC_BELT_TUNE, CIC_BELT_PALETTES, describeCicBeltAt } from './cicBeltLayer.js';
+import { createCicTradeLayer } from './cicTradeLayer.js';
+import { createCicCoverageLayer } from './cicCoverageLayer.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -45,6 +47,16 @@ const CIC_CONFIG = {
 };
 
 const CIC_FIGHTER_TYPES = new Set(['fighter', 'interceptor', 'drone']);
+// TRAVEL TO przyciąga do celu w tylu px mapy od kliknięcia (DECYZJE-2 T1 — index.html: travelSnapAt / travelToSnapped).
+const CIC_TRAVEL_SNAP_PX = 28;
+/** Podpis celu TRAVEL TO w menu PPM (skrót — menu ma 160 px, „▶ TRAVEL TO” zajmuje ~83 px monospace 11 px: podpis
+ * najwyżej 9 znaków ≈ 59 px, odstęp ~10 px; recenzja T ust. 11 — przy 11 znakach podpis wchodził na etykietę). */
+const CIC_TRAVEL_HINT_MAX = 9;
+const CIC_TRAVEL_HINT_PX = 60;
+function cicTravelHint(label) {
+  const t = String(label || '').toUpperCase();
+  return t.length > CIC_TRAVEL_HINT_MAX ? `${t.slice(0, CIC_TRAVEL_HINT_MAX - 1)}…` : t;
+}
 const CIC_SILHOUETTE_CACHE = new Map();
 const CIC_SOURCE_IDS = new WeakMap();
 const EMPTY_CIC_WORLD_FEATURES = Object.freeze([]);
@@ -217,16 +229,18 @@ function cicGlowStamp(color) {
   return c;
 }
 
-// Słońce: 0 — korona (dawny gradient poświaty), 1 — tarcza.
+// Słońce: 0 — korona (dawny gradient poświaty), 1 — tarcza. Tarcza 256 px z marginesem CIC_SUN_DISC_PAD (przy
+// gigantycznym słońcu tarcza ma na mapie setki px — bez marginesu skraj stempla ścinał górę i dół koła).
 const CIC_SUN_STAMPS = [null, null];
+const CIC_SUN_DISC_PAD = 3;
 function cicSunStamp(kind) {
   if (CIC_SUN_STAMPS[kind]) return CIC_SUN_STAMPS[kind];
-  const S = kind ? 64 : 128;
+  const S = kind ? 256 : 128;
   const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(S, S) : document.createElement('canvas');
   c.width = S; c.height = S;
   const g = c.getContext('2d');
   const h = S / 2;
-  const grad = g.createRadialGradient(h, h, kind ? 0 : h * 0.06, h, h, h);
+  const grad = g.createRadialGradient(h, h, kind ? 0 : h * 0.06, h, h, kind ? h - CIC_SUN_DISC_PAD : h);
   if (kind) {
     grad.addColorStop(0, '#fff8e0');
     grad.addColorStop(0.5, '#ffe080');
@@ -313,7 +327,8 @@ export function getCicEntitySpriteRotation(entity) {
 
 // Połowy boków prostokąta ekranu (osiowego) opisanego na obróconym kadłubie — ramka zaznaczenia
 // jednostek (src/ui/commandOverlay.js). 0 / 0, gdy kadłub nie ma wymiarów.
-export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0 }) {
+/** Półwymiary ramki kadłuba na ekranie [px]; roll — obrót kadru (kąt ekranu = kąt świata − roll; CIC: 0). */
+export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0 }, roll = 0) {
   const metrics = getEntityHullMetrics(entity, zoom);
   const w = metrics.drawW;
   const h = metrics.drawH;
@@ -322,7 +337,7 @@ export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0
     out.hy = 0;
     return out;
   }
-  const angle = readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity);
+  const angle = readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity) - (Number(roll) || 0);
   const c = Math.abs(Math.cos(angle));
   const s = Math.abs(Math.sin(angle));
   out.hx = (w * c + h * s) * 0.5;
@@ -713,6 +728,36 @@ const CIC_BELT_VIEW = { W: 0, H: 0, cx: 0, cy: 0, viewX: 0, viewY: 0, zoom: 1, b
 if (typeof window !== 'undefined') window.CicBeltTune = CIC_BELT_TUNE;
 // Warstwa pasów nie może zatrzymać pętli gry (wyjątek w rysunku CIC = koniec klatek): błąd raz do konsoli.
 let cicBeltLayerFailed = false;
+// Komputer handlowy (E7, src/ui/cicTradeLayer.js) — warstwa „HANDEL”; dane z ruchu v2 przez `setTradeSource`.
+const cicTradeLayer = createCicTradeLayer();
+// Mgła wojny w warstwie handlu: port ukryty jak znacznik stacji (`SensorSystem.hides`, drawStationMarkers).
+cicTradeLayer.setHiddenTest(portId => {
+  const list = window.stations;
+  if (!Array.isArray(list) || !window.SensorSystem?.hides) return false;
+  for (const st of list) if (st && st.id === portId) return !!window.SensorSystem.hides(st);
+  return false;
+});
+let cicTradeLayerFailed = false;
+function cicTradeLayerFail(e) {
+  if (!cicTradeLayerFailed) console.error('[CIC] warstwa handlu:', e);
+  cicTradeLayerFailed = true;
+}
+// Zasięgi radarów (prototyp ?radarZasiegi, src/ui/cicCoverageLayer.js) — warstwa „ZASIĘGI”; obraz czujników z gry
+// przez `setCoverageSource`. Rzut mapy bez alokacji: pola widoku ustawia draw() co klatkę.
+const cicCoverageLayer = createCicCoverageLayer();
+let cicCoverageLayerFailed = false;
+function cicCoverageLayerFail(e) {
+  if (!cicCoverageLayerFailed) console.error('[CIC] warstwa zasięgów:', e);
+  cicCoverageLayerFailed = true;
+}
+const CIC_COV_VIEW = {
+  W: 0, H: 0, ox: 0, oy: 0, cx: 0, cy: 0, zoom: 1, roll: 0, player: null,
+  project(x, y, out) { out.x = this.cx + (x - this.ox) * this.zoom; out.y = this.cy + (y - this.oy) * this.zoom; return out; },
+  // poza bieżąca — warstwa woła tylko dla bytu zidentyfikowanego w zasięgu wzroku (mgła wojny nietknięta)
+  poseOf(e, out) { out.x = finiteNumber(e.pos?.x ?? e.x, 0); out.y = finiteNumber(e.pos?.y ?? e.y, 0); out.angle = finiteNumber(e.angle, 0); return true; },
+  hullHalf(e, out) { return getCicEntityScreenHalfExtents(e, this.zoom, out); }
+};
+
 function cicBeltLayerFail(e) {
   if (cicBeltLayerFailed) return;
   cicBeltLayerFailed = true;
@@ -763,6 +808,25 @@ export const CICDisplay = {
 
   getSelectedTarget()  { return cicSelectedContacts[0]?.entity || cicSelectedTarget || null; },
   getSelectedTargets() { return cicSelectedContacts.map(c => c.entity).filter(Boolean); },
+
+  /** Komputer handlowy (warstwa „HANDEL”, klawisz H w CIC): trasy, porty, okazje z ruchu v2. */
+  toggleTrade() { return cicTradeLayer.toggle(); },
+  get tradeEnabled() { return cicTradeLayer.enabled; },
+  /** Źródło danych: `() => Promise<summary>` (most ruchu v2 — `requestTradeSummary`). */
+  setTradeSource(fn) { cicTradeLayer.setSource(fn); },
+  /** Kupcy towaru w panelu HANDEL (E23a): `{ cargo: () => ładownia, partners: (towar, ilość) => wynik }`. */
+  setTradePartnerSource(src) { cicTradeLayer.setPartnerSource(src); },
+  /** Wybór towaru w sekcji „KUPCY TOWARU” wprost (narzędzia). */
+  selectTradePartnerKey(key) { return cicTradeLayer.selectPartnerKey(key); },
+  tradeStats() { return cicTradeLayer.stats(); },
+
+  /** Zasięgi radarów (warstwa „ZASIĘGI”, klawisz Z w CIC; prototyp ?radarZasiegi): strefy radarów wroga i własne. */
+  toggleCoverage() { return cicCoverageLayer.toggle(); },
+  get coverageEnabled() { return cicCoverageLayer.enabled; },
+  get coverageAvailable() { return cicCoverageLayer.hasSource; },
+  /** Źródło: `() => obraz czujników` (src/game/sensorPicture.js) albo null. */
+  setCoverageSource(fn) { cicCoverageLayer.setSource(fn); },
+  coverageStats() { return cicCoverageLayer.stats(); },
 
   /** Jump to system view (V key) — sets target zoom to system level */
   toggleSystemView() {
@@ -862,8 +926,12 @@ export const CICDisplay = {
             // — dawne { type: 'moveTo', x, y } nie ruszało statku i nie miało linii.
             if (window.ship) window.ship.command = { type: 'move', target: { x: worldX, y: worldY }, arrival: 90 };
           } else if (item.action === 'travel') {
-            // TRAVEL TO (index.html: setTravelTarget) — napęd dobiera podróż (dziś warp odcinkami).
-            if (window.setTravelTarget) window.setTravelTarget(worldX, worldY);
+            // TRAVEL TO (index.html: setTravelTarget) — napęd dobiera podróż (warp odcinkami). Przyciąga do najbliższego
+            // celu przy kliknięciu (DECYZJE-2 T1 — index.html: travelToSnapped; promień CIC_TRAVEL_SNAP_PX na mapie),
+            // punkt w próżni zostaje „punktem”.
+            const snapR = CIC_TRAVEL_SNAP_PX / Math.max(1e-9, cicZoom);
+            if (window.travelToSnapped) window.travelToSnapped(worldX, worldY, snapR);
+            else if (window.setTravelTarget) window.setTravelTarget(worldX, worldY);
           } else if (item.action === 'drone') {
             const droneSystem = window.SpotterDroneSystem;
             const ship = window.ship;
@@ -919,10 +987,12 @@ export const CICDisplay = {
         const droneSystem = window.SpotterDroneSystem;
         const hasDroneSystem = !!droneSystem;
         const hasActiveDrones = !!droneSystem?.getDrones?.().some(d => d && !d.dead);
+        // TRAVEL TO: podgląd celu, do którego przyciągnie kliknięcie (index.html: travelSnapAt) — nazwa w menu.
+        const snap = window.travelSnapAt ? window.travelSnapAt(worldX, worldY, CIC_TRAVEL_SNAP_PX / Math.max(1e-9, cicZoom)) : null;
         cicContextMenu.items = [
           { label: 'ATAK', action: hasSelected ? 'attack' : null },
           { label: 'RUCH', action: 'move' },
-          { label: 'TRAVEL TO', action: 'travel' },
+          { label: 'TRAVEL TO', action: 'travel', hint: snap ? cicTravelHint(snap.label) : 'PUNKT' },
           { label: 'SEND DRONE', action: hasDroneSystem ? 'drone' : null },
           { label: 'RECALL DRONES', action: hasActiveDrones ? 'recallDrones' : null },
         ];
@@ -982,6 +1052,8 @@ export const CICDisplay = {
     cicMouseWorld.x = shipX + (x - cx) / cicZoom;
     cicMouseWorld.y = shipY + (y - cy) / cicZoom;
     cicMouseInView = true;
+    // Komputer handlowy: kursor nad towarem w sekcji „KUPCY TOWARU” panelu HANDEL wybiera towar.
+    try { cicTradeLayer.hover(x, y); } catch (e) { cicTradeLayerFail(e); }
   },
 
   /** Handle mouse up in CIC */
@@ -1143,6 +1215,20 @@ export const CICDisplay = {
     // podpisy pasów, rodzin i olbrzymy nad orbitami
     try { cicBeltLayer.drawLabels(ctx, beltView, window.__beltWorld?.giants?.entries || null); } catch (e) { cicBeltLayerFail(e); }
 
+    // === HANDEL (komputer handlowy — src/ui/cicTradeLayer.js; [H]) ===
+    try {
+      cicTradeLayer.update(performance.now());
+      cicTradeLayer.draw(ctx, W, H, toScreen);
+    } catch (e) { cicTradeLayerFail(e); }
+
+    // === ZASIĘGI RADARÓW (prototyp — src/ui/cicCoverageLayer.js; [Z]) ===
+    if (cicCoverageLayer.enabled) {
+      try {
+        CIC_COV_VIEW.player = ship; CIC_COV_VIEW.W = W; CIC_COV_VIEW.H = H; CIC_COV_VIEW.ox = shipX; CIC_COV_VIEW.oy = shipY; CIC_COV_VIEW.cx = cx; CIC_COV_VIEW.cy = cy; CIC_COV_VIEW.zoom = cicZoom;
+        cicCoverageLayer.draw(ctx, W, H, CIC_COV_VIEW, performance.now() / 1000);
+      } catch (e) { cicCoverageLayerFail(e); }
+    }
+
     // === RANGE RINGS (from ship center) ===
     const shipScr = toScreen(ship.pos.x, ship.pos.y);
     ctx.strokeStyle = CIC_CONFIG.colors.rangeRing;
@@ -1163,10 +1249,10 @@ export const CICDisplay = {
     }
     ctx.setLineDash([]);
 
-    // === SENSOR RANGES ===
+    // === SENSOR RANGES === (przy warstwie ZASIĘGI jej obrys własnych czujników zastępuje okręgi)
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
-    for (const src of SensorSystem.getSensorSources()) {
+    for (const src of (cicCoverageLayer.enabled ? [] : SensorSystem.getSensorSources())) {
       const sp = toScreen(src.x, src.y);
       const sr = src.range * cicZoom;
       switch (src.type) {
@@ -1450,6 +1536,12 @@ export const CICDisplay = {
         ctx.textAlign = 'left';
         ctx.fillStyle = disabled ? 'rgba(148, 163, 184, 0.35)' : '#94d4ff';
         ctx.fillText('▶ ' + item.label, mx + 10, iy + 17);
+        if (item.hint && !disabled) {
+          // cel, do którego przyciągnie TRAVEL TO (albo „PUNKT” w próżni)
+          ctx.textAlign = 'right';
+          ctx.fillStyle = 'rgba(148, 212, 255, 0.6)';
+          ctx.fillText(item.hint, mx + MENU_W - 8, iy + 17, CIC_TRAVEL_HINT_PX);
+        }
       }
     }
 
@@ -1530,8 +1622,14 @@ export const CICDisplay = {
       rows.push([`STATEK  ${describeCicBeltAt(beltField, ship.pos.x, ship.pos.y) || 'POZA PASAMI'}`, '#e8c48a']);
       if (cicMouseInView) rows.push([`KURSOR  ${describeCicBeltAt(beltField, cicMouseWorld.x, cicMouseWorld.y) || '—'}`, '#c9a978']);
     }
-    const panelBottom = drawCicInfoPanel(ctx, W, isSystemScale ? 'CIC · WIDOK UKŁADU' : 'CIC · WIDOK TAKTYCZNY',
+    let panelBottom = drawCicInfoPanel(ctx, W, isSystemScale ? 'CIC · WIDOK UKŁADU' : 'CIC · WIDOK TAKTYCZNY',
       rows, !!beltField, isSystemScale);
+    if (cicTradeLayer.enabled) {
+      try { panelBottom = cicTradeLayer.drawPanel(ctx, W, panelBottom + 10, CIC_PANEL_W); } catch (e) { cicTradeLayerFail(e); }
+    }
+    if (cicCoverageLayer.enabled) {
+      try { panelBottom = cicCoverageLayer.drawPanel(ctx, W, panelBottom + 10, CIC_PANEL_W); } catch (e) { cicCoverageLayerFail(e); }
+    }
 
     // Dane zaznaczonego celu — pod panelem (dawniej w prawym dolnym rogu, pod podpowiedziami kokpitu)
     const _panelTarget = cicSelectedContacts[0]?.entity || null;
@@ -1606,12 +1704,15 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const blend = cicSystemBlend;
   const sunMinR = 3 + blend * 9;
   const sunScreenR = Math.max(sunMinR, SUN.r * zoom);
-  // Sun glow + body — stemple (gradienty pieczone raz); poza kadrem nic
+  // Sun glow + body — stemple (gradienty pieczone raz); poza kadrem nic. Poświata ×4–6 tylko przy kropce słońca
+  // (widok układu); tarcza w skali mapy (SUN.r 200 tys. j.) — korona ~1,6 promienia jak w 3D (DirectSun).
   ctx.save();
-  const glowR = sunScreenR * (4 + blend * 2);
+  const dotK = Math.max(0, Math.min(1, (40 - sunScreenR) / 30));
+  const glowR = sunScreenR * (1.6 + (2.4 + blend * 2) * dotK);
   if (sunScr.x > -glowR && sunScr.x < W + glowR && sunScr.y > -glowR && sunScr.y < H + glowR) {
     ctx.drawImage(cicSunStamp(0), sunScr.x - glowR, sunScr.y - glowR, glowR * 2, glowR * 2);
-    ctx.drawImage(cicSunStamp(1), sunScr.x - sunScreenR, sunScr.y - sunScreenR, sunScreenR * 2, sunScreenR * 2);
+    const discR = sunScreenR * 128 / (128 - CIC_SUN_DISC_PAD);
+    ctx.drawImage(cicSunStamp(1), sunScr.x - discR, sunScr.y - discR, discR * 2, discR * 2);
   }
 
   // Sun label
@@ -1619,7 +1720,8 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const sunLabelSize = Math.round(8 + blend * 4);
   ctx.font = blend > 0.5 ? `bold ${sunLabelSize}px monospace` : `${sunLabelSize}px monospace`;
   ctx.textAlign = 'center';
-  ctx.fillText('SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
+  // podpis gwiazdy układu (src/data/starSystems.js — `label`; strona wpisuje go do SUN)
+  ctx.fillText(SUN.label || 'SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
   ctx.restore();
 
   // === PLANET ORBITS & PLANETS ===

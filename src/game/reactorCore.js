@@ -40,6 +40,7 @@
 
 import { HullBodies, hullImpactResult, hullSpriteRotation } from './hullBodies.js';
 import { activateNode } from './beamActiveRegion3D.js';
+import { reactorModelParams } from '../data/reactorCores.js';
 import {
   CORE_STATE, CORE_STATE_RANK, CORE_STATE_LABEL, coreStateRank, CORE_KILL_MODE, CORE_PROBE_CONFIG,
   CORE_DEFAULTS, resolveCoreClassId, getCoreClassProfile, normalizeCoreMarker, computeCoreBlast,
@@ -258,22 +259,9 @@ export function reactorCoreFrame(core, out = {}, pose = null) {
   return out;
 }
 
-/**
- * Parametry modelu 3D rdzenia z markera (obraz — reactor3D.js; rozgrywka ich nie czyta): housingR — promień
- * obrysu obudowy [j. świata] (`hr` markera w px PNG × `pxToWorld`; bez niego model w skali komory), housing —
- * false: wnętrze bez obudowy, kind — rodzaj modelu (terran / pirate / atlas; bez niego z gospodarza), tier —
- * poziom rdzenia (R1–R6, etap 2 kreatora). null — wszystko domyślne.
- */
-export function reactorModelParams(marker, pxToWorld) {
-  const hr = finite(marker?.hr, 0);
-  const out = {
-    housingR: hr > 0 ? hr * finite(pxToWorld, 1) : 0,
-    housing: marker?.housing !== false,
-    kind: marker?.model || null,
-    tier: marker?.tier || null
-  };
-  return out.housingR > 0 || !out.housing || out.kind || out.tier ? out : null;
-}
+// Parametry modelu 3D rdzenia z markera — `reactorModelParams` w src/data/reactorCores.js (E17b: czyta je też
+// render proxy statków ruchu), tu re-eksport.
+export { reactorModelParams };
 
 /** Pozycja spoczynkowa komórki komory k w świecie gry (u bieżącego gospodarza). */
 export function reactorCellWorld(core, k, out = {}) {
@@ -316,7 +304,8 @@ export function attachReactorCores(entity, markers, options = {}) {
     killMode: options.killMode || CORE_DEFAULTS.killMode,
     config: { ...CORE_DEFAULTS, ...(options.config || {}) },
     color: options.color || null,
-    kind: options.kind || null
+    kind: options.kind || null,
+    bridgeCells: bridgeArmorCells(entity, hull)
   };
   const claimed = new Set();
   const cores = [];
@@ -352,10 +341,13 @@ function buildCore(entity, hull, marker, index, opts, claimed) {
     const key = s.ix[i] + s.iy[i] * dx;
     if (claimed.has(key)) continue; // komory się nie nakładają
     claimed.add(key);
-    // Pancerz: maxHp × armorMul, ten sam ułamek zdrowia.
-    const b0 = s.maxHp[i];
-    const frac = b0 > 0 ? Math.max(0, s.hp[i]) / b0 : 1;
-    s.maxHp[i] = b0 * armorMul;
+    // Pancerz: maxHp × armorMul, ten sam ułamek zdrowia. Komórka strefy mostka (rdzeń Atlasa pod mostkiem
+    // rufowym) — od bazy sprzed mostka i WIĘKSZY z mnożników, nie iloczyn.
+    const under = opts.bridgeCells?.get(key);
+    const b0 = under ? under.base : s.maxHp[i];
+    const cur = s.maxHp[i];
+    const frac = cur > 0 ? Math.max(0, s.hp[i]) / cur : 1;
+    s.maxHp[i] = b0 * (under ? Math.max(armorMul, under.mul) : armorMul);
     s.hp[i] = frac * s.maxHp[i];
     ixs.push(s.ix[i]); iys.push(s.iy[i]); base.push(b0); maxs.push(s.maxHp[i]);
   }
@@ -416,6 +408,27 @@ function buildCore(entity, hull, marker, index, opts, claimed) {
   };
   reactorCoreWorld(core, _p);
   return core;
+}
+
+/**
+ * Komórki stref mostków na belkach tego kadłuba (mostki montują się przed rdzeniami — `attachEntityBridges`):
+ * klucz siatki → { base (HP sprzed mostka), mul (pancerz strefy) }. Null — bez mostków albo z innego rodu.
+ */
+function bridgeArmorCells(entity, hull) {
+  const st = entity?.bridgeState;
+  if (!st || st.lineage !== hull.dmgKey || !Array.isArray(st.bridges)) return null;
+  const dx = hull.body.dims.x;
+  let map = null;
+  for (const b of st.bridges) {
+    if (!b?.cellX || !b.cellBaseHp) continue;
+    const mul = Number(b.def?.armorMul) || 1;
+    for (let k = 0; k < b.cellX.length; k++) {
+      const base = b.cellBaseHp[k];
+      if (!(base > 0)) continue;
+      (map || (map = new Map())).set(b.cellX[k] + b.cellY[k] * dx, { base, mul });
+    }
+  }
+  return map;
 }
 
 /** Zdejmuje rdzenie z encji i przywraca pancerz komór (tylko u bieżącego gospodarza). */
@@ -986,13 +999,8 @@ export function applyReactorDetonation(core, variantId, blast, ctx = {}) {
   res.vaporized = vaporized;
 
   // 3) Rozpad od razu (encje wraków powstają w haku onWreck → window.wrecks).
-  if (!body.dead && body.activeNodes > 0) {
-    const queued = D.splitQueue;
-    D.splitQueue = [body];
-    body.structureDirty = true;
-    D.processSplits([body]);
-    for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
-  }
+  // HullBodies.splitNow: encja wraku dostaje pozę i pivot przebudowanego ciała (nowy środek masy) od razu.
+  if (!body.dead && body.activeNodes > 0) HullBodies.splitNow(wreck);
   const frags = res.fragments;
   if (reactorHull(wreck)) frags.push(wreck);
   if (wrecks) for (let i = after; i < wrecks.length; i++) if (wrecks[i] && !wrecks[i].dead) frags.push(wrecks[i]);

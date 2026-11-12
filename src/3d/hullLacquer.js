@@ -303,9 +303,9 @@ function createShapeTexture(data, w, h) {
   return texture;
 }
 
-function bakeShapeTextureFromImage(image) {
+function bakeShapeTextureFromImage(image, maxSide = SHAPE_MAP_DEFAULTS.maxSide) {
   const { w: iw, h: ih } = imageSize(image);
-  const scale = Math.min(1, SHAPE_MAP_DEFAULTS.maxSide / Math.max(iw, ih));
+  const scale = Math.min(1, maxSide / Math.max(iw, ih));
   const w = Math.max(2, Math.round(iw * scale));
   const h = Math.max(2, Math.round(ih * scale));
   const canvas = makeCanvas(w, h);
@@ -419,11 +419,13 @@ export const HullLacquer = {
   // Obiekt uniformu mapy kształtu wspólny dla wszystkich kadłubów z tym samym
   // obrazem. Pieczenie leci w kolejce (jeden obraz na klatkę), a do tego czasu
   // uniform wskazuje mapę płaską z wagą 0 — statek przez chwilę jest matowy.
-  acquireShapeUniform(image) {
+  acquireShapeUniform(image, maxSide = 0) {
     if (!image) return this.flatShapeUniform;
     let entry = this._entries.get(image);
     if (!entry) {
-      entry = { image, refs: 0, texture: null, uniform: { value: flatShapeTexture } };
+      // `maxSide` mniejszy niż domyślny — proxy statków ruchu (E17): tańszy wypiek na wątku renderu; decyduje pierwszy.
+      entry = { image, refs: 0, texture: null, uniform: { value: flatShapeTexture },
+        maxSide: maxSide > 0 ? Math.min(maxSide, SHAPE_MAP_DEFAULTS.maxSide) : SHAPE_MAP_DEFAULTS.maxSide };
       this._entries.set(image, entry);
       this._pending.push(entry);
     }
@@ -472,7 +474,7 @@ export const HullLacquer = {
       clampNum(t.sunElevDeg, 0, 89, 30) * DEG
     );
     // W warpie bliskie obłoki gasną: kafel przewijałby się szybciej niż klatki.
-    const warpActive = RenderWorld.warp?.state === 'active';
+    const warpActive = RenderWorld.warp?.state === 'active' || RenderWorld.hyper?.state === 'active';
     const fadeStep = dt / SKY_WARP_FADE_S;
     this._skyFade = warpActive
       ? Math.max(0, this._skyFade - fadeStep)
@@ -544,7 +546,7 @@ export const HullLacquer = {
         continue;
       }
       try {
-        entry.texture = bakeShapeTextureFromImage(entry.image);
+        entry.texture = bakeShapeTextureFromImage(entry.image, entry.maxSide);
       } catch (err) {
         console.warn('[HullLacquer] Nie udało się wypiec mapy kształtu:', err);
         entry.texture = null;

@@ -15,6 +15,7 @@ import {
   ASTEROID_YIELD,
   getBagValue
 } from '../../src/data/resources.js';
+import { POPULATION_CENTERS, WORKFORCE_PER_BUILDING } from '../../src/data/workforce.js';
 import { createSuite, runIfMain } from './harness.mjs';
 
 // Marże z projektu ekonomii: rafinacja ~1.7x, montaż ~1.5x, recykling złomu 1.33x.
@@ -73,6 +74,8 @@ export function run() {
     for (const id of Object.keys(entry.yields)) producible.add(id);
   }
   producible.add('scrap'); // z wraków, poza łańcuchem wydobycia
+  // Workforce: z ośrodków ludności (ringi, strefy zielone), poza łańcuchem wydobycia.
+  if (Object.values(POPULATION_CENTERS).some(p => Object.values(p).some(v => v > 0))) producible.add('workforce');
   // Kilka przebiegów, bo receptury tworzą łańcuch (T0 → T1 → T2).
   for (let pass = 0; pass < RECIPE_KEYS.length; pass++) {
     let grew = false;
@@ -96,6 +99,8 @@ export function run() {
   t.check('każdy surowiec ma etykietę, kolor, wartość i masę', missingFields.length === 0, `(${missingFields.join(', ')})`);
   t.check('wartości są dodatnie', RESOURCE_KEYS.every(id => RESOURCES[id].value > 0));
   t.check('masy są dodatnie', RESOURCE_KEYS.every(id => RESOURCES[id].mass > 0));
+  t.check('workforce ma producenta (ośrodki ludności) i odbiorcę (obsada budynków)',
+    producible.has('workforce') && Object.values(WORKFORCE_PER_BUILDING).some(v => v > 0));
   t.note(`${RESOURCE_KEYS.length} surowców, ${RECIPE_KEYS.length} receptur`);
 
   return t.results;

@@ -25,7 +25,7 @@ import {
 } from '../game/shipSystem.js';
 import { isCloakHidden } from '../game/cloak.js';
 import { getFlightIntent, resolveShipFlightSpec } from '../game/flight/shipFlightModel.js';
-import { clearModifierSource, fireRateModifier, modifierFireRate, setModifierSource } from '../game/shipModifiers.js';
+import { clearModifierSource, fireRateModifier, modifierFireRate, setModifierSource, weaponRangeFor } from '../game/shipModifiers.js';
 
 export const NPC_SYSTEM_AI = Object.freeze({
   // Szybki ogień: ułamek dział z celem w zasięgu i łuku; warunek trwa tyle sekund.
@@ -88,7 +88,7 @@ function npcGunRange(npc) {
   for (let i = 0; i < n; i++) {
     const w = ws[i];
     if (!isGun(w)) continue;
-    const br = Number(w.def?.baseRange) || 0;
+    const br = weaponRangeFor(npc, w.def, Number(w.def?.baseRange) || 0);
     if (br > r) r = br;
   }
   npc.__fSysRangeN = n;
@@ -116,7 +116,7 @@ export function npcWantsRapidFire(npc, share = NPC_SYSTEM_AI.rapidShare) {
     if (!t || t.dead || t.destroyed || t.isWreck || isProjectile(t) || isCloakHidden(t)) continue;
     const dx = (Number(targetX(t)) || 0) - nx;
     const dy = (Number(targetY(t)) || 0) - ny;
-    const range = (Number(w.def?.baseRange) || 1000) + (Number(t.radius) || 0);
+    const range = weaponRangeFor(npc, w.def, Number(w.def?.baseRange) || 1000) + (Number(t.radius) || 0);
     if (dx * dx + dy * dy > range * range) continue;
     const arc = Number(w.arc);
     if (arc >= 0 && Math.abs(wrapSysAngle(Math.atan2(dy, dx) - (ang + (Number(w.mountAngle) || 0)))) > arc) continue;

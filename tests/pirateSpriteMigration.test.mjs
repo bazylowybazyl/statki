@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { migratePirateSpriteLayout } from '../src/data/pirateSpriteMigration.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
+import { NAV_LIGHT_LAYOUT } from '../src/data/shipNavLights.js';
 
 test('legacy preset mounts follow the new artwork without changing IDs or loadouts', () => {
   const saved = { hardpoints: [{ id: 'm_bcebjuk', type: 'main', x: -100, y: -70, mount: 'rail' }] };
@@ -20,7 +21,7 @@ test('custom markers retain normalized position and empty arrays remain intentio
     hardpoints: [{ id: 'custom', x: 140.8, y: -153.6, type: 'aux', rot: 33 }],
     engines: { main: [], side: [{ id: 'side', x: 0, y: -153.6, offsetX: 28.16 }] },
     cores: [{ id: 'reactor', x: 0, y: 0, r: 20 }],
-    lights: { position: [{ id: 'light', x: 140.8, y: 0, color: '#ff0000' }] }
+    lights: { navLayout: NAV_LIGHT_LAYOUT, position: [{ id: 'light', x: 140.8, y: 0, color: '#ff0000' }] }
   };
   const migrated = migratePirateSpriteLayout('pirate_frigate', saved);
   assert.ok(Math.abs(migrated.hardpoints[0].x - 97.1) < 1e-9);

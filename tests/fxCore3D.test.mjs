@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 globalThis.window = globalThis.window || {};
 const THREE = await import('three/webgpu');
 const { texture } = await import('three/tsl');
-const { FxFrame, FX_DISTORT_LAYER, FX_VIEW_MARGIN, FX_MAX_DT } = await import('../src/3d/fx/fxFrame.js');
+const { FxFrame, FX_DISTORT_LAYER, FX_OVERLAY_LAYER, FX_VIEW_MARGIN, FX_MAX_DT } = await import('../src/3d/fx/fxFrame.js');
 const { GridLighting } = await import('../src/3d/fx/lightGrid.js');
 const { SimClock } = await import('../src/game/simClock.js');
 const { BloomGry, createPostUniforms, createUberPost, hdrBezpieczny } = await import('../src/3d/tsl/postGry.js');
@@ -71,6 +71,30 @@ test('klatka efektów: raz na klatkę rAF, kolejność spawn → początek → p
   close(fx.time, 0.016 + FX_MAX_DT, 1e-9);
 });
 
+test('klatka efektów z kluczem strony (worker): raz na stronę gry — dwie strony w jednym takcie rAF to dwie klatki', () => {
+  const fx = new FxFrame();
+  const r = fakeRenderer(40);
+  fx.attach(r);
+  const dts = [];
+  fx.addStep({ name: 'test', update: (ctx) => dts.push(ctx.dt) });
+  // strona 100 i 101 w TYM SAMYM takcie rAF workera (info.frame 40): obie mają klatkę efektów, czas z zegara stron
+  assert.equal(fx.frame(r, cam, null, 1920, 1080, false, 1000, 100), true);
+  assert.equal(fx.frame(r, cam, null, 1920, 1080, false, 1004.2, 101), true, 'druga strona w tym samym takcie rAF');
+  close(dts[1], 0.0042, 1e-9, 'dt = odstęp zegarów stron');
+  // ta sama strona drugi raz (podzielony ekran: drugi renderSingle) — nic
+  assert.equal(fx.frame(r, cam, null, 1920, 1080, false, 1004.2, 101), false);
+  // bez klucza (tryb off): po renderer.info.frame jak dawniej
+  r.info.frame = 41;
+  assert.equal(fx.frame(r, cam, null, 1920, 1080, false, 1008.4), true);
+  assert.equal(fx.frame(r, cam, null, 1920, 1080, false, 1012.6), false);
+  assert.equal(fx.frame(r, cam, null, 1920, 1080, false, 1016.8, 102), true, 'klucz po klatce bez klucza');
+  assert.equal(dts.length, 4);
+  // worker: klucz = numer strony (render.worker.js renderPage), Core3D przekazuje go do klatki efektów
+  const wk = read('src/render/render.worker.js');
+  assert.match(wk, /st\.Core3D\.fxFrameKey = st\.fxPerPage === false \? NaN : k;/);
+  assert.match(core, /this\.frameNowMs\(\), this\.fxFrameKey\);/);
+});
+
 test('siatka świateł: kadr kamery (z zapasem, split = suma kadrów), pusta siatka bez budowy i wysyłki', () => {
   const fx = new FxFrame();
   const r = fakeRenderer(1);
@@ -123,17 +147,7 @@ test('światła efektów: błysk z tej klatki świeci od wieku 0 (starzenie po z
 // nieinlinowanych (uniform.value = liczba, argumenty addWorld) — kilkanaście B na światło, ~150 B
 // stałe na klatkę; próg łapie alokację obiektu na światło (≥ 40 B × 18 świateł na klatkę).
 test('klatka efektów ze światłami i źródłami: bez obiektów na klatkę (zakresy wysyłki siatki na stałe)', async () => {
-  const v8 = await import('node:v8');
-  const newSpaceUsed = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
-  const allocatedBytes = (fn, n) => {
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const before = newSpaceUsed();
-      for (let i = 0; i < n; i++) fn(i);
-      const delta = newSpaceUsed() - before;
-      if (delta >= 0) return delta;
-    }
-    return Infinity;
-  };
+  const { allocatedBytes, untilSteady } = await import('./helpers/alokacje.mjs');
   const fx = new FxFrame();
   const r = fakeRenderer(1);
   fx.attach(r);
@@ -151,9 +165,11 @@ test('klatka efektów ze światłami i źródłami: bez obiektów na klatkę (za
   };
   for (let i = 0; i < 20000; i++) frame(i);
   assert.ok(fx.stats.gridBuilt && fx.stats.lights >= 17);
-  const base = allocatedBytes(() => {}, 3000);
-  const used = allocatedBytes(frame, 3000);
-  assert.ok((used - base) / 3000 < 700, `klatka efektów: ${((used - base) / 3000).toFixed(0)} B na klatkę (18 świateł, 1 źródło)`);
+  // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+  let i0 = 20000;
+  const perFrame = await untilSteady(() => (allocatedBytes((i) => frame(i0 + i), 3000) - allocatedBytes(() => {}, 3000)) / 3000,
+    (b) => b < 700, { warm: () => { for (let i = 0; i < 3000; i++) frame(i0++); } });
+  assert.ok(perFrame < 700, `klatka efektów: ${perFrame.toFixed(0)} B na klatkę (18 świateł, 1 źródło)`);
   assert.deepEqual(fx.grid.lightNode.value.updateRanges, [{ start: 0, count: fx.stats.lights * 16 }]);
 });
 
@@ -313,9 +329,20 @@ test('Core3D: wpięcie klatki efektów, zniekształceń, warstwy DIST i rozgrzew
   assert.match(dist, /u\.uDistLayerOn\.value = layerOn \? 1 : 0;/);
   assert.match(dist, /fx\.distortLayerActive === true/, 'tylko gdy właściciel zgłosił zawartość');
   const create = bodyOf(core, '  _createPost(renderer) {');
-  assert.equal((create.match(/distortion, distortionLayer \}\)\)/g) || []).length, 2, 'oba pipeline’y postu z blokiem i warstwą');
+  assert.equal((create.match(/distortion, distortionLayer, overlayLayer \}\)\)/g) || []).length, 2, 'oba pipeline’y postu z blokiem, warstwą DIST i NAKŁADKĄ');
   const prewarm = bodyOf(core, '  prewarmPass(object3d, layer = 0, opts = {}) {');
   assert.match(prewarm, /if \(layer === FX_DISTORT_LAYER && this\.distortionTarget\) renderer\.setRenderTarget\(this\.distortionTarget\);/, 'warstwa DIST rozgrzewana na własnym celu (inny klucz pipeline’u)');
   assert.match(bodyOf(core, '  resize(w, h) {'), /resizeRenderTarget\(this\.distortionTarget, bufW, bufH, readyRenderer\)/);
   assert.equal(FX_DISTORT_LAYER, 10, 'warstwa 8 = nowy warp, 9 = tło menu');
+  // Warstwa NAKŁADKI (czujniki): po DIST, przed postem; tylko widok gracza; zgłoszenie jak DIST; własny cel w rozgrzewce.
+  assert.ok(at('this._renderOverlayLayer(freePerspective || RenderWorld.splitScreenMode === true);') > at('this._renderFxDistortion(freePerspective'), 'nakładka po DIST');
+  assert.ok(at('this._renderOverlayLayer(') < at('this._renderPost();'), 'nakładka przed postem');
+  assert.match(backdrop, /this\._renderOverlayLayer\(true\);/, 'tło menu bez nakładki');
+  const ov = bodyOf(core, '  _renderOverlayLayer(off) {');
+  assert.match(ov, /camera\.layers\.set\(FX_OVERLAY_LAYER\);/);
+  assert.match(ov, /fx\.overlayLayerActive === true/);
+  assert.match(ov, /u\.uOverlayLayerOn\.value = layerOn \? 1 : 0;/);
+  assert.match(prewarm, /if \(layer === FX_OVERLAY_LAYER && this\.overlayTarget\) renderer\.setRenderTarget\(this\.overlayTarget\);/, 'nakładka rozgrzewana na własnym celu');
+  assert.match(bodyOf(core, '  resize(w, h) {'), /resizeRenderTarget\(this\.overlayTarget, bufW, bufH, readyRenderer\)/);
+  assert.equal(FX_OVERLAY_LAYER, 11);
 });

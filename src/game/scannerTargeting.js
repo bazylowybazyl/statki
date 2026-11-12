@@ -81,7 +81,7 @@ export function isTargetAlive(target) {
   if (isAsteroidTarget(a)) {
     return a.alive !== false && !a.dead && !a.destroyed && !a.removed;
   }
-  return !target.dead && !target.destroyed && !target.removed;
+  return !target.dead && !target.destroyed && !target.removed && !target._destroyed3D;
 }
 
 export function getTargetX(target) {

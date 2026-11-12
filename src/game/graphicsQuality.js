@@ -37,6 +37,8 @@ export const GFX_SETTINGS = Object.freeze({
   effects: { values: GFX_LEVELS, def: 'high' },
   // Pył i para w halach K-7 (pole gazu 2D na GPU).
   hallDust: { values: ['on', 'off'], def: 'on' },
+  // Gaz w otwartej przestrzeni (pas asteroid: pole gazu z transportem na GPU — src/3d/spaceGas/).
+  spaceGas: { values: ['on', 'off'], def: 'on' },
   lacquer: { values: ['on', 'off'], def: 'on', legacyKey: 'sc_hull_lacquer' },
   hullLight: { values: ['pbr', 'classic'], def: 'pbr', legacyKey: 'sc_hull_light' },
   spaceDust: { values: ['on', 'off'], def: 'on', legacyKey: 'sc_space_dust', preset: false },
@@ -46,7 +48,11 @@ export const GFX_SETTINGS = Object.freeze({
   // VSync: 'on' — klatki w takcie odświeżania ekranu, 'off' — bez limitu klatek. Tylko gra w Electronie (flagi
   // Chromium przy starcie procesu — electron/main.js, plik Dokumenty\HULLFALL\uruchomienie.json przez preload;
   // tam też źródło wyboru); w przeglądarce VSync ustawia przeglądarka. Preferencja poza presetami.
-  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true }
+  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true },
+  // Limit klatek (src/render/frameLimiter.js): pętla gry i tło menu rysują najwyżej tyle klatek na sekundę — przy
+  // ekranie 240 Hz limit 120 to ~połowa pracy karty (ciszej, mniej prądu). 'off' — tyle, ile ekran (z VSync) albo
+  // karta (bez VSync). Na żywo, preferencja poza presetami.
+  frameLimit: { values: ['off', '240', '144', '120', '60'], def: 'off', preset: false }
 });
 
 /**
@@ -69,6 +75,31 @@ export function gfxDynamicTargetFps(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+// Limit klatek [kl/s] (0 = bez limitu) — FrameLimiter.setFps.
+export function gfxFrameLimitFps(value) {
+  const n = Number(normalizeGfxValue('frameLimit', value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Docelowe FPS sterownika rozdzielczości dynamicznej z limitem klatek: cel 120 przy limicie 60 to budżet limitu
+ * (16,7 ms) — gra rysuje 60 kl/s, więc skala nie spada do budżetu 8,3 ms. Wyłączona (0) zostaje wyłączona.
+ */
+export function gfxDynamicBudgetFps(dynamicRes, frameLimit) {
+  const target = gfxDynamicTargetFps(dynamicRes);
+  const limit = gfxFrameLimitFps(frameLimit);
+  return target > 0 && limit > 0 ? Math.min(target, limit) : target;
+}
+
+/** Nadpisanie limitu klatek z adresu (?limitKlatek=120|0|off) — na tę sesję bez zapisu (narzędzia, pomiary); null — brak. */
+export function gfxFrameLimitFromQuery(search) {
+  let q = null;
+  try { q = new URLSearchParams(String(search || '')).get('limitKlatek'); } catch { q = null; }
+  if (q == null || q === '') return null;
+  const s = String(q).toLowerCase();
+  return s === '0' || s === 'off' || s === 'brak' ? 'off' : normalizeGfxValue('frameLimit', s);
+}
+
 // Dobór presetu przy pierwszym uruchomieniu (src/game/graphicsAutoPreset.js): co wybrano i dlaczego — informacja
 // w opcjach („dobrane automatycznie”), dopóki gracz czegoś nie zmieni.
 export const GFX_AUTO_KEY = 'sc_gfx_auto';
@@ -82,19 +113,19 @@ export const GFX_PRESET_KEYS = Object.freeze(GFX_KEYS.filter((k) => GFX_SETTINGS
 export const GFX_PRESETS = Object.freeze({
   low: Object.freeze({
     renderScale: 0.67, msaa: 0, bloom: 'half', heatHaze: 'off', shadowShafts: 'off', planetQuality: 'low',
-    explosions: 'low', effects: 'low', hallDust: 'off', lacquer: 'off', hullLight: 'classic'
+    explosions: 'low', effects: 'low', hallDust: 'off', spaceGas: 'off', lacquer: 'off', hullLight: 'classic'
   }),
   medium: Object.freeze({
     renderScale: 0.85, msaa: 4, bloom: 'full', heatHaze: 'on', shadowShafts: 'low', planetQuality: 'medium',
-    explosions: 'medium', effects: 'medium', hallDust: 'on', lacquer: 'on', hullLight: 'pbr'
+    explosions: 'medium', effects: 'medium', hallDust: 'on', spaceGas: 'on', lacquer: 'on', hullLight: 'pbr'
   }),
   high: Object.freeze({
     renderScale: 1, msaa: 4, bloom: 'full', heatHaze: 'on', shadowShafts: 'high', planetQuality: 'high',
-    explosions: 'high', effects: 'high', hallDust: 'on', lacquer: 'on', hullLight: 'pbr'
+    explosions: 'high', effects: 'high', hallDust: 'on', spaceGas: 'on', lacquer: 'on', hullLight: 'pbr'
   }),
   ultra: Object.freeze({
     renderScale: 1.25, msaa: 4, bloom: 'full', heatHaze: 'on', shadowShafts: 'high', planetQuality: 'ultra',
-    explosions: 'ultra', effects: 'ultra', hallDust: 'on', lacquer: 'on', hullLight: 'pbr'
+    explosions: 'ultra', effects: 'ultra', hallDust: 'on', spaceGas: 'on', lacquer: 'on', hullLight: 'pbr'
   })
 });
 
@@ -112,16 +143,40 @@ export const GFX_EXPLOSIONS = Object.freeze({
 // Budżety efektów (na żywo). „Wysoka” = wartości gry sprzed opcji: SIDE_JET_TUNE.maxLights 48 / minGasPx 1,1
 // (sideJets3D.js), MUZZLE_PER_FRAME / IMPACT_PER_FRAME 48 (weaponFx.js), ASTEROID_BELT_CONFIG.maxLitShips 6 /
 // maxShadowShips 2 (asteroidBelt.js — każda mapa cienia to render atlasu), MEDIUM_COUNT_DEFAULT 1 mln (warp/medium.js;
-// najwyżej pojemność z init, więc Ultra nie dokłada drobin).
+// najwyżej pojemność z init, więc Ultra nie dokłada drobin). cargoSwarmSlots — stanowiska przeładunku z rojem dronów
+// liczonym na żywo na GPU (E12, src/3d/swarm/swarmBerthPool.js; decyzja 2026-10-22: Niska 0 — sam stan z zegara
+// postoju, Średnia 4, Wysoka i Ultra 8 = pojemność puli).
 export const GFX_EFFECTS = Object.freeze({
-  low: Object.freeze({ sideJetLights: 12, sideJetGasPx: 2.2, weaponMuzzles: 16, weaponImpacts: 16, beltLitShips: 3, beltShadowShips: 1, warpParticles: 400000 }),
-  medium: Object.freeze({ sideJetLights: 24, sideJetGasPx: 1.5, weaponMuzzles: 32, weaponImpacts: 32, beltLitShips: 4, beltShadowShips: 1, warpParticles: 700000 }),
-  high: Object.freeze({ sideJetLights: 48, sideJetGasPx: 1.1, weaponMuzzles: 48, weaponImpacts: 48, beltLitShips: 6, beltShadowShips: 2, warpParticles: 1000000 }),
-  ultra: Object.freeze({ sideJetLights: 64, sideJetGasPx: 0.9, weaponMuzzles: 64, weaponImpacts: 64, beltLitShips: 8, beltShadowShips: 3, warpParticles: 1000000 })
+  low: Object.freeze({ sideJetLights: 12, sideJetGasPx: 2.2, weaponMuzzles: 16, weaponImpacts: 16, beltLitShips: 3, beltShadowShips: 1, warpParticles: 400000, cargoSwarmSlots: 0 }),
+  medium: Object.freeze({ sideJetLights: 24, sideJetGasPx: 1.5, weaponMuzzles: 32, weaponImpacts: 32, beltLitShips: 4, beltShadowShips: 1, warpParticles: 700000, cargoSwarmSlots: 4 }),
+  high: Object.freeze({ sideJetLights: 48, sideJetGasPx: 1.1, weaponMuzzles: 48, weaponImpacts: 48, beltLitShips: 6, beltShadowShips: 2, warpParticles: 1000000, cargoSwarmSlots: 8 }),
+  ultra: Object.freeze({ sideJetLights: 64, sideJetGasPx: 0.9, weaponMuzzles: 64, weaponImpacts: 64, beltLitShips: 8, beltShadowShips: 3, warpParticles: 1000000, cargoSwarmSlots: 8 })
 });
 
 // Skala bloomu (Core3D.bloomResolutionScale) i włącznik (perfToggles.bloom).
 export function gfxBloomScale(level) { return level === 'half' ? 0.5 : 1; }
+
+/**
+ * Ustawienia OBRAZU dla renderu w workerze (2026-10-28): worker ma własne Core3D i moduły efektów, a
+ * `applyGraphicsSettings` strony ustawia tylko moduły strony — do workera szły jedynie skala i MSAA przy starcie, więc
+ * w trybie domyślnym worker zawsze liczył bloom pełny, gaz wybuchów i efekty „Wysokie”, smugi cieni domyślne Core3D.
+ * Zwykły obiekt (structured clone): Core3D (skala renderu — z rozdzielczością dynamiczną, bloom, gorące powietrze,
+ * smugi cieni), lakier, oświetlenie kadłubów, pył hal K-7 (`HALL_DUST_TUNE.enabled` — symulację liczy worker),
+ * `GFX_EXPLOSIONS` (→ `EXPLOSION_TUNE`) i pola `GFX_EFFECTS` czytane przez moduły renderu. Stosuje `render.worker.js` (wiadomość `gfx`).
+ */
+export function gfxRenderRecord(settings, renderScale) {
+  const s = normalizeGfx(settings);
+  const ex = GFX_EXPLOSIONS[s.explosions] || GFX_EXPLOSIONS.high;
+  const fx = GFX_EFFECTS[s.effects] || GFX_EFFECTS.high;
+  return {
+    renderScale: Number.isFinite(renderScale) && renderScale > 0 ? renderScale : s.renderScale,
+    bloom: s.bloom !== 'off', bloomScale: gfxBloomScale(s.bloom), heatHaze: s.heatHaze !== 'off',
+    shadowShafts: s.shadowShafts, lacquer: s.lacquer !== 'off', hullLight: s.hullLight, hallDust: s.hallDust !== 'off',
+    explosions: { ...ex },
+    effects: { sideJetLights: fx.sideJetLights, sideJetGasPx: fx.sideJetGasPx, weaponMuzzles: fx.weaponMuzzles,
+      weaponImpacts: fx.weaponImpacts, beltLitShips: fx.beltLitShips, beltShadowShips: fx.beltShadowShips, warpParticles: fx.warpParticles }
+  };
+}
 
 /** Wartość dozwolona dla ustawienia `key` (liczby — najbliższa z listy), inaczej domyślna. */
 export function normalizeGfxValue(key, value) {

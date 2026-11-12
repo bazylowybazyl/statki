@@ -123,15 +123,18 @@ export class PirateRockSite3D extends PortBuilding3D {
     this.frame = frame;
     this.root.matrix.fromArray(portHubMatrixElements(frame));
     this.root.matrixWorldNeedsUpdate = true;
+    // ramka bez soczewki skoku gracza (pirateBaseGame.js mnoży root.matrix przez macierz soczewki) — wybuchy i dym
+    // rozpadu (`fx.root` na prawdziwym miejscu) liczą się z niej, nie z przeskalowanego obrazu
+    (this._frameM || (this._frameM = new THREE.Matrix4())).copy(this.root.matrix);
     const f = this.rock.foot;
-    _v0.set(f[0], f[1], f[2]).applyMatrix4(this.root.matrix);
+    _v0.set(f[0], f[1], f[2]).applyMatrix4(this._frameM);
     this.fx?.setOrigin(_v0.x, _v0.y, _v0.z);
   }
 
-  /** Punkt układu bazy → scena; normalna (kierunek) → scena. */
-  _toScene(x, h, z, out) { return out.set(x, h, z).applyMatrix4(this.root.matrix); }
+  /** Punkt układu bazy → scena; normalna (kierunek) → scena (ramka gry — bez soczewki skoku). */
+  _toScene(x, h, z, out) { return out.set(x, h, z).applyMatrix4(this._frameM || this.root.matrix); }
   _dirToScene(x, h, z, out) {
-    const e = this.root.matrix.elements;
+    const e = (this._frameM || this.root.matrix).elements;
     return out.set(e[0] * x + e[4] * h + e[8] * z, e[1] * x + e[5] * h + e[9] * z, e[2] * x + e[6] * h + e[10] * z);
   }
   _blastAt(x, h, z, size, nx, nh, nz, dust = false) {

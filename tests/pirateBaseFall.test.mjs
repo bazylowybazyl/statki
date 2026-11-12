@@ -1,7 +1,7 @@
-// Upadek habitatu bazy piratów na planetoidę (src/game/story/pirateBaseFall.js, 2026-10-19): teren skały w silniku belek
-// leży tam, gdzie rysuje się skała (te same wierzchołki siatki co render), studnia grawitacji (punkt, 1/r² albo stała),
-// wrak dziedziczy studnię rodzica, bryła spadająca na teren-kulę osiada na powierzchni bez przebicia. Pełna sekwencja
-// upadku (wieża pierwsza, dysk za nią, wszystko zamarza na skale) — scripts/destrukcja-taran-sym.mjs --tryb upadek.
+// Planetoida pod bazą piratów w silniku belek (src/game/story/pirateBaseFall.js): teren skały leży tam, gdzie rysuje się
+// skała (te same wierzchołki siatki co render), studnia grawitacji (punkt, 1/r² albo stała), wrak dziedziczy studnię
+// rodzica, bryła spadająca na teren-kulę osiada na powierzchni bez przebicia, odłam spod habitatu dostaje studnię i
+// zamarza w spoczynku.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
@@ -10,14 +10,14 @@ import { buildBeamStructure } from '../src/game/beamBody3D.js';
 import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js';
 import { HULL_BODY_CONFIG as C } from '../src/game/hullBodies.js';
 import {
-  PIRATE_ROCK_SHAPE, PIRATE_FALL_TUNE, bodyFootprint, createPirateRockTerrain, decodeRockShape, fallKindOf
+  PIRATE_ROCK_SHAPE, PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, decodeRockShape,
+  detachPirateRockTerrain, stepRockDebris
 } from '../src/game/story/pirateBaseFall.js';
 import { createPirateRockLayout } from '../src/3d/portBuildings/pirateRockLayout.js';
 import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
 import { placePirateBase } from '../src/game/story/pirateBaseSite.js';
 import { SMALL_BODY_MAPS, SMALL_BODY_SHAPE_RANGE } from '../src/3d/planetMaps.js';
 import { SMALL_BODY_SEGMENTS, decodeSmallBodyShape, displaceSmallBodyGeometry } from '../src/3d/smallBodyShape.js';
-import { ROCK_FOOT_BINS } from '../src/render/rockImpactRecord.js';
 
 function gameConfig() {
   const cfg = createBeamConfig(15);
@@ -152,56 +152,6 @@ test('studnia grawitacji: przyspieszenie ku punktowi, stałe (r0 = 0) albo ∝ 1
   assert.ok(e.vel.z <= -2990, 'szybsze niż sufit — bez hamowania');
 });
 
-test('obrys bryły z góry (bodyFootprint): rzut węzłów — profil biegunowy (okrągła głowa daje okrąg, nie prostokąt)', () => {
-  const K = ROCK_FOOT_BINS;
-  // „wieża”: talerz r 800 (środek x = 500 ciała) ∪ szyja 2 × 1300 na 2 × 150 wzdłuż x — węzły co 30 j. w płaszczyźnie x–y
-  const inShape = (x, y) => Math.hypot(x - 500, y) <= 800 || (Math.abs(x) <= 1300 && Math.abs(y) <= 150);
-  const pts = [];
-  for (let x = -1300; x <= 1300; x += 30) for (let y = -800; y <= 800; y += 30) if (inShape(x, y)) pts.push([x, y]);
-  const store = {
-    count: pts.length, active: new Uint8Array(pts.length).fill(1),
-    x: Float64Array.from(pts, (p) => p[0]), y: Float64Array.from(pts, (p) => p[1]), z: new Float64Array(pts.length)
-  };
-  const b = { nodeStore: store, cellSize: 30, quat: { x: 0, y: 0, z: 0, w: 1 }, pos: { x: 100, y: 200, z: 500 } };
-  const out = {};
-  bodyFootprint(b, 0, 0, 0, 0, 0, 1, out);
-  assert.equal(out.n, K);
-  assert.ok(Math.abs(out.ux - 1) < 1e-12 && Math.abs(out.uz) < 1e-12, 'kąt 0 wzdłuż osi x ciała');
-  // środek rzutu = środek węzłów (na płaszczyźnie styku z = 0)
-  const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length, my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
-  assert.ok(Math.abs(out.cx - (100 + mx)) < 1e-6 && Math.abs(out.cy - (200 + my)) < 1e-6 && Math.abs(out.cz) < 1e-9);
-  // wycinek ku głowie pod kątem 30–45° od osi: promień do OKRĘGU talerza (rzut bez rogów), dużo mniej niż do rogu obwiedni
-  // prostokątnej (1300, 800)
-  const nodeR = 30 * 0.55;
-  const toCircle = (a) => {   // odległość od środka rzutu do brzegu talerza w kierunku a (największa t)
-    const dx = Math.cos(a), dy = Math.sin(a), ox = mx - 500, oy = my;
-    const bq = ox * dx + oy * dy, c = ox * ox + oy * oy - 800 * 800;
-    return -bq + Math.sqrt(bq * bq - c);
-  };
-  const k2 = Math.floor((37.5 / 360) * K);   // wycinek [30°, 45°)
-  const exact = Math.max(toCircle(Math.PI / 6), toCircle(Math.PI / 4)) + nodeR;
-  assert.ok(Math.abs(out.r[k2] - exact) < 45, `wycinek 30–45°: ${out.r[k2].toFixed(0)} vs okrąg ${exact.toFixed(0)}`);
-  const corner = Math.hypot(1300 - mx, 800 - my);
-  assert.ok(out.r[k2] < 0.85 * corner, `nie róg obwiedni (${corner.toFixed(0)})`);
-  // obrót 30° wokół z: profil ten sam (kąt 0 jedzie z osią ciała)
-  const R0 = Float64Array.from(out.r);
-  b.quat = { x: 0, y: 0, z: Math.sin(Math.PI / 12), w: Math.cos(Math.PI / 12) };
-  bodyFootprint(b, 0, 0, 0, 0, 0, 1, out);
-  for (let k = 0; k < K; k++) assert.ok(Math.abs(out.r[k] - R0[k]) < 1e-6, `obrót: wycinek ${k}`);
-  assert.ok(Math.abs(out.ux - Math.cos(Math.PI / 6)) < 1e-9 && Math.abs(out.uy - Math.sin(Math.PI / 6)) < 1e-9);
-  // przechył 90° wokół x (talerz pionowo — z góry tylko kreska): w poprzek (wycinki ~90° i ~270°) promień ≈ węzeł
-  const s2 = Math.SQRT1_2;
-  b.quat = { x: s2, y: 0, z: 0, w: s2 };
-  bodyFootprint(b, 0, 0, 0, 0, 0, 1, out);
-  assert.ok(out.r[Math.floor(K / 4)] < 60 && out.r[Math.floor(3 * K / 4)] < 60, `kreska: ${out.r[Math.floor(K / 4)].toFixed(0)}`);
-  const maxX = Math.max(...pts.map((p) => p[0])), minX = Math.min(...pts.map((p) => p[0]));
-  assert.ok(Math.abs(Math.max(out.r[0], out.r[K - 1]) - (maxX - mx + nodeR)) < 1e-6, 'wzdłuż +x — do końca szyi');
-  assert.ok(Math.abs(Math.max(out.r[K / 2 - 1], out.r[K / 2]) - (mx - minX + nodeR)) < 1e-6, 'wzdłuż −x — do końca szyi');
-  // bez węzłów — brak obrysu
-  bodyFootprint({ quat: b.quat, pos: b.pos }, 0, 0, 0, 0, 0, 1, out);
-  assert.equal(out.n, 0);
-});
-
 test('wrak z rozpadu bryły dziedziczy studnię rodzica', () => {
   gameConfig();
   // dwie rozłączne kostki w jednej strukturze — rozpad daje drugi wrak
@@ -270,12 +220,43 @@ test('bryła spada na teren-kulę i osiada na powierzchni (bez przebicia), styk 
   assert.ok(g > -cell && g < cell * 2, `leży na powierzchni (najniższy węzeł ${g.toFixed(1)} j.)`);
 });
 
-test('rodzaj bryły upadku z kawałka (wieża, dysk, bęben, szyb, drobnica)', () => {
-  const mk = (kind, n, extra = {}) => ({ activeNodes: n, hull: { world: { kind, ...extra } } });
-  assert.equal(fallKindOf(mk('tech', 5000)), 'tower');
-  assert.equal(fallKindOf(mk('disc', 3000)), 'disc');
-  assert.equal(fallKindOf(mk('drum', 2000)), 'drum');
-  assert.equal(fallKindOf(mk('core', 2000)), 'core');
-  assert.equal(fallKindOf(mk('drum', 100)), 'debris');
-  assert.equal(fallKindOf({ activeNodes: 10, hull: null }), 'debris');
+test('odłam spod habitatu: studnia skały poniżej wellBelowZ, zamrożenie w spoczynku na skale, odpięcie terenu', () => {
+  const T = { cx: 0, cy: 0, cz: -50000, R: 30000, radius: () => 30000, normal: (x, y, z, r, o) => o };
+  const added = [], frozen = [];
+  const engine = { addTerrain: (x) => added.push(x), removeTerrain: (x) => added.splice(added.indexOf(x), 1),
+    freezeBody: (b) => { frozen.push(b); b.anchored = true; return 4; } };
+  let now = 10;
+  const st = createFallState();
+  const ctx = { engine, terrain: T, simTime: () => now, solids: [], isBaseSite: (s) => s === site, tune: PIRATE_FALL_TUNE };
+  const site = {};
+  attachPirateRockTerrain(st, ctx);
+  assert.equal(st.terrain, T);
+  assert.deepEqual(added, [T]);
+  const mk = (z, world = { site }) => ({ pos: { x: 0, y: 0, z }, vel: { x: 0, y: 0, z: 0 }, angVel: { x: 0, y: 0, z: 0 },
+    activeNodes: 500, radius: 100, hull: { world }, entity: {}, gravityWell: null });
+  const low = mk(PIRATE_FALL_TUNE.wellBelowZ - 1), high = mk(PIRATE_FALL_TUNE.wellBelowZ + 1), foreign = mk(-5000, { site: {} });
+  ctx.solids = [low, high, foreign];
+  stepRockDebris(st, ctx, 1 / 60);
+  assert.ok(low.gravityWell, 'odłam pod progiem w studni');
+  assert.equal(low.gravityWell.z, T.cz, 'studnia w środku skały');
+  assert.equal(high.gravityWell, null, 'nad progiem: grawitacja habitatu');
+  assert.equal(foreign.gravityWell, null, 'ciało spoza bazy');
+  // styk ze skałą i bezruch przez restTime: zamrożenie
+  const dt = 1 / 60;
+  for (let k = 0; k < 90 && !frozen.length; k++) {
+    now += dt;
+    T.onContact(low, { doDamage: true });
+    stepRockDebris(st, ctx, dt);
+  }
+  assert.deepEqual(frozen, [low]);
+  assert.equal(st.frozen, 1);
+  detachPirateRockTerrain(st, engine);
+  assert.equal(st.terrain, null);
+  assert.deepEqual(added, []);
+  assert.equal(T.onContact, null);
+  // bez terenu krok nic nie robi
+  const later = mk(-5000);
+  ctx.solids = [later];
+  stepRockDebris(st, ctx, dt);
+  assert.equal(later.gravityWell, null);
 });

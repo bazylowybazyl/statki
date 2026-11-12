@@ -1611,7 +1611,9 @@ export const WeaponFx = {
    * lot, światło), bufor rysunku pocisków, wstrząs strzałów, bank Fx3D.
    */
   sync(bullets) {
-    const nowMs = typeof performance !== 'undefined' ? performance.now() : 0;
+    // zegar klatki efektów (znacznik rAF strony — Core3D.frameNowMs), nie chwila rysowania: krok banku Fx3D i migawka
+    // pocisków równe co vsync
+    const nowMs = Core3D.frameNowMs();
     const dt = this._lastSyncMs > 0 ? Math.max(0.001, Math.min(0.05, (nowMs - this._lastSyncMs) * 0.001)) : 1 / 60;
     this._lastSyncMs = nowMs;
     this._frameDt += (Math.min(dt, 1 / 30) - this._frameDt) * 0.25;
@@ -1644,12 +1646,22 @@ export const WeaponFx = {
       if (b.forceCanvas) continue;
       let st = b.__fx;
       const vx = Number(b.vx) || 0; const vy = Number(b.vy) || 0;
-      const lag = b.clock === CLOCK_RENDER ? renderLag : 0;
-      const x = bx - vx * lag;
-      const y = by - vy * lag;
+      // Zegar renderu (gracz; NPC i wraki w pozie renderu — isRenderClockEntity): pocisk w czasie SimClock.render, jak
+      // kadłub strzelca. Przed chwilą wystrzału (pocisk NPC rodzi się w pozie PO kroku: bornSim = sim) leci tylko z lufą
+      // (ivx / ivy) — bez tego cofał się za wylot o prędkość pocisku × opóźnienie renderu.
+      let lag = 0, rel = 0;
+      if (b.clock === CLOCK_RENDER) {
+        lag = renderLag;
+        const born = Number(b.bornSim);
+        rel = Number.isFinite(born) ? Math.min(lag, Math.max(0, SimClock.sim - born)) : lag;
+      }
+      const ivx0 = Number(b.ivx) || 0; const ivy0 = Number(b.ivy) || 0;
+      const x = bx - ivx0 * lag - (vx - ivx0) * rel;
+      const y = by - ivy0 * lag - (vy - ivy0) * rel;
       // Gra 3D: wysokość pocisku (b.z, b.vz — strzał z wysokości statku w punkt celowania 3D).
       const vz = Number(b.vz) || 0;
-      const z = (Number(b.z) || 0) - vz * lag;
+      const ivz0 = Number(b.ivz) || 0;
+      const z = (Number(b.z) || 0) - ivz0 * lag - (vz - ivz0) * rel;
       if (!st || st.bullet !== b) {
         st = this._free.pop() || null;
         if (!st) continue;

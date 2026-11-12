@@ -19,11 +19,12 @@
 // szumy i losuje gromady oraz obłoki H II (CPU).
 import * as THREE from 'three/webgpu';
 import {
-  Fn, Loop, abs, clamp, dot, exp, float, int, log, max, mix, saturate, smoothstep,
-  sqrt, step, uniform, uniformArray, vec2, vec3, vec4
+  Fn, Loop, abs, atan, clamp, cos, dot, exp, float, floor, int, length, log, max, min, mix, saturate, sin, smoothstep,
+  sqrt, step, texture, uniform, uniformArray, vec2, vec3, vec4
 } from 'three/tsl';
-import { skyBillow, skyFbm, skyHashCpu, skyRidged } from './skyBakeNoise.js';
+import { skyBillow, skyFbm, skyFbm3, skyHashCpu, skyRidged, skyRidged3 } from './skyBakeNoise.js';
 import { starFieldNode } from './skyBakeStars.js';
+import { SKY_SPHERE_RAD_PER_UNIT } from './skyBaker.js';
 
 const DEG = Math.PI / 180;
 const LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -138,7 +139,40 @@ export function cpuRand(seed, salt) {
   return () => skyHashCpu(seed >>> 0, salt >>> 0, (n++) >>> 0);
 }
 
-export function createGalaktykaStyle() {
+// ── TRYB SFERY (DECYZJE-2 N2): pas na WIELKIM KOLE (równik equirect, φ = 0) ──────────────────────────────────────
+// Wzdłuż pasa s = λ / K, w poprzek d = φ / K [jednostki nieba; K = SKY_SPHERE_RAD_PER_UNIT ≈ 3,27 rad — gęstość jak
+// płaszczyzna gry]. Szumy pasa (anizotropowe, wzdłuż s) są WALCOWE: punkt 2D q = (k·s + c, …) idzie na walec o obwodzie
+// k · P (P = 2π / K — okres s), więc pas zamyka się na 2π bez szwu, a częstotliwość wzdłuż pasa jest ta sama co na
+// płaszczyźnie. Szumy izotropowe (grudkowatość, mgiełka tła) — szum 3D kierunku. Rzeczy lokalne (zgrubienie, odnogi,
+// gromady, obłoki H II) — różnica s zawinięta do ±P/2. Kąt pasa i krzywizna nie mają sensu na wielkim kole (orientację
+// nieba w kadrze daje SKY_START w src/3d/skyScroll.js); `srodekX` przesuwa pas wzdłuż, `srodekY` kładzie go na małym
+// kole (eksport sfery: 0 — dema/niebo-webgpu.js SFERA_DEFAULTS).
+// ŁATY MGŁAWIC: obraz z wypiekacza płaskiego (styl „mgławica”, pass „obraz” — obraz wyświetlany) kładziony na sferę
+// rzutem równoodległym wokół kierunku łaty (szerokość 2 · span, proporcje 1,6 : 1, miękki brzeg), składany „ekranem”
+// 1 − (1 − niebo)(1 − mgławica · gain) w passie „laty”.
+const SPHERE_K = SKY_SPHERE_RAD_PER_UNIT;
+const SPHERE_P = 2 * Math.PI / SPHERE_K;
+const MAX_PATCHES = 3;
+
+/** Baza łaty na sferze: środek c (λ, φ), wschód e i północ n obrócone o roll wokół c. */
+export function sphereFrameCpu(lonDeg, latDeg, rollDeg) {
+  const D = Math.PI / 180;
+  const lon = lonDeg * D, lat = latDeg * D, r = (rollDeg || 0) * D;
+  const c = [Math.cos(lat) * Math.cos(lon), Math.cos(lat) * Math.sin(lon), Math.sin(lat)];
+  const e0 = [-Math.sin(lon), Math.cos(lon), 0];
+  const n0 = [-Math.sin(lat) * Math.cos(lon), -Math.sin(lat) * Math.sin(lon), Math.cos(lat)];
+  const e = e0.map((v, i) => v * Math.cos(r) + n0[i] * Math.sin(r));
+  const n = n0.map((v, i) => -e0[i] * Math.sin(r) + v * Math.cos(r));
+  return { c, e, n };
+}
+
+/**
+ * Styl „galaktyka”. opts.sphere — tryb sfery (wypiekacz equirect, SkyBaker({ sphere: true })), opts.patches — łaty
+ * mgławic: [{ texture (obraz wyświetlany), lonDeg, latDeg, rollDeg, spanDeg (pół szerokości), gain }].
+ */
+export function createGalaktykaStyle(opts = {}) {
+  const sphere = !!opts.sphere;
+  const patchDefs = sphere ? (opts.patches || []).slice(0, MAX_PATCHES) : [];
   const U = {};
   for (const [k, , , , , def] of GALAKTYKA_PARAMS) U[k] = uniform(def);
   for (const [k, , def] of GALAKTYKA_COLORS) U[k] = uniform(new THREE.Vector3(...def));
@@ -154,73 +188,109 @@ export function createGalaktykaStyle() {
   U.hiiPos = uniformArray(Array.from({ length: MAX_HII }, () => new THREE.Vector4()), 'vec4');
   U.hiiCol = uniformArray(Array.from({ length: MAX_HII }, () => new THREE.Vector4()), 'vec4');
   U.hiiCount = uniform(0, 'int');
+  // łaty mgławic (tryb sfery): środek, wschód, północ (vec3), pół szerokości [rad], siła
+  const patches = patchDefs.map((P, i) => ({
+    tex: P.texture,
+    c: uniform(new THREE.Vector3(1, 0, 0)), e: uniform(new THREE.Vector3(0, 1, 0)), n: uniform(new THREE.Vector3(0, 0, 1)),
+    span: uniform(1.0), gain: uniform(1.0), def: P, i
+  }));
+
+  // ── szumy: płaszczyzna / sfera (walec wzdłuż pasa, izotropowe z kierunku) ──
+  // N2(q, k, …): fbm 2D punktu q; w trybie sfery fbm 3D punktu na walcu, gdzie q.x ma okres k · P (R2 — grzbietowy).
+  const cylOf = (q, kper) => {
+    const a = q.x.mul(2 * Math.PI).div(kper);
+    const R = kper.div(2 * Math.PI);
+    return vec3(cos(a).mul(R), sin(a).mul(R), q.y);
+  };
+  const KP = (k) => (typeof k === 'number' ? float(k * SPHERE_P) : k.mul(SPHERE_P));
+  const N2 = (q, k, oct, lac, gain) => (sphere ? skyFbm3(cylOf(q, KP(k)), oct, lac, gain) : skyFbm(q, oct, lac, gain));
+  const R2 = (q, k, oct, lac, gain) => (sphere ? skyRidged3(cylOf(q, KP(k)), oct, lac, gain) : skyRidged(q, oct, lac, gain));
+  // izotropowy: płaszczyzna — fbm(p · freq + off), sfera — fbm 3D kierunku (freq / K na radian)
+  const ISO = (F, freq, off, oct, lac, gain) => (sphere
+    ? skyFbm3(F.dir.mul(freq.div(SPHERE_K)).add(vec3(off, 0.0)), oct, lac, gain)
+    : skyFbm(F.p.mul(freq).add(off), oct, lac, gain));
+  // różnica wzdłuż pasa zawinięta do ±P/2 (sfera); płaszczyzna — bez zmian
+  const wrapS = (x) => (sphere ? x.sub(floor(x.div(SPHERE_P).add(0.5)).mul(SPHERE_P)) : x);
 
   // ── pas: układ (wzdłuż s, w poprzek d) ──────────────────────────────────────
-  const bandFrame = (p) => {
+  // F = { p (płaszczyzna: współrzędne nieba), dir (sfera: kierunek), s, d (z falowaniem), d0 (bez — gromady, H II) }
+  const bandFrame = (ctx) => {
+    if (sphere) {
+      const ll = ctx.lonLat();
+      const s = wrapS(ll.x.div(SPHERE_K).sub(U.srodekX)).toVar();
+      const d0 = ll.y.div(SPHERE_K).sub(U.srodekY).toVar();
+      const wob = N2(vec2(s.mul(2.2), 0.37).add(U.o1), 2.2, int(3), 2.0, 0.5).mul(U.falowanie);
+      return { p: null, dir: ctx.dir().toVar(), s, d0, d: d0.sub(wob).toVar() };
+    }
+    const p = ctx.sky().toVar();
     const q = p.sub(vec2(U.srodekX, U.srodekY)).toVar();
     const s = dot(q, U.axis).toVar();
     const d0 = dot(q, vec2(U.axis.y.negate(), U.axis.x));
     const wob = skyFbm(vec2(s.mul(2.2), 0.37).add(U.o1), int(3), 2.0, 0.5).mul(U.falowanie)
       .add(s.mul(s).mul(U.krzywizna));
-    return { s, d: d0.sub(wob).toVar() };
+    return { p, dir: null, s, d0, d: d0.sub(wob).toVar() };
   };
+  // położenie względem punktu (s, d) pasa — płaszczyzna: punkt nieba p − c.xy; sfera: (Δs zawinięte, d0 − c.y)
+  const relTo = (F, c) => (sphere ? vec2(wrapS(F.s.sub(c.x)), F.d0.sub(c.y)) : F.p.sub(c.xy));
 
   // ── pass 1: pola ────────────────────────────────────────────────────────────
   const polaNode = (ctx) => Fn(() => {
-    const p = ctx.sky().toVar();
-    const { s, d } = bandFrame(p);
-    const thick = float(1.0).add(skyFbm(vec2(s.mul(3.1), 1.7).add(U.o2), int(3), 2.0, 0.5).mul(0.28));
+    const F = bandFrame(ctx);
+    const { s, d } = F;
+    const thick = float(1.0).add(N2(vec2(s.mul(3.1), 1.7).add(U.o2), 3.1, int(3), 2.0, 0.5).mul(0.28));
     const z1 = d.div(U.szerokosc.mul(thick)).toVar();
     const z2 = d.div(U.halo).toVar();
     const disk = exp(z1.mul(z1).mul(-0.5))
       .add(exp(z2.mul(z2).mul(-0.5)).mul(U.haloAmp))
       .add(exp(abs(d).div(U.ogon).negate()).mul(U.ogonAmp)).toVar();
-    const bs = s.sub(U.zgrubienieS).div(U.zgrubienieDl);
+    const bs = wrapS(s.sub(U.zgrubienieS)).div(U.zgrubienieDl);
     const bd = d.div(U.zgrubienieGr);
     const bulge = exp(bs.mul(bs).add(bd.mul(bd)).mul(-0.5)).mul(U.zgrubienieAmp).toVar();
 
     // Obłoki gwiazd: anizotropowy fbm z zawinięciem — jasne płaty wzdłuż pasa.
     const qc = vec2(s.mul(U.chmuryCz), d.mul(U.chmuryCz).mul(2.4)).add(U.o3).toVar();
+    const kc = U.chmuryCz;
     const wc = vec2(
-      skyFbm(qc.mul(0.6).add(vec2(4.1, 9.3)), int(4), 2.0, 0.5),
-      skyFbm(qc.mul(0.6).add(vec2(7.7, 1.2)), int(4), 2.0, 0.5)
+      N2(qc.mul(0.6).add(vec2(4.1, 9.3)), kc.mul(0.6), int(4), 2.0, 0.5),
+      N2(qc.mul(0.6).add(vec2(7.7, 1.2)), kc.mul(0.6), int(4), 2.0, 0.5)
     );
-    const cl = skyFbm(qc.add(wc.mul(0.9)), int(5), 2.05, 0.55);
+    const cl = N2(qc.add(wc.mul(0.9)), kc, int(5), 2.05, 0.55);
     const clouds = clamp(float(1.0).add(cl.mul(U.chmury)), 0.2, 2.4).toVar();
     // Grudkowatość: wahania liczby nierozdzielonych gwiazd w drobnej skali (pas „ziarnisty”, nie gładki).
-    const mt = skyFbm(p.mul(U.ziarnoCz).add(U.o2.mul(1.7)), int(4).add(U.dodOkt), 2.1, 0.6);
+    const mt = ISO(F, U.ziarnoCz, U.o2.mul(1.7), int(4).add(U.dodOkt), 2.1, 0.6);
     const clumpy = clamp(float(1.0).add(mt.mul(U.ziarno)), 0.3, 1.9).toVar();
     const starLight = disk.mul(clouds).mul(clumpy).add(bulge.mul(mix(float(1.0), clouds, 0.5)).mul(mix(float(1.0), clumpy, 0.6))).toVar();
     const L = starLight.mul(U.poswiata).toVar();
 
     // Pył: pasmo przy płaszczyźnie (z meandrami) + szerokie zasnucie, struktura wzdłuż pasa.
-    const laneOff = skyFbm(vec2(s.mul(1.6), 5.5).add(U.o4), int(3), 2.0, 0.5).mul(U.pylPrzes);
+    const laneOff = N2(vec2(s.mul(1.6), 5.5).add(U.o4), 1.6, int(3), 2.0, 0.5).mul(U.pylPrzes);
     const lz = d.sub(laneOff).div(U.pylSzer);
     const mask = exp(lz.mul(lz).mul(-0.5)).add(exp(z2.mul(z2).mul(-0.5)).mul(U.pylSzeroki)).toVar();
     const qd = vec2(s, d.mul(U.pylAniz)).mul(U.pylCz).add(U.o5).toVar();
+    const kd = U.pylCz;
     const wd = vec2(
-      skyFbm(qd.mul(0.55).add(vec2(1.3, 8.8)), int(4), 2.0, 0.5),
-      skyFbm(qd.mul(0.55).add(vec2(9.1, 3.4)), int(4), 2.0, 0.5)
+      N2(qd.mul(0.55).add(vec2(1.3, 8.8)), kd.mul(0.55), int(4), 2.0, 0.5),
+      N2(qd.mul(0.55).add(vec2(9.1, 3.4)), kd.mul(0.55), int(4), 2.0, 0.5)
     ).mul(U.zawirowanie);
     const qw = qd.add(wd).toVar();
     // Szczeliny (duże ciemne płaty), grudki (drobne obłoki pyłu — częściej przy szczelinach), włókna
     // (grzbiety), prześwity (odcinki pasa z mniejszą ilością pyłu) i drobne cętkowanie.
-    const big = skyFbm(qw, int(7).add(U.dodOkt), 2.03, 0.52).mul(0.5).add(0.5).toVar();
+    const big = N2(qw, kd, int(7).add(U.dodOkt), 2.03, 0.52).mul(0.5).add(0.5).toVar();
     const rift = smoothstep(U.szczelinyOd, U.szczelinyOd.add(U.szczelinyMiekk), big).toVar();
-    const small = skyFbm(qw.mul(3.1).add(vec2(41.0, 7.0)), int(5).add(U.dodOkt), 2.1, 0.55).mul(0.5).add(0.5);
+    const small = N2(qw.mul(3.1).add(vec2(41.0, 7.0)), kd.mul(3.1), int(5).add(U.dodOkt), 2.1, 0.55).mul(0.5).add(0.5);
     const clumps = smoothstep(0.5, 0.64, small).mul(smoothstep(U.szczelinyOd.sub(0.13), U.szczelinyOd.add(0.04), big));
-    const fil = smoothstep(U.wloknaOd, U.wloknaOd.add(0.22), skyRidged(qw.mul(2.1).add(vec2(17.0, 3.0)), int(6).add(U.dodOkt), 2.07, 0.55));
-    const mott = skyFbm(qw.mul(6.0).add(vec2(2.0, 29.0)), int(4).add(U.dodOkt), 2.0, 0.5).mul(0.5).add(0.5);
-    const winN = skyFbm(qd.mul(0.28).add(vec2(5.0, 5.0)), int(3), 2.0, 0.5).mul(0.5).add(0.5);
+    const fil = smoothstep(U.wloknaOd, U.wloknaOd.add(0.22), R2(qw.mul(2.1).add(vec2(17.0, 3.0)), kd.mul(2.1), int(6).add(U.dodOkt), 2.07, 0.55));
+    const mott = N2(qw.mul(6.0).add(vec2(2.0, 29.0)), kd.mul(6.0), int(4).add(U.dodOkt), 2.0, 0.5).mul(0.5).add(0.5);
+    const winN = N2(qd.mul(0.28).add(vec2(5.0, 5.0)), kd.mul(0.28), int(3), 2.0, 0.5).mul(0.5).add(0.5);
     const win = mix(float(1.0), smoothstep(0.2, 0.75, winN).mul(1.5).add(0.15), U.pylOkna);
     const tauBand = mask.mul(rift.add(clumps.mul(U.grudki)).add(fil.mul(U.wlokna).mul(rift.mul(0.7).add(0.3))).add(mott.mul(0.05)))
       .mul(U.pyl).mul(win).toVar();
     // Porowatość: gęstość wewnątrz pasm się waha (półprzezroczyste plamy zamiast jednolitej wycinanki).
-    const poro = skyFbm(qw.mul(8.0).add(vec2(13.0, 61.0)), int(4).add(U.dodOkt), 2.0, 0.55).mul(0.5).add(0.5);
+    const poro = N2(qw.mul(8.0).add(vec2(13.0, 61.0)), kd.mul(8.0), int(4).add(U.dodOkt), 2.0, 0.55).mul(0.5).add(0.5);
     tauBand.mulAssign(mix(float(1.0), poro.mul(1.1).add(0.45), U.porowatosc));
 
     // Odnogi: ciemne smugi wychodzące z pasa pod kątem (jak pył przy Wężowniku na fot. 2).
-    const rel = vec2(s.sub(U.odnogiS), d).toVar();
+    const rel = vec2(wrapS(s.sub(U.odnogiS)), d).toVar();
     const su = dot(rel, U.strAxis);
     const sv = dot(rel, vec2(U.strAxis.y.negate(), U.strAxis.x));
     const side = d.mul(U.odnogiStrona);
@@ -244,7 +314,7 @@ export function createGalaktykaStyle() {
     const rho = U.gwiazdyTlo.add(float(1.0).sub(U.gwiazdyTlo).mul(saturate(starLight.mul(0.8)))).toVar();
     Loop({ start: 0, end: U.clusterCount, type: 'int', condition: '<', name: 'ck' }, ({ ck }) => {
       const c = U.clusters.element(ck);
-      const r = p.sub(c.xy).div(c.z);
+      const r = relTo(F, c).div(c.z);
       const g = exp(dot(r, r).mul(-0.5));
       rho.addAssign(g.mul(c.w));
       L.addAssign(g.mul(c.w).mul(0.06));
@@ -269,7 +339,7 @@ export function createGalaktykaStyle() {
 
   // ── pass 3: obraz (wyświetlany, liniowo) ─────────────────────────────────────
   const obrazNode = (ctx) => Fn(() => {
-    const p = ctx.sky().toVar();
+    const F = bandFrame(ctx);
     const ip = ctx.pixel();
     const f = ctx.load('pola', ip).toVar();
     const stars = ctx.load('gwiazdy', ip).rgb;
@@ -286,14 +356,14 @@ export function createGalaktykaStyle() {
     Loop({ start: 0, end: U.hiiCount, type: 'int', condition: '<', name: 'hk' }, ({ hk }) => {
       const P = U.hiiPos.element(hk);
       const C = U.hiiCol.element(hk);
-      const r = p.sub(P.xy).div(P.z).toVar();
+      const r = relTo(F, P).div(P.z).toVar();
       const g = exp(dot(r, r).mul(-1.4));
       const n = skyBillow(r.mul(1.3).add(vec2(float(hk).mul(17.3), float(hk).mul(-9.1))).add(U.o8), int(5), 2.1, 0.55);
       em.addAssign(C.xyz.mul(P.w).mul(g).mul(n.mul(1.1).add(0.15)));
     });
     const emT = em.mul(Tb.mul(0.65).add(0.35)).mul(U.hii);
     // Mgiełka tła (galaktyczne cirrusy daleko od pasa).
-    const cir = smoothstep(0.42, 0.95, skyFbm(p.mul(2.4).add(U.o7), int(6), 2.0, 0.55).mul(0.5).add(0.5));
+    const cir = smoothstep(0.42, 0.95, ISO(F, float(2.4), U.o7, int(6), 2.0, 0.55).mul(0.5).add(0.5));
     const cirrus = U.barwaCirrus.mul(cir).mul(U.cirrus).mul(0.08);
     const C0 = band.add(dustGlow).add(emT).add(cirrus).add(stars);
 
@@ -336,7 +406,8 @@ export function createGalaktykaStyle() {
     // Punkt pasa (s wzdłuż, d w poprzek od osi z krzywizną; bez falowania — gromady i H II leżą przy płaszczyźnie).
     const ax = Math.cos(a);
     const ay = Math.sin(a);
-    const at = (s, d) => {
+    // sfera: punkt pasa wprost w układzie (s, d) względem środka pasa (relTo w passach)
+    const at = sphere ? (s, d) => [s, d] : (s, d) => {
       const dd = d + P.krzywizna * s * s;
       return [P.srodekX + ax * s - ay * dd, P.srodekY + ay * s + ax * dd];
     };
@@ -361,7 +432,39 @@ export function createGalaktykaStyle() {
       U.hiiCol.array[i].set(c[0], c[1], c[2], 0);
     }
     U.hiiCount.value = nh;
+    for (const pt of patches) {
+      const f = sphereFrameCpu(pt.def.lonDeg || 0, pt.def.latDeg || 0, pt.def.rollDeg || 0);
+      pt.c.value.set(...f.c);
+      pt.e.value.set(...f.e);
+      pt.n.value.set(...f.n);
+      pt.span.value = (pt.def.spanDeg || 40) * DEG;
+      pt.gain.value = pt.def.gain ?? 1;
+    }
   }
+
+  // ── pass 4 (sfera z łatami): łaty mgławic na niebie, złożenie „ekranem” ──────────
+  const PATCH_ASPECT = 1.6;
+  const latyNode = (ctx) => Fn(() => {
+    const col = ctx.load('obraz', ctx.pixel()).rgb.toVar();
+    const dir = ctx.dir().toVar();
+    for (const pt of patches) {
+      const cz = dot(dir, pt.c);
+      const cx = dot(dir, pt.e);
+      const cy = dot(dir, pt.n);
+      const rxy = length(vec2(cx, cy)).toVar();
+      const th = atan(rxy, cz).toVar();
+      const k = th.div(max(rxy, 1e-6));
+      // rzut równoodległy wokół środka łaty [rad] → uv obrazu (y obrazu w dół, proporcje 1,6 : 1)
+      const uvP = vec2(cx.mul(k).div(pt.span.mul(2.0)).add(0.5),
+        float(0.5).sub(cy.mul(k).mul(PATCH_ASPECT).div(pt.span.mul(2.0)))).toVar();
+      const ex = min(uvP.x, float(1.0).sub(uvP.x));
+      const ey = min(uvP.y, float(1.0).sub(uvP.y));
+      const mask = smoothstep(0.0, 0.14, ex).mul(smoothstep(0.0, 0.14, ey)).mul(step(th, Math.PI / 2)).toVar();
+      const neb = texture(pt.tex, clamp(uvP, vec2(0.0), vec2(1.0)), float(0)).rgb.mul(mask).mul(pt.gain);
+      col.assign(vec3(1.0).sub(vec3(1.0).sub(col).mul(vec3(1.0).sub(neb))));
+    }
+    return vec4(col, 1.0);
+  })();
 
   return {
     name: 'galaktyka',
@@ -371,10 +474,12 @@ export function createGalaktykaStyle() {
     defaults: GALAKTYKA_DEFAULTS,
     presets: GALAKTYKA_PRESETS,
     apply,
+    sphere,
     passes: [
       { name: 'pola', node: polaNode },
       { name: 'gwiazdy', node: gwiazdyNode },
-      { name: 'obraz', node: obrazNode }
+      { name: 'obraz', node: obrazNode },
+      ...(patches.length ? [{ name: 'laty', node: latyNode }] : [])
     ]
   };
 }

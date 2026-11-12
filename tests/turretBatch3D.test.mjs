@@ -17,15 +17,17 @@ import { applySunShadowToBuiltinMaterial } from '../src/3d/sunShadowMask.js';
 const DEG = Math.PI / 180;
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
-test('rekord instancji: 16 liczb, cztery vec4 w jednym przeplecionym buforze', () => {
-  assert.equal(TURRET_INST_STRIDE, 16);
-  assert.deepEqual(TURRET_INST_ATTRS.map((a) => [a.name, a.offset]), [['iTurPos', 0], ['iTurRot', 4], ['iTurBarrel', 8], ['iTurSlab', 12]]);
+test('rekord instancji: 20 liczb, pięć vec4 w jednym przeplecionym buforze', () => {
+  assert.equal(TURRET_INST_STRIDE, 20);
+  assert.deepEqual(TURRET_INST_ATTRS.map((a) => [a.name, a.offset]),
+    [['iTurPos', 0], ['iTurRot', 4], ['iTurBarrel', 8], ['iTurSlab', 12], ['iTurLook', 16]]);
   const t = turretInstanceScratch();
-  Object.assign(t, { x: 1, y: 2, z: 3, scale: 4, yawCos: 5, yawSin: 6, hullCos: 7, hullSin: 8, pitchCos: 9, pitchSin: 10, back: 11, spin: 12, zb: 13, zt: 14, lo: 15, hi: 16 });
-  const d = new Float32Array(32);
-  writeTurretInstance(d, 16, t);
-  assert.deepEqual([...d.subarray(16)], Array.from({ length: 16 }, (_, i) => i + 1));
-  assert.ok(d.subarray(0, 16).every((v) => v === 0), 'zapis tylko w swoim rekordzie');
+  assert.equal(t.glow, 1, 'akcenty domyślnie świecą (wieże proxy, rekordy bez lampki)');
+  Object.assign(t, { x: 1, y: 2, z: 3, scale: 4, yawCos: 5, yawSin: 6, hullCos: 7, hullSin: 8, pitchCos: 9, pitchSin: 10, back: 11, spin: 12, zb: 13, zt: 14, lo: 15, hi: 16, glow: 17 });
+  const d = new Float32Array(40).fill(-1);
+  writeTurretInstance(d, 20, t);
+  assert.deepEqual([...d.subarray(20)], [...Array.from({ length: 17 }, (_, i) => i + 1), 0, 0, 0]);
+  assert.ok(d.subarray(0, 20).every((v) => v === -1), 'zapis tylko w swoim rekordzie');
 });
 
 test('geometria partii: ≤ 8 buforów wierzchołków, jeden bufor instancji, wszystkie rodziny', () => {
@@ -156,7 +158,7 @@ test('poza części z rekordu = dawne drzewo Object3D (pozycje i normalne, wszys
         pitchCos: Math.cos(pose.pitch), pitchSin: Math.sin(pose.pitch), back: pose.back, spin: pose.spin
       });
       assert.ok(Math.abs(base.z - t.z) < 1e-9, 'podstawa wieży: z = pokład × k');
-      const rec = new Float64Array(16);
+      const rec = new Float64Array(TURRET_INST_STRIDE);
       writeTurretInstance(rec, 0, t);
       const objFor = (p, j) => (p.part === TURRET_PART.RING ? tree.ring : p.part === TURRET_PART.HOUSING ? tree.housing
         : p.part === TURRET_PART.BARREL ? tree.barrels[j % model.barrels.length] : tree.spins[j % model.barrels.length]);
@@ -238,7 +240,8 @@ test('materiał partii: WGSL z rekordem instancji, normalna przed widokiem, wars
   const holder = turretBatchWarmHolder(mat, 'vulcan');
   assert.equal(holder.receiveShadow, true, 'rozgrzewka w stanie siatek partii (receiveShadow w kluczu three)');
   const w = buildWGSL(holder);
-  for (const name of ['iTurPos', 'iTurRot', 'iTurBarrel', 'iTurSlab', 'aTurPart', 'aMat', 'aAO']) assert.ok(w.vertex.includes(name), `atrybut ${name}`);
+  for (const name of ['iTurPos', 'iTurRot', 'iTurBarrel', 'iTurSlab', 'iTurLook', 'aTurPart', 'aMat', 'aAO']) assert.ok(w.vertex.includes(name), `atrybut ${name}`);
+  assert.ok(/vTurLook/.test(w.fragment), 'mnożnik akcentów z rekordu w emisji (fragment)');
   assert.equal(mat.aoNode != null, true, 'AO z wierzchołków na świetle pośrednim (aoNode)');
   const main = w.vertex.slice(w.vertex.indexOf('fn main'));
   const assignN = main.search(/normalLocal\s*=/);

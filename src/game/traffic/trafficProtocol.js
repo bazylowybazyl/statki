@@ -8,10 +8,16 @@
  * GRA → WORKER
  *   init       { seed, economyScale, capacityMultiplier, piracyPressure,
  *                origin, planetAngles, planetScale, sunRadius,
- *                stations: { id: { factionId?, capacity?, stock? } }, focus? }
+ *                stations: { id: { factionId?, capacity?, stock? } }, focus?, warmup?,
+ *                homeBerths? }
  *              `capacity` i `stock` w jednostkach gry (skala 1) — worker sam
  *              mnoży przez skalę (`worldCapacityFromGame`); `stock` tylko dla
- *              stacji opuszczonych (resztki po mieszkańcach).
+ *              stacji opuszczonych (resztki po mieszkańcach). `warmup` (E15) —
+ *              sekundy świata do przeliczenia w tle po `ready` (`true` =
+ *              `TRAFFIC_WARMUP_SECONDS`; brak = start od zera: testy, narzędzia).
+ *              `homeBerths` — stanowiska domowe gracza (`PLAYER_HOME_BERTHS`):
+ *              trzymane dla gracza od budowy świata, a ich hala jest pierwsza
+ *              dla zapasu floty; brak = żadne (symulacja, bramka, testy).
  *   advance    { dt }                 co klatkę z krokami fizyki; pauza = brak
  *   focus      { x, y, r }            środek i promień bańki (~10 Hz)
  *   stock      { seq, stationId, bag, reason }   handel, rozbiórka wraku
@@ -24,17 +30,59 @@
  *   station    { stationId, destroyed: true }
  *   config     { piracyPressure?, piracyEnabled?, protectObserved? }
  *   snapshot   { requestId }          podsumowanie dla konsoli
- *   (zarezerwowane dla Z13 + portu Z2: berth-hold / berth-release gracza)
+ *   berth-hold { berths: [id…] }      stanowiska zajęte przez gracza (pełny zbiór; [] = żadne) —
+ *              dyspozytor ich nie przydziela, kurs w podejściu przenosi na inne (E6)
+ *
+ *   BAŃKA W WORKERZE (E6, docs/PLAN-ekonomia-rynki.md § 3.5): lot materializowany
+ *   (`materializedFlight.js`) liczy się TU, obok rekordów kursów — gra nie
+ *   odtwarza kursów. Po każdym `advance` worker wysyła `actors` (bufor
+ *   `ACTOR_FIELD`), gra liczy na nim trafienia i taran, a zniszczenie zgłasza
+ *   `destroyed` (kurs → wrak z ładunkiem, `strikeCourse`). `attach` / `detach` /
+ *   `progress` / `stage-done` zostają dla encji prowadzonych przez grę (awans
+ *   do pełnego NPC — później).
+ *
+ *   GRACZ NA RYNKU I ZAPIS (E7) — `economySave.js`, `tradeSummary.js`
+ *   init.restore         zapis ekonomii (`exportEconomyState`) nakładany na świeży świat; magazyny
+ *                        rynków, których jeszcze nie ma (stacja gracza), po ich `market-add`
+ *   economy-restore { requestId, state }  ten sam zapis na świat już zbudowany (gra: wybór w menu, przed
+ *                        pierwszym krokiem); odpowiedź `economy-restore-result { restored }`
+ *   economy-save    { requestId }   stan do zapisu gry
+ *   trade-summary   { requestId }   agregat dla komputera handlowego (trasy, porty, okazje)
+ *
+ *   RYNKI (E1, docs/PLAN-ekonomia-rynki.md § 3.1) — `src/game/traffic/markets.js`
+ *   market-add      { def }                  nowy rynek (MarketDef, `src/data/markets.js`)
+ *   market-building { stationId, role }      budynek przemysłu na rynku
+ *   market-owner    { stationId, factionId } nowy właściciel (null = opuszczony)
+ *   market-remove   { stationId }            rynek znika ze świata
+ *   Po każdej zmianie worker od razu wysyła `tick` z nową tabelą `stations`
+ *   i `berths` — indeksy rynku i `PORT` kursów liczą się od tej tabeli.
  *
  * WORKER → GRA
  *   ready      { version, clock, step, seed, economyScale, capacityMultiplier,
- *                stations, resources, factions, kinds, berths, buildMs }
+ *                stations, resources, factions, kinds, berths, buildMs, warmup }
  *              `berths`: { stationId: [id stanowiska…] } — `BERTH` kursu to
  *              indeks w liście jego portu (`PORT`), id jak w układach gry.
- *   tick       { clock, steps, stepMs, stats, stockSeq, market, bubble,
- *                wrecks, warWrecks, stationFactions? }   po każdym kroku świata
+ *   tick       { clock, steps, stepMs, stats, stockSeq, market, crew, bubble,
+ *                wrecks, warWrecks, stationFactions?, stations?, berths?, warmup }
+ *              po każdym kroku świata; `stations` i `berths` (jak w `ready`)
+ *              tylko po zmianie listy rynków — przed `market` z nowym układem.
+ *              `crew` — obsada portów (`CREW_FIELD`, W5), ten sam układ stacji co `market`.
+ *              `warmup { total, seconds, active, ms }` (E15): rozgrzewka świata w tle —
+ *              `seconds` już przeliczone; most dokłada je do swojego zegara (`time`), więc
+ *              czas mostu = czas świata także po rozgrzewce (pułapka 4 reguły `ruch-v2`).
  *   bubble     { clock, count, data, hulls? }            po przesunięciu fokusu
+ *   actors     { time, count, data, hulls?, ms, docks?, undocked? }   po każdym `advance` (E6): encje
+ *              bańki — `ACTOR_FIELD`, `time` = czas mostu, w którym pozy są ważne;
+ *              `docks` — postoje przy stanowisku, które się zaczęły albo zmieniły
+ *              (`DockRecord` niżej), `undocked` — numery kursów, których postój się skończył
+ *              (odłączenie, zniknięcie z bańki). Tylko zmiany — stan trzyma most (`actorDocks`).
+ *              `manifests?` / `unmanifested?` (kontenery-łup K1): ładunek encji z kursem w locie
+ *              `{ id, cargo: { towar: sztuki }, mass, value }` (jednostki świata) — nowy albo zmieniony;
+ *              `unmanifested` — numery encji bez ładunku albo poza bańką. Tylko zmiany — stan
+ *              trzyma most (`actorManifests`); gra rzuca z niego kontenery przy zniszczeniu.
  *   snapshot-result { requestId, snapshot }
+ *   economy-save-result  { requestId, state }     (E7)
+ *   trade-summary-result { requestId, summary }   (E7)
  *   error      { message, stack, during }
  *
  * `course` w wiadomościach to NUMER kursu — część liczbowa jego id
@@ -42,7 +90,32 @@
  * z jednego licznika.
  */
 
+import { SOL_SYSTEM } from '../../data/starSystems.js';
+
 export const TRAFFIC_PROTOCOL_VERSION = 1;
+
+/**
+ * ROZGRZEWKA ŚWIATA RUCHU (E15) — ile sekund świata przelicza worker w tle zaraz po `ready`, zanim gracz
+ * wyleci do portu. Świeży świat startuje pusty (kursy rodzą się z gospodarki): po 15 min gry w powietrzu jest
+ * ~90 kursów, po 30 min ~250, po 60 min ~740 (ziarno 7, ×60). Godzina daje grę z pełnym ruchem od pierwszej
+ * klatki; koszt to ~6 s CPU workera (720 kroków po 5 s świata, krok do ~45 ms), liczone kawałkami w menu.
+ * Wołający prosi o nią jawnie (`init.warmup: true`) — symulacja, bramka bilansu i testy startują od zera.
+ */
+export const TRAFFIC_WARMUP_SECONDS = 3600;
+/**
+ * Tryb awaryjny (rdzeń na głównym wątku): bez rozgrzewki — 720 kroków po 12–45 ms to kilka sekund przycinania
+ * menu i pierwszych klatek gry; świat startuje pusty jak przed E15 (rzadka ścieżka: brak `Worker`).
+ */
+export const TRAFFIC_WARMUP_FALLBACK_SECONDS = 0;
+
+/**
+ * STANOWISKO DOMOWE ATLASA (2026-10-26, zgłoszenie użytkownika: na stanowisku Atlasa stał nosiciel zapasu floty
+ * i oba „skakały”) — C-01 hali K-7 nr 0 Ziemi (`earth:K7-1`), gdzie fabuła stawia gracza na starcie misji 1
+ * (`_dockPlace('C-01')`) i dokąd wraca (`dockReturn`); holownik serwisowy też tam wiezie. Gra wysyła je w `init`:
+ * dyspozytor trzyma je dla gracza od budowy świata (jak `berth-hold`, ale stale), a zapas floty zapełnia jego halę
+ * jako pierwszą (`placeFleetStock`, `homeDocks`). Źródło: dom gracza Układu Słonecznego (`src/data/starSystems.js`).
+ */
+export const PLAYER_HOME_BERTHS = SOL_SYSTEM.home.berthIds;
 
 export const TRAFFIC_MSG = Object.freeze({
   INIT: 'init',
@@ -58,6 +131,42 @@ export const TRAFFIC_MSG = Object.freeze({
   STATION: 'station',
   CONFIG: 'config',
   SNAPSHOT: 'snapshot',
+
+  // Rynki (E1) — `markets.js`.
+  MARKET_ADD: 'market-add',
+  MARKET_BUILDING: 'market-building',
+  MARKET_OWNER: 'market-owner',
+  MARKET_REMOVE: 'market-remove',
+
+  // Bańka w workerze (E6).
+  BERTH_HOLD: 'berth-hold',
+  ACTORS: 'actors',
+  /**
+   * Encja BEZ kursu (zapas floty STOCK, postój PARKED — id ujemny; odlot DEPARTED — numer zamkniętego kursu)
+   * przejęta przez grę jako pełny NPC (taran, ogień): `{ id, on }` — `on`: statek firmy schodzi z puli dyspozytora
+   * (nie dostanie kursu, dopóki NPC żyje), odlot znika z bańki; `on: false` — statek wraca na postój.
+   */
+  ENTITY_HOLD: 'entity-hold',
+  /**
+   * Encja bez kursu zniszczona w grze: `{ id, x, y, reason }` — zapas floty → strata z zapasu frakcji
+   * (`settleGarrisonLosses`, wrak ze złomem), statek firmy (postój, odlot) → firma traci statek (`loseShip`; kurs,
+   * który zdążył dostać, ginie z nim). Bez kursu nie ma ładunku do rozliczenia.
+   */
+  ENTITY_LOST: 'entity-lost',
+
+  // Gracz na rynku i zapis (E7).
+  ECONOMY_SAVE: 'economy-save',
+  ECONOMY_SAVE_RESULT: 'economy-save-result',
+  ECONOMY_RESTORE: 'economy-restore',
+  ECONOMY_RESTORE_RESULT: 'economy-restore-result',
+  TRADE_SUMMARY: 'trade-summary',
+  TRADE_SUMMARY_RESULT: 'trade-summary-result',
+
+  // Kapsuły ratunkowe (E22 K4, `escapePodTransit.js`). Świat → gra: cel kapsuł promu zniszczonego w grze
+  // `{ course, stationId, people }` (port nadania, ludzie z kontraktu — gra dzieli ich po kapsułach kursu);
+  // gra → świat: dolot kapsuły z ludźmi `{ course, stationId, people }` (magazyn stacji dolotu, w chwili dolotu).
+  PODS_TARGET: 'pods-target',
+  PODS_LANDED: 'pods-landed',
 
   READY: 'ready',
   TICK: 'tick',
@@ -122,24 +231,147 @@ export const COURSE_KIND_SHIFT = 12;
 export const COURSE_KIND_MASK = 15;
 
 /**
+ * Encja bańki (E6): poza lekkiego statku w chwili `actors.time` (czas mostu).
+ * Gra ekstrapoluje ją do swojego czasu (wiadomość przychodzi klatkę po
+ * `advance`, który ją policzył): `VX`, `VY`, `ANG_VEL` to ruch FAKTYCZNY
+ * ostatniego kroku bańki (z rozpychaniem, dociąganiem przechwytu i cofaniem —
+ * nie sama prędkość wzdłuż dziobu), `AX`, `AY` — przyspieszenie z dwóch kroków.
+ * Ekstrapolacja drugiego rzędu trzyma skok pozy przy nowym buforze poniżej
+ * jednostki (przy 240 Hz obraz nie drga co klatkę fizyki).
+ *
+ * `LENGTH` × `WIDTH` to obrys kadłuba (`trafficHullFootprint`) — ten sam,
+ * którym bańka mieści statek na stanowisku; gra liczy na nim trafienia.
+ * `PORT` / `BERTH` jak w kursie: stanowisko, na które statek leci (`APPROACH`),
+ * przy którym stoi (faza `capture` / `docked` / `undock`) albo z którego
+ * właśnie wychodzi (`LEAVING`); −1, gdy żadne.
+ */
+export const ACTOR_STRIDE = 20;
+export const ACTOR_FIELD = Object.freeze({
+  /** Numer kursu (`courseNumber`) — ten sam, który gra odsyła w `destroyed`. */
+  ID: 0,
+  X: 1,
+  Y: 2,
+  ANGLE: 3,
+  VX: 4,
+  VY: 5,
+  ANG_VEL: 6,
+  /** Indeks w tabeli `hulls` (wspólna z buforem kursów). */
+  HULL: 7,
+  FACTION: 8,
+  /** Indeks w `ACTOR_PHASES`. */
+  PHASE: 9,
+  FLAGS: 10,
+  /** −1…1: przyspieszenie wzdłuż dziobu (dysze główne / wsteczne). */
+  THROTTLE: 11,
+  LENGTH: 12,
+  WIDTH: 13,
+  PORT: 14,
+  BERTH: 15,
+  /** Czas od przechwytu na stanowisku [s] (sekwencja obsługi). */
+  DOCK_TIME: 16,
+  /** Prędkość wzdłuż dziobu (ujemna = cofanie) i przelotowa etapu — dysze. */
+  SPEED: 17,
+  /** Przyspieszenie faktyczne [j./s²] — ekstrapolacja drugiego rzędu w grze. */
+  AX: 18,
+  AY: 19
+});
+
+/**
+ * Postój statku przy stanowisku (kontrakt E6 ↔ E12 — przeładunek: ładownie, roje dronów, taśmociągi):
+ *   { id, berthId, stationId, mode, cargo, fill, t0, dur, hull, unitClass }
+ *   id        — numer kursu (= `ACTOR_FIELD.ID` encji),
+ *   berthId   — id stanowiska jak w `ready.berths` / układach doków gry,
+ *   mode      — powód postoju (`DWELL_REASON`): 'load' | 'unload' | 'extract' | 'refuel' | 'service' | 'hold',
+ *   cargo     — { towar: ilość } w jednostkach ŚWIATA ruchu (zapas × skala gospodarki): to, co statek
+ *               wyładowuje ('unload') albo bierze ('load'); urobek wyprawy — cały worek; pusty przelot,
+ *               patrol — {},
+ *   (Obok, w każdej wiadomości `actors`: `cargo` — Float32Array rekordów przeładunku encji przy stanowisku,
+ *   krok `ACTOR_CARGO_STRIDE` — `bubbleCargo.js`, kontrakt E12 przyjęty przez orkiestratora; null bez rekordów.)
+ *   fill      — 0…1: masa ładunku (`payload.mass`) / ładowność klasy kursu (`VAN_CLASSES[].capacity`, ta sama
+ *               skala co masa); null — klasa bez ładowni (okręty, rejdery) albo kurs bez masy (pusty → 0),
+ *   t0, dur   — obsługa przy stanowisku w CZASIE MOSTU: od `t0` (koniec przechwytu) przez `dur` s
+ *               (postęp = (czas − t0) / dur; dojście w porcie nie wchodzi),
+ *   hull      — id kadłuba proxy (`resolveTrafficHullId`), unitClass — klasa kursu.
+ */
+export const DOCK_MODES = Object.freeze(['load', 'unload', 'extract', 'refuel', 'service', 'hold']);
+
+/** Fazy encji w kolejności indeksów `ACTOR_FIELD.PHASE` (= wartości `ACTOR_PHASE`). */
+export const ACTOR_PHASES = Object.freeze(['fly', 'capture', 'docked', 'undock', 'hold', 'station']);
+
+export const ACTOR_FLAG = Object.freeze({
+  /** Etap warpu — dysze na dopalaczu, bez plazmy. */
+  WARP: 1,
+  /** Leci na przydzielone stanowisko (`PORT` / `BERTH`). */
+  APPROACH: 2,
+  /** Wychodzi ze stanowiska `PORT` / `BERTH` (pole jeszcze nie wolne). */
+  LEAVING: 4,
+  CONVOY: 8,
+  AGENT: 16,
+  DEADHEAD: 32,
+  /**
+   * Okręt z zapasu floty frakcji portu na padzie hali K-7 (`placeFleetStock`, Z2) — BEZ kursu: stoi,
+   * `ID` ujemny (nie numer kursu). Fizyczny jak każda encja (obrażenia, awans przed taranem); strata →
+   * `entity-lost` (ubytek zapasu frakcji), nie `destroyed`.
+   */
+  STOCK: 64,
+  /**
+   * Kurs skończył się przy stanowisku (rozładunek u celu): encja dokańcza odlot BEZ kursu — odłączanie, korytarz,
+   * lot poza bańkę. Numer kursu zostaje (ciągłość encji); obrażenia i awans jak STOCK (`entity-hold` / `entity-lost`).
+   */
+  DEPARTED: 128,
+  /**
+   * Statek BEZ kursu na postoju przy porcie (E15): statek firmy na redzie albo orbicie postojowej
+   * (`portParking.js`) albo nadmiar zapasu floty na redzie wojskowej (wtedy razem ze STOCK). `ID` ujemny,
+   * stoi (prędkość 0); obrażenia i awans jak STOCK (`entity-hold` / `entity-lost`).
+   */
+  PARKED: 256
+});
+
+/**
  * Rynek: stacje × surowce × pola, w kolejności tabel `stations` i `resources`
  * z `ready`. `BID`/`ASK` to ceny przy neutralnej reputacji — gra, która zna
  * reputację gracza, liczy swoje z `resourcePrice` na kopii magazynu.
  */
-export const MARKET_STRIDE = 5;
+export const MARKET_STRIDE = 7;
 export const MARKET_FIELD = Object.freeze({
   STOCK: 0,
   CAPACITY: 1,
   /** Sekundy głodu (`econ.duress`) — trzeci składnik ceny. */
   DURESS: 2,
   BID: 3,
-  ASK: 4
+  ASK: 4,
+  /** Oferta portu dla kupca (gracz): ile sprzeda ponad rezerwę na własne potrzeby (E7, `portOfferFromQuote`). */
+  SELL: 5,
+  /** …i ile skupi do celu uzupełnienia, licząc z towarem w drodze (0 — ma dość, −1 — port towaru nie używa). */
+  BUY: 6
 });
 
 /** Indeks rekordu rynku dla stacji `s` i surowca `r`. */
 export function marketOffset(stationIndex, resourceIndex, resourceCount) {
   return (stationIndex * resourceCount + resourceIndex) * MARKET_STRIDE;
 }
+
+/**
+ * OBSADA (workforce, E16 W5) — stacje × pola w kolejności tabeli `stations`, osoby świata, w `tick.crew`
+ * obok bufora rynku. Ludzi na miejscu, kwatery i ofertę kontraktów niesie bufor rynku (towar `workforce`:
+ * `STOCK`, `CAPACITY`, `SELL` — kontrakty, które port wystawia (tylko źródło), `BUY` — które przyjmie,
+ * `ASK` / `BID`); potrzebę N i podaż źródła — tabela `stations` (`workforce`). Tu to, czego rynek nie ma:
+ *   INBOUND     ludzie na kontraktach w drodze DO portu (kursy z ludźmi, łącznie z zaokrętowaniem)
+ *   OUTBOUND    …w drodze Z portu (źródło)
+ *   RETURNING   ludzie po kontrakcie w drodze do domu (powroty promów DO portu)
+ *   LEAVING     ludzie po kontrakcie czekający w porcie na prom do domu (`econ.workforceLeaving`)
+ *   EFFICIENCY  wydajność zakładów z ostatniego cyklu (`econ.workforceEfficiency`, 0…1)
+ *   HOSTAGES    zakładnicy w kryjówce (porwania W4), jeszcze bez zapłaconego okupu
+ */
+export const CREW_STRIDE = 6;
+export const CREW_FIELD = Object.freeze({
+  INBOUND: 0,
+  OUTBOUND: 1,
+  RETURNING: 2,
+  LEAVING: 3,
+  EFFICIENCY: 4,
+  HOSTAGES: 5
+});
 
 /** Numer kursu z jego id (`haul-00012` → 12); `NaN`, gdy id ma inny kształt. */
 export function courseNumber(courseId) {
@@ -149,3 +381,63 @@ export function courseNumber(courseId) {
   const tail = id.slice(dash + 1);
   return /^\d+$/.test(tail) ? Number(tail) : NaN;
 }
+
+/**
+ * PAS W EKONOMII (E3, docs/PLAN-ekonomia-rynki.md § 3.3) — uszczuplenie pasa i wyrwy
+ * (`traffic/miningFields.js`). Osobna tabela, bo `TRAFFIC_MSG` rozbudowuje rynek.
+ *
+ * GRA → WORKER
+ *   belt-mined { x, y, tons }       urobek platformy gracza (ładownia) w punkcie świata gry —
+ *                                   ten sam rejestr uszczuplenia co wyprawy NPC
+ * WORKER → GRA
+ *   belt-holes { holes, full }      zmienione wyrwy `[{ id, x, y, r, depth }]` (depth 0 = usunięta);
+ *                                   `full` — pełna lista (po `ready`), inaczej tylko zmiany od ostatniej
+ */
+export const BELT_MSG = Object.freeze({
+  MINED: 'belt-mined',
+  HOLES: 'belt-holes'
+});
+
+/**
+ * PRACA STATKÓW RUCHU W BAŃCE I WRAKI GRY DLA ZŁOMIARZY (E24) — osobna tabela jak `BELT_MSG`.
+ *
+ * WORKER → GRA (w wiadomości `actors`, tylko zmiany — jak `docks`):
+ *   works: [WorkRecord]   encja w etapie pracy albo holu (nowa lub zmieniona),
+ *   unworked: [id]        encja skończyła pracę albo zniknęła z bańki.
+ *   WorkRecord = { id, kind, phase, x, y, t0, dur, gid }
+ *     id    — numer kursu (= `ACTOR_FIELD.ID` encji),
+ *     kind  — `WORK_KIND`: górnik w etapie wydobycia, złomiarz tnie albo holuje,
+ *     phase — 'work' (postój przy polu / wraku), 'haul' (złomiarz wraca z wrakiem na linie),
+ *     x, y  — punkt pracy z rekordu (miejsce wydobycia, pozycja wraku z rejestru),
+ *     t0, dur — czas mostu początku i długość postoju (koniec pracy = t0 + dur; w holu 0, 0),
+ *     gid   — id wraku GRY (zgłoszony przez `wreck-report`) albo null (wrak wojny liczonej w tle).
+ *
+ * GRA → WORKER
+ *   wreck-report { wrecks: [{ gid, x, y, r, work, classId, scale, towable, factionId, source }] }
+ *       wraki gry w bańce gracza do rejestru złomiarzy (`war.wrecks`): klasa okrętu wojennego (`WARSHIP_CLASSES`),
+ *       `scale` — ułamek kadłuba klasy (0–1), `towable: false` — sam złom (odłam, cywil); `source` — 'course:N'
+ *       albo 'entity:N' (okręt garnizonu / zapasu floty: wrak wiąże się ze stratą zapasu, bez drugiego wraku);
+ *       `r` — promień wraku (punkt postoju złomiarza), `work` — szacunek czasu cięcia [s] z wielkości wraku
+ *       (cięcie jako proces, reguła `zlomowanie`): postój złomiarza przy cięciu wraku gry trwa tyle, bez `work` —
+ *       stałe `cutSeconds`;
+ *   wreck-gone { gids: [gid] }   wrak gry przepadł — złomiarz w drodze wraca pusty, wpis wypada z rejestru;
+ *   wreck-hold { gids: [gid], on } gracz pracuje przy wraku (tnie, holuje, zbiera łup) — złomiarze go pomijają, holownik
+ *       w drodze albo przy wraku wraca pusty (wrak zostaje w rejestrze); `on: false` — gracz go zostawił.
+ *   Pierwszeństwo gracza: złomiarz nie leci po wrak gry wcześniej niż `gameWreckDelay` (300 s) po zgłoszeniu.
+ * WORKER → GRA
+ *   salvage-taken { taken: [{ gid, mode, course }] }   złomiarz skończył cięcie albo zaczepił wrak (koniec postoju):
+ *       gra usuwa wrak (`removeWreckFromWorld`), a przy holu w bańce — dopiero gdy holownik zniknie z bańki.
+ */
+export const SALVAGE_MSG = Object.freeze({
+  WRECK_REPORT: 'wreck-report',
+  WRECK_GONE: 'wreck-gone',
+  WRECK_HOLD: 'wreck-hold',
+  TAKEN: 'salvage-taken'
+});
+
+/** Rodzaj pracy encji w `WorkRecord`. */
+export const WORK_KIND = Object.freeze({
+  MINE: 'mine',
+  CUT: 'cut',
+  TOW: 'tow'
+});

@@ -66,11 +66,14 @@ const HullDamageEvents = {
   kerf(e, x0, y0, x1, y1, family) { stamps.push({ type: 'kerf', family, entity: e, x0, y0, x1, y1 }); }
 };
 const game = {
+  // Scena dźwięków (blok „SCENA DŹWIĘKI”): poza sceną warstwy dźwięku nie ma — haki w pętli pocisków to `if (SND)`.
+  SND: null,
   bullets: [], npcs: [], wrecks: window.wrecks, ship: null, player2Ship: null, splitScreenMode: false,
   SpatialGrid: {
     list: [], _resultBuffer: [],
     clear() { this.list.length = 0; },
     insert(e) { this.list.push(e); },
+    insertSwept(e) { this.list.push(e); },
     getPotentialTargetsAlongSegment() { this._resultBuffer.length = 0; for (const e of this.list) this._resultBuffer.push(e); return this._resultBuffer.length; },
     getPotentialTargets() { return this.getPotentialTargetsAlongSegment(); }
   },
@@ -107,7 +110,11 @@ const game = {
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false, projectilePassesAlly,
   HullBodies, HullDamageEvents, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  // migotanie świateł po trafieniu (stan zasilania okrętu) — sam obraz
+  notePowerFlick() {},
   noteBridgeHit() {}, bridgeSimTime: 0,
+  // mała skala (?malaSkala=1, src/game/smallScale.js): bez flagi pocisk nie jest strzałem fregaty gracza
+  scoutPlayerShot: () => false, scoutTurretHit() {}, scoutDeckPasses: () => false,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
   shouldRemoveProjectileAfterImpact, haloWorld: null,
@@ -117,10 +124,15 @@ const game = {
   cometField: null,
   // rój dronów naprawczych (src/game/repairSwarm.js): bez dronów w powietrzu — pocisk ich nie sprawdza
   RepairSwarm: { out: 0 },
+  // bańka ruchu v2 (E6, src/game/trafficBubble.js): bez statków ruchu — pocisk ich nie sprawdza
+  trafficBubble: null,
+  // doki portów bez ringu (E14, src/game/portDockWorld.js): bez budowli — pocisk ich nie sprawdza
+  portDocks: { count: 0 },
   window: { asteroidField: null, AudioSys: null }
 };
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };
 load('function removeBulletAt(index) {', 'removeBulletAt');
+load('function insertBulletGridTarget(e, dt) {', 'insertBulletGridTarget');
 load('function hullSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hullSweepImpact');
 load("function applyHexImpact(entity, x, y, damage, vel, fxSource = null, fxVariant = 'impact') {", 'applyHexImpact');
 load('function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {', 'writeImpactHit');

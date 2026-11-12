@@ -30,12 +30,12 @@ export const MISSION01_DIALOGUE = Object.freeze({
   ],
   // Wyjście z warpa na obrzeżach — mgła wojny: czujniki grawitacyjne widzą tylko dużą masę (bez tożsamości).
   massContact: [
-    { who: 'xo', text: '[Wyszliśmy z warpa. Czujniki grawitacyjne: duża masa przed nami, kilkadziesiąt kilometrów. Nic więcej nie widać.]' },
+    { who: 'xo', text: '[Wyszliśmy z warpa. Czujniki mają kontakt — kilkadziesiąt kilometrów, nic więcej. Czujką znajdziemy kierunek.]' },
     { who: 'xo', text: '[Proponuję zwiad — dron albo ostrożne podejście. Nie dajmy się zobaczyć.]' }
   ],
   // To samo z fregatą zwiadu w ładowni (2026-10-11).
   massContactScout: [
-    { who: 'xo', text: '[Wyszliśmy z warpa. Czujniki grawitacyjne: duża masa przed nami, kilkadziesiąt kilometrów. Nic więcej nie widać.]' },
+    { who: 'xo', text: '[Wyszliśmy z warpa. Czujniki mają kontakt — kilkadziesiąt kilometrów, nic więcej. Czujką znajdziemy kierunek.]' },
     { who: 'xo', text: '[Fregata zwiadu w ładowni gotowa. Wypuśćmy ją i obleć to coś z daleka — Atlasa z bliska zobaczą.]' }
   ],
   // Fregata obleciała bazę — wszystkie budowle rozpoznane.
@@ -110,7 +110,7 @@ export const MISSION01_DIALOGUE = Object.freeze({
   ],
   // Habitat wylatuje w powietrze.
   shipyardDown: [
-    { who: 'xo', text: '[Habitat pęka! Bęben się składa — dysk pod nim idzie razem z nim!]' },
+    { who: 'xo', text: '[Reaktory padły, habitat pęka! Całe miasto leci na planetoidę!]' },
     { who: 'pirate', text: '[Herszt: zapłacisz za to…]' }
   ],
   // Koniec misji 1 — w polu, nad gruzami (dalej misja 2: naprawa, odwet).

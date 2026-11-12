@@ -106,24 +106,44 @@ test('wartości komórki: luka Kirkwooda odjęta (raster bez mory), pole wygaszo
   assert.equal(out.f, 0);
 });
 
+const BAKE_TUNE = { on: true, cellPx: 6, bakeMs: 2, maxTiles: 96, contours: true, beltIso: 0.2, fieldIso: 0.16, lanes: true, labels: true, giants: true, families: true };
+// kadr nad pasem głównym (38 AU na osi x) przy średnim zoomie
+const BAKE_VIEW = { W: 1600, H: 900, cx: 800, cy: 450, viewX: SX + 38.5 * AU, viewY: SY, zoom: 0.0006, blend: 0 };
+const bakeDone = (layer) => layer.stats.ready > 0 && !layer.job && layer._need.length === 0;
+
+// Zegar wypieku w testach: czas ściany zależy od obciążenia maszyny i JIT, więc nie mówi, czy wypiek trzyma budżet.
+// Tu czas płynie tylko z próbkowaniem pola — stały koszt komórki: wiersze na klatkę i domknięcia są deterministyczne.
+const SAMPLE_MS = 0.00025; // ~4,2 ms na kafel 130 × 130 (w grze ~4,6 ms)
+const FINISH_COST_MS = 0.3; // domknięcie kafla (w grze ~0,2–0,4 ms)
+function timedField(clock) {
+  const f = Object.create(field);
+  f.sampleMacro = (x, y) => { clock.t += SAMPLE_MS; return field.sampleMacro(x, y); };
+  return f;
+}
+function timedFinish(layer, clock) {
+  const finish = layer._finishTile.bind(layer);
+  layer._finishTile = (t) => { clock.t += FINISH_COST_MS; finish(t); };
+  return layer;
+}
+
 test('wypiek kafli na prawdziwym polu: budżet, puste kafle, kontury, korzeń przypięty', () => {
-  const tune = { on: true, cellPx: 6, bakeMs: 2, maxTiles: 96, contours: true, beltIso: 0.2, fieldIso: 0.16, lanes: true, labels: true, giants: true, families: true };
   const ctx = stubCtx();
-  // rozgrzewka JIT (pierwsze domknięcie kafla na zimno trwa kilka ms) — inna warstwa, inny kadr
-  const warm = new CicBeltLayer({ getField: () => field, tune });
-  for (let f = 0; f < 60; f++) warm.draw(ctx, { W: 1600, H: 900, cx: 800, cy: 450, viewX: SX - 38.5 * AU, viewY: SY, zoom: 0.003, blend: 0 });
-  const layer = new CicBeltLayer({ getField: () => field, keepLines: true, tune });
-  // kadr nad pasem głównym (38 AU na osi x) przy średnim zoomie
-  const v = { W: 1600, H: 900, cx: 800, cy: 450, viewX: SX + 38.5 * AU, viewY: SY, zoom: 0.0006, blend: 0 };
+  const clock = { t: 0 };
+  const timed = timedField(clock);
+  const layer = timedFinish(new CicBeltLayer({ getField: () => timed, keepLines: true, tune: BAKE_TUNE, clock: () => clock.t }), clock);
+  const v = BAKE_VIEW;
   const perCall = [];
   for (let f = 0; f < 400; f++) {
     const t0 = layer.stats.bakeMs;
     layer.draw(ctx, v);
     perCall.push(layer.stats.bakeMs - t0);
-    if (layer.stats.ready > 0 && !layer.job && layer._need.length === 0) break;
+    if (bakeDone(layer)) break;
   }
+  // wiersz kończy się po terminie najwyżej raz na klatkę; domknięcie kafla tylko z zapasem budżetu
+  const rowMs = CIC_BELT_TEX * SAMPLE_MS;
   const max = Math.max(...perCall);
-  assert.ok(max < 2 + 1, `wypiek w klatce ${max.toFixed(2)} ms (budżet 2 ms + jeden wiersz)`);
+  assert.ok(max > BAKE_TUNE.bakeMs && max <= BAKE_TUNE.bakeMs + rowMs + 1e-9,
+    `wypiek w klatce ${max.toFixed(4)} ms (budżet 2 ms + jeden wiersz ${rowMs} ms)`);
   assert.ok(layer.stats.baked >= 2, `upieczone ${layer.stats.baked}`);
   const ready = [...layer.tiles.values()].filter((t) => t.state === 2);
   const root = [...layer.tiles.values()].find((t) => t.k === CIC_BELT_KMAX);
@@ -145,6 +165,28 @@ test('wypiek kafli na prawdziwym polu: budżet, puste kafle, kontury, korzeń pr
   for (let f = 0; f < 40; f++) layer.draw(ctx, v2);
   assert.ok(layer.stats.empty > empty0);
   assert.equal(layer.stats.samples, samples0, 'pusty kadr nie próbkuje pola');
+});
+
+test('wypiek przy zagłodzonym wątku: dokładnie jeden krok na klatkę, kafel domyka się jako pierwsza praca klatki', () => {
+  // Każdy odczyt zegara „trwa” 5 ms (wywłaszczenie między odczytami): budżet 2 ms minął przed pierwszym krokiem
+  // i zapasu na domknięcie nie ma w żadnej klatce — bez gwarancji kroku wypiek stoi. Z gwarancją: DOKŁADNIE jeden
+  // krok na klatkę (wiersz albo domknięcie kafla; puste kafle bez próbkowania nie są krokiem) — resztę tnie budżet.
+  const ctx = stubCtx();
+  let t = 0;
+  const layer = new CicBeltLayer({ getField: () => field, keepLines: true, tune: BAKE_TUNE, clock: () => (t += 5) });
+  let frames = 0;
+  for (; frames < 3000 && !bakeDone(layer); frames++) {
+    const { samples, baked } = layer.stats;
+    layer.draw(ctx, BAKE_VIEW);
+    if (bakeDone(layer)) break;
+    const rows = (layer.stats.samples - samples) / CIC_BELT_TEX;
+    const finished = layer.stats.baked - baked;
+    assert.equal(rows + finished, 1, `klatka ${frames}: wierszy ${rows}, domknięć ${finished}`);
+  }
+  assert.ok(bakeDone(layer), `kadr dopieczony (${frames} klatek, upieczone ${layer.stats.baked})`);
+  const root = [...layer.tiles.values()].find((x) => x.k === CIC_BELT_KMAX);
+  assert.ok(root && root.state === 2, 'korzeń upieczony');
+  assert.ok(layer.stats.baked >= 2);
 });
 
 test('grupy konturów wg palety regionu przy łańcuchu', () => {

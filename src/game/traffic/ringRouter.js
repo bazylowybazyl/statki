@@ -55,6 +55,8 @@ export const RING_ROUTER_DEFAULTS = Object.freeze({
   transitLead: 1800,
   /** Wlot / wylot tranzytu nad płytą. */
   transitMouth: 350,
+  /** Zapas od czoła segmentu w przerwie ringu w budowie [j.] (przerwa = szeroki tranzyt). */
+  gapMargin: 900,
   /** Sufit prędkości w tranzycie [j./s]. */
   transitSpeed: 260
 });
@@ -138,9 +140,18 @@ export function createRingObstacle(spec = {}, options = {}) {
     haloLocalToGame(place, Math.cos(theta) * 1000, Math.sin(theta) * 1000, tmp);
     return Math.atan2(tmp.y - y, tmp.x - x);
   };
+  // Przeloty: 4 tranzyty i przerwy ringu w budowie (Jowisz, haloRingConstruction.js) — przerwa to
+  // szeroki „tranzyt” z własną pół-szerokością (krawędź segmentu z zapasem gapMargin).
   const localAngles = haloTransitAngles();
-  const transitAngles = new Float64Array(localAngles.length);
-  localAngles.forEach((theta, i) => { transitAngles[i] = gameAngle(theta); });
+  const gaps = ringLayout.construction?.active ? ringLayout.construction.gaps : [];
+  const transitAngles = new Float64Array(localAngles.length + gaps.length);
+  const transitHalfWidths = new Float64Array(transitAngles.length);
+  localAngles.forEach((theta, i) => { transitAngles[i] = gameAngle(theta); transitHalfWidths[i] = HALO_TRANSIT.halfWidth; });
+  gaps.forEach((gap, j) => {
+    const i = localAngles.length + j;
+    transitAngles[i] = gameAngle(gap.center);
+    transitHalfWidths[i] = Math.max(HALO_TRANSIT.halfWidth, gap.half * radii.floorMid - config.gapMargin);
+  });
 
   // Płyty portu (hale K-7, zatoki): w ich obrębie podłoga jest płaska (pad
   // +7 j.), a nie teren z górami — hale stoją NA podłodze, nie w płycie.
@@ -169,6 +180,10 @@ export function createRingObstacle(spec = {}, options = {}) {
     funnelR: arcR + 120,
     innerR: (planetBound + slabInner) * 0.5,
     transitAngles,
+    /** Pół-prześwit każdego przelotu [j.] (tranzyty, potem przerwy ringu w budowie). */
+    transitHalfWidths,
+    /** Liczba tranzytów (dalej w `transitAngles` — przerwy). */
+    transitCount: localAngles.length,
     /** Pół-prześwit tranzytu (bez ścian) [j.] i jego kąt na promieniu podłogi. */
     transitHalfWidth: HALO_TRANSIT.halfWidth,
     transitHalf: HALO_TRANSIT.halfWidth / radii.floorMid,
@@ -223,8 +238,9 @@ export function segmentPointDistance(px, py, ax, ay, bx, by) {
 export function transitIndexAt(ring, x, y) {
   const angle = Math.atan2(y - ring.y, x - ring.x);
   const r = Math.hypot(x - ring.x, y - ring.y);
-  const half = ring.transitHalfWidth / Math.max(1, r);
+  const inv = 1 / Math.max(1, r);
   for (let i = 0; i < ring.transitAngles.length; i++) {
+    const half = (ring.transitHalfWidths ? ring.transitHalfWidths[i] : ring.transitHalfWidth) * inv;
     if (Math.abs(wrapPi(angle - ring.transitAngles[i])) < half) return i;
   }
   return -1;

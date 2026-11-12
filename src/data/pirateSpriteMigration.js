@@ -1,3 +1,5 @@
+import { migrateSavedNavLights } from './shipNavLights.js';
+
 // Legacy editor positions use the original PNG pixels. Keep saved custom layouts
 // when switching to the v2 sprites; unchanged preset markers follow the new mounts.
 const REVISIONS = {
@@ -83,8 +85,12 @@ const REVISIONS = {
   }
 };
 
-/** Pure, idempotent migration shared by the player, NPCs and layout editor. */
+/** Pure, idempotent migration shared by the player, NPCs and layout editor. Też lampy zapisu: dawne lampy obrysu → światła nawigacyjne. */
 export function migratePirateSpriteLayout(id, layout) {
+  return migrateSavedNavLights(id, migrateSpriteRevision(id, layout));
+}
+
+function migrateSpriteRevision(id, layout) {
   // Eksport pierwszego układu supercapitala zawierał dwa SPECIAL na jednej podstawie.
   // Usuwamy tylko zatwierdzony duplikat, również z hpEditor.v1; przesunięte gniazdo zostaje.
   if (id === 'pirate_supercapital' && Array.isArray(layout?.hardpoints)

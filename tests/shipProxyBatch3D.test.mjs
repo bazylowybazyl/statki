@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { Core3D } from '../src/3d/core3d.js';
 import { ShipProxyBatch3D } from '../src/3d/shipProxyBatch3D.js';
+import { PROXY_INSTANCE_STRIDE } from '../src/3d/shipProxyBatch3D.tsl.js';
+import { HullLightStore } from '../src/3d/hexShips3D.tsl.js';
 import { TRAFFIC_HULLS, trafficHullRenderSize } from '../src/data/trafficHulls.js';
 import { mainExhaustPaletteIndex } from '../src/data/engineFx.js';
 
@@ -22,24 +24,17 @@ test('materiał proxy: TSL, instancje względem początku przy kamerze (precyzja
   assert.match(source, /mesh\.position\.set\(origin\.x, origin\.y, 0\)/);
 });
 
-test('materiał proxy: rdzeń światła = fragment kadłubów (hexShips3D.tsl.js — maska słońca, glow)', () => {
+test('materiał proxy: fragment = fragment pełnego kadłuba (E17 — oświetlenie v2, lakier, lampy; bez ran i warpa)', () => {
   const proxy = squash(tslSource);
   const hull = squash(hullTslSource);
-  const shared = [
-    'normalize(vec3(p.x.mul(0.45), p.y.mul(-0.45), 1.0))',
-    'sunVisibility().toVar()',
-    '.mul(sunFill(sunVis)).add(dayDiffuse.mul(',
-    'pow(max(dot(worldNormal, halfVector), 0.0), 32.0)',
-    'smoothstep(-0.02, 0.08, NdotL)',
-    '.mul(litMask).mul(sunVis)));',
-    'step(0.6, sunlitColor.z).mul(step(sunlitColor.x, 0.5))',
-    'float(1.0).sub(fieldDarkness())',
-    '.mul(isGlowing).mul(1.5).mul(fieldLit.mul(0.7).add(0.3))'
-  ];
-  for (const line of shared) {
-    assert.ok(hull.includes(line), `kadłuby zmieniły model światła — popraw lustro w shipProxyBatch3D.tsl.js: ${line}`);
-    assert.ok(proxy.includes(line), `proxy nie ma: ${line}`);
-  }
+  // Proxy nie ma własnego modelu światła (dawne lustro klasycznego modelu) — bierze fragment skóry belek.
+  assert.match(proxy, /import \{ hullProxyFragmentNode \} from '\.\/hexShips3D\.tsl\.js'/);
+  assert.match(proxy, /fragmentNode = hullProxyFragmentNode\(/);
+  assert.doesNotMatch(proxy, /dayDiffuse|sunVisibility\(\)|isGlowing/);
+  // Wariant proxy fragmentu kadłuba: bez mapy ran, żaru i jasności blachy; światła efektów z siatki (lampy hali K-7) — tak (E17b).
+  assert.match(hull, /export function hullProxyFragmentNode\(.*\) \{ return hullFragmentNode\(\{ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false, effectLights: true \}\); \}/);
+  assert.match(hull, /function hullEffectLights\(ctx\) \{ if \(!ctx\.effectLights\) return vec3\(0\.0\);/);
+  assert.match(proxy, /uGridOwner: float\(0\.0\)/);
 });
 
 // Atrapa Core3D bez WebGL: scena three, rozmiar widoku, obrazek {width, height}.
@@ -98,17 +93,19 @@ test('pusty rodzaj: count 0 i visible = false (zero draw calli)', () => {
   assert.equal(ShipProxyBatch3D.stats.drawCalls, 0);
 });
 
-test('jedna siatka na teksturę: ciężki frachtowiec dzieli sprite i mesh z dalekiego zasięgu', () => {
+test('jedna siatka na teksturę: ciężki frachtowiec ma własny sprite Z11 (E13) — osobna siatka w skali 1800 j.', () => {
   const list = [
     actor({ id: 'haul-00010', hull: 'long_haul_freighter', x: cam.x, y: cam.y }),
-    actor({ id: 'haul-00011', cls: 'freighter-capital', x: cam.x + 300, y: cam.y })
+    actor({ id: 'haul-00011', cls: 'freighter-capital', x: cam.x + 300, y: cam.y }),
+    actor({ id: 'haul-00012', cls: 'freighter-capital', x: cam.x + 600, y: cam.y })
   ];
   ShipProxyBatch3D.update(list, 1, cam);
-  const mesh = meshOf('long_haul_freighter.png');
-  assert.equal(countOf(mesh), 2);
-  assert.equal(ShipProxyBatch3D.stats.drawCalls, 1);
+  assert.equal(countOf(meshOf('long_haul_freighter.png')), 1);
+  const mesh = meshOf('heavy_freighter.png');
+  assert.equal(countOf(mesh), 2, 'dwa ciężkie frachtowce — jedna siatka');
+  assert.equal(ShipProxyBatch3D.stats.drawCalls, 2);
   const M = dataOf(mesh);
-  assert.equal(Math.round(M[16]), trafficHullRenderSize('heavy_freighter').w, 'druga instancja w skali 1800 j.');
+  assert.equal(Math.round(M[0]), trafficHullRenderSize('heavy_freighter').w, 'instancja w skali 1800 j.');
 });
 
 test('rodzaj rośnie ponad pojemność początkową bez gubienia instancji', () => {
@@ -118,7 +115,50 @@ test('rodzaj rośnie ponad pojemność początkową bez gubienia instancji', () 
   const meshes = Core3D.scene.children.filter((o) => o.name === 'shipProxy:smuggler.png');
   assert.equal(meshes.length, 1, 'stary mesh odpięty');
   assert.equal(countOf(meshes[0]), 70);
-  assert.ok(Math.abs(dataOf(meshes[0])[69 * 16 + 12] - 690) < 1e-6);
+  assert.ok(Math.abs(dataOf(meshes[0])[69 * PROXY_INSTANCE_STRIDE + 12] - 690) < 1e-6);
+});
+
+test('wygląd rodzaju (E17): lampy w slocie HullLightStore z bramką promienia, lampy cywila, strefy dysz, odblask', () => {
+  const near = { x: cam.x, y: cam.y, zoom: 0.5 };
+  const destroyer = actor({ id: 'haul-00050', hull: 'terran_destroyer', x: near.x, y: near.y });
+  const freighter = actor({ id: 'haul-00051', hull: 'container_ship', x: near.x + 1200, y: near.y });
+  ShipProxyBatch3D.update([destroyer, freighter], 1, near);
+  const D = dataOf(meshOf('terrandestroyer.png'));
+  // 6 nawigacyjnych + reflektor daleki i otoczenia + lampy pokładowe (stan zasilania okrętu, src/data/shipDeckLights.js)
+  assert.ok(D[14] >= 8, `niszczyciel: lampy statku na blasze (${D[14]})`);
+  assert.ok(D[19] >= 0 && D[19] < 1, 'faza migania okrętu w instancji');
+  assert.equal(D[16] % HullLightStore.slotVec4, 0, 'slot lamp rodzaju w vec4');
+  const lamps = HullLightStore.array();
+  const base = HullLightStore.slotFloatOffset(D[16] / HullLightStore.slotVec4);
+  assert.ok(lamps[base + 3] > 0, 'moc pierwszej lampy w slocie');
+  assert.ok(D[17] > 0, 'strefy dysz (lakier gaśnie przy wylotach)');
+  assert.equal(D[18], 1, 'waga lakieru');
+  assert.ok(D[15] > 0.99, 'duży na ekranie — pełny odblask lakieru');
+  const F = dataOf(meshOf('container_ship.png'));
+  // 6 świateł nawigacyjnych (src/data/shipNavLights.js) + lampy pokładowe kadłuba (src/data/shipDeckLights.js),
+  // bez reflektorów otoczenia
+  assert.ok(F[14] >= 6, `cywil: lampy nawigacyjne i pokładowe (${F[14]})`);
+  assert.ok(F[17] > 0, 'cywil ma strefy dysz MAIN / SIDE');
+  assert.equal(ShipProxyBatch3D.stats.lights, 2, 'widoki lamp pozycyjnych (billboardy) — niszczyciel i frachtowiec');
+
+  // Daleko: bez lamp na blasze (promień < 4 px) i bez billboardów (< 2,5 px), odblask zgaszony.
+  ShipProxyBatch3D.update([destroyer], 1, { ...near, zoom: 0.003 });
+  const Far = dataOf(meshOf('terrandestroyer.png'));
+  assert.equal(Far[14], 0);
+  assert.equal(Far[15], 0);
+  assert.equal(ShipProxyBatch3D.stats.lights, 0);
+});
+
+test('budżet lamp proxy w puli billboardów: przy nadmiarze zostają kadłuby największe na ekranie', () => {
+  const near = { x: cam.x, y: cam.y, zoom: 0.5 };
+  // 100 frachtowców × 6 lamp > budżet; jeden duży (ciężki frachtowiec) musi zostać.
+  const list = [];
+  for (let i = 0; i < 100; i++) list.push(actor({ id: `haul-3${i}`, hull: 'inter_station_shuttle', x: near.x + (i % 10) * 130 - 600, y: near.y + Math.floor(i / 10) * 70 - 350 }));
+  list.push(actor({ id: 'haul-39999', hull: 'heavy_freighter', x: near.x, y: near.y }));
+  ShipProxyBatch3D.update(list, 1, near);
+  const kept = ShipProxyBatch3D.stats.lights;
+  assert.ok(kept * 6 <= 384 && kept > 0, `widoków lamp ${kept}`);
+  assert.equal(ShipProxyBatch3D.stats.lightsDropped, 101 - kept);
 });
 
 test('dysze: widok encji z układem MAIN kadłuba, postój bez dysz, budżet na flotę', () => {

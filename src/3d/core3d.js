@@ -32,12 +32,14 @@ import { HEAT_TILE_PX, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost
 import { zbierzZakres } from './zakresyWysylki.js';
 import { BloomGryCompute } from './tsl/bloomCompute.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
-import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
+import { CZYSZCZENIE_AB, renderCzyszczac } from './czyszczenieWPassie.js';
+import { FxFrame, FX_DISTORT_LAYER, FX_OVERLAY_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
 import { syncSky3D } from './sky3D.js';
 import { setBillboard3DCamera } from './tsl/billboard3D.js';
 import { installRulonGlobal, RULON, rulonActive, rulonInverse } from './warp/rulon.js';
+import { createZegarGpuKlatki } from './zegarGpuKlatki.js';
 import { packFogView } from './fog/fogOfWarView.js';
 import { FOG_CACHE_MIN_ZOOM, FogNoiseCache } from './fog/fogOfWarPost.js';
 import { ZBIERACZ, ZGLOSZENIE_POWOD, wyslijZgloszenia, zainstalujZbieranieZgloszen } from './zbieraczZgloszen.js';
@@ -177,7 +179,7 @@ export const GPU_REQUIRED_LIMITS = Object.freeze([
 const SHIELD_RENDER_LAYER = 7;
 // Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
 // tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
-const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER]);
+const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER, FX_OVERLAY_LAYER]);
 // Warstwy passów sceny gry w kolejności rozgrzewki (wpisy „start gry” rejestru, klatka zero — prewarmVisibleNow).
 const GAME_PASS_LAYERS = Object.freeze([0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]);
 // Kamera perspektywy z góry (gałąź płaska syncCamera): wysokość nad płaszczyzną gry liczona z FOV tak, żeby
@@ -354,11 +356,12 @@ function shadowShaftsMaskNode(u) {
         // Kanał B = mrok pola (1 − T): w nim gaśnie też otoczenie (sunFill),
         // bo w rdzeniu pola nie ma już pyłu oświetlonego słońcem. Tekstura
         // = DataTexture (v = 0 w pierwszym wierszu danych, y świata rośnie z v).
+        // uFieldOccOn = SIŁA pola 0..1 (zanik pola przy skoku gracza — asteroidBelt.js WARP_FADE): T → 1 − (1 − T) · siła.
         const fieldDark = float(0.0).toVar();
-        If(uFieldOccOn.greaterThan(0.5), () => {
+        If(uFieldOccOn.greaterThan(0.001), () => {
           const fuv = worldP.sub(uFieldOccRect.xy).mul(uFieldOccRect.zw).toVar();
           If(fuv.x.greaterThanEqual(0.0).and(fuv.y.greaterThanEqual(0.0)).and(fuv.x.lessThanEqual(1.0)).and(fuv.y.lessThanEqual(1.0)), () => {
-            const fieldT = texture(uFieldOcc, fuv, float(0)).r.toVar();
+            const fieldT = float(1.0).sub(float(1.0).sub(texture(uFieldOcc, fuv, float(0)).r).mul(uFieldOccOn)).toVar();
             shadow.assign(float(1.0).sub(float(1.0).sub(shadow).mul(fieldT)));
             backdropShadow.assign(float(1.0).sub(float(1.0).sub(backdropShadow).mul(fieldT)));
             fieldDark.assign(float(1.0).sub(fieldT));
@@ -585,7 +588,7 @@ const _bbRight = new THREE.Vector3();
 const _bbUp = new THREE.Vector3();
 const _bbFwd = new THREE.Vector3();
 // Mgła wojny: widok renderu (packFogView) — pola przepisywane w miejscu.
-const _fogView = { persp: false, refX: 0, refY: 0, zoom: 1, bufW: 1, bufH: 1, camZ: 1, inv: new THREE.Matrix4() };
+const _fogView = { persp: false, refX: 0, refY: 0, zoom: 1, roll: 0, bufW: 1, bufH: 1, camZ: 1, inv: new THREE.Matrix4() };
 const _fogRot = new THREE.Matrix4();
 
 export const Core3D = {
@@ -618,6 +621,13 @@ export const Core3D = {
   uniformUploadStats: { merged: 0, savedWrites: 0, skippedFull: 0, skippedBytes: 0 },
   // wysyłki bufora z przeplotem pominięte jako powtórka tej samej wersji (_dedupeInterleavedUploads)
   attributeUploadStats: { skipped: 0 },
+  // Czyszczenie celu sceny w passie sceny (loadOp clear, _runScenePass) zamiast osobnych passów renderer.clear three
+  // i rozwiązanie MSAA celu sceny tylko w ostatnim passie renderu (_skipIntermediateResolves) — 2026-10-29, pole asteroid
+  // przy 5120 × 1440. A/B w biegu: Core3D.clearInPass / msaaResolveOnce = false (dawna ścieżka three).
+  clearInPass: true,
+  msaaResolveOnce: true,
+  _resolveSkipTarget: null,
+  resolveStats: { skipped: 0 },
   // Zgłoszenia kolejki GPU (src/3d/zbieraczZgloszen.js, 2026-10-17): three r183 robi queue.submit przy każdym
   // render / compute / clear (~20 na klatkę), a każde zgłoszenie w Chrome to osobne zadanie procesu GPU. Zbieracz
   // wysyła je razem na końcu klatki (wcześniej tylko przy konflikcie zapisu z odłożonymi poleceniami). Instalacja przy
@@ -657,8 +667,8 @@ export const Core3D = {
   shaftHullTexture: null,
   shaftRings: new Map(),
   // Czy na warstwach planet / halo / ring-planet / tarcz jest w tej klatce coś
-  // widocznego. Pusty pass to i tak pełny obchód grafu sceny, a do celu MSAA
-  // także resolve + invalidate (three robi je na końcu KAŻDEGO render()).
+  // widocznego. Pusty pass to i tak pełny obchód grafu sceny i osobny pass GPU
+  // (rozwiązanie MSAA — tylko w ostatnim passie sceny, _skipIntermediateResolves).
   // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true. Ośrodek
   // warpa (warstwa 8) — odwrotnie: tylko gdy sterownik warpa zgłosi go w tej klatce.
@@ -685,21 +695,27 @@ export const Core3D = {
   // jedyny pomiar, który rozstrzyga CPU vs GPU. WebGPU: znaczniki czasu
   // (trackTimestamp, cecha timestamp-query) rozwiązywane asynchronicznie —
   // najwyżej jedno zapytanie w locie na typ (render / compute), bez narastania
-  // Promise (SPIKE 8); wynik = ms GPU ostatniej rozwiązanej klatki.
+  // Promise (SPIKE 8). Wynik = ms GPU NA JEDNĄ KLATKĘ Core3D (render() — podzielony ekran: para
+  // renderów — albo renderBackdrop()): średnia z pełnych klatek rozliczonych w ostatnim wyniku
+  // (src/3d/zegarGpuKlatki.js — znacznik dostaje numer klatki Core3D przy przydziale, nie
+  // renderer.info.frame: w workerze takt rAF three obejmował dziesiątki renderów — 2026-11-04).
   gpuFrameMs: 0,
   gpuComputeMs: 0,
   gpuFrameSamples: 0,
   gpuComputeSamples: 0,
-  // Co którą klatkę rAF mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
+  // Co którą klatkę Core3D mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
   // 1 = każda klatka (narzędzia pomiaru: koszt-klatki.mjs).
   gpuTimerSampleEvery: 4,
   _gpuTimerPending: { render: false, compute: false },
-  _gpuTimerFrame: -1,
+  // Numer klatki Core3D, dla której brama znaczników już rozstrzygnęła (zegar GPU: _gpuClock.fid).
   _gpuTimerGateFrame: -1,
+  _gpuSplitHalf: 0,
+  _gpuClock: null,
   _gpuTimestampFeature: false,
   _onGpuRenderTimestamp: null,
   _onGpuComputeTimestamp: null,
-  _onGpuTimestampError: null,
+  _onGpuRenderTimestampError: null,
+  _onGpuComputeTimestampError: null,
   perfToggles: { bloom: true, heatHaze: true, fxDistortion: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   shadowShaftsQuality: 'medium',
   _shaftCfg: resolveShadowShaftsQuality('medium'),
@@ -728,9 +744,11 @@ export const Core3D = {
   // Infrastruktura efektów GPU (zadanie 12-B, src/3d/fx/fxFrame.js, docs/webgpu/FX-INFRA.md): kroki
   // compute raz na klatkę przed passami (addFxStep), początek pul i zegar efektów (fx.origin, fx.time),
   // siatka świateł (fx.grid; renderer.lighting = GridLighting „optIn”), światła efektów (fx.lights),
-  // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget).
-  // fxStats — pomiar klatki (PerfHUD, harness).
-  fx: null, fxStats: null, fxNowMs: NaN, distortionTarget: null,
+  // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget),
+  // warstwa NAKŁADKI (FX_OVERLAY_LAYER → overlayTarget; czujniki — po mgle wojny, bez bloomu).
+  // fxStats — pomiar klatki (PerfHUD, harness). fxFrameKey — klucz klatki efektów z zewnątrz (worker: numer strony gry —
+  // klatka efektów raz na stronę, nie raz na takt rAF workera; NaN — renderer.info.frame, tryb off / inline).
+  fx: null, fxStats: null, fxNowMs: NaN, fxFrameKey: NaN, distortionTarget: null, overlayTarget: null,
 
   _getBloomConfig() {
     const bloom = RenderWorld.devVFX?.bloom || null;
@@ -936,7 +954,8 @@ export const Core3D = {
 
     // Bufor sceny: HalfFloat (HDR-first, próg bloomu ~0,9) + MSAA 4. Wszystkie
     // passy sceny piszą do niego; backend WebGPU trzyma MSAA między render()
-    // (storeOp store) i rozwiązuje go do .texture na końcu każdego passa.
+    // (storeOp store), a rozwiązanie do .texture robi ostatni pass sceny renderu
+    // (_skipIntermediateResolves).
     const rt = new THREE.RenderTarget(w0, h0, {
       format: THREE.RGBAFormat, type: THREE.HalfFloatType,
       depthBuffer: true, stencilBuffer: false, samples: this.msaaBoot > 0 ? 4 : 0
@@ -978,6 +997,12 @@ export const Core3D = {
     this.fx = this.fx || new FxFrame();
     this.fxStats = this.fx.stats;
     this.distortionTarget = new THREE.RenderTarget(w0, h0, {
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
+    });
+    // Warstwa NAKŁADKI (czujniki: kontakty, czujka, granice wykrycia): premultiplied rgb + alfa pokrycia, rozmiar bufora
+    // sceny; „uber” kładzie ją po mgle wojny (obraz czujników pokazuje to, czego mgła nie odsłania).
+    this.overlayTarget = new THREE.RenderTarget(w0, h0, {
       format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
       generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
     });
@@ -1050,10 +1075,8 @@ export const Core3D = {
     // Handlery zegara GPU i pomiaru bloomu przypięte raz (bez domknięć per klatka).
     this._onGpuRenderTimestamp = (ms) => this._handleGpuTimestamp('render', ms);
     this._onGpuComputeTimestamp = (ms) => this._handleGpuTimestamp('compute', ms);
-    this._onGpuTimestampError = () => {
-      this._gpuTimerPending.render = false;
-      this._gpuTimerPending.compute = false;
-    };
+    this._onGpuRenderTimestampError = () => this._handleGpuTimestamp('render', NaN);
+    this._onGpuComputeTimestampError = () => this._handleGpuTimestamp('compute', NaN);
     this._onBloomRenderBegin = () => this._bloomRenderBegin();
     this._onBloomRenderEnd = () => this._bloomRenderEnd();
 
@@ -1142,13 +1165,16 @@ export const Core3D = {
   },
 
   // Kamera i cel rozgrzewki dla warstwy passa (Core3D.warmup — src/3d/rozgrzewka.js), jak w prewarmPass:
-  // typ kamery passa warstwy ('all' = perspektywa), cel composerTarget (warstwa DIST — distortionTarget).
+  // typ kamery passa warstwy ('all' = perspektywa), cel composerTarget (warstwa DIST — distortionTarget, NAKŁADKA —
+  // overlayTarget).
   warmupCamera(layer, ortho) {
     const isOrtho = typeof ortho === 'boolean' ? ortho : (layer !== 'all' && ORTHO_PASS_LAYERS.has(layer));
     return this.getPassCamera(isOrtho);
   },
   warmupTarget(layer) {
-    return layer === FX_DISTORT_LAYER && this.distortionTarget ? this.distortionTarget : this.composerTarget;
+    if (layer === FX_DISTORT_LAYER && this.distortionTarget) return this.distortionTarget;
+    if (layer === FX_OVERLAY_LAYER && this.overlayTarget) return this.overlayTarget;
+    return this.composerTarget;
   },
 
   // Passy Core3D w rejestrze rozgrzewki (zadanie 11). W tle menu: to, co już widać w passach tła i planet (mgławica,
@@ -1231,6 +1257,8 @@ export const Core3D = {
     this._coalesceUniformUploads(renderer);
     this._dedupeInterleavedUploads(renderer);
     this._uniqueComputeListTimestamps(renderer);
+    this._skipIntermediateResolves(renderer);
+    this._installGpuFrameClock(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
   },
@@ -1301,6 +1329,37 @@ export const Core3D = {
     };
   },
 
+  // ROZWIĄZANIE MSAA RAZ NA RENDER (2026-10-29, pole asteroid przy 5120 × 1440): three r183 kończy KAŻDY pass do celu
+  // MSAA (render() i clear()) rozwiązaniem do .texture (resolveTarget w deskryptorze passa — _getRenderPassDescriptor),
+  // a composerTarget.texture czyta dopiero post. Przy 5120 × 1440 RGBA16F × 4 próbki to do ~236 MB odczytu i 59 MB zapisu
+  // na pass, bez znaczników czasu. Gdy render() ustawi `_resolveSkipTarget` (passy sceny przed ostatnim), deskryptor
+  // passa do tego celu idzie bez resolveTarget: próbki zostają w celu MSAA (storeOp store), następny pass ładuje je
+  // (loadOp load), rozwiązuje ostatni pass — obraz bit w bit ten sam. Inne cele i tryby (tło menu, pre-pass halo,
+  // DIST, maska) bez zmian. Deskryptor three składa co pass na nowo (pamięć ma tylko widoki), więc zmiana nie zostaje
+  // w pamięci three. A/B: Core3D.msaaResolveOnce = false. Liczniki: Core3D.resolveStats.skipped.
+  _skipIntermediateResolves(renderer) {
+    const backend = renderer?.backend;
+    if (!backend || typeof backend._getRenderPassDescriptor !== 'function' || backend.__core3dResolveSkip) return;
+    const orig = backend._getRenderPassDescriptor;
+    const core = this;
+    const stats = this.resolveStats;
+    backend.__core3dResolveSkip = true;
+    backend._getRenderPassDescriptor = function (renderContext, colorAttachmentsConfig) {
+      const descriptor = orig.call(this, renderContext, colorAttachmentsConfig);
+      const skip = core._resolveSkipTarget;
+      if (skip !== null && renderContext && renderContext.renderTarget === skip && descriptor && descriptor.colorAttachments) {
+        const list = descriptor.colorAttachments;
+        for (let i = 0; i < list.length; i++) {
+          if (list[i] && list[i].resolveTarget !== undefined) {
+            list[i].resolveTarget = undefined;
+            stats.skipped++;
+          }
+        }
+      }
+      return descriptor;
+    };
+  },
+
   // three r183 (Backend.updateTimeStampUID): uid znacznika czasu LISTY compute (renderer.compute([…]) — tablica)
   // dostaje prefiks renderu i id `undefined` („r:<nr renderu w klatce>:undefined:f<klatka>”: tablica nie ma
   // isComputeNode ani id), więc wszystkie listy między dwoma renderami mają TEN SAM uid, a pula znaczników trzyma
@@ -1320,6 +1379,24 @@ export const Core3D = {
       if (id === undefined) { id = next++; ids.set(ctx, id); }
       const info = this.renderer.info;
       this.get(ctx).timestampUID = 'c:' + info.compute.frameCalls + ':L' + id + ':f' + info.frame;
+    };
+  },
+
+  // Zegar GPU na klatkę Core3D (src/3d/zegarGpuKlatki.js): każdy przydział pary zapytań czasu (pass renderu,
+  // wywołanie compute) dostaje numer bieżącej klatki Core3D — three r183 wiąże znaczniki z renderer.info.frame
+  // (takt rAF pętli three), który w workerze renderu nie ma związku z renderami.
+  _installGpuFrameClock(renderer) {
+    const backend = renderer?.backend;
+    if (!this._gpuClock) this._gpuClock = createZegarGpuKlatki();
+    if (!backend || typeof backend.initTimestampQuery !== 'function' || backend.__core3dGpuFrameClock) return;
+    const clock = this._gpuClock;
+    const orig = backend.initTimestampQuery;
+    backend.__core3dGpuFrameClock = true;
+    backend.initTimestampQuery = function (type, uid, descriptor) {
+      orig.call(this, type, uid, descriptor);
+      if (!this.trackTimestamp) return; // three nic nie przydzieliło (brama: klatka bez znaczników)
+      const w = descriptor && descriptor.timestampWrites;
+      clock.noteQuery(type, w ? w.beginningOfPassWriteIndex : null);
     };
   },
 
@@ -1382,9 +1459,10 @@ export const Core3D = {
     // Zniekształcenia efektów (fxFrame.js): blok źródeł i warstwa DIST — wspólne dla obu pipeline'ów.
     const distortion = this.fx ? this.fx.distortion.node : null;
     const distortionLayer = this.distortionTarget ? this.distortionTarget.texture : null;
-    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms, distortion, distortionLayer }));
+    const overlayLayer = this.overlayTarget ? this.overlayTarget.texture : null;
+    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms, distortion, distortionLayer, overlayLayer }));
     post.outputColorTransform = false;
-    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms, distortion, distortionLayer }));
+    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms, distortion, distortionLayer, overlayLayer }));
     postBezBloomu.outputColorTransform = false;
     this.bloomPass = bloom;
     this._postUniforms = uniforms;
@@ -1405,6 +1483,7 @@ export const Core3D = {
       try { this._fogCache?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
       try { this.distortionTarget?.dispose?.(); } catch { }
+      try { this.overlayTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
@@ -1418,6 +1497,7 @@ export const Core3D = {
     this.shadowShaftsPass = null;
     this.sunShadowTarget = null;
     this.distortionTarget = null;
+    this.overlayTarget = null;
     // Węzeł tekstury nie przyjmuje null — materiały wracają do maski zastępczej.
     sunShadowUniforms.uSunShadowMap.value = SUN_SHADOW_MAP_PLACEHOLDER;
     sunShadowUniforms.uSunShadowOn.value = 0;
@@ -1576,6 +1656,7 @@ export const Core3D = {
     resizeRenderTarget(this.composerTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.sunShadowTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.distortionTarget, bufW, bufH, readyRenderer);
+    resizeRenderTarget(this.overlayTarget, bufW, bufH, readyRenderer);
     resizeRenderTarget(this.planetHaloTarget, bufW, bufH, readyRenderer);
     // Bloom sam bierze rozmiar bufora rysowania w każdym renderze (BloomNode.updateBefore);
     // tu tylko skala rozdzielczości.
@@ -1734,87 +1815,116 @@ export const Core3D = {
     return this._gpuTimestampFeature === true;
   },
 
-  // Zegar GPU: po klatce (koniec render / renderBackdrop) rozwiązanie zapytań —
-  // najwyżej jedno w locie na typ, nowe dopiero po rozwiązaniu poprzedniego.
-  // Zapytania kumulują się do rozwiązania (pula 2048 = 1024 rendery), więc
-  // rozwiązujemy stale; wynik three = suma ms GPU OSTATNIEJ klatki w paczce
-  // (passy Core3D + rendery modułów w tej klatce, np. pieczenie map ringu).
-  // Podzielony ekran to dwa renderSingle w klatce — pytamy po drugim, żeby
-  // ostatnia klatka paczki była pełna.
+  // Zegar GPU — granica klatki Core3D (koniec render(); podzielony ekran: koniec DRUGIEGO renderu pary).
+  // Licznik połówek zamiast renderer.info.frame: w workerze renderu takt rAF three nie ma związku z
+  // renderami (render na wiadomość strony), więc „ta sama klatka rAF” obejmowała dziesiątki obrazów.
   _gpuTimerAfterRender() {
-    const renderer = this.renderer;
-    if (!renderer) return;
-    const frame = renderer.info.frame;
-    const firstOfFrame = frame !== this._gpuTimerFrame;
-    this._gpuTimerFrame = frame;
-    const split = !!RenderWorld.splitScreenMode;
-    if (!split || !firstOfFrame) this._gpuTimerPoll();
+    if (!this.renderer) return;
+    if (RenderWorld.splitScreenMode && this._gpuSplitHalf === 0) { this._gpuSplitHalf = 1; return; }
+    this._gpuSplitHalf = 0;
+    this._gpuTimerFrameEnd();
   },
 
-  // Wynik zapytania: ms ostatniej klatki paczki. Pula three trzyma ms KAŻDEGO
-  // renderu w mapie `timestamps` (klucz = uid z numerem klatki) i nigdy jej nie
-  // czyści — przy rozwiązywaniu co klatkę rosłaby bez końca (~700 wpisów/s),
-  // a gra używa tylko sumy klatki: czyścimy po każdym wyniku.
+  // Koniec klatki Core3D: nowy numer klatki zegara (src/3d/zegarGpuKlatki.js), zlecenia rozwiązania zapytań
+  // (najwyżej jedno w locie na typ; rozliczają klatki zakończone przed zgłoszeniem) i brama znaczników NASTĘPNEJ
+  // klatki od razu — rendery modułów do własnych celów przed jej render() (pieczenie map ringu, wypieki) są w niej.
+  _gpuTimerFrameEnd() {
+    const clock = this._gpuClock;
+    if (!clock || !this.renderer) return;
+    clock.frameEnd();
+    const backend = this.renderer.backend;
+    if (!backend || this._gpuTimestampFeature !== true) return;
+    // Backend.resolveTimestampsAsync three nic nie robi przy trackTimestamp = false, pula compute przy własnej
+    // fladze false też nie zabiera zapytań — zlecenie z flagami włączonymi, brama niżej rozstrzyga od nowa.
+    backend.trackTimestamp = true;
+    const compute = backend.timestampQueryPool?.compute;
+    if (compute) compute.trackTimestamp = true;
+    this._gpuTimerPollType('render');
+    this._gpuTimerPollType('compute');
+    this._gpuTimerFrameBegin();
+  },
+
+  // Wynik zlecenia: znaczniki z mapy `timestamps` puli three (uid → ms) rozliczone na klatki Core3D; gdy klatki
+  // pełne doszły do rozliczenia — średnie ms GPU na klatkę do gpuFrameMs / gpuComputeMs i liczniki próbek
+  // (odbiorca — rozdzielczość dynamiczna — bierze tylko NOWE wyniki). Wartość `ms` od three (suma ostatniego
+  // info.frame paczki) nie jest używana. Pula three nigdy nie czyści `timestamps` — czyścimy po każdym wyniku.
   _handleGpuTimestamp(type, ms) {
     this._gpuTimerPending[type] = false;
-    if (Number.isFinite(ms) && ms > 0) {
-      // Liczniki próbek: odbiorca (rozdzielczość dynamiczna) bierze tylko NOWE wyniki.
+    const pool = this.renderer?.backend?.timestampQueryPool?.[type];
+    const clock = this._gpuClock;
+    if (clock) {
+      clock.onResult(type, pool ? pool.timestamps : null);
+      this._publishGpuClock(clock);
+    } else if (Number.isFinite(ms) && ms > 0) {
       if (type === 'render') { this.gpuFrameMs = ms; this.gpuFrameSamples++; }
       else { this.gpuComputeMs = ms; this.gpuComputeSamples++; }
     }
-    this.renderer?.backend?.timestampQueryPool?.[type]?.timestamps?.clear?.();
+    pool?.timestamps?.clear?.();
   },
 
-  // Brama znaczników czasu na granicy klatki rAF (start render / renderBackdrop).
-  // Pula three ma 2048 zapytań (2 na pass), a wynik zlecenia przychodzi po kilku–
-  // kilkudziesięciu klatkach (harness headless: ~70 klatek, ~200 ms); klatka to dziś
-  // ~25 passów (sceny, 12 bloomu, post), więc pula się przepełniała — three ostrzegało
-  // „Maximum number of queries exceeded”, a passy po przepełnieniu dostawały indeks
-  // null → pisały znaczniki do slotów 0/1 (psuły pierwszy pomiar paczki). Gdy w puli
-  // brak miejsca na całą klatkę: bez wiszącego zlecenia — nowe od razu (zeruje pulę
-  // synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp =
-  // false: initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje.
-  // Zmierzone klatki zostają pełne; PerfHUD dostaje wynik rzadziej.
-  // Zadanie 23: miejsce sprawdzane też przy KAŻDYM kolejnym renderze tej samej klatki rAF (dema i
-  // narzędzia renderują wiele razy na klatkę — brama raz na klatkę przepuszczała całą serię i pula się
-  // przepełniała) i w puli compute (osobny znacznik puli — compute nie gasi znaczników renderu).
-  _gpuTimerGate() {
-    const renderer = this.renderer;
-    const backend = renderer?.backend;
-    if (!backend || this._gpuTimestampFeature !== true) return;
-    const frame = renderer.info.frame;
-    const firstOfFrame = frame !== this._gpuTimerGateFrame;
+  _publishGpuClock(clock) {
+    if (clock.renderN > 0) { this.gpuFrameMs = clock.renderMs; this.gpuFrameSamples++; }
+    if (clock.computeN > 0) { this.gpuComputeMs = clock.computeMs; this.gpuComputeSamples++; }
+  },
+
+  // Brama znaczników czasu na początku klatki Core3D (decyzja zapada na końcu poprzedniej — _gpuTimerFrameEnd;
+  // przy starcie render() tylko pierwsza klatka i narzędzia, które zerują _gpuTimerGateFrame). Pula three ma 2048
+  // zapytań (2 na pass), a wynik zlecenia przychodzi po kilku–kilkudziesięciu klatkach (harness headless: ~70 klatek,
+  // ~200 ms); klatka to dziś ~25 passów (sceny, post) + compute (bloom, efekty), więc pula się przepełniała — three
+  // ostrzegało „Maximum number of queries exceeded”, a passy po przepełnieniu dostawały indeks null → pisały znaczniki
+  // do slotów 0/1 (psuły pierwszy pomiar paczki). Gdy w puli brak miejsca na całą klatkę: bez wiszącego zlecenia —
+  // nowe od razu (zeruje pulę synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp = false:
+  // initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje. Zmierzone klatki zostają pełne;
+  // PerfHUD dostaje wynik rzadziej. Zadanie 23: znaczniki co N-tą klatkę (gpuTimerSampleEvery) — para zapytań na
+  // pass kosztowała ~5 µs CPU na pass (~0,13 ms klatki przy Ziemi, 25 passów z bloomem), a wynik i tak przychodzi
+  // z opóźnieniem. Pula compute ma własny znacznik puli — compute nie gasi znaczników renderu.
+  _gpuTimerFrameBegin() {
+    const backend = this.renderer?.backend;
+    const clock = this._gpuClock;
+    if (!backend || !clock || this._gpuTimestampFeature !== true) return;
+    this._gpuTimerGateFrame = clock.fid;
+    const every = Math.max(1, this.gpuTimerSampleEvery | 0);
+    if (every > 1 && (clock.fid % every) !== 0) {
+      backend.trackTimestamp = false;
+      clock.setSampled(false);
+      return;
+    }
+    backend.trackTimestamp = true;
     const pools = backend.timestampQueryPool;
-    if (firstOfFrame) {
-      this._gpuTimerGateFrame = frame;
-      // Zadanie 23: znaczniki co N-tą klatkę (gpuTimerSampleEvery) — para zapytań na pass kosztowała
-      // ~5 µs CPU na pass (~0,13 ms klatki przy Ziemi, 25 passów z bloomem), a wynik i tak przychodzi
-      // z opóźnieniem kilku–kilkudziesięciu klatek (PerfHUD, harness). Klatka bez próbki: bez znaczników.
-      const every = Math.max(1, this.gpuTimerSampleEvery | 0);
-      if (every > 1 && (frame % every) !== 0) {
-        backend.trackTimestamp = false;
-        return;
+    const pending = this._gpuTimerPending;
+    const compute = pools?.compute;
+    if (compute) {
+      compute.trackTimestamp = true;
+      if (compute.maxQueries - compute.currentQueryIndex < GPU_TIMER_FRAME_COMPUTE_QUERIES) {
+        if (!pending.compute) this._gpuTimerPollType('compute');
+        else { compute.trackTimestamp = false; clock.notePartial('compute'); }
       }
-      backend.trackTimestamp = true;
-      const compute = pools?.compute;
-      if (compute) {
-        compute.trackTimestamp = true;
-        if (compute.maxQueries - compute.currentQueryIndex < GPU_TIMER_FRAME_COMPUTE_QUERIES) {
-          if (!this._gpuTimerPending.compute) this._gpuTimerPollType('compute');
-          else compute.trackTimestamp = false;
-        }
-      }
-    } else if (backend.trackTimestamp !== true) {
-      return; // ta klatka już bez znaczników
     }
     const pool = pools?.render;
-    if (!pool || !(pool.maxQueries > 0)) return;
-    const need = firstOfFrame ? GPU_TIMER_FRAME_QUERIES : GPU_TIMER_RENDER_QUERIES;
-    if (pool.maxQueries - pool.currentQueryIndex >= need) return;
-    if (!this._gpuTimerPending.render) this._gpuTimerPollType('render');
-    else backend.trackTimestamp = false;
+    if (pool && pool.maxQueries > 0 && pool.maxQueries - pool.currentQueryIndex < GPU_TIMER_FRAME_QUERIES) {
+      if (!pending.render) this._gpuTimerPollType('render');
+      else { backend.trackTimestamp = false; clock.setSampled(false); return; }
+    }
+    clock.setSampled(true);
   },
 
+  // Start render() / renderBackdrop(). Pierwszy render klatki bez rozstrzygniętej bramy — rozstrzyga ją; kolejny
+  // render tej samej klatki (podzielony ekran) — miejsce w puli na jeden pełny render (zadanie 23: dema i narzędzia
+  // renderują seriami); bez miejsca i ze zleceniem w locie reszta klatki bez znaczników (klatka niepełna).
+  _gpuTimerGate() {
+    const backend = this.renderer?.backend;
+    const clock = this._gpuClock;
+    if (!backend || !clock || this._gpuTimestampFeature !== true) return;
+    if (this._gpuTimerGateFrame !== clock.fid) { this._gpuTimerFrameBegin(); return; }
+    if (backend.trackTimestamp !== true) return; // ta klatka bez znaczników
+    const pool = backend.timestampQueryPool?.render;
+    if (!pool || !(pool.maxQueries > 0)) return;
+    if (pool.maxQueries - pool.currentQueryIndex >= GPU_TIMER_RENDER_QUERIES) return;
+    if (!this._gpuTimerPending.render) this._gpuTimerPollType('render');
+    else { backend.trackTimestamp = false; clock.notePartial(); }
+  },
+
+  // Rozwiązanie zapytań obu pul (narzędzia) — przy włączonych znacznikach backendu.
   _gpuTimerPoll() {
     const backend = this.renderer?.backend;
     if (!backend || backend.trackTimestamp !== true) return;
@@ -1822,17 +1932,28 @@ export const Core3D = {
     this._gpuTimerPollType('compute');
   },
 
-  // Jedno zlecenie w locie na typ puli (render / compute); zlecenie zeruje pulę synchronicznie.
+  // Jedno zlecenie w locie na typ puli (render / compute); zlecenie zeruje pulę synchronicznie (three r183 kopiuje
+  // mapę uid → przesunięcie w tym samym wywołaniu) — zegar robi migawkę tuż przed nim. Pusta pula: rozliczenie od
+  // razu, bez zlecenia GPU i bez Promise (klatki bez znaczników też muszą dojść do rozliczenia).
   _gpuTimerPollType(type) {
     const renderer = this.renderer;
     const pool = renderer?.backend?.timestampQueryPool?.[type];
     const pending = this._gpuTimerPending;
     if (!pool || pending[type]) return;
+    const clock = this._gpuClock;
+    if (clock && pool.currentQueryIndex === 0) {
+      clock.beforeResolve(type, pool);
+      clock.onResult(type, null);
+      this._publishGpuClock(clock);
+      return;
+    }
     pending[type] = true;
+    if (clock) clock.beforeResolve(type, pool);
     renderer.resolveTimestampsAsync(type).then(
       type === 'render' ? this._onGpuRenderTimestamp : this._onGpuComputeTimestamp,
-      this._onGpuTimestampError
+      type === 'render' ? this._onGpuRenderTimestampError : this._onGpuComputeTimestampError
     );
+    if (clock) clock.afterResolveCall(type, pool);
   },
 
   // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu —
@@ -1918,7 +2039,8 @@ export const Core3D = {
     // jakości: maska liczy się też przy wyłączonych smugach — wtedy bez tarcz,
     // kadłubów i ringów, sam term pola.
     const field = this.sunOcclusionField;
-    const fieldOn = !!(field && field.texture && sun) && !this.isFreePerspectiveCamera();
+    const fieldK = field ? Math.min(1, field.strength ?? 1) : 0;
+    const fieldOn = !!(field && field.texture && sun && fieldK > 0.001) && !this.isFreePerspectiveCamera();
     const raysOn = !!active && !!pass && pass.enabled !== false;
     if (!pass || !target || (!raysOn && !fieldOn)) {
       sunShadowUniforms.uSunShadowOn.value = 0;
@@ -1926,7 +2048,7 @@ export const Core3D = {
       return false;
     }
     const uShafts = pass.material.uniforms;
-    uShafts.uFieldOccOn.value = fieldOn ? 1 : 0;
+    uShafts.uFieldOccOn.value = fieldOn ? fieldK : 0;
     // Węzeł tekstury nie przyjmuje null — bez pola zastępcza (i tak nieczytana).
     uShafts.uFieldOcc.value = fieldOn ? field.texture : pass.fieldOccPlaceholder;
     if (fieldOn) {
@@ -2117,12 +2239,15 @@ export const Core3D = {
 
     const tComposer0 = performance.now();
 
-    // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
-    // każdego passa), potem post bez MSAA na kanwę.
+    // Scena → composerTarget (MSAA; rozwiązanie do .texture w ostatnim passie sceny),
+    // potem post bez MSAA na kanwę.
     // Kadr = kanwa gry (px CSS) / zoom — jak nakładki 2D; bufor ma pxScale px na px kanwy (opcje grafiki).
     this.syncCamera(this.activeCam1, this._viewCssW(), this._viewCssH());
     this._updateFogUniforms(freePerspective);
     renderer.setRenderTarget(this.composerTarget);
+    // MSAA rozwiązuje tylko OSTATNI pass sceny tego renderu (_skipIntermediateResolves): composerTarget.texture czyta
+    // dopiero post, a wcześniejsze passy trzymają próbki (storeOp store) dla następnych.
+    const resolvePass = this._lastScenePass(layerActivity);
     for (const pass of this._scenePasses) {
       if (!pass || pass.enabled === false) continue;
       // Pusty pass (planety poza kadrem, zero widocznych tarcz) = zero pracy.
@@ -2137,10 +2262,14 @@ export const Core3D = {
         if (pass === this.renderPassOrtho) this._requestSunShadowUpdate(t, 1 | (1 << 2) | (1 << SHADOW_WARM_LAYER));
       } else if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);
       else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);
+      this._resolveSkipTarget = resolvePass !== null && pass !== resolvePass ? this.composerTarget : null;
       this._runScenePass(pass, freePerspective);
     }
+    this._resolveSkipTarget = null;
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
     this._renderFxDistortion(freePerspective || t.fxDistortion === false);
+    // Nakładka czujników (po mgle wojny w „uber”): tylko widok gracza — bez kamer 3D i podzielonego ekranu.
+    this._renderOverlayLayer(freePerspective || RenderWorld.splitScreenMode === true);
     renderer.setRenderTarget(null);
     this._renderPost();
 
@@ -2172,25 +2301,88 @@ export const Core3D = {
     if (pass.quad) {
       pass.quad.render(renderer);
     } else {
-      if (pass.clearColor) {
-        renderer.setClearColor(0x000000, 0.0);
-        renderer.clear(true, true, true);
-      } else if (pass.clearDepth && !sharedDepth) {
-        // Kamera z góry: każdy pass rysuje się na poprzednich (tło → planety → świat → FG).
-        // Kamery 3D (sharedDepth): jedna kamera perspektywy dla wszystkich passów, więc wspólna
-        // głębia daje prawdziwe przesłanianie (statek za planetą / ringiem, ring przed statkiem).
-        renderer.clear(false, true, false);
-      }
+      // Czyszczenie przed passem: kolor i głębia (tło) albo sama głębia — kamera z góry: każdy pass rysuje się na
+      // poprzednich (tło → planety → świat → FG). Kamery 3D (sharedDepth): jedna kamera perspektywy dla wszystkich
+      // passów, więc wspólna głębia daje prawdziwe przesłanianie (statek za planetą / ringiem, ring przed statkiem).
+      const clearColor = pass.clearColor === true;
+      const clearDepth = clearColor || (pass.clearDepth === true && !sharedDepth);
+      if (clearColor) renderer.setClearColor(0x000000, 0.0);
+      // CZYSZCZENIE W PASSIE SCENY (2026-10-29, pole asteroid przy 5120 × 1440): loadOp „clear” passa sceny (autoClear na
+      // czas jednego render()) zamiast renderer.clear — three r183 robi z clear() OSOBNY pass z własnym zgłoszeniem
+      // i rozwiązaniem MSAA całego celu, bez znaczników czasu (3 na klatkę: tło, ortho, FG). Ten sam obraz: ten sam kolor
+      // czyszczenia i głębia 1, haki passa niżej nie rysują do celu sceny (piszą bufory albo własne cele). A/B:
+      // Core3D.clearInPass = false (dawne passy czyszczenia).
+      const inPass = clearDepth && this.clearInPass !== false;
+      if (!inPass && clearColor) renderer.clear(true, true, true);
+      else if (!inPass && clearDepth) renderer.clear(false, true, false);
       const camera = this.getPassCamera(pass.ortho);
       camera.layers.set(pass.layer);
       const hooks = this._passHooks ? this._passHooks[pass.name] : null;
       if (hooks) for (let i = 0; i < hooks.length; i++) hooks[i](camera, pass);
       // Rulon warpa: pass świata gnie się (hak w materiałach — rulon.js); post i cienie nie.
       RULON.pass.value = 1;
-      renderer.render(this.scene, camera);
+      // Czyszczenie w passie idzie z PIERWSZYM renderem do celu sceny: znaczkiem głębi (addPassDepthStamp) albo sceną.
+      let clearNext = inPass;
+      const stamps = !sharedDepth && this.depthStamps !== false && this._passStamps && this._stampCoverRuns() ? this._passStamps[pass.name] : null;
+      if (stamps && stamps.length) {
+        const ortho = this.getPassCamera(true);
+        const mask = ortho.layers.mask;
+        for (let i = 0; i < stamps.length; i++) {
+          const s = stamps[i];
+          if (!s || !s.scene || (typeof s.active === 'function' && s.active() !== true)) continue;
+          ortho.layers.set(0);
+          this._renderPassScene(renderer, s.scene, ortho, clearNext, clearColor);
+          clearNext = false;
+          this.stampStats.renders++;
+        }
+        ortho.layers.mask = mask;
+      }
+      this._renderPassScene(renderer, this.scene, camera, clearNext, clearColor);
       RULON.pass.value = 0;
     }
     this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
+  },
+
+  // Render sceny passa do celu sceny; clear — z czyszczeniem w tym samym passie GPU (loadOp clear: kolor przy clearColor,
+  // głębia zawsze) przez autoClear na czas jednego render() — stan renderera wraca także przy błędzie.
+  _renderPassScene(renderer, scene, camera, clear, clearColor) {
+    if (!clear) {
+      renderer.render(scene, camera);
+      return;
+    }
+    renderCzyszczac(renderer, scene, camera, clearColor, true, clearColor);
+  },
+
+  // ZNACZEK GŁĘBI PRZED PASSEM SCENY (2026-10-29, pole asteroid przy 5120 × 1440): obiekty rysowane tylko do GŁĘBI celu
+  // sceny przed renderem passa `passName` (w tym samym celu, kamerą passa gry — ortho, warstwa 0 sceny znaczka), np.
+  // skały pasa gry z głębią 0 przed passem tła (asteroidBelt.js _createPlayStamp): rzeczy passa z testem głębi (skały tła,
+  // płaty mgły, zasłona) nie liczą fragmentów pod nimi. WARUNEK WŁAŚCICIELA: znaczek leży ŚCIŚLE wewnątrz pokrycia czegoś
+  // nieprzezroczystego, co pass gry rysuje później z zapisem koloru (inaczej obraz się zmienia). stamp = { scene (własna
+  // scena bez świateł, materiały colorWrite = false), active() → true, gdy rysować w tym renderze }; rozgrzewka:
+  // Core3D.prewarmPass(scene, 0, { ortho: true }). Bez znaczków w kamerach 3D (wspólna głębia passów) i gdy pass gry nie
+  // rysuje w tym renderze (_stampCoverRuns). Czyszczenie celu w passie idzie ze znaczkiem (pierwszy render passa). A/B:
+  // Core3D.depthStamps = false. Licznik: Core3D.stampStats.
+  _passStamps: null,
+  depthStamps: true,
+  stampStats: { renders: 0 },
+  // Znaczek zasłania pass GRY (ortho — skała gry rysowana później z zapisem koloru). Pass gry wyłączony w tym renderze
+  // (perfToggles.orthoPass = false → renderPassOrtho.enabled = false, _applyPassToggles na starcie render()) — bez
+  // znaczków: inaczej pod niewidocznymi skałami gry w tle zostają czarne dziury (przegląd 2026-10-29).
+  _stampCoverRuns() {
+    const p = this.renderPassOrtho;
+    return !!p && p.enabled !== false && this.perfToggles?.orthoPass !== false;
+  },
+  addPassDepthStamp(passName, stamp) {
+    if (!stamp || !stamp.scene) return;
+    const map = this._passStamps || (this._passStamps = {});
+    const list = map[passName] || (map[passName] = []);
+    if (!list.includes(stamp)) list.push(stamp);
+  },
+  removePassDepthStamp(passName, stamp) {
+    const list = this._passStamps?.[passName];
+    if (!list) return;
+    const i = list.indexOf(stamp);
+    if (i >= 0) list.splice(i, 1);
   },
 
   // Uniformy „uber” przed postem: źródła gorącego powietrza (≤ 24, dane z
@@ -2273,6 +2465,7 @@ export const Core3D = {
       v.refX = Number(cam.x) || 0;
       v.refY = Number(cam.y) || 0;
       v.zoom = this.viewZoom(cam);   // px bufora na j. świata
+      v.roll = cameraRoll(cam);      // obrót kadru (viewRoll.js)
     }
     packFogView(u, world, v);
     // Pamięć szumu: kamera z góry bez rulonu (punkt świata piksela = px / zoom w prostym kadrze) i zoom, przy którym
@@ -2311,9 +2504,18 @@ export const Core3D = {
     const split = !!RenderWorld.splitScreenMode;
     const cam2 = split && !freePerspective ? (RenderWorld.camera2 || null) : null;
     // Kadr siatki świateł w j. świata: kanwa (px CSS) / zoom.
-    // fxNowMs: zegar klatki z zewnątrz (render w workerze — performance.now strony z migawki; pod harnessem wirtualny)
-    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective,
-      Number.isFinite(this.fxNowMs) ? this.fxNowMs : performance.now());
+    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, this.frameNowMs(), this.fxFrameKey);
+  },
+
+  // Zegar klatki efektów [ms] (Core3D.fx, WeaponFx z bankiem Fx3D, kadłuby, odłamki): `fxNowMs` z zewnątrz (worker —
+  // znacznik rAF strony z migawki, HEAD.WALL), inaczej znacznik rAF pętli gry strony (RenderWorld.frameNowMs), poza
+  // pętlą — performance.now() (pod harnessem wszystkie trzy to ten sam czas wirtualny). Odczyt performance.now() w
+  // chwili rysowania szedł po fizyce strony: przy 240 Hz klatka z krokiem 60 Hz „trwała” dla efektów o czas kroku
+  // dłużej, następna krócej — cząstki, błyski i dym szarpały co 4. klatkę, a kadłuby (czas z rAF) jechały płynnie.
+  frameNowMs() {
+    if (Number.isFinite(this.fxNowMs)) return this.fxNowMs;
+    const t = RenderWorld.frameNowMs;
+    return Number.isFinite(t) ? t : performance.now();
   },
 
   // Na każdy render: źródła zniekształceń rzutowane na kamerę tego renderu (blok „uber”) i warstwa
@@ -2340,13 +2542,48 @@ export const Core3D = {
     const t0 = performance.now();
     renderer.setRenderTarget(target);
     renderer.setClearColor(0x000000, 0.0);
-    renderer.clear(true, false, false);
+    // kolor czyszczony w passie warstwy (czyszczenieWPassie.js — bez osobnego passu clear z rozwiązaniem MSAA celu),
+    // głębia jak dawniej bez czyszczenia; A/B: CZYSZCZENIE_AB.pomocnicze = false
+    const inPass = CZYSZCZENIE_AB.pomocnicze !== false;
+    if (!inPass) renderer.clear(true, false, false);
     const camera = this.getPassCamera(true);
     const prevMask = camera.layers.mask;
     camera.layers.set(FX_DISTORT_LAYER);
     RULON.pass.value = 1;
-    renderer.render(this.scene, camera);
+    if (inPass) renderCzyszczac(renderer, this.scene, camera, true, false, false);
+    else renderer.render(this.scene, camera);
     RULON.pass.value = 0;
+    camera.layers.mask = prevMask;
+    renderer.setRenderTarget(prevTarget);
+    this._addRenderInfoDelta('ortho', performance.now() - t0, before);
+  },
+
+  // Warstwa NAKŁADKI (FX_OVERLAY_LAYER, kamera ortho) do overlayTarget — tylko gdy właściciel zgłosił w tej klatce
+  // zawartość (setOverlayLayerActive, z kroku Core3D.fx), inaczej „uber” jej nie czyta (uOverlayLayerOn = 0).
+  // Cel czyszczony do (0, 0, 0, 0) w passie warstwy; materiały piszą premultiplied rgb i alfę pokrycia.
+  _renderOverlayLayer(off) {
+    const fx = this.fx;
+    const u = this._postUniforms;
+    if (!u || !u.uOverlayLayerOn) return;
+    const target = this.overlayTarget;
+    const layerOn = !off && !!fx && fx.overlayLayerActive === true && !!target;
+    if (fx) fx.stats.overlayLayer = layerOn;
+    u.uOverlayLayerOn.value = layerOn ? 1 : 0;
+    if (!layerOn) return;
+    const renderer = this.renderer;
+    const prevTarget = renderer.getRenderTarget();
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0.0);
+    const inPass = CZYSZCZENIE_AB.pomocnicze !== false;
+    if (!inPass) renderer.clear(true, false, false);
+    const camera = this.getPassCamera(true);
+    const prevMask = camera.layers.mask;
+    camera.layers.set(FX_OVERLAY_LAYER);
+    if (inPass) renderCzyszczac(renderer, this.scene, camera, true, false, false);
+    else renderer.render(this.scene, camera);
     camera.layers.mask = prevMask;
     renderer.setRenderTarget(prevTarget);
     this._addRenderInfoDelta('ortho', performance.now() - t0, before);
@@ -2431,6 +2668,8 @@ export const Core3D = {
     const prevMask = camera.layers.mask;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.autoClear = false;
+    // tło menu: zwykłe rozwiązanie MSAA w każdym passie (pominięcie dotyczy tylko passów sceny render())
+    this._resolveSkipTarget = null;
     renderer.setRenderTarget(this.composerTarget);
     renderer.setClearColor(0x000000, 1);
     renderer.clear(true, true, true);
@@ -2442,6 +2681,7 @@ export const Core3D = {
     if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
     // Tło menu: bez zniekształceń efektów i bez źródeł gorącego powietrza (przed startem gry
     // nic ich nie zgłasza).
+    this._renderOverlayLayer(true);
     this._renderFxDistortion(true);
     this._updatePostUniforms(false, 0);
     renderer.setRenderTarget(null);
@@ -2453,7 +2693,9 @@ export const Core3D = {
     perf.renderTotalMs = performance.now() - tRenderTotal0;
     perf.composerMs = 0;
     this._publishRendererInfo();
-    this._gpuTimerPoll();
+    // Tło menu: każdy render to klatka zegara GPU.
+    this._gpuSplitHalf = 0;
+    this._gpuTimerFrameEnd();
     wyslijZgloszenia(ZGLOSZENIE_POWOD.KADR);
   },
 
@@ -2488,6 +2730,7 @@ export const Core3D = {
     // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u
     // (głębia celu, nie renderera: compileAsyncNaCelu).
     if (layer === FX_DISTORT_LAYER && this.distortionTarget) renderer.setRenderTarget(this.distortionTarget);
+    if (layer === FX_OVERLAY_LAYER && this.overlayTarget) renderer.setRenderTarget(this.overlayTarget);
     let promise;
     try {
       promise = compileAsyncNaCelu(renderer, object3d, camera, object3d.isScene ? null : this.scene);
@@ -2521,6 +2764,10 @@ export const Core3D = {
       this._passTogglesDirty = false;
     }
     this._syncSceneMatrices();
+    // Reszta kolejki rejestru od razu (bez wpisów 'after'): siatki odsłaniane dopiero w haku passa (pył kosmiczny, pył
+    // hal K-7, maska słońca) są tu jeszcze ukryte, a ich wpis mógł czekać w kolejce — pierwsza klatka kompilowała je
+    // synchronicznie (start pod obciążeniem, `start-sync-gra.mjs --stres 150`).
+    if (typeof w.drainNow === 'function') w.drainNow();
     const ortho = this.isFreePerspectiveCamera() ? false : undefined;
     const jobs = [];
     for (const layer of GAME_PASS_LAYERS) {
@@ -2687,9 +2934,11 @@ export const Core3D = {
         Math.max(1, Number(cfg.discLenMul) || 5), viewed ? this.shaftDiscViewAxis : null)
       : 1;
     // Pole przesłaniające (pas asteroid): maska liczy 1 − (1 − cień) · T, czyli widoczność × T.
-    if (this.sunOcclusionField && typeof this.sunFieldCpu === 'function') {
+    const occ = this.sunOcclusionField;
+    const occK = occ ? Math.min(1, occ.strength ?? 1) : 0;
+    if (occK > 0.001 && typeof this.sunFieldCpu === 'function') {
       const T = this.sunFieldCpu(worldX, worldY);
-      if (T >= 0 && T < 1) vis *= T;
+      if (T >= 0 && T < 1) vis *= 1 - (1 - T) * occK;
     }
     return vis;
   },
@@ -2697,11 +2946,14 @@ export const Core3D = {
   // (R, 1 = pełne słońce) na prostokącie w układzie sceny (x, −y świata).
   // Maska cienia mnoży nią widoczność słońca — wszystko, co czyta
   // sunVisibility()/sunShaftBackdrop(), ciemnieje w głębi pola. Właściciel
-  // (pas asteroid, src/3d/asteroids/asteroidBelt.js) ustawia co klatkę.
-  setSunOcclusionField(texture, x0, y0, w, h) {
+  // (pas asteroid, src/3d/asteroids/asteroidBelt.js) ustawia co klatkę. strength 0..1 (domyślnie 1) — siła pola:
+  // T → 1 − (1 − T) · siła (pas: zanik pola przy skoku gracza; 0 — jak bez pola).
+  setSunOcclusionField(texture, x0, y0, w, h, strength = 1) {
     if (!texture) { this.sunOcclusionField = null; return; }
-    const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1 });
+    const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1, strength: 1 });
     f.texture = texture; f.x0 = x0; f.y0 = y0; f.w = w; f.h = h;
+    const k = Number(strength);
+    f.strength = Number.isFinite(k) ? (k > 0 ? (k < 1 ? k : 1) : 0) : 1;
   },
   clearSunOcclusionField() { this.sunOcclusionField = null; },
 
@@ -2759,6 +3011,8 @@ export const Core3D = {
   // Warstwa DIST: zgłoszenia właścicieli w klatce łączone przez OR (broń, rakiety, …) — FxFrame
   // kasuje flagę na starcie klatki efektów, właściciel zgłasza w swoim kroku (update).
   setDistortLayerActive(active) { if (this.fx && active) this.fx.distortLayerActive = true; },
+  // Warstwa NAKŁADKI (FX_OVERLAY_LAYER — czujniki): zgłoszenie z kroku Core3D.fx, jak DIST (kasuje je start klatki efektów).
+  setOverlayLayerActive(active) { if (this.fx && active) this.fx.overlayLayerActive = true; },
 
   // Pass sceny bez widocznej zawartości pomijamy w całości.
   _scenePassHasContent(pass, activity) {
@@ -2768,6 +3022,20 @@ export const Core3D = {
     if (pass === this.renderPassShields) return activity.shields !== false;
     if (pass === this.renderPassWarp) return activity.warp === true;
     return true;
+  },
+
+  // Ostatni pass sceny, który ten render wykona (ten jeden rozwiązuje MSAA celu sceny — _skipIntermediateResolves),
+  // albo null: rozwiązanie w każdym passie (cel bez MSAA, A/B Core3D.msaaResolveOnce = false).
+  _lastScenePass(activity) {
+    const target = this.composerTarget;
+    if (this.msaaResolveOnce === false || !target || !(Number(target.samples) > 1)) return null;
+    const list = this._scenePasses;
+    if (!list) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const pass = list[i];
+      if (pass && pass.enabled !== false && this._scenePassHasContent(pass, activity)) return pass;
+    }
+    return null;
   },
 
   // Dawne API soczewki warpa (setWarpLensWorld, clearWarpLens, setWarpViewWorld, clearWarpView,

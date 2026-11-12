@@ -165,6 +165,9 @@ test('wpięcie: Core3D obraca kamery, maska słońca, gorące powietrze, ośrode
   assert.match(nurt, /L\.roll = roll;/);
   assert.match(nurt, /cullWarpFrameToView\(frame, vh\.hw, vh\.hh/);
   const planets = read('src/3d/planet3d.assets.js');
-  assert.equal((planets.match(/lensToWorld\(L, o\.x \* k, o\.y \* k\)/g) || []).length, 3, 'trzy rozstawienia ciał soczewki');
+  assert.equal((planets.match(/lensImageToWorld\(L, o\.x, o\.y, [^;]+, _lensWorld\)/g) || []).length, 4, 'cztery rozstawienia ciał soczewki (planety, księżyce, małe ciała, słońce — DECYZJE M5)');
+  // obrót kadru w rozstawieniu (worldLens.js: lensImageToWorld — świat = kamera + R(roll)·(o · k))
+  const lensSrc = read('src/3d/warp/worldLens.js');
+  assert.match(lensSrc, /export function lensImageToWorld\(L, ox, oy, z, plane, out\) \{[\s\S]*?const roll = Number\(L\.roll\) \|\| 0;/);
   assert.doesNotMatch(planets, /L\.camX \+ o\.x \* k/);
 });

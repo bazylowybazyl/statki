@@ -78,6 +78,10 @@ export const RADAR_RGB = Object.freeze({
   friendly: '61, 220, 132',
   unknown: '255, 208, 80',
   neutral: '150, 190, 212',
+  // Kontenery-łup — bursztyn lampki-boi paczek.
+  loot: '255, 168, 60',
+  // Kapsuły ratunkowe — biel kadłubka (nie strona: AI i broń ich nie widzą).
+  pod: '236, 232, 214',
   station: '255, 176, 64',
   wreck: '150, 160, 172',
   missileHostile: '255, 128, 64',

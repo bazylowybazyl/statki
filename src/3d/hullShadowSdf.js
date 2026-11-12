@@ -703,6 +703,9 @@ export const HullShadowSdf = {
   // (zmierzone, zadanie 03); jedna warstwa to 64 KB. Bez haka albo zanim tablica jest na GPU
   // (false) — needsUpdate jak dotąd.
   layerUploader: null,
+  // Zegar budżetu pieczenia [ms] (BAKE_BUDGET_MS). Testy podmieniają go na deterministyczny: czas ściany
+  // pierwszego pieczenia na obciążonej maszynie przekracza budżet i drugie pieczenie klatki przepada.
+  clock: nowMs,
   _perGrid: new WeakMap(),
   _templates: new WeakMap(),
   _frame: 0,
@@ -867,7 +870,7 @@ export const HullShadowSdf = {
     entry.empty = false;
     if (this._bakesLeft <= 0) return false;
     if (this._bakesLeft < MAX_BAKES_PER_FRAME && this._bakeMs >= BAKE_BUDGET_MS) return false;
-    const t0 = nowMs();
+    const t0 = this.clock();
     let layer = entry.layer;
     if (layer < 0 || this.layers[layer].owner !== entry) {
       layer = this._allocLayer(entry);
@@ -895,7 +898,7 @@ export const HullShadowSdf = {
       this.texture.addLayerUpdate(layer);
       this.texture.needsUpdate = true;
     }
-    const ms = nowMs() - t0;
+    const ms = this.clock() - t0;
     this._bakesLeft--;
     this._bakeMs += ms;
     this.stats.bakes++;

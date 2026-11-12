@@ -22,7 +22,7 @@ import { PORT_PAD_H } from '../haloRingRoofPlan.js';
 import { haloHash12, haloPureFn } from '../haloRingTSL.js';
 import { uniformsAdapter } from '../haloUniformsAdapter.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
-import { ArchBatch, archHex, archRingTubeBoxes, archRunSteps } from './archFrame.js';
+import { ArchBatch, archBeamMatrix, archHex, archPoint, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
 import {
   ECU_DISTRICTS,
@@ -33,14 +33,15 @@ import {
   buildEcumeneDomes,
   buildEcumeneInstancesSteps,
   buildEcumeneStructure,
-  createEcumenePlan
+  createEcumenePlan,
+  ecumeneVault
 } from './ecumenePlan.js';
 
 const S = ECU_S;
 
 // ---------------------------------------------------------------------------
 // Powierzchnia dzielnic (tekstury createSectorTextures dema, na piksel). Funkcje pól czyste
-// (setLayout): uEcu (LEN dzielnicy, S, W, —) w parametrze, bez uniformów w domknięciu (PLAN §3).
+// (setLayout): uEcu (LEN dzielnicy, S, W, zArt) w parametrze, bez uniformów w domknięciu (PLAN §3).
 const sel = (k, i) => abs(k.sub(i)).lessThan(0.5);
 const ecuEllipse = haloPureFn('ecuEllipse', 'float', [['q', 'vec2'], ['c', 'vec2'], ['r', 'vec2']], (a) =>
   length(a.q.sub(a.c).div(a.r)).sub(1.0).mul(min(a.r.x, a.r.y)));
@@ -91,7 +92,7 @@ const ecuType = haloPureFn('ecuType', 'float', [['q', 'vec2'], ['k', 'float'], [
     t.assign(3.0);
   }).ElseIf(abs(z).greaterThan(HW.sub(Sc.mul(38.0))), () => {
     t.assign(7.0);
-  }).ElseIf(abs(abs(z).sub(Sc.mul(850.0))).lessThan(Sc.mul(19.0)), () => {
+  }).ElseIf(abs(abs(z).sub(a.ecu.w)).lessThan(Sc.mul(19.0)), () => {
     t.assign(6.0);
   }).ElseIf(a.water.lessThan(Sc.mul(28.0)).and(sel(k, 1.0).or(sel(k, 2.0)).or(sel(k, 9.0)).or(sel(k, 11.0))), () => {
     t.assign(8.0);
@@ -118,7 +119,7 @@ const ecuType = haloPureFn('ecuType', 'float', [['q', 'vec2'], ['k', 'float'], [
     });
     If(k.lessThan(0.5).and(ecuEllipse(a.q, vec2(L.mul(0.48), Sc.mul(-30.0)), vec2(330.0, 230.0).mul(Sc)).lessThan(0.0)), () => { t.assign(7.0); });
     If(t.lessThan(0.5).or(sel(t, 5.0)), () => {
-      If(ecuMod(s, Sc.mul(76.0)).lessThan(Sc.mul(12.0)).or(ecuMod(z.add(Sc.mul(850.0)), Sc.mul(88.0)).lessThan(Sc.mul(12.0))), () => { t.assign(6.0); });
+      If(ecuMod(s, Sc.mul(76.0)).lessThan(Sc.mul(12.0)).or(ecuMod(z.add(a.ecu.w), Sc.mul(88.0)).lessThan(Sc.mul(12.0))), () => { t.assign(6.0); });
     });
   });
   return t;
@@ -131,7 +132,7 @@ const f32mul = (a, b) => Math.fround(Math.fround(a) * Math.fround(b));
 const F32_8x414 = f32mul(8.0, 4.14);
 const F32_3x414 = f32mul(3.0, 4.14);
 
-// Materiał powierzchni dzielnic (dawne ECU_SURFACE_*): ecu — uniform vec4 (LEN, S, W, —),
+// Materiał powierzchni dzielnic (dawne ECU_SURFACE_*): ecu — uniform vec4 (LEN, S, W, zArt — arterie),
 // pal — uniformArray 10 × vec3 (barwy typów, sRGB 0–255).
 export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
   const { H, U, archNight, archShade, archWater, archSAbs } = archLitTSL(u);
@@ -183,16 +184,53 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
     If(t.lessThan(0.5).or(sel(t, 5.0)).or(sel(t, 6.0)), () => {
       const ci = floor(q.x.div(Sc.mul(76.0))).toVar();
       const sc0 = Sc.mul(38.0).add(ci.mul(76.0).mul(Sc)).toVar();
-      const cj = floor(z.add(Sc.mul(806.0)).add(Sc.mul(44.0)).div(Sc.mul(88.0))).toVar();
-      const zc0 = Sc.mul(-806.0).add(cj.mul(88.0).mul(Sc)).toVar();
+      const cj = floor(z.add(ecu.w).div(Sc.mul(88.0))).toVar();
+      const zc0 = Sc.mul(44.0).sub(ecu.w).add(cj.mul(88.0).mul(Sc)).toVar();
       const cc = vec2(sc0, zc0).toVar();
       const tc = ecuType(cc, k, ecuWater(cc, k, ecu), ecu).toVar();
       const house = tc.lessThan(0.5).or(sel(tc, 5.0)).toVar();
       If(house.and(abs(q.x.sub(sc0)).lessThan(Sc.mul(26.0))).and(abs(z.sub(zc0)).lessThan(Sc.mul(30.0)))
-        .and(cj.greaterThanEqual(0.0)).and(zc0.lessThan(Sc.mul(820.0))), () => {
+        .and(cj.greaterThanEqual(0.0)).and(zc0.lessThan(ecu.w.sub(Sc.mul(30.0)))), () => {
         const v = float(67.0).add(haloHash12(vec2(ci, cj).add(k.mul(17.0))).mul(38.0)).toVar();
         base255.assign(vec3(v, v.add(7.0), v.add(9.0)));
         nz.mulAssign(0.3);
+      });
+      // Kwartał bez śladu budynku (2026-10-22, podłoga do poziomu ringu Ziemi): podwórze kwartału —
+      // jasny bruk albo ogród (losowo per działka), cień kontaktowy wokół śladu budynku (AO), ulice
+      // z chodnikami przy krawężnikach zamiast jednolitej ciemnej siatki.
+      const inFoot = abs(q.x.sub(sc0)).lessThan(Sc.mul(26.0)).and(abs(z.sub(zc0)).lessThan(Sc.mul(30.0))).toVar();
+      const footD = max(abs(q.x.sub(sc0)).sub(Sc.mul(26.0)), abs(z.sub(zc0)).sub(Sc.mul(30.0))).toVar();
+      const plot = haloHash12(vec2(ci, cj).add(k.mul(41.0)).add(9.0)).toVar();
+      If(sel(t, 0.0).and(inFoot.not().or(house.not())), () => {
+        const yard = plot.lessThan(0.42).select(vec3(126.0, 122.0, 112.0),
+          plot.lessThan(0.78).select(vec3(56.0, 78.0, 44.0), vec3(96.0, 100.0, 98.0))).toVar();
+        base255.assign(yard);
+        // ogród: korony i ścieżki w szumie
+        If(plot.greaterThanEqual(0.42).and(plot.lessThan(0.78)), () => {
+          nz.addAssign(haloHash12(floor(q.div(Sc.mul(3.0))).add(k)).sub(0.5).mul(22.0));
+        });
+        // bruk: płyty 6 × 6 m dema
+        If(plot.lessThan(0.42), () => {
+          const pq = abs(fract(q.div(Sc.mul(6.0))).sub(0.5)).toVar();
+          nz.subAssign(step(0.46, max(pq.x, pq.y)).mul(14.0));
+        });
+      });
+      If(house.and(inFoot.not()).and(footD.lessThan(Sc.mul(5.0))), () => {
+        // cień kontaktowy wokół budynku (bez geometrii cienia — AO z odległości od śladu)
+        base255.mulAssign(mix(0.62, 1.0, smoothstep(0.0, Sc.mul(5.0), footD)));
+      });
+      If(sel(t, 6.0), () => {
+        // ulica: krawężnik i chodnik przy brzegu pasa (12 m dema), asfalt w środku
+        const dsx = ecuMod(q.x, Sc.mul(76.0)).toVar();
+        const dsz = ecuMod(z.add(ecu.w), Sc.mul(88.0)).toVar();
+        const onX = dsx.lessThan(Sc.mul(12.0)).toVar();
+        const edgeX = min(dsx, Sc.mul(12.0).sub(dsx));
+        const edgeZ = min(dsz, Sc.mul(12.0).sub(dsz));
+        const edge = onX.select(edgeX, edgeZ).toVar();
+        If(edge.lessThan(Sc.mul(2.6)), () => {
+          base255.assign(vec3(112.0, 112.0, 106.0));
+          nz.mulAssign(0.4);
+        });
       });
       const r2 = haloHash12(vec2(ci, cj).add(k.mul(29.0)).add(3.0)).toVar();
       If(house.and(r2.greaterThan(0.57)).and(abs(q.x.sub(sc0)).lessThan(Sc.mul(30.0))).and(abs(z.sub(zc0.sub(Sc.mul(37.0)))).lessThan(Sc.mul(1.3))), () => {
@@ -200,15 +238,15 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
       });
     });
     const col = ecuLin(base255.add(nz)).toVar();
-    // arterie z = ±850: asfalt, przerywana oś, oświetlenie od frontu
-    const azd = abs(abs(z).sub(Sc.mul(850.0))).toVar();
+    // arterie z = ±zArt (dema ±850 × S): asfalt, przerywana oś, oświetlenie od frontu
+    const azd = abs(abs(z).sub(ecu.w)).toVar();
     If(azd.lessThan(Sc.mul(18.0)).and(water.greaterThanEqual(0.0)), () => {
       col.assign(ecuLin(vec3(34.0, 44.0, 50.0).add(nz.mul(0.3))));
       // 8 · 4,14 i 3 · 4,14 zwinięte jak stałe GLSL w bazie (mnożenie w float32)
       const dash = step(ecuMod(q.x, float(F32_8x414).mul(Sc)), float(F32_3x414).mul(Sc));
       If(azd.lessThan(Sc.mul(0.9)), () => { col.assign(mix(col, ecuLin(vec3(168.0, 170.0, 153.0)), dash)); });
     });
-    If(abs(abs(z.add(Sc.mul(15.0).mul(sign(z)))).sub(Sc.mul(850.0))).lessThan(Sc.mul(1.1)), () => { emit.addAssign(vec3(0.30, 0.19, 0.07)); });
+    If(abs(abs(z.add(Sc.mul(15.0).mul(sign(z)))).sub(ecu.w)).lessThan(Sc.mul(1.1)), () => { emit.addAssign(vec3(0.30, 0.19, 0.07)); });
     // ścieżki spacerowe w parkach i lasach (bez brodzenia)
     If(sel(k, 1.0).or(sel(k, 2.0)).or(sel(k, 4.0)).or(sel(k, 9.0)).or(sel(k, 11.0)).and(water.greaterThan(Sc.mul(25.0))), () => {
       Loop({ start: 0, end: 3, type: 'int', condition: '<', name: 'ecuLane' }, ({ ecuLane }) => {
@@ -225,7 +263,7 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
     });
     const night = archNight(vPos).toVar();
     If(water.lessThan(0.0).and(pad.lessThan(0.5)), () => {
-      col.assign(archWater(vPos, n, q, vec3(0.018, 0.092, 0.093).mul(0.6), vec3(0.06, 0.15, 0.17), clamp(water.negate().div(Sc.mul(60.0)), 0.0, 1.0)));
+      col.assign(archWater(vPos, n, q, vec3(0.006, 0.034, 0.042), vec3(0.04, 0.10, 0.105), clamp(water.negate().div(Sc.mul(60.0)), 0.0, 1.0)));
     }).Else(() => {
       col.assign(archShade(vPos, n, col, 0.0));
     });
@@ -381,9 +419,12 @@ function* districtSurfaceSteps(plan, p, cell) {
   return g;
 }
 
-// Pas wokół ringu po profilu (h, z) — powłoka; u wzdłuż ringu co `rep` j.
+// Pas wokół ringu po profilu (h, z) dema — powłoka; u wzdłuż ringu co `rep` j. Wierzchołki profilu przez
+// przekrój ringu (mapZ / mapH — węższa wstęga, cieńszy kadłub).
 function shellStrip(plan, profile, segs, repU, repV) {
   const { R } = plan;
+  const { mapZ, mapH } = plan.section;
+  profile = profile.map(([h, z]) => [mapH(h * S) / S, mapZ(z * S) / S]);
   const pos = [];
   const uv = [];
   const idx = [];
@@ -461,9 +502,9 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   const zTop = layout.z.topIn;
 
   // ---- powierzchnia dzielnic ----
-  // uEcu: LEN dzielnicy, S, W, —; uEcuPal: barwy typów (sRGB 0–255), tablica ze stałą nazwą bufora
+  // uEcu: LEN dzielnicy, S, W, arterie zArt; uEcuPal: barwy typów (sRGB 0–255), tablica ze stałą nazwą bufora
   // (ten sam WGSL przy przebudowie ringu)
-  const uEcu = uniform(new THREE.Vector4(plan.LEN, S, plan.W, 0));
+  const uEcu = uniform(new THREE.Vector4(plan.LEN, S, plan.W, plan.zArt));
   const uEcuPal = uniformArray(ECU_TYPE_PALETTE.map((c) => new THREE.Vector3(...c)), 'vec3').setName('ecuPal');
   const surfaceMat = archNodeMaterial('EcumeneSurface', makeEcumeneSurfaceNodes({ u: uniforms, ecu: uEcu, pal: uEcuPal }), {},
     { ...uniforms, ...uniformsAdapter({ uEcu, uEcuPal }) });
@@ -501,13 +542,110 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   // ---- konstrukcja: żebra, belki, radiatory, rury wzdłuż ringu i bryły
   // portu (zatoki, tranzyty) — jedna partia na stronę (BG + FG) ----
   const st = buildEcumeneStructure(plan);
+  const { mapZ, mapH } = plan.section;
   for (const t of ECU_TUBES) {
     for (const side of [-1, 1]) {
       const color = t.color == null ? [0.38 * 0.55, 1.6 * 0.55, 2.3 * 0.55] : archHex(t.color);
-      const z = side * t.z * S;
-      archRingTubeBoxes(z > zTop - 1 ? st.fg : st.bg, plan.R, t.h * S, z, t.r * S, 512, color,
+      const z = mapZ(side * t.z * S);
+      archRingTubeBoxes(z > zTop - 1 ? st.fg : st.bg, plan.R, mapH(t.h * S), z, t.r * S, 512, color,
         t.color == null ? 2 : 0, t.color == null ? 1 : (t.color === 0xb19a70 ? 0.6 : 0.3));
     }
+  }
+  // ---- kryte habitaty: szklane kopuły przęseł nad pasem habitatu (ecumeneVault) — ciągła siatka szkła
+  // na odcinek przykrycia (przęsła wybrzuszone ku środkowi, szklane czoła na końcach odcinka), żebra po
+  // krzywej szkła na granicach przęseł ze światłami na szczytach i szprosy wzdłuż ringu w partiach
+  // konstrukcji. Szkło leży w z ∈ [−HW, HW] — pod płaszczyzną górnej ściany, więc w BG jak podłoga.
+  const vault = ecumeneVault(plan);
+  let vaultStats = null;
+  if (vault) {
+    const K = 12;
+    const SUB = 2;
+    const zs = Array.from({ length: K + 1 }, (_, j) => -plan.HW + (2 * plan.HW * j) / K);
+    const rib = archHex(0xc4ccc9);
+    const mul = archHex(0x8fa0a4);
+    const RIB_LIGHT = [1.25, 1.05, 0.78];
+    const pos = [];
+    const idx = [];
+    const vm = new Array(16);
+    const thOf = (k) => layout.sectorStart + k * vault.dA;
+    const push = (th, z, h) => {
+      const r = plan.R + h;
+      pos.push(r * Math.cos(th), r * Math.sin(th), z);
+      return pos.length / 3 - 1;
+    };
+    let runs = 0;
+    let ribs = 0;
+    for (let i = 0; i < vault.n;) {
+      if (!vault.covered[i]) { i++; continue; }
+      let e = i;
+      while (e < vault.n && vault.covered[e]) e++;
+      runs++;
+      // powłoka odcinka [i, e): (e − i)·SUB + 1 kolumn × K + 1 wierszy
+      const cols = (e - i) * SUB + 1;
+      const base = pos.length / 3;
+      for (let c = 0; c < cols; c++) {
+        const th = thOf(i + c / SUB);
+        for (let j = 0; j <= K; j++) push(th, zs[j], vault.hAt(zs[j], th));
+      }
+      for (let c = 0; c < cols - 1; c++) {
+        for (let j = 0; j < K; j++) {
+          const a = base + c * (K + 1) + j;
+          const b = a + K + 1;
+          idx.push(a, b, a + 1, a + 1, b, b + 1);
+        }
+      }
+      // szklane czoła na końcach odcinka: od podłogi do łuku szkła
+      for (const th of [thOf(i), thOf(e)]) {
+        const cb = pos.length / 3;
+        for (let j = 0; j <= K; j++) { push(th, zs[j], -4); push(th, zs[j], vault.hAt(zs[j], th)); }
+        for (let j = 0; j < K; j++) {
+          const a = cb + j * 2;
+          idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+        }
+      }
+      // żebra na granicach przęseł (w tym czoła) po krzywej szkła + światło na szczycie
+      for (let k = i; k <= e; k += vault.bay) {
+        const th = thOf(k);
+        for (let j = 0; j < K; j++) {
+          const q0 = archPoint(plan.R, th, zs[j], vault.hAt(zs[j], th) + 4, {});
+          const q1 = archPoint(plan.R, th, zs[j + 1], vault.hAt(zs[j + 1], th) + 4, {});
+          archBeamMatrix(q0, q1, 10, vm);
+          st.bg.push16(vm, rib, 4, 0.5, 0.3, 0);
+        }
+        const top = archPoint(plan.R, th, 0, vault.hAt(0, th) + 12, {});
+        lights.add(top.x, top.y, top.z, RIB_LIGHT, 6 * S, 0.05);
+        ribs++;
+      }
+      // szprosy wzdłuż ringu (co 3 pasy w poprzek)
+      for (let j = 3; j < K; j += 3) {
+        for (let c = 0; c < cols - 1; c++) {
+          const t0 = thOf(i + c / SUB);
+          const t1 = thOf(i + (c + 1) / SUB);
+          const q0 = archPoint(plan.R, t0, zs[j], vault.hAt(zs[j], t0) + 2, {});
+          const q1 = archPoint(plan.R, t1, zs[j], vault.hAt(zs[j], t1) + 2, {});
+          archBeamMatrix(q0, q1, 4, vm);
+          st.bg.push16(vm, mul, 0, 0, 0.4, 0);
+        }
+      }
+      i = e;
+    }
+    if (idx.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      g.computeBoundingSphere();
+      disposables.push(g);
+      // jedna instancja z macierzą jednostkową — materiał szkła archetypów (instancje), siatka w układzie ringu
+      const one = new ArchBatch('EcumeneVault');
+      one.push16([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], [0.55, 0.74, 0.8], 0, 0, 0, 0);
+      const mesh = archBatchMesh(one, g, materials.glass({ alpha: 0.03, fresnel: 0.2 }));
+      mesh.geometry.boundingSphere = g.boundingSphere.clone();
+      mesh.geometry.boundingBox = new THREE.Box3().setFromBufferAttribute(g.getAttribute('position'));
+      mesh.renderOrder = 31;
+      bg.push(mesh);
+    }
+    vaultStats = { runs, ribs, segments: vault.covered.reduce((s, c) => s + c, 0), of: vault.n, apex: vault.apex };
   }
   if (portSolid) st.bg.append(portSolid);
   yield;
@@ -538,6 +676,11 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   yield;
   // ---- tablice sektorów (+z, patrzą w kamerę gry) ----
   let signMesh = null;
+  // tablica na licu kadłuba od strony kamery gry: środek i wysokość z profilu powłoki (lico −45 … −345 dema),
+  // proporcje atlasu 2 : 1
+  const signH = plan.section.mapH(-190 * S);
+  const signHH = Math.min(97.5 * S, 0.47 * (plan.section.mapH(-45 * S) - plan.section.mapH(-345 * S)));
+  const signZ = plan.section.mapZ(1130 * S) + 6;
   const atlas = makeSignAtlas(plan);
   disposables.push(atlas);
   {
@@ -549,10 +692,10 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
       const a = plan.theta0(p) + plan.span * 0.5;
       const c = Math.cos(a);
       const sn = Math.sin(a);
-      const r = plan.R - 190 * S;
-      const hw = 195 * S;
-      const hh = 97.5 * S;
-      const z = 1130 * S + 6;
+      const r = plan.R + signH;
+      const hw = signHH * 2;
+      const hh = signHH;
+      const z = signZ;
       const ox = (p % 2) * 0.5;
       const oy = 1 - (Math.floor(p / 2) + 1) / 6;
       const base = pos.length / 3;
@@ -582,7 +725,7 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   }
   const signCenters = plan.sectors.map((sec, p) => {
     const a = plan.theta0(p) + plan.span * 0.5;
-    return new THREE.Vector3((plan.R - 190 * S) * Math.cos(a), (plan.R - 190 * S) * Math.sin(a), 1130 * S);
+    return new THREE.Vector3((plan.R + signH) * Math.cos(a), (plan.R + signH) * Math.sin(a), signZ);
   });
 
   yield;
@@ -688,7 +831,7 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
     fg,
     domes,
     landmarks: [],
-    stats: { instances: inst.stats.buildings + inst.stats.trees, buildings: inst.stats.buildings, trees: inst.stats.trees, lights: lights.pos.length / 3 },
+    stats: { instances: inst.stats.buildings + inst.stats.trees, buildings: inst.stats.buildings, trees: inst.stats.trees, lights: lights.pos.length / 3, vault: vaultStats },
     heightAt: (theta, z) => plan.heightAt(theta, z),
     plan,
     // LOD: drzewa i drobne bryły dzielnicy znikają, gdy kamera daleko (mniej niż ~1 px)

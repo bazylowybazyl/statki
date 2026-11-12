@@ -1,39 +1,44 @@
-// Demo WARPA „PĘD” (2026-10-19) — porównanie stylów skoku Atlasa na PRAWDZIWYCH modułach gry. User: „przekombinowałem
-// z zawijanym efektem warp — myślę, czy nie wrócić do soczewki, czy zrobić po prostu dużą prędkość”. Wszystko jak w grze:
-// Core3D (WebGPU, TSL, bloom, ACES), planety, mgławica i gwiazdy (planet3d.assets.js: initPlanets3D / updatePlanets3D,
-// soczewka świata), warp „Nurt” (src/3d/warp — WarpNurt: ośrodek, bańka, smugi gwiazd, fale, plazma z dysz), kadłub
-// Atlasa na belkach (HullBodies + hexShips3D), kamera z rigu gry (cameraRig.js: kop, oddalenie, wyprzedzenie) i automat
-// skoku jak w index.html (ładowanie 0,8 s, prędkość przelotowa z planWarpCruise, zwolnienie przy ciałach, rampa wyjścia).
-// Styl skoku = warpDrive.js: setWarpStyle (w grze: ?warp=rulon|ped|akcent|soczewka, ?rulon=0):
-//   1 RULON (dziś w grze) · 2 PĘD — sama prędkość · 3 PĘD + AKCENTY — soczewka tylko na przejściach · 4 SOCZEWKA bańki.
-// Wyjście: Z PĘDEM (rampa hamuje do k × prędkość bojowa Atlasa i statek leci dalej; createWarpExitRamp — vEnd) albo do
-// zatrzymania (dziś w grze). Po otwarciu od razu: podróż Ziemia → Jowisz (przelot obok Marsa) w pętli.
+// Demo WARPA „PĘD” (2026-10-19) — warp gracza na PRAWDZIWYCH modułach gry. Od sprzątania S1 nowego warpa „podniesiony
+// świat” (2026-10-26) JEDEN WARP jak w grze — bez stylów skoku (dawne rulon / akcenty / soczewka bańki usunięte z gry
+// i z dema; docs/webgpu/WARP-SOCZEWKA.md). Wszystko jak w grze: Core3D (WebGPU, TSL, bloom, ACES), planety, słońce,
+// mgławica i gwiazdy (planet3d.assets.js: initPlanets3D / updatePlanets3D, SOCZEWKA ŚWIATA — mapa C, worldLens.js),
+// warp „Nurt” (src/3d/warp — WarpNurt: smugi gwiazd, fale, błyski, plazma z dysz), kadłub Atlasa na belkach (HullBodies
+// + hexShips3D), kamera z rigu gry (cameraRig.js: kop, oddalenie, wyprzedzenie, kadr przylotu K1, kotwica kadru
+// soczewki) i automat skoku jak w index.html (ładowanie 0,8 s, prędkość przelotowa z planWarpCruise, zwolnienie przy
+// ciałach, rampa wyjścia). Oś β soczewki: rekord własny efektu (WarpPlayerFx.lensPhase — zegar efektu, te same wzory co
+// strona gry: src/render/warpLensPhase.js). Ośrodek drobin w skoku — tylko A/B (O, ?warpOsrodek=1 — DECYZJE O1).
+// Wyjście: Z PĘDEM (rampa hamuje do k × prędkość bojowa Atlasa i statek leci dalej; createWarpExitRamp — vEnd; jak
+// w grze) albo do zatrzymania. Po otwarciu od razu: podróż Ziemia → Jowisz (przelot obok Marsa) w pętli.
 //
-// Serwowanie: `npm run dev` → /dema/warp-ped.html   ?styl=rulon|ped|akcent|soczewka   ?trasa=jowisz|mars   ?ped=0|1..6
+// Serwowanie: `npm run dev` → /dema/warp-ped.html   ?trasa=jowisz|mars   ?ped=0|1..6   ?warpOsrodek=1
 //   ?clean=1 (bez paneli)   ?test=1 (klatki tylko z __warpPed.runFrames — harness zrzutów: scripts/webgpu/warp-ped-demo.mjs)
 import { Core3D } from '../src/3d/core3d.js';
 import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D } from '../src/3d/hexShips3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { WarpNurt } from '../src/3d/warp/warpNurt.js';
+import { setWarpMedium } from '../src/3d/warp/player.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
 import '../src/3d/planet3d.assets.js';
 import { SimClock } from '../src/game/simClock.js';
 import {
   planWarpCruise, warpFlybyFactor, createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance,
-  setWarpStyle, warpStyle, warpRulonEnabled, WARP_EXIT, WARP_STYLES
+  warpTripTuneFor, WARP_EXIT
 } from '../src/game/warpDrive.js';
+import { WARP_DRIVES, WARP_DRIVE } from '../src/data/driveModes.js';
 import {
   createCameraRig, createCameraRigTune, stepCameraRig, stepCameraRigWarp, stepCameraRigRoll, noteCameraRigWarp,
-  defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, CAMERA_WARP_ROLL_MODES
+  defaultShipZoom, warpJumpZoomRef, cameraShakeAmplitudePx, sampleCameraShakePx, CAMERA_WARP_ROLL_MODES
 } from '../src/game/cameraRig.js';
 import { rolledHalfExtents } from '../src/3d/viewRoll.js';
-import { buildSystemMap } from '../src/data/systemMap.js';
+import { createWarpShakeState, stepWarpShakes } from '../src/game/warpShakes.js';
+import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from '../src/data/systemMap.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
 import { DEFAULT_PLANET_SCALE } from '../src/config/constants.js';
 import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 import { World, loadHullAssets } from './mostki-webgpu/swiat.js';
 // Reszta świata jak w grze (2026-10-19, user: „a co z resztą świata? asteroidy, ringi”): ringi „Halo” Ziemi, Marsa
-// i Jowisza (świat ringów gry + obraz HaloRingGame) i pas asteroid (świat pasa gry + obraz AsteroidBelt).
+// i Jowisza (świat ringów gry + obraz HaloRingGame) i pas asteroid (świat pasa gry + obraz AsteroidBelt; w skoku pas
+// nie jest rysowany — skały skoku usunięte 2026-10-27, jak w grze).
 import { HaloRingWorld } from '../src/game/haloRingWorld.js';
 import { HaloRingGame } from '../src/3d/haloRing/haloRingGame.js';
 import { computeHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
@@ -58,12 +63,18 @@ window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.r
 
 const PHYS_DT = 1 / 120;
 const ATLAS = SHIP_FLIGHT_SPECS.atlas;          // gracz kalibruje się do tej tabeli: bojowa 500 j/s, hamowanie 200 j/s²
-const WARP_SPEED = 260000;                      // index.html: jedna prędkość warpa (swobodny skok)
-const STYLE_INFO = {
-  rulon: { k: 'RULON', d: 'dziś w grze — świat zwija się w walec i lejek do statku' },
-  ped: { k: 'PĘD', d: 'sama prędkość — nic się nie gnie: smugi, ośrodek, planety mijają' },
-  akcent: { k: 'PĘD + AKCENTY', d: 'soczewka tylko na przejściach: naciąg przed dziobem → pęknięcie → sprężenie przy wyjściu' },
-  soczewka: { k: 'SOCZEWKA BAŃKI', d: 'przestrzeń gnie się wokół statku przez cały skok (kadłub nietknięty)' }
+// Napęd warp jak w grze (src/data/driveModes.js — Mk I / II / III: 100 / 175 / 250 tys. j/s w przestrzeni
+// międzyplanetarnej, strefy mnożą). Demo domyślnie Mk I (user 2026-10-23: „jeszcze wolniej, 100k”); ?naped=mk2|mk3.
+const WARP_DRIVE_ID = { mk1: 'warp_mk1', mk2: 'warp_mk2', mk3: 'warp_mk3' }[params.get('naped')] || 'warp_mk1';
+const WARP_SPEED = WARP_DRIVES[WARP_DRIVE_ID].speed;
+// Czas skoku z celem przeskalowany do prędkości napędu (gra: planPlayerWarp — warpTripTuneFor(warp.speed)). Sufit
+// prędkości przelotowej = prędkość napędu (user: „100k”): w grze plan może ją przekroczyć (Mk I do 230 tys. j/s),
+// żeby nadgonić zwolnienia przy ciałach — w demie skok wtedy po prostu trwa dłużej.
+const WARP_TRIP_TUNE = Object.freeze({ ...warpTripTuneFor(WARP_SPEED), vMax: WARP_SPEED });
+// Napis u góry kadru: jeden warp, ośrodek drobin tylko jako A/B (DECYZJE O1).
+const MEDIUM_INFO = {
+  off: { k: 'WARP — PODNIESIONY ŚWIAT', d: 'jak w grze: świat w soczewce (daleko mały, przy mijaniu ogromny), smugi gwiazd, bez ośrodka drobin' },
+  on: { k: 'WARP + OŚRODEK (A/B)', d: 'dawny ośrodek drobin i soczewka bańki na mgławicy — tylko porównanie (?warpOsrodek=1)' }
 };
 // Układ planet: kurs Ziemia → Jowisz idzie W POPRZEK kierunku do Słońca (start nad terminatorem Ziemi, tarcze
 // planet z terminatorem, cień kadłuba w bok od kursu, nie wzdłuż niego), Mars stoi na tym kursie z boku dalszego
@@ -87,7 +98,8 @@ const HOLD_END = 2.6;      // [s] po wyjściu (ślizg + chwila), potem pętla
 
 const S = {
   paused: false, timeScale: 1, acc: 0, frame: 0, time: 0, frameMs: 16, cpuMs: 0,
-  style: WARP_STYLES.includes(params.get('styl')) ? params.get('styl') : 'akcent',
+  // Ośrodek drobin w skoku gracza (O): w grze wyłączony (DECYZJE O1), tu A/B jak `?warpOsrodek=1` gry.
+  medium: params.get('warpOsrodek') === '1',
   momentum: params.get('ped') !== '0',
   dropK: Math.max(1, Math.min(6, Number(params.get('ped')) || 3)),
   route: ROUTES[params.get('trasa')] ? params.get('trasa') : 'jowisz',
@@ -100,11 +112,11 @@ const S = {
   free: false,
   keys: { w: false, s: false, a: false, d: false, shift: false }
 };
-setWarpStyle(S.style);
+setWarpMedium(S.medium);
 
 // Automat warpa — pola jak `warp` gry (index.html): czytają je WarpNurt, dysze (engineVfxSystem) i rig kamery.
 const warp = {
-  state: 'idle', charge: 0, chargeTime: 0.8, speed: WARP_SPEED, cruise: WARP_SPEED,
+  state: 'idle', charge: 0, chargeTime: 0.8, speed: WARP_SPEED, cruise: WARP_SPEED, zone: 1,
   flybyFactor: 1, originBody: null, targetBody: null, tripPlan: null, gear: 1,
   dir: { x: 1, y: 0 }, entryProgress: 0, entryDuration: 0.9, entryBaseSpeed: 0, chargeAngle: NaN, exitRamp: null,
   isBusy() { return this.state !== 'idle' || !!(this.exitRamp && this.exitRamp.active); }
@@ -119,9 +131,9 @@ const flyBodies = [];      // { planet, x, y, r } — ciała zwolnienia (bez sta
 let nFly = 0;
 const _rampSample = { speed: 0, phase: 'done', tb: 0 };
 
-// Słońce jak w grze (index.html: SUN — środek świata 12 mln j.).
+// Słońce jak w grze (index.html: SUN — środek świata 12 mln j., tarcza SYSTEM_MAP_CONSTANTS.sunRadius).
 const SUN = {
-  x: 6_000_000, y: 6_000_000, r: 823, r3D: 399,
+  x: 6_000_000, y: 6_000_000, r: SYSTEM_MAP_CONSTANTS.sunRadius,
   color: { core: '#ffe88a', mid: '#ffbe3b', rim: '#ff8c1a' },
   corona: { rays: 72, jitter: 0.35, length: 0.85, pulse: 0.22, haze: 2.8 },
   seed: 93731
@@ -156,6 +168,11 @@ const renderList = [];
 
 // Kamera: rig gry (kop i oddalenie warpa w czasie gry, wyprzedzenie lotu) + zoom gracza (kółko).
 const camTune = createCameraRigTune();
+// Obrót kadru w skoku szybciej niż domyślne 3,2/s (2026-10-23, „dopracować efekt lotu”): przy kursie ~150° od
+// północy kadr kończył obrót sekundę PO skoku — kop, pęknięcie i wybuch smug gwiazd szły w obracającym się kadrze.
+// 5/s: przy skoku (0,8 s ładowania) zostaje ~9% obrotu, kadr stoi ~0,3 s po skoku. Gra: ta sama wartość jako
+// `warpJumpRollOmega` (index.html podaje ją wejściu obrotu warpa gracza).
+camTune.warpRollOmega = camTune.warpJumpRollOmega;
 const rig = createCameraRig();
 let zoomBase = 0.2;
 const cam = { x: 0, y: 0, zoom: 0.2 };            // bez wstrząsu (planety, ośrodek)
@@ -170,13 +187,16 @@ function addShake(mag, dur) {
   const now = shake.dur > 0 ? shake.mag * Math.max(0, 1 - shake.t / shake.dur) : 0;
   if (mag >= now) { shake.mag = mag; shake.dur = Math.max(0.05, dur); shake.t = 0; }
 }
-const warpCamIn = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: true };
+const warpCamIn = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35 };
 const rigIn = {
   dt: 0, viewW: 1, viewH: 1, mouseX: 0, mouseY: 0, lookEnabled: false, mode: 'never',
   velX: 0, velY: 0, maxSpeed: ATLAS.maxSpeed, holdDt: 0, insetTop: 0, insetBottom: 0, lookScale: 1, biasX: 0, biasY: 0
 };
 const rollIn = { dt: 0, state: 'idle', dirX: 1, dirY: 0, exitAge: -1, exitHalt: 0, enabled: true, mode: 'up' };
 const _rollHalf = { hw: 0, hh: 0 };
+// Wstrząsy skoku (kop, wyjście, hamowanie) zgłasza „gra” — jak index.html (src/game/warpShakes.js; efekt już nie wstrząsa).
+const _warpShakes = createWarpShakeState();
+const _warpShakeIn = { alive: true, jumping: false, hyper: false, charging: false, ramp: null };
 const _shakeOut = { x: 0, y: 0 };
 const pose = { x: 0, y: 0, angle: 0 };
 
@@ -194,8 +214,46 @@ function bodyStopRadius(p) {
 }
 function planetById(id) { return planets.find((p) => p.id === id) || null; }
 
-// Kąt orbity Marsa: punkt kursu Ziemia → Jowisz na promieniu orbity Marsa, przesunięty o MARS_LATERAL w bok
-// dalszy od Słońca.
+// STREFY WARPA jak w grze (index.html: detectZones → warpMultiplier): w studni grawitacyjnej planety × 0,3 (planeta
+// z ringiem „Halo” — obwiednia ringu + 12 tys. j., inaczej orbitZone.gravity albo zapas z promienia — planetOrbitRadii),
+// w pasie głównym (BELT_DEFINITIONS `main`, promień od Słońca) × 0,8 (WARP_DRIVE.zones), poza nimi × 1.
+const _wellR = new Map();
+let _beltIn = 0, _beltOut = 0;
+function gravityWellRadius(p) {
+  let w = _wellR.get(p);
+  if (w !== undefined) return w;
+  const r = Number.isFinite(p.r) ? p.r : 100;
+  if (RING_PLANET_WORLD_RADII[p.id]) w = computeHaloRingLayout(p).outerRadius + 3000 + 9000;
+  else if (p.orbitZone) w = p.orbitZone.gravity || r * 8;
+  else w = Math.max(r * 2.2, r + 1500) + 4000 + 6000;
+  _wellR.set(p, w);
+  return w;
+}
+function setupZones() {
+  _wellR.clear();
+  const main = BELT_DEFINITIONS.find((b) => b.id === 'main' && b.shape === 'ring');
+  const au = Number(window.WORLD_UNITS_PER_AU) || 0;
+  _beltIn = main && au ? Math.max(50, main.innerAU * au) : 0;
+  _beltOut = main && au ? main.outerAU * au : 0;
+}
+function warpZoneAt(x, y) {
+  for (let i = 0; i < planets.length; i++) {
+    const p = planets[i];
+    const dx = x - p.x, dy = y - p.y;
+    const w = gravityWellRadius(p);
+    if (dx * dx + dy * dy <= w * w) return WARP_DRIVE.zones.planet;
+  }
+  if (_beltOut > 0) {
+    const sx = x - SUN.x, sy = y - SUN.y;
+    const rr = Math.sqrt(sx * sx + sy * sy);
+    if (rr >= _beltIn && rr <= _beltOut) return WARP_DRIVE.zones.belt;
+  }
+  return 1;
+}
+
+// Kąt orbity Marsa: punkt orbity Marsa (promień rM) MARS_LATERAL od kursu Ziemia → Jowisz, po stronie dalszej od
+// Słońca, najbliżej przecięcia kursu z orbitą. (Dawniej: przecięcie przesunięte o MARS_LATERAL w bok i z powrotem
+// rzutowane na orbitę kątem — rzut zjadał większość odstępu, Mars mijał kurs w ~31 tys. j., w studni grawitacyjnej.)
 function marsAngle(rE, rM, rJ) {
   const ex = rE * Math.cos(EARTH_ANGLE), ey = rE * Math.sin(EARTH_ANGLE);
   const jx = rJ * Math.cos(JUPITER_ANGLE), jy = rJ * Math.sin(JUPITER_ANGLE);
@@ -209,7 +267,14 @@ function marsAngle(rE, rM, rJ) {
   const len = Math.sqrt(a);
   let nx = -dy / len, ny = dx / len;
   if (nx * px + ny * py < 0) { nx = -nx; ny = -ny; }   // bok dalszy od Słońca
-  return Math.atan2(py + ny * MARS_LATERAL, px + nx * MARS_LATERAL);
+  // n · P(θ) = n · E + MARS_LATERAL, P(θ) = rM (cos θ, sin θ) → cos(θ − φ) = k
+  const phi = Math.atan2(ny, nx);
+  const k = Math.max(-1, Math.min(1, (nx * ex + ny * ey + MARS_LATERAL) / rM));
+  const a0 = Math.atan2(py, px);
+  const th1 = phi + Math.acos(k);
+  const th2 = phi - Math.acos(k);
+  const near = (th) => Math.abs(Math.atan2(Math.sin(th - a0), Math.cos(th - a0)));
+  return near(th1) <= near(th2) ? th1 : th2;
 }
 
 function buildPlanets() {
@@ -359,7 +424,8 @@ function engageWarp() {
     bodies.push({ along: ox * dirX + oy * dirY, lateral: oy * dirX - ox * dirY, r: b.r });
   }
   const v0 = Math.hypot(e.vx, e.vy);
-  const plan = planWarpCruise({ dist, v0, hullLength: hullLength(), bodies, zone: null, entry: warp.entryDuration, lag: 6, dt: 1 / 30 });
+  const zone = (sd) => warpZoneAt(e.x + dirX * sd, e.y + dirY * sd);
+  const plan = planWarpCruise({ dist, v0, hullLength: hullLength(), bodies, zone, entry: warp.entryDuration, lag: 6, dt: 1 / 30 }, WARP_TRIP_TUNE);
   warp.cruise = plan.speed;
   warp.tripPlan = { dist: Math.round(dist), speed: Math.round(plan.speed), time: +plan.time.toFixed(2) };
   warp.flybyFactor = 1;
@@ -448,7 +514,9 @@ function physicsStep(dt) {
     const ease = smooth01(warp.entryProgress);
     warp.flybyFactor = warpFlybyFactor(e.x, e.y, warp.dir.x, warp.dir.y, flyBodies, nFly);
     trip.flyMin = Math.min(trip.flyMin, warp.flybyFactor);
-    const maxV = (warp.cruise || warp.speed) * warp.flybyFactor;
+    // gra: maxWarpSpeed = przelotowa × strefa × zwolnienie przy ciałach
+    warp.zone = warpZoneAt(e.x, e.y);
+    const maxV = (warp.cruise || warp.speed) * warp.zone * warp.flybyFactor;
     const startV = Math.min(warp.entryBaseSpeed, maxV);
     const target = startV + (maxV - startV) * ease;
     const k = Math.min(1, 6 * dt);
@@ -488,6 +556,10 @@ function physicsStep(dt) {
     }
   }
   trip.maxSpeed = Math.max(trip.maxSpeed, Math.hypot(e.vx, e.vy));
+  _warpShakeIn.jumping = warp.state === 'active';
+  _warpShakeIn.charging = warp.state === 'charging';
+  _warpShakeIn.ramp = warp.exitRamp;
+  stepWarpShakes(_warpShakes, _warpShakeIn, dt, addShake);
 
   // Fazy podróży (pętla).
   if (S.free) {
@@ -552,12 +624,13 @@ function stepCamera(realDt, gameDt) {
     w.dirX = rc * warp.dir.x + rs * warp.dir.y;
     w.dirY = -rs * warp.dir.x + rc * warp.dir.y;
   }
-  w.rulon = warpRulonEnabled('');
   w.exitAge = exitAge;
   w.exitSlow = exitSlow;
   w.exitHalt = exitHalt;
-  // Ujednolicony kadr skoku: oddalenie od domyślnego zoomu statku (ten sam kadr przy każdym zoomie gracza).
+  // Ujednolicony kadr skoku: oddalenie od domyślnego zoomu statku (ten sam kadr przy każdym zoomie gracza), w locie kadr
+  // lotu gry (warpJumpZoomRef — index.html: updateCameraWarpKick).
   w.zoomRef = S.warpZoom === 'staly' ? defaultShipZoom(W, hullLength(), camTune) : 0;
+  w.zoomRefFar = S.warpZoom === 'staly' ? warpJumpZoomRef(W, H, hullLength(), camTune) : 0;
   w.zoomBase = zoomBase;
   w.arriving = arriving;
   // Kadr przylotu: odległość statku od bliskiego brzegu tarczy celu (bodyRadius — jak gra: tarcza ringu albo r × 4,5);
@@ -575,6 +648,8 @@ function stepCamera(realDt, gameDt) {
   ri.mouseX = W * 0.5; ri.mouseY = H * 0.5;
   ri.velX = rc * atlas.vx + rs * atlas.vy;
   ri.velY = -rs * atlas.vx + rc * atlas.vy;
+  // skok (ładowanie, lot, rampa): wyprzedzenie skoku gry (index.html: rigIn.leadGain przy playerWarpCameraBusy)
+  ri.leadGain = warp.isBusy() ? camTune.warpJumpLead : NaN;
   stepCameraRig(rig, ri, camTune);
   pose.x = atlas.x; pose.y = atlas.y; pose.angle = atlas.angle;
   window.__interpShipPose = pose;
@@ -585,7 +660,7 @@ function stepCamera(realDt, gameDt) {
   cam.y = pose.y + rs * ox + rc * oy;
   cam.zoom = zoom;
   cam.roll = roll;
-  // wstrząs: camera.addShake (WarpNurt.onShake) + drżenie ładowania (rig.warpShakePx) — px ekranu → świat
+  // wstrząs: camera.addShake (wstrząsy skoku — warpShakes.js w physicsStep) + drżenie ładowania (rig.warpShakePx) — px ekranu → świat
   if (shake.dur > 0) { shake.t += realDt; if (shake.t >= shake.dur) shake.dur = 0; }
   const mag = shake.dur > 0 ? shake.mag * (1 - shake.t / shake.dur) : 0;
   const amp = cameraShakeAmplitudePx(mag, 0, camTune, rig.warpShakePx);
@@ -598,7 +673,9 @@ function stepCamera(realDt, gameDt) {
   c.x = cam.x; c.y = cam.y; c.zoom = zoom; c.targetZoom = zoomBase; c.roll = roll;
 }
 
-const nurtFrame = { dt: 0, cam, camShake, camFollow: true, ship: null, warp, trafficTime: 0, lensAllowed: true };
+// anchorSX / SY — kotwica kadru soczewki (DECYZJE M3): nominalne miejsce statku w kadrze (sprężyna riga bez kopu
+// i wysunięcia — cameraRig.nominalX / Y), px CSS od środka kadru, jak `o.anchorSX / SY` klatki „Nurtu” gry.
+const nurtFrame = { dt: 0, cam, camShake, camFollow: true, ship: null, warp, trafficTime: 0, lensAllowed: true, anchorSX: NaN, anchorSY: NaN };
 
 let lastNow = 0;
 function frame(realDt) {
@@ -634,6 +711,13 @@ function render(realDt, gameDt) {
   nurtFrame.dt = gameDt;
   nurtFrame.ship = atlas;
   nurtFrame.trafficTime = S.time;
+  nurtFrame.anchorSX = -rig.nominalX;
+  nurtFrame.anchorSY = -rig.nominalY;
+  // Kadr soczewki jak w grze (index.html: stepPlayerWarpLensPhase): zoom odniesienia i kadr skoku [px CSS / j.], ułamek
+  // kadru przylotu i dolot (ślizg z pędem) — bez nich podgląd kadru przylotu celu nie ma miękkiego minimum z kadrem
+  // skoku i cel przy dolocie rośnie ponad prawdziwy obraz (smoke w Node: 136 tys. px zamiast 10 tys.).
+  const zr = Number.isFinite(rig.warpZoomRef) ? rig.warpZoomRef : warpCamIn.zoomRef;   // kadr ładowania → kadr lotu
+  WarpNurt.player?.setLensFrame(zr, zr * camTune.warpZoomOut, camTune.warpArrivalFill, warpCamIn.arriving);
   WarpNurt.update(nurtFrame);
   window.updatePlanets3D(gameDt, cam);
   // Reszta świata jak render() gry: świat ringów (zegar świateł hal, automat K-7) → obraz ringów (kamera TEJ klatki ze
@@ -685,18 +769,24 @@ function updateHud() {
   const lines = [];
   lines.push(`<b>${(1000 / Math.max(1, S.frameMs)).toFixed(0)} FPS</b> · CPU ${S.cpuMs.toFixed(2)} ms · GPU ${(Number(Core3D.gpuFrameMs) || 0).toFixed(2)} ms · draw ${info.drawCalls ?? info.calls ?? 0}${S.paused ? ' · <span class="warn">PAUZA</span>' : ''}${S.timeScale !== 1 ? ` · czas ×${S.timeScale}` : ''}`);
   lines.push(`faza       ${phaseLabel()}`);
-  lines.push(`prędkość   ${v >= 10000 ? `${(v / 1000).toFixed(1)} tys.` : v.toFixed(0)} j/s${warp.state === 'active' ? `  (przelot ${(warp.cruise / 1000).toFixed(0)} tys. × ${warp.flybyFactor.toFixed(2)})` : ''}`);
+  lines.push(`prędkość   ${v >= 10000 ? `${(v / 1000).toFixed(1)} tys.` : v.toFixed(0)} j/s${warp.state === 'active' ? `  (przelot ${(warp.cruise / 1000).toFixed(0)} tys. × strefa ${warp.zone.toFixed(1)} × ${warp.flybyFactor.toFixed(2)})` : ''}`);
+  lines.push(`napęd      ${WARP_DRIVES[WARP_DRIVE_ID].label} — ${(WARP_SPEED / 1000).toFixed(0)} tys. j/s (jak w grze: ?naped=mk1|mk2|mk3)`);
   lines.push(S.free
     ? 'trasa      lot swobodny — W/S ciąg, A/D obrót, Shift dopalacz, CapsLock / 9 warp'
     : `trasa      ${ROUTES[S.route].label} · plan ${trip.planTime.toFixed(1)} s · do celu ${(Math.hypot(trip.endX - atlas.x, trip.endY - atlas.y) / 1000).toFixed(1)} km`);
   lines.push(`wyjście    ${S.momentum ? `<span class="good">z pędem ${S.dropK}× (${(S.dropK * ATLAS.maxSpeed).toFixed(0)} j/s)</span>` : 'do zatrzymania'}`);
   lines.push(`kamera     ${CAM_ROLL_LABELS[S.camRoll]} · obrót ${Math.round(rig.roll * 180 / Math.PI)}° · zoom ${cam.zoom.toFixed(3)} (${S.warpZoom === 'staly' ? 'w skoku stały' : 'w skoku × zoom gracza'})`);
-  lines.push(`ośrodek    ${st.awake ? 'aktywny' : 'śpi'} · fale ${st.waves ?? 0} · bańki ${st.bubbles ?? 0}`);
+  lines.push(`ośrodek    ${S.medium ? 'A/B włączony' : 'wyłączony (jak w grze)'} · ${st.awake ? 'aktywny' : 'śpi'} · fale ${st.waves ?? 0} · bańki ${st.bubbles ?? 0}`);
+  // Pas asteroid: w skoku nie jest rysowany (decyzja użytkownika 2026-10-27) — pole gaśnie z β soczewki i wraca po skoku.
+  const bs = asteroidBelt?.stats;
+  if (bs && (bs.active || bs.warpMode || bs.fade < 1)) {
+    lines.push(`pas        ${bs.warpMode ? 'w skoku — nie rysowany' : `pole · udział ${bs.fade.toFixed(2)} · skał ${bs.rocks.reduce((a, n) => a + n, 0)}`}`);
+  }
   $('hud').innerHTML = lines.join('\n');
 }
 
 function syncPanel() {
-  for (const b of document.querySelectorAll('#styles button')) b.classList.toggle('on', b.dataset.styl === S.style);
+  for (const b of document.querySelectorAll('#medium button')) b.classList.toggle('on', (b.dataset.medium === 'on') === S.medium);
   for (const b of document.querySelectorAll('#routes button')) b.classList.toggle('on', !S.free && b.dataset.trasa === S.route);
   $('btn-free').classList.toggle('on', S.free);
   $('btn-ped').classList.toggle('on', S.momentum);
@@ -707,17 +797,17 @@ function syncPanel() {
   $('btn-slow').classList.toggle('on', S.timeScale !== 1);
   $('pedK').value = String(S.dropK);
   $('pedK-v').textContent = `${S.dropK}×`;
-  const info = STYLE_INFO[S.style];
+  const info = MEDIUM_INFO[S.medium ? 'on' : 'off'];
   $('styl-k').textContent = info.k;
   $('styl-d').textContent = info.d;
 }
 
-function setStyle(style) {
-  if (!WARP_STYLES.includes(style)) return false;
-  S.style = style;
-  setWarpStyle(style);
+// Ośrodek drobin w skoku gracza — A/B (player.js: setWarpMedium; w grze `?warpOsrodek=1`).
+function setMedium(on) {
+  S.medium = !!on;
+  setWarpMedium(S.medium);
   syncPanel();
-  return true;
+  return S.medium;
 }
 function setMomentum(on) { S.momentum = !!on; syncPanel(); }
 const CAM_ROLL_LABELS = { up: 'w skoku kursem w górę', right: 'w skoku kursem w prawo', off: 'bez obrotu' };
@@ -743,7 +833,7 @@ function setRoute(key) {
 }
 
 const ACTIONS = {
-  style1: () => setStyle('rulon'), style2: () => setStyle('ped'), style3: () => setStyle('akcent'), style4: () => setStyle('soczewka'),
+  medium: () => setMedium(!S.medium),
   momentum: () => setMomentum(!S.momentum),
   camRoll: () => setCamRoll(CAMERA_WARP_ROLL_MODES[(CAMERA_WARP_ROLL_MODES.indexOf(S.camRoll) + 1) % CAMERA_WARP_ROLL_MODES.length]),
   warpZoom: () => setWarpZoom(S.warpZoom === 'staly' ? 'gracz' : 'staly'),
@@ -757,7 +847,7 @@ const ACTIONS = {
 };
 
 function bindPanel() {
-  for (const b of document.querySelectorAll('#styles button')) b.addEventListener('click', () => setStyle(b.dataset.styl));
+  for (const b of document.querySelectorAll('#medium button')) b.addEventListener('click', () => setMedium(b.dataset.medium === 'on'));
   for (const b of document.querySelectorAll('#routes button')) b.addEventListener('click', () => setRoute(b.dataset.trasa));
   for (const b of document.querySelectorAll('#camroll button')) b.addEventListener('click', () => setCamRoll(b.dataset.roll));
   for (const b of document.querySelectorAll('#warpzoom button')) b.addEventListener('click', () => setWarpZoom(b.dataset.zoom));
@@ -785,7 +875,7 @@ function bindInput() {
     if (e.repeat) return;
     const k = e.key.toLowerCase();
     const map = {
-      1: 'style1', 2: 'style2', 3: 'style3', 4: 'style4', p: 'momentum', k: 'camRoll', z: 'warpZoom', j: 'jowisz', m: 'mars', f: 'free',
+      o: 'medium', p: 'momentum', k: 'camRoll', z: 'warpZoom', j: 'jowisz', m: 'mars', f: 'free',
       capslock: 'warp', 9: 'warp', ' ': 'jump', escape: 'pause', t: 'slow', h: 'clean'
     };
     const a = map[k];
@@ -820,7 +910,7 @@ function loop(now) {
 window.__warpPed = {
   ready: false, S, warp, trip,
   get atlas() { return atlas; },
-  setStyle, setMomentum, setRoute, setFree, setCamRoll, setWarpZoom, toggleFreeWarp, restart: () => restartTrip(), act: (k) => ACTIONS[k]?.(),
+  setMedium, setMomentum, setRoute, setFree, setCamRoll, setWarpZoom, toggleFreeWarp, restart: () => restartTrip(), act: (k) => ACTIONS[k]?.(),
   get roll() { return rig.roll; },
   /** Lot swobodny z harnessu: klawisze trzymane (w, s, a, d, shift). */
   keys(state) { Object.assign(S.keys, state || {}); return { ...S.keys }; },
@@ -844,7 +934,7 @@ window.__warpPed = {
   },
   stats() {
     return {
-      style: warpStyle(''), phase: phaseLabel(), time: +S.time.toFixed(2), v: Math.round(Math.hypot(atlas.vx, atlas.vy)),
+      medium: S.medium, phase: phaseLabel(), time: +S.time.toFixed(2), v: Math.round(Math.hypot(atlas.vx, atlas.vy)),
       cruise: Math.round(warp.cruise), planTime: +trip.planTime.toFixed(2), flyMin: +trip.flyMin.toFixed(3),
       maxSpeed: Math.round(trip.maxSpeed), toEnd: Math.round(Math.hypot(trip.endX - atlas.x, trip.endY - atlas.y)),
       zoom: +cam.zoom.toFixed(4), warpNurt: { ...(WarpNurt.stats || {}) }, gpuMs: +(Number(Core3D.gpuFrameMs) || 0).toFixed(3),
@@ -863,10 +953,14 @@ window.__warpPed = {
       window.__warpPed.error = 'webgpu';
       return;
     }
-    await Core3D.warmup.run('kadłuby, mapa ran, broń (hexShips3D)', () => prewarmHexShips3D({ canvas: glCanvas }));
     planets = buildPlanets();
     window.planets = planets;
+    setupZones();
     window.initPlanets3D(planets, SUN);
+    // Rozgrzewka kadłubów i efektów (w tym plazmy WARP na dyszach) PO planetach, jak w grze: initPlanets3D dokłada
+    // stałe światła sceny, a ich zestaw jest w kluczu każdego pipeline'u — rozgrzane wcześniej `WarpPlume` kompilowały
+    // się synchronicznie przy pierwszym skoku (2026-10-23).
+    await Core3D.warmup.run('kadłuby, mapa ran, broń (hexShips3D)', () => prewarmHexShips3D({ canvas: glCanvas }));
     // Ringi „Halo” i pas asteroid jak w grze (index.html: initHaloRings, start świata, startGame): kolidery i pole od
     // razu, cień pól i start GPU pasa; ringi budowane z góry (w grze — gdy kadr zbliży się do planety; w skoku planeta
     // mija kadr w kilka s, a ring-archetyp buduje się ~2–3 s).
@@ -888,7 +982,6 @@ window.__warpPed = {
       await new Promise((ok) => requestAnimationFrame(() => ok()));
     }
     WarpNurt.init();
-    WarpNurt.onShake = (mag, dur) => addShake(mag, dur);
     world = new World();
     atlas = world.add('atlas', { x: 0, y: 0, angle: 0, throttle: 0.6 });
     window.ship = atlas;

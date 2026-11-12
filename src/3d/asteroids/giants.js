@@ -22,13 +22,16 @@
 // Marsz promienia to wspólny węzeł głębi i koloru: three buduje zapis głębi
 // PRZED fragmentem (NodeMaterial.setupDepth), więc wynik marszu jest zmienną
 // liczoną raz w depthNode i czytaną przez fragmentNode.
+//
+// PIECZENIE ŚWIATŁA = JEDEN kernel dla wszystkich olbrzymów (GiantBakeKernel niżej, 2026-10-30), rozgrzany pustym
+// dispatchem na ekranie ładowania (AsteroidBelt._prewarmCompute) — pipeline compute three r183 powstaje synchronicznie.
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, int, vec2, vec3, vec4, uniform, uniformArray, instanceIndex, textureStore, texture3D,
+  Fn, float, int, vec2, vec3, vec4, uniform, uniformArray, instanceIndex, texture3D, storageTexture,
   positionLocal, cameraProjectionMatrix, modelViewMatrix, Loop, If, Break, Return, Discard, select,
   mix, smoothstep, clamp, exp, max, min, pow, sin, atan, dot, normalize, length, step, dFdx, dFdy,
-  cross, sign, abs, uint
+  cross, sign, abs, uvec3
 } from 'three/tsl';
 import { BAND_VOXELS } from '../../game/asteroidGiants.js';
 
@@ -41,6 +44,195 @@ export const GIANT_LOOK = Object.freeze({
   cap: [0.016, 0.015, 0.014]
 });
 
+// --- SDF olbrzyma (TSL, wspólne dla raymarchingu i pieczenia) ------------------
+// P — uniformy siatki { ext, gridN, voxel, band }, sample(uvw) — odczyt tekstury SDF (R8, 128 = powierzchnia).
+
+function giantUvw(P, g) {
+  return g.add(P.ext).add(P.voxel.mul(0.5)).div(P.gridN.mul(P.voxel));
+}
+
+function giantSdf(P, sample, g) {
+  const uvw = giantUvw(P, g).toVar();
+  const out = uvw.x.lessThan(0.0).or(uvw.y.lessThan(0.0)).or(uvw.z.lessThan(0.0))
+    .or(uvw.x.greaterThan(1.0)).or(uvw.y.greaterThan(1.0)).or(uvw.z.greaterThan(1.0));
+  const d = sample(uvw).r.mul(255.0).sub(128.0).mul(P.band.div(127.0));
+  return select(out, P.band, d);
+}
+
+function giantNormal(P, sample, g, e) {
+  const sdf = (q) => giantSdf(P, sample, q);
+  const n = vec3(
+    sdf(g.add(vec3(e, 0, 0))).sub(sdf(g.sub(vec3(e, 0, 0)))),
+    sdf(g.add(vec3(0, e, 0))).sub(sdf(g.sub(vec3(0, e, 0)))),
+    sdf(g.add(vec3(0, 0, e))).sub(sdf(g.sub(vec3(0, 0, e))))
+  ).toVar();
+  const l = length(n);
+  return select(l.greaterThan(1e-6), n.div(l), vec3(0, 0, 1));
+}
+
+/** Tekstura SDF olbrzyma (R8, filtr liniowy) — siatka z workera GiantBuilder (ta sama tablica co kolizje). */
+function giantSdfTexture(data, nx, ny, nz) {
+  const t = new THREE.Data3DTexture(data, nx, ny, nz);
+  t.format = THREE.RedFormat;
+  t.type = THREE.UnsignedByteType;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = t.wrapR = THREE.ClampToEdgeWrapping;
+  t.unpackAlignment = 1;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+/** Tekstura światła olbrzyma (storage 3D RGBA8: widoczność słońca, AO, poświata złóż, barwa złoża). */
+function giantLightTexture(lx, ly, lz, name) {
+  const t = new THREE.Storage3DTexture(lx, ly, lz);
+  t.name = name;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = t.wrapR = THREE.ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+/**
+ * PIECZENIE ŚWIATŁA OLBRZYMÓW — JEDEN kernel compute dla wszystkich (2026-10-30). Pipeline compute three r183 powstaje
+ * SYNCHRONICZNIE przy pierwszym dispatchu (nie ma odpowiednika compileAsync), a jego klucz to id węzła compute + program.
+ * Dawniej każdy GiantView budował własny kernel (wymiary siatki światła w stałych WGSL, własne tablice złóż
+ * `NodeBuffer_<id>`), więc pierwszy widok KAŻDEGO olbrzyma kompilował pipeline w klatce gry (pomiar 2026-10-30,
+ * `gpu-pas-gra.mjs`: jedyny pipeline compute tworzony po starcie — `GiantView.bake` przy pierwszym olbrzymie w kadrze).
+ * Tu graf raz: wymiary, siatka, słońce i złoża w uniformach, tekstury olbrzyma podpinane przed dispatchem (wartość węzłów
+ * tekstur — nowa grupa wiązań, ten sam pipeline), liczba wątków w uniformie `count` ze strażnikiem (teksle lx · ly · lz;
+ * 0 — pusty dispatch rozgrzewki: `warm`, wołane w `AsteroidBelt._prewarmCompute` na ekranie ładowania). Jeden kernel na
+ * pas (AsteroidBelt.giantBake); każdy `bake` to osobny `renderer.compute`, a zapis uniformów następnego olbrzyma idzie
+ * w kolejce po nim (zbieracz zgłoszeń wysyła odłożone polecenia przed zapisem do bufora, którego używają —
+ * zbieraczZgloszen.js; wzór: kopiowanie atlasu wydobycia `minedRocks.js`). Nowy kernel w kroku pasa — rozgrzewka tak samo.
+ */
+export class GiantBakeKernel {
+  constructor({ name = 'giantLightBake' } = {}) {
+    const U = this.U = {
+      count: uniform(0, 'uint'),                // wątki = teksle światła (0 — pusty dispatch)
+      lx: uniform(1, 'uint'),                   // wymiary siatki światła (indeks wątku → teksel)
+      ly: uniform(1, 'uint'),
+      lightN: uniform(new THREE.Vector3(1, 1, 1)),
+      ext: uniform(new THREE.Vector3()),        // siatka SDF olbrzyma (jak GiantView.U)
+      gridN: uniform(new THREE.Vector3(1, 1, 1)),
+      voxel: uniform(1),
+      band: uniform(1),
+      sunG: uniform(new THREE.Vector3(1, 0, 0)),
+      depCount: uniform(0, 'int'),
+      dep: uniformArray(Array.from({ length: DEPOSIT_CAP }, () => new THREE.Vector4()), 'vec4').setName(`${name}Dep`),
+      depHue: uniformArray(Array.from({ length: DEPOSIT_CAP }, () => new THREE.Vector4()), 'vec4').setName(`${name}DepHue`)
+    };
+    // Węzły bazowe tekstur (zastępcze 1 × 1 × 1 tego samego formatu — układ wiązań taki jak przy olbrzymie): próbki SDF
+    // (`.sample`) i zapis światła (`referenceNode`) biorą teksturę z bazy — `bind` podmienia tylko wartość.
+    this.sdfNode = texture3D(giantSdfTexture(new Uint8Array([255]), 1, 1, 1));
+    this.lightNode = storageTexture(giantLightTexture(1, 1, 1, `${name}Light0`));
+    const sample = (uvw) => this.sdfNode.sample(uvw).level(0);
+    this.node = Fn(() => {
+      If(instanceIndex.greaterThanEqual(U.count), () => { Return(); });
+      const ix = instanceIndex.mod(U.lx);
+      const iy = instanceIndex.div(U.lx).mod(U.ly);
+      const iz = instanceIndex.div(U.lx.mul(U.ly));
+      const uvw = vec3(float(ix).add(0.5), float(iy).add(0.5), float(iz).add(0.5)).div(U.lightN);
+      const g0 = uvw.mul(U.gridN).mul(U.voxel).sub(U.ext).sub(U.voxel.mul(0.5)).toVar();
+      const n = giantNormal(U, sample, g0, U.voxel).toVar();
+      // Teksel rzutowany na najbliższą powierzchnię (teksel w skale liczyłby cień ze środka skały).
+      const g = g0.sub(n.mul(giantSdf(U, sample, g0))).toVar();
+      // Miękki cień słońca: marsz po SDF od punktu nad powierzchnią w stronę słońca.
+      const vis = float(1.0).toVar();
+      const t = U.voxel.mul(1.5).toVar();
+      const o = g.add(n.mul(U.voxel.mul(0.75))).toVar();
+      Loop({ start: 0, end: 48, type: 'int', condition: '<', name: 'si' }, () => {
+        const q = o.add(U.sunG.mul(t)).toVar();
+        const h = giantSdf(U, sample, q).toVar();
+        // SDF obcięte do ±pasma: kara półcienia tylko przy geometrii.
+        If(h.lessThan(U.band.mul(0.95)), () => { vis.assign(min(vis, h.mul(12.0).div(t))); });
+        If(vis.lessThan(0.01), () => { Break(); });
+        t.addAssign(clamp(h, U.voxel.mul(0.6), U.voxel.mul(6.0)));
+        If(t.greaterThan(U.voxel.mul(260.0)).or(q.z.greaterThan(U.ext.z)), () => { Break(); });
+      });
+      vis.assign(clamp(vis, 0.0, 1.0));
+      // AO: próbki wzdłuż normalnej na rosnących odległościach.
+      const occ = float(0.0).toVar();
+      let w = 0.5;
+      for (let k = 0; k < 5; k++) {
+        const dist = U.voxel.mul(1.0 + k * k * 1.2);
+        occ.addAssign(clamp(dist.sub(giantSdf(U, sample, g.add(n.mul(dist)))).div(dist), 0.0, 1.0).mul(w));
+        w *= 0.62;
+      }
+      const ao = clamp(float(1.0).sub(occ.mul(1.15)), 0.0, 1.0);
+      // Złoża: poświata w ich pobliżu (barwa w kanale A).
+      const glow = float(0.0).toVar();
+      const hue = float(0.0).toVar();
+      Loop({ start: 0, end: DEPOSIT_CAP, type: 'int', condition: '<', name: 'di' }, ({ di }) => {
+        If(di.greaterThanEqual(U.depCount), () => { Break(); });
+        const dp = U.dep.element(di);
+        const dd = g.sub(dp.xyz);
+        const e = exp(dot(dd, dd).div(dp.w.mul(dp.w)).negate()).toVar();
+        If(e.greaterThan(glow), () => { hue.assign(U.depHue.element(di).x); });
+        glow.assign(max(glow, e));
+      });
+      // Zapis: węzeł z uv od razu (węzeł tekstury bez uv dostaje macierz uv tekstury — pułapka 7 — i jego klon przez
+      // textureStore przekształcał współrzędne teksla), tekstura z węzła bazowego (`referenceNode`, jak klony `.sample`).
+      const st = storageTexture(this.lightNode.value, uvec3(ix, iy, iz), vec4(vis, ao, glow, hue));
+      st.referenceNode = this.lightNode;
+      st.toStack();
+    })().compute(64).setName(name);
+  }
+
+  /** Olbrzym → uniformy i tekstury kernela (przed dispatchem); zwraca liczbę wątków (teksli światła). */
+  bind(view, gx, gy, gz) {
+    const U = this.U, V = view.U, [lx, ly, lz] = view.lightN;
+    U.count.value = lx * ly * lz;
+    U.lx.value = lx;
+    U.ly.value = ly;
+    U.lightN.value.set(lx, ly, lz);
+    U.ext.value.copy(V.ext.value);
+    U.gridN.value.copy(V.gridN.value);
+    U.voxel.value = V.voxel.value;
+    U.band.value = V.band.value;
+    U.sunG.value.set(gx, gy, gz);
+    const deps = view.giant.plan.deposits || [];
+    U.depCount.value = Math.min(DEPOSIT_CAP, deps.length);
+    for (let i = 0; i < U.depCount.value; i++) {
+      const d = deps[i];
+      U.dep.array[i].set(d.x, d.y, d.z, d.r);
+      U.depHue.array[i].set(d.hue || 0, 0, 0, 0);
+    }
+    this.sdfNode.value = view.sdfTexture;
+    this.lightNode.value = view.lightTexture;
+    return U.count.value;
+  }
+
+  /** Pieczenie światła olbrzyma `view` dla kierunku ku słońcu (gx, gy, gz) — układ olbrzyma. */
+  bake(renderer, view, gx, gy, gz) {
+    const n = this.bind(view, gx, gy, gz);
+    if (renderer && n > 0) renderer.compute(this.node, n);
+  }
+
+  /** Pusty dispatch (count 0 — żaden wątek nie pisze): pipeline compute na ekranie ładowania. */
+  warm(renderer) {
+    if (!renderer) return;
+    const n = this.U.count.value;
+    this.U.count.value = 0;
+    try { renderer.compute(this.node, 64); } finally { this.U.count.value = n; }
+  }
+}
+
+// Kernel domyślny — GiantView bez `o.bake` (pas podaje swój, rozgrzany w _prewarmCompute).
+let _defaultBake = null;
+function defaultGiantBakeKernel() {
+  if (!_defaultBake) {
+    _defaultBake = new GiantBakeKernel();
+    // AGENT: kernel domyślny nikt nie rozgrzewa — jego pierwszy dispatch kompiluje pipeline compute w klatce gry
+    console.warn('[giants] GiantView bez o.bake — kernel pieczenia nierozgrzany (podaj belt.giantBake)');
+  }
+  return _defaultBake;
+}
+
 export class GiantView {
   /**
    * @param {object} o
@@ -51,44 +243,27 @@ export class GiantView {
    * @param {object} o.shared uniformy skał (słońce, otoczenie, S.volume)
    * @param {import('./lights.js').LightGrid} o.grid
    * @param {{x:number,y:number}} o.sun
+   * @param {GiantBakeKernel} [o.bake] wspólny kernel pieczenia światła (rozgrzany) — bez niego domyślny modułu
    */
   constructor(o) {
     this.renderer = o.renderer;
     this.giant = o.giant;
     this.S = o.shared;
     this.grid = o.grid;
+    this.bakeKernel = o.bake || defaultGiantBakeKernel();
     const { nx, ny, nz, ext } = this.giant.dims;
     const v = this.giant.plan.voxel;
-    this.sdfTexture = new THREE.Data3DTexture(this.giant.grid, nx, ny, nz);
-    this.sdfTexture.format = THREE.RedFormat;
-    this.sdfTexture.type = THREE.UnsignedByteType;
-    this.sdfTexture.minFilter = THREE.LinearFilter;
-    this.sdfTexture.magFilter = THREE.LinearFilter;
-    this.sdfTexture.wrapS = this.sdfTexture.wrapT = this.sdfTexture.wrapR = THREE.ClampToEdgeWrapping;
-    this.sdfTexture.unpackAlignment = 1;
-    this.sdfTexture.generateMipmaps = false;
-    this.sdfTexture.colorSpace = THREE.NoColorSpace;
-    this.sdfTexture.needsUpdate = true;
+    this.sdfTexture = giantSdfTexture(this.giant.grid, nx, ny, nz);
     this.lightN = [Math.ceil(nx / 2), Math.ceil(ny / 2), Math.ceil(nz / 2)];
-    this.lightTexture = new THREE.Storage3DTexture(this.lightN[0], this.lightN[1], this.lightN[2]);
-    this.lightTexture.name = `giantLight_${this.giant.plan.id}`;
-    this.lightTexture.minFilter = THREE.LinearFilter;
-    this.lightTexture.magFilter = THREE.LinearFilter;
-    this.lightTexture.wrapS = this.lightTexture.wrapT = this.lightTexture.wrapR = THREE.ClampToEdgeWrapping;
-    this.lightTexture.generateMipmaps = false;
-    this.lightTexture.colorSpace = THREE.NoColorSpace;
+    this.lightTexture = giantLightTexture(this.lightN[0], this.lightN[1], this.lightN[2], `giantLight_${this.giant.plan.id}`);
     this.noise = o.noise;
+    this._sample = (uvw) => texture3D(this.sdfTexture, uvw).level(0);
     this.U = {
       ext: uniform(new THREE.Vector3(ext[0], ext[1], ext[2])),
       gridN: uniform(new THREE.Vector3(nx, ny, nz)),
       voxel: uniform(v),
       band: uniform(BAND_VOXELS * v),
-      lightN: uniform(new THREE.Vector3(...this.lightN)),
-      sunG: uniform(new THREE.Vector3(1, 0, 0)),
       sunS: uniform(new THREE.Vector3(1, 0, 0)),
-      depCount: uniform(0, 'int'),
-      dep: uniformArray(Array.from({ length: DEPOSIT_CAP }, () => new THREE.Vector4()), 'vec4'),
-      depHue: uniformArray(Array.from({ length: DEPOSIT_CAP }, () => new THREE.Vector4()), 'vec4'),
       craterCount: uniform(0, 'int'),
       craters: uniformArray(Array.from({ length: CRATER_CAP }, () => new THREE.Vector4()), 'vec4'),
       cut: uniform(new THREE.Vector4(0, 0, 0, 1)),
@@ -104,7 +279,6 @@ export class GiantView {
     const craters = this.giant.plan.craters || [];
     this.U.craterCount.value = Math.min(CRATER_CAP, craters.length);
     craters.slice(0, CRATER_CAP).forEach((c, i) => this.U.craters.array[i].set(c.x, c.y, c.r, c.fresh ?? 0.5));
-    this._buildBake();
     this._buildMaterial();
     const sx = nx * v; const sy = ny * v; const sz = nz * v;
     const geo = new THREE.BoxGeometry(sx, sy, sz);
@@ -125,82 +299,13 @@ export class GiantView {
 
   // --- SDF (TSL) -------------------------------------------------------------
 
-  _uvw(g) {
-    const U = this.U;
-    return g.add(U.ext).add(U.voxel.mul(0.5)).div(U.gridN.mul(U.voxel));
-  }
+  _uvw(g) { return giantUvw(this.U, g); }
 
-  _sdf(g) {
-    const U = this.U;
-    const uvw = this._uvw(g).toVar();
-    const out = uvw.x.lessThan(0.0).or(uvw.y.lessThan(0.0)).or(uvw.z.lessThan(0.0))
-      .or(uvw.x.greaterThan(1.0)).or(uvw.y.greaterThan(1.0)).or(uvw.z.greaterThan(1.0));
-    const d = texture3D(this.sdfTexture, uvw).level(0).r.mul(255.0).sub(128.0).mul(U.band.div(127.0));
-    return select(out, U.band, d);
-  }
+  _sdf(g) { return giantSdf(this.U, this._sample, g); }
 
-  _normal(g, e) {
-    const n = vec3(
-      this._sdf(g.add(vec3(e, 0, 0))).sub(this._sdf(g.sub(vec3(e, 0, 0)))),
-      this._sdf(g.add(vec3(0, e, 0))).sub(this._sdf(g.sub(vec3(0, e, 0)))),
-      this._sdf(g.add(vec3(0, 0, e))).sub(this._sdf(g.sub(vec3(0, 0, e))))
-    ).toVar();
-    const l = length(n);
-    return select(l.greaterThan(1e-6), n.div(l), vec3(0, 0, 1));
-  }
+  _normal(g, e) { return giantNormal(this.U, this._sample, g, e); }
 
-  // --- Pieczenie światła (compute) --------------------------------------------
-
-  _buildBake() {
-    const U = this.U;
-    const [lx, ly, lz] = this.lightN;
-    this.bakeNode = Fn(() => {
-      If(instanceIndex.greaterThanEqual(uint(lx * ly * lz)), () => { Return(); });
-      const ix = instanceIndex.mod(uint(lx));
-      const iy = instanceIndex.div(uint(lx)).mod(uint(ly));
-      const iz = instanceIndex.div(uint(lx * ly));
-      const uvw = vec3(float(ix).add(0.5), float(iy).add(0.5), float(iz).add(0.5)).div(U.lightN);
-      const g0 = uvw.mul(U.gridN).mul(U.voxel).sub(U.ext).sub(U.voxel.mul(0.5)).toVar();
-      const n = this._normal(g0, U.voxel).toVar();
-      // Teksel rzutowany na najbliższą powierzchnię (teksel w skale liczyłby cień ze środka skały).
-      const g = g0.sub(n.mul(this._sdf(g0))).toVar();
-      // Miękki cień słońca: marsz po SDF od punktu nad powierzchnią w stronę słońca.
-      const vis = float(1.0).toVar();
-      const t = U.voxel.mul(1.5).toVar();
-      const o = g.add(n.mul(U.voxel.mul(0.75))).toVar();
-      Loop({ start: 0, end: 48, type: 'int', condition: '<', name: 'si' }, () => {
-        const q = o.add(U.sunG.mul(t)).toVar();
-        const h = this._sdf(q).toVar();
-        // SDF obcięte do ±pasma: kara półcienia tylko przy geometrii.
-        If(h.lessThan(U.band.mul(0.95)), () => { vis.assign(min(vis, h.mul(12.0).div(t))); });
-        If(vis.lessThan(0.01), () => { Break(); });
-        t.addAssign(clamp(h, U.voxel.mul(0.6), U.voxel.mul(6.0)));
-        If(t.greaterThan(U.voxel.mul(260.0)).or(q.z.greaterThan(U.ext.z)), () => { Break(); });
-      });
-      vis.assign(clamp(vis, 0.0, 1.0));
-      // AO: próbki wzdłuż normalnej na rosnących odległościach.
-      const occ = float(0.0).toVar();
-      let w = 0.5;
-      for (let k = 0; k < 5; k++) {
-        const dist = U.voxel.mul(1.0 + k * k * 1.2);
-        occ.addAssign(clamp(dist.sub(this._sdf(g.add(n.mul(dist)))).div(dist), 0.0, 1.0).mul(w));
-        w *= 0.62;
-      }
-      const ao = clamp(float(1.0).sub(occ.mul(1.15)), 0.0, 1.0);
-      // Złoża: poświata w ich pobliżu (barwa w kanale A).
-      const glow = float(0.0).toVar();
-      const hue = float(0.0).toVar();
-      Loop({ start: 0, end: DEPOSIT_CAP, type: 'int', condition: '<', name: 'di' }, ({ di }) => {
-        If(di.greaterThanEqual(U.depCount), () => { Break(); });
-        const dp = U.dep.element(di);
-        const dd = g.sub(dp.xyz);
-        const e = exp(dot(dd, dd).div(dp.w.mul(dp.w)).negate()).toVar();
-        If(e.greaterThan(glow), () => { hue.assign(U.depHue.element(di).x); });
-        glow.assign(max(glow, e));
-      });
-      textureStore(this.lightTexture, vec3(ix, iy, iz), vec4(vis, ao, glow, hue));
-    })().compute(lx * ly * lz).setName('giantLightBake');
-  }
+  // --- Pieczenie światła (compute — wspólny kernel GiantBakeKernel) -------------
 
   /** Pieczenie światła dla słońca w (sun.x, sun.y) świata gry. */
   bake(sun, sunElevDeg = this.sunElevDeg) {
@@ -210,19 +315,9 @@ export class GiantView {
     const l = Math.hypot(dx, dy) || 1;
     const el = sunElevDeg * Math.PI / 180;
     const gx = dx / l * Math.cos(el); const gy = dy / l * Math.cos(el); const gz = Math.sin(el);
-    this.U.sunG.value.set(gx, gy, gz);
     this.U.sunS.value.set(gx, -gy, gz);
-    const deps = this.giant.plan.deposits || [];
-    this.U.depCount.value = Math.min(DEPOSIT_CAP, deps.length);
-    for (let i = 0; i < DEPOSIT_CAP; i++) {
-      const d = deps[i];
-      if (d) {
-        this.U.dep.array[i].set(d.x, d.y, d.z, d.r);
-        this.U.depHue.array[i].set(d.hue || 0, 0, 0, 0);
-      }
-    }
     const t0 = performance.now();
-    this.renderer.compute(this.bakeNode);
+    this.bakeKernel.bake(this.renderer, this, gx, gy, gz);
     this.bakeMs = performance.now() - t0;
   }
 

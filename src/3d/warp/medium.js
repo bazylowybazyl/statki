@@ -43,10 +43,8 @@ import {
 } from 'three/tsl';
 import { RULON } from './rulon.js';
 
-// Zapas pudeł na rulon (rulon.js): zwinięty kadr pokazuje świat aż do horyzontu walca —
-// bez zapasu brzegi przy horyzoncie byłyby puste. W grze tylko na czas rulonu (setBoxes: boxK —
-// sterownik podaje 1 + 0,4 · zwinięcie), poza skokiem pudło jak przed rulonem (gęstość).
-export const RULON_BOX = 1.4;
+// Zapas pudeł na rulon (setBoxes: boxK) — od sprzątania S1 nowego warpa (2026-10-26, jeden warp bez stylu 'rulon')
+// sterownik podaje 1; RULON w kernelu (hak rulon.js) zostaje do decyzji C2 (zmiana WGSL).
 
 export const MEDIUM_CAP = 1 << 20;
 export const MEDIUM_COUNT_DEFAULT = 1000000;

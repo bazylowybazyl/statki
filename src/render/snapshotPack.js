@@ -29,6 +29,7 @@ import { createTripleBuffer, TripleBufferWriter } from './tripleBuffer.js';
 import { createRenderIds } from './renderIds.js';
 import { describeEntity, describeCore, describeStation } from './describeEntity.js';
 import { describeBodyTopology } from './mirrorBody.js';
+import { packWarpWorld } from './warpWorldMirror.js';
 
 const EF = ENT.F64, EI = ENT.I32;
 const BF = BODY.F64, BI = BODY.I32;
@@ -100,11 +101,17 @@ export function createSnapshotFrame() {
     interpPose: null,           // window.__interpShipPose
     ship: null, p2: null, npcs: null, wrecks: null, coldWrecks: null, coldRenderList: null, coldNearExtras: true,
     stations: null, bullets: null,
-    hides: null,                // SensorSystem.hides (używane tylko przy fog)
+    hides: null,                // SensorSystem.hides (używane tylko przy fog albo lensDots)
+    lensDots: false,            // soczewka skoku gracza zastępuje encje kropkami (index.html: stampWarpLensDots; `hides` je obejmuje)
     reactorCores: null,         // lista rdzeni albo null — wtedy coresOf
     coresOf: null,              // (listy) → rdzenie (ReactorGame.cores) z list migawki: [gracz, P2], NPC i wraki widoczne, zimne
     sun: null, skyZone: null,
     warp: null, boost: null,
+    // warp gracza (warpWorldMirror.js): listy ciał (indeks celu / startu skoku — ta sama kolejność, którą strona wysyła
+    // workerowi), zegar efektu warpa strony (suma dt klatek „Nurtu”), kotwica kadru skoku (px ekranu od środka kadru)
+    planets: null, smallBodies: null, warpFxClock: NaN, warpAnchorSX: NaN, warpAnchorSY: NaN,
+    warpLens: null,             // oś β soczewki świata (warpLensPhase.js: rekord stepWarpLensPhase strony gry) albo null
+    hyper: null,               // hipercruise gracza w kształcie warpa (GameState.hyper)
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
     turretFrame: null,          // faza finish (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame)
                                 // — pierwszeństwo przed turretsOf
@@ -396,7 +403,8 @@ export class SnapshotPacker {
     const wrecks = f.wrecks || EMPTY;
     const rWreck = render.length;
     for (let i = 0; i < wrecks.length; i++) { const e = wrecks[i]; if (e && !e.dead) render.push(e); }
-    const hides = f.fog ? f.hides : null;
+    // mgła wojny albo kropki soczewki skoku (f.lensDots — index.html: stampWarpLensDots; `hides` gry obejmuje obie)
+    const hides = f.fog || f.lensDots ? f.hides : null;
     // mgła: jedno pytanie na encję listy RENDER (wynik w _fogR po indeksie) — listy NPCS_SEEN / WRECKS_SEEN i flaga
     // FOG_HIDDEN encji biorą je stąd (żywe NPC i wraki leżą w RENDER w tej samej kolejności)
     if (this._fogR.length < render.length) this._fogR = new Uint8Array(Math.max(render.length, this._fogR.length * 2));
@@ -408,13 +416,16 @@ export class SnapshotPacker {
       fogR[i] = h;
       if (!h) seenR.push(e);
     }
-    // zimne wraki z ciałem do rysowania (index.html: withColdNearWrecks — tu bez zapisu _coldExtrasFrame)
+    // zimne wraki z ciałem do rysowania (index.html: withColdNearWrecks — tu bez zapisu _coldExtrasFrame); wrak
+    // zastąpiony w skoku smugą soczewki (f.lensDots, flaga `__lensDot` z withColdNearWrecks) — bez dodatków
     const near = L[LIST.COLD_NEAR];
     const cold = f.coldRenderList || EMPTY;
+    const lensDots = f.lensDots === true;
     if (f.coldNearExtras !== false) {
       for (let i = 0; i < cold.length; i++) {
         const w = cold[i];
         if (!w || !w.isCold || w.dead || !w.beamHull) continue;
+        if (lensDots && w.__lensDot === true) continue;
         near.push(w);
       }
     }
@@ -515,6 +526,9 @@ export class SnapshotPacker {
     h[HEAD.CAMNS_X] = ns ? raw(ns.x) : NaN;
     h[HEAD.CAMNS_Y] = ns ? raw(ns.y) : NaN;
     h[HEAD.CAMNS_ZOOM] = ns ? raw(ns.zoom) : NaN;
+    // obrót kadru (brak pola = 0 — kadr osiami świata)
+    h[HEAD.CAM_ROLL] = cam ? num(cam.roll) : 0;
+    h[HEAD.CAMNS_ROLL] = ns ? num(ns.roll) : 0;
     h[HEAD.SHAKE_PX_X] = num(f.shakePxX);
     h[HEAD.SHAKE_PX_Y] = num(f.shakePxY);
     const free = !!(cam && cam.mode === 'free3d' && cam.position && cam.quaternion);
@@ -547,6 +561,13 @@ export class SnapshotPacker {
     h[HEAD.INTERP_X] = ip ? raw(ip.x) : NaN;
     h[HEAD.INTERP_Y] = ip ? raw(ip.y) : NaN;
     h[HEAD.INTERP_ANGLE] = ip ? raw(ip.angle) : NaN;
+    // okręt prowadzony przez kamerę (fregata zwiadu — window.__cameraLead strony; w = 0 — statek gracza)
+    const cl = f.cameraLead;
+    const lw = cl ? num(cl.w) : 0;
+    h[HEAD.LEAD_W] = lw;
+    h[HEAD.LEAD_X] = lw > 0 ? raw(cl.x) : 0;
+    h[HEAD.LEAD_Y] = lw > 0 ? raw(cl.y) : 0;
+    h[HEAD.LEAD_V] = lw > 0 ? num(cl.v) : 0;
     h[HEAD.EVENT_LAST] = 0;
   }
 
@@ -557,7 +578,7 @@ export class SnapshotPacker {
     const st = this.stats;
     st.ents = 0; st.bodies = 0; st.bodiesPacked = 0; st.nodesPacked = 0; st.beamsPacked = 0; st.nozzles = 0;
     this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0; this._imp = 0; this._br = 0;
-    const hides = f.fog ? f.hides : null;
+    const hides = f.fog || f.lensDots ? f.hides : null;
     const ship = f.ship, p2 = f.p2;
     // kolejność: listy źródłowe po kolei, encja pakowana raz (pierwsze wystąpienie) — listy pochodne (SEEN ⊂ RENDER,
     // SEEN_COLD ⊂ RENDER ∪ COLD_NEAR, NPCS_SEEN ⊂ NPCS, WRECKS_SEEN ⊂ WRECKS) nie wnoszą nowych encji, a kolejność
@@ -640,6 +661,7 @@ export class SnapshotPacker {
     if (isPlayer) flags |= ENT_FLAG.PLAYER;
     if (isP2) flags |= ENT_FLAG.P2;
     if (fogHidden) flags |= ENT_FLAG.FOG_HIDDEN;
+    if (e.__lensDot === true) flags |= ENT_FLAG.LENS_DOT;
     if (e.isBridgeHulk) flags |= ENT_FLAG.BRIDGE_HULK;
     if (e.lightsOff) flags |= ENT_FLAG.LIGHTS_OFF;
     if (e.roadLightsOff) flags |= ENT_FLAG.ROAD_LIGHTS_OFF;
@@ -654,6 +676,9 @@ export class SnapshotPacker {
     if (e.__warpPreview === true) flags |= ENT_FLAG.WARP_PREVIEW;
     if (e.fighter) flags2 |= ENT_FLAG2.FIGHTER;
     if (e._shieldForcedOff) flags2 |= ENT_FLAG2.SH_FORCED_OFF;
+    if (e.__hyperMode === 'active') flags2 |= ENT_FLAG2.HYPER_ACTIVE;
+    else if (e.__hyperMode === 'charging') flags2 |= ENT_FLAG2.HYPER_CHARGING;
+    else if (e.__hyperMode === 'drop') flags2 |= ENT_FLAG2.HYPER_DROP;
     i32[bi + EI.STATE] = ec.code(ecb + 1, e.state);
     i32[bi + EI.PHASE] = ec.code(ecb + 2, e.phase);
     i32[bi + EI.OWNER_ID] = this._tierBI[tbi + 2];
@@ -675,6 +700,19 @@ export class SnapshotPacker {
       i32[bi + EI.IGN_STATE] = -1;
       f64[b + EF.IGN_T] = NaN;
     }
+    // stan zasilania okrętu (src/game/shipPower.js), migotanie świateł, reflektor dziobowy, alarm, światło bojowe
+    const pw = e.shipPower;
+    if (pw) {
+      i32[bi + EI.PWR_STATE] = num(pw.state) | 0;
+      f64[b + EF.PWR_T] = raw(pw.t);
+    } else {
+      i32[bi + EI.PWR_STATE] = -1;
+      f64[b + EF.PWR_T] = NaN;
+    }
+    f64[b + EF.PWR_FLICK] = e.__powerFlick > 0 ? e.__powerFlick : 0;
+    f64[b + EF.SPOT_ANG] = e.__spotAng === undefined ? NaN : raw(e.__spotAng);
+    i32[bi + EI.ALARM] = e.__alarmCode > 0 ? e.__alarmCode | 0 : 0;
+    if (e.__battleLights === true) flags2 |= ENT_FLAG2.BATTLE_LIGHTS;
     // tarcza
     const sh = e.shield;
     if (sh) {
@@ -1345,22 +1383,15 @@ export class SnapshotPacker {
     w[WORLD.SUN_Y] = sun ? raw(sun.y) : NaN;
     w[WORLD.SUN_R] = sun ? raw(sun.r) : NaN;
     w[WORLD.SKY_ZONE] = this.dict.code(f.skyZone);
-    const wp = f.warp;
-    w[WORLD.WARP_STATE] = wp ? this.dict.code(wp.state) : -1;
-    w[WORLD.WARP_CHARGE] = wp ? raw(wp.charge) : NaN;
-    w[WORLD.WARP_CHARGE_TIME] = wp ? raw(wp.chargeTime) : NaN;
-    w[WORLD.WARP_GEAR] = wp ? raw(wp.gear) : NaN;
-    w[WORLD.WARP_DIR] = wp ? raw(wp.dir) : NaN;
-    w[WORLD.WARP_FLYBY] = wp ? raw(wp.flybyFactor) : NaN;
-    w[WORLD.WARP_CRUISE] = wp ? raw(wp.cruise) : NaN;
-    w[WORLD.WARP_SPEED] = wp ? raw(wp.speed) : NaN;
-    const ramp = wp ? wp.exitRamp : null;
-    w[WORLD.WARP_EXIT_ACTIVE] = ramp ? (ramp.active ? 1 : 0) : -1;
-    w[WORLD.WARP_EXIT_AGE] = ramp ? raw(ramp.age) : NaN;
-    w[WORLD.WARP_EXIT_TBRAKE] = ramp ? raw(ramp.tBrake) : NaN;
-    w[WORLD.WARP_TARGET_BODY] = -1;   // AGENT: RW-11c — indeks planety warp.targetBody na liście planet
-    const bo = f.boost;
-    w[WORLD.BOOST_STATE] = bo ? this.dict.code(bo.state) : -1;
+    // warp gracza i dopalacz (pełny kształt — rampa, ślizg, kurs, ciała, zegary, kotwica kadru): warpWorldMirror.js
+    packWarpWorld(w, f, this.dict);
+    const hy = f.hyper;
+    w[WORLD.HYPER_STATE] = hy ? this.dict.code(hy.state) : -1;
+    w[WORLD.HYPER_CHARGE] = hy ? raw(hy.charge) : NaN;
+    w[WORLD.HYPER_CHARGE_TIME] = hy ? raw(hy.chargeTime) : NaN;
+    w[WORLD.HYPER_SPEED] = hy ? raw(hy.speed) : NaN;
+    w[WORLD.HYPER_VMAX] = hy ? raw(hy.vmax) : NaN;
+    w[WORLD.HYPER_DIR] = hy ? raw(hy.dir) : NaN;
   }
 
   _packTurrets(v, f) {
@@ -1418,6 +1449,7 @@ export class SnapshotPacker {
     i32[bi + TI.UID] = tc.code(tcb + 1, r.uid);
     i32[bi + TI.WEAPON] = tc.code(tcb + 2, r.weaponId);
     i32[bi + TI.FX_KEY] = tc.code(tcb + 3, r.fxKey);
+    i32[bi + TI.READY] = r.ready | 0;
     f64[b + TF.WX] = raw(r.wx);
     f64[b + TF.WY] = raw(r.wy);
     f64[b + TF.ANG] = raw(r.ang);

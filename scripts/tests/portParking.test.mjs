@@ -339,6 +339,27 @@ export function run() {
   const tn = placeFleetStock(earth, regT, terraNova);
   t.check('Terra Nova (58) mieści się w halach Ziemi', tn.berthed === 58 && tn.reda === 0);
 
+  // Hala domowa gracza (stanowisko Atlasa, 2026-10-26): trzymane stanowisko gracza wolne, reszta hali pełna — także
+  // pady capital, gdy frakcja ma jednego nosiciela (krążownik i niszczyciel wchodzą wyżej), bez `keepFree`.
+  const domowe = 'earth:K7-1:C-01';
+  const earthById = new Map(earth.berths.map(b => [b.id, b]));
+  reserveBerth(earthById.get(domowe), 'player', 0);
+  const flotaTN = { terra_nova: { frigate: 24, destroyer: 10, cruiser: 5, carrier: 1 } };
+  const regD = createParkingRegistry(plan, { role: BERTH_ROLE.MILITARY });
+  const dom = placeFleetStock(earth, regD, flotaTN, { homeDocks: new Set(['earth:K7-1']) });
+  const wDomu = [...dom.placements.values()].filter(p => p.kind === 'berth' && p.dockId === 'earth:K7-1');
+  const padyDomu = earth.berths.filter(b => b.dockId === 'earth:K7-1' && b.role === BERTH_ROLE.MILITARY);
+  t.check('stanowisko gracza bez okrętu zapasu', !wDomu.some(p => p.berthId === domowe));
+  t.equal('hala domowa pełna (wszystkie pady poza stanowiskiem gracza)', wDomu.length, padyDomu.length - 1);
+  t.check('nosiciel w hali domowej', wDomu.some(p => p.classId === 'carrier'));
+  t.check('pady capital hali domowej bez wolnego (stanowisko przylotu = gracza)',
+    padyDomu.filter(b => b.cls === 'capital' && b.id !== domowe).every(b => wDomu.some(p => p.berthId === b.id)));
+  t.equal('reszta zapasu w pozostałych halach', dom.berthed, 40);
+  const domZnowu = placeFleetStock(earth, regD, flotaTN, { homeDocks: new Set(['earth:K7-1']) });
+  t.check('hala domowa stabilna przy kolejnym wywołaniu', [...domZnowu.placements.values()]
+    .every(p => p.berthId === dom.placements.get(p.shipId)?.berthId));
+  earthById.get(domowe).occupantId = null;
+
   return t.results;
 }
 

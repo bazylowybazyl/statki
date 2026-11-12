@@ -124,7 +124,10 @@ test('przegląd sceny: visible:false = tylko widoczny łańcuch, filtr warstwy; 
   let made = null;
   const loading = w.add({ name: 'pula', objects: () => (made = made || mesh('pula', 0)), phase: 'loading' });
   w.start();
-  await new Promise((r) => setTimeout(r, 60));
+  // czekamy na STAN — kolejka w tle pusta (wpis „loading” jej nie zajmuje), nie stały czas: pod obciążeniem wolna
+  // chwila przychodzi później niż po 60 ms
+  for (let i = 0; i < 2000 && w.busy; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(w.busy, false, 'kolejka w tle przerobiona');
   assert.deepEqual(calls.map((c) => c.obj.name), ['widoczna'], 'bez ukrytych i spoza warstwy; pula jeszcze nie');
   assert.equal(made, null, 'obiekty wpisu „loading” powstają dopiero na ekranie ładowania');
   await w.flush();
@@ -183,7 +186,10 @@ test('cały obiekt jednym wywołaniem: materiał zastępczy sceny i culling podd
   w2.add({ name: 'wisi', objects: [mesh('x')] });
   const t0 = Date.now();
   await w2.flush({ timeoutMs: 150 });
-  assert.ok(Date.now() - t0 < 2000);
+  // wraca po SWOIM limicie: nie czeka na pipeline (wisi) ani domyślnych 8 s — próg to połowa domyślnego limitu,
+  // z zapasem na obciążoną maszynę (timer 150 ms spóźniony o sekundy)
+  assert.ok(Date.now() - t0 < 4000, `flush ${Date.now() - t0} ms`);
+  assert.equal(w2.stats.flush.wLocie, 1, 'limit minął przed pipeline’em');
   assert.equal(w2.busy, true, 'kompilacja dalej w tle');
 });
 
@@ -223,6 +229,34 @@ test('compileNow (klatka zero): od razu, bez kolejki — widoczne z warstwy, roz
   assert.equal(w2._pending.size, 1);
   const stats = await w2.flush({ timeoutMs: 30 });
   assert.equal(stats.flush.wLocie, 1, 'limit czasu minął przed pipeline’em');
+});
+
+test('drainNow (klatka zero): reszta kolejki od razu — także siatki ukryte do haka passa; wpisy after zostają w tle', async () => {
+  const { core, calls } = fakeCore({ hang: true });
+  const w = new Rozgrzewka(core);
+  w.start();
+  await w.flush({ timeoutMs: 20 });                     // pierwszy flush (menu): faza 'after' otwarta
+  const dust = mesh('pył', 0, { visible: false });       // pył kosmiczny: odsłaniany dopiero w haku passa ortho
+  const fleet = mesh('flota', 0);
+  w.add({ name: 'pył kosmiczny', objects: () => [dust] });
+  w.add({ name: 'modele floty', objects: () => [fleet], phase: 'after' });
+  const n = w.drainNow();                               // synchronicznie — przed jakimkolwiek zadaniem w tle
+  const names = calls.map((c) => c.obj.name);
+  assert.ok(n >= 1 && names.includes('pył'), 'wpis z kolejki skompilowany przed rysunkiem klatki zero');
+  assert.ok(!names.includes('flota'), "wpis 'after' zostaje w tle");
+  assert.equal(dust.visible, false, 'stan wraca');
+  // Przed pierwszym flushem (klatka zero przed „przygotowaniem” workera): wpisy 'loading' też — to już gra.
+  const two = fakeCore({ hang: true });
+  const w2 = new Rozgrzewka(two.core);
+  w2.start();
+  const hall = mesh('pył hal', 0);
+  w2.add({ name: 'pył hal K-7', objects: () => [hall], phase: 'loading' });
+  w2.drainNow();
+  assert.deepEqual(two.calls.map((c) => c.obj.name), ['pył hal']);
+  // Core3D: klatka zero dokańcza kolejkę przed przeglądem widocznych siatek.
+  const fn = read('src/3d/core3d.js');
+  const body = fn.slice(fn.indexOf('  prewarmVisibleNow() {'), fn.indexOf('  prewarmShadowPass(object3d) {'));
+  assert.ok(body.indexOf('w.drainNow()') > 0 && body.indexOf('w.drainNow()') < body.indexOf('w.compileNow('), 'drainNow przed compileNow');
 });
 
 test('worker renderu: stałe światła sceny przed urządzeniem, klatka zero rozgrzewa to, co widać, przed rysunkiem', () => {

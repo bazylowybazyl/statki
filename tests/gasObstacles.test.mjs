@@ -2,7 +2,7 @@
 // zachowawczo, cienka ściana bez szpar przy dowolnym kącie i przesunięciu domeny), okno rastra zakotwiczone w świecie
 // (domena z nośnikiem), kadłuby w uniformach domeny i pasma masek obrysu, gospodarz domeny, lustro CPU maski (solidCpu)
 // i rzutu ciśnienia z warunkiem ściany (gasProjectCpu: Neumann, bez wnikania), WGSL kerneli, wejście gry
-// (src/game/gasObstacleInput.js: hale K-7, kawałki suchego doku, kadłuby przy domenach) i klej reżysera wybuchów.
+// (src/game/gasObstacleInput.js: hale K-7, kawałki bazy piratów, kadłuby przy domenach) i klej reżysera wybuchów.
 // node --test tests/gasObstacles.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +16,8 @@ const { createK7Layout, k7ForceFieldList, k7SolidList } = await import('../src/3
 // bryły hali dla gazu: kolizje + pola siłowe w otworach bram (gaz jak o mur; statki przelatują)
 const hallGasSolids = (L) => [...k7SolidList(L), ...k7ForceFieldList(L)];
 const { hallToGameAffine } = await import('../src/game/hallDustInput.js');
-const { placeDryDock } = await import('../src/game/story/shipyardLayout.js');
-const { pointInPoly } = await import('../src/3d/portBuildings/pirateDryDockLayout.js');
+const { placePirateBase } = await import('../src/game/story/pirateBaseSite.js');
+const { pointInPoly } = await import('../src/3d/portBuildings/pirateBaseLayout.js');
 
 function noiseTex() {
   const t = new THREE.Data3DTexture(new Uint16Array(4), 1, 1, 1);
@@ -403,14 +403,19 @@ test('wejście gry: bryły hali K-7 w świecie = bryły kolizji hali + pola sił
   assert.notEqual(out[GAS_OBST_IN.statVer], v);
 });
 
-test('wejście gry: kawałki suchego doku — bryły trafień (bez odpadłych), ruszony kawałek jako obrys ciał', () => {
-  const dock = placeDryDock({ x: 6.1e6, y: 2.2e6 }, 0.4);
-  const gone = new Set(['G-W']);
+test('wejście gry: kawałki budowli — bryły trafień (bez odpadłych), ruszony kawałek jako obrys ciał', () => {
+  const place = placePirateBase({ x: 6.1e6, y: 2.2e6 }, 0.4);
+  // bryły-czworokąty pomostów: jedno pudło na bryłę (wielokąty inne — test bazy niżej)
+  const dock = { hitShapes: place.shapesOf.piers.filter((h) => h.pts.length === 4), origin: place.origin };
+  const chunks = [...new Set(dock.hitShapes.map((h) => h.chunk))];
+  assert.ok(chunks.length >= 2, `kawałki z czworokątami: ${chunks.length}`);
+  const [goneChunk, touchedChunk] = chunks;
+  const gone = new Set([goneChunk]);
   const touched = new Set();
   const adapter = {
     shapes: dock.hitShapes,
     status: (c) => (gone.has(c) ? 0 : touched.has(c) ? 2 : 1),
-    feet: (c, cb) => { if (c === 'S-3') cb({ x: dock.origin.x, y: dock.origin.y, angle: 0.4, w: 600, h: 200, vx: 0, vy: 0, beamHull: null }); }
+    feet: (c, cb) => { if (c === touchedChunk) cb({ x: dock.origin.x, y: dock.origin.y, angle: 0.4, w: 600, h: 200, vx: 0, vy: 0, beamHull: null }); }
   };
   const out = OI.createGasObstacleInput();
   const st = OI.createGasObstacleState();
@@ -432,13 +437,13 @@ test('wejście gry: kawałki suchego doku — bryły trafień (bez odpadłych), 
     }
     if (inPoly) assert.ok(inBox, 'punkt bryły w pudle');
   }
-  touched.add('S-3');
+  touched.add(touchedChunk);
   OI.packGasObstacleFrame(out, st, { dt: 1 / 60, dock: adapter });
   assert.equal(out[GAS_OBST_IN.foots], 1, 'ruszony kawałek — obrys ciała');
-  assert.equal(out[GAS_OBST_IN.boxes], n - dock.hitShapes.filter((h) => h.chunk === 'S-3').length);
+  assert.equal(out[GAS_OBST_IN.boxes], n - dock.hitShapes.filter((h) => h.chunk === touchedChunk).length);
 });
 
-test('wejście gry: bryły bazy piratów — wycinki pierścienia bębna i koła (szyb, zbiorniki) pokryte pudłami bez szpar, nadmiar ≤ 5% bryły', async () => {
+test('wejście gry: bryły bazy piratów — koła (podstawa wieży, zbiorniki) pokryte pudłami bez szpar, nadmiar ≤ 5% bryły; wieżowce miasta po jednym pudle', async () => {
   const { placePirateBase } = await import('../src/game/story/pirateBaseSite.js');
   const place = placePirateBase({ x: 6.1e6, y: 2.2e6 }, 0.7);
   const adapter = { shapes: place.hitShapes, status: () => 1, feet: () => {} };
@@ -465,11 +470,11 @@ test('wejście gry: bryły bazy piratów — wycinki pierścienia bębna i koła
     }
     return d;
   };
-  const kinds = { bęben: 0, koło: 0 };
+  const kinds = { miasto: 0, koło: 0 };
   const r = rng(11);
   for (const hs of place.hitShapes) {
-    if (hs.pts.length === 4) continue;
-    kinds[/^H-[ESWN]$/.test(hs.chunk) ? 'bęben' : 'koło']++;
+    if (hs.pts.length === 4) { if (/^B-\d\d$/.test(hs.chunk)) kinds.miasto++; continue; }
+    kinds.koło++;
     const size = Math.max(hs.x1 - hs.x0, hs.y1 - hs.y0);
     for (let t = 0; t < 1500; t++) {
       const x = hs.x0 + (r.next() * 1.3 - 0.15) * (hs.x1 - hs.x0), y = hs.y0 + (r.next() * 1.3 - 0.15) * (hs.y1 - hs.y0);
@@ -482,7 +487,7 @@ test('wejście gry: bryły bazy piratów — wycinki pierścienia bębna i koła
       }
     }
   }
-  assert.deepEqual(kinds, { bęben: 4, koło: 4 }, 'cztery ćwiartki bębna, szyb i trzy zbiorniki');
+  assert.deepEqual(kinds, { miasto: 24, koło: 4 }, '24 wieżowce miasta (prostokąty), podstawa wieży i trzy zbiorniki (koła)');
 });
 
 test('wejście gry: kadłuby tylko przy domenach gazu (bez domen nic), klucz rodu, uid i wersja maski, prędkości i ω', () => {

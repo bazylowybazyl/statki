@@ -1,5 +1,7 @@
 import { ATLAS_EDITOR_DEFAULTS } from './atlasHardpointDefaults.js';
 import { PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS } from './pirateSupercapitalDefaults.js';
+import { withShipNavLights } from './shipNavLights.js';
+import { workHullRows } from './workHulls.js';
 
 export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 
@@ -7,12 +9,34 @@ export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 const civilSide = (id, x, y, mount) => ({
   id, x, y, deg: y < 0 ? 180 : 0, offsetX: 0, offsetY: 0, mount, gimbalMinDeg: -90, gimbalMaxDeg: 90
 });
-// Frachtowiec dalekiego zasięgu — ten sam sprite rysuje dziś ciężki frachtowiec (TRAFFIC_HULLS.heavy_freighter).
+// Dysza MAIN kadłuba ruchu (oś z TRAFFIC_HULLS[].main): deg 90 — wydech ku rufie, jak dysze MAIN floty.
+const trafficMain = (id, x, y) => ({ id, x, y, deg: 90, offsetX: 0, offsetY: 0 });
+// Kadłub cywilny ruchu v2: dysze MAIN tylko do obrazu i SIDE (runtime NPC — applySideOnlyLayout), bez gniazd.
+const trafficCivilHull = (label, main, side) => ({ label, frontAxis: '+X', sideOnly: true, engines: { main, side } });
+// Frachtowiec dalekiego zasięgu.
+const LONG_HAUL_MAIN = [trafficMain('main_1', -786, -148), trafficMain('main_2', -805, -18), trafficMain('main_3', -786, 114)];
 const LONG_HAUL_SIDE = [
   civilSide('side_front_left', 300, -196, 'upper_left'),
   civilSide('side_front_right', 300, 165, 'upper_right'),
   civilSide('side_rear_left', -662, -206, 'lower_left'),
   civilSide('side_rear_right', -662, 173, 'lower_right')
+];
+// Promy z ludźmi (workforce W7): do PNG z generatora sprite frachtowca bazowego (D14), więc dysze MAIN i SIDE jak u
+// bazowego. Świeże obiekty (runtime nie dzieli wpisów). AGENT: po PNG z generatora ustawić dysze na nowym sprite'cie.
+const crewCopyOf = (label, main, side) => trafficCivilHull(label, main.map((m) => ({ ...m })), side.map((d) => ({ ...d })));
+const SHUTTLE_MAIN = [trafficMain('main_1', -448, -114), trafficMain('main_2', -448, 104)];
+const SHUTTLE_SIDE = [
+  civilSide('side_front_left', 160, -131, 'upper_left'),
+  civilSide('side_front_right', 160, 120, 'upper_right'),
+  civilSide('side_rear_left', -295, -188, 'lower_left'),
+  civilSide('side_rear_right', -295, 176, 'lower_right')
+];
+const CONTAINER_MAIN = [trafficMain('main_1', -785, -156), trafficMain('main_2', -814, -12), trafficMain('main_3', -785, 132)];
+const CONTAINER_SIDE = [
+  civilSide('side_front_left', 375, -221, 'upper_left'),
+  civilSide('side_front_right', 375, 194, 'upper_right'),
+  civilSide('side_rear_left', -612, -231, 'lower_left'),
+  civilSide('side_rear_right', -612, 205, 'lower_right')
 ];
 
 export const SHIP_EDITOR_DEFAULTS = {
@@ -34,10 +58,10 @@ export const SHIP_EDITOR_DEFAULTS = {
       engines: { main: [], side: [] },
       lights: { position: [], road: [] }
     },
-    // Frachtowce cywilne i lokomotywa megafrachtowca NPC (2026-10-07): SAME dysze SIDE — modele 3D dysz w szarej
+    // Frachtowce cywilne i lokomotywa megafrachtowca NPC (2026-10-07): dysze SIDE — modele 3D dysz w szarej
     // palecie cywilnej (sideThrusterPaletteFor) i strugi SIDE. `sideOnly`: runtime NPC (npcHardpointRuntime.js)
-    // bierze z wpisu tylko dysze SIDE — bez dysz MAIN (npcHasPhysicalThrusters przełączyłby frachtowcom ścieżkę
-    // lotu), gniazd, rdzeni i świateł. Po 4 w narożnikach kadłuba: oś dyszy na płaskim odcinku krawędzi alfy
+    // bierze z wpisu tylko dysze — SIDE i (od E13, 2026-10-22) MAIN jako sam obraz (`visual.mainVisualOnly`:
+    // npcHasPhysicalThrusters nie przełącza frachtowcom ścieżki lotu) — i światła nawigacyjne, bez gniazd i rdzeni. Po 4 w narożnikach kadłuba: oś dyszy na płaskim odcinku krawędzi alfy
     // sprite'a, ~0,5 promienia wylotu (SIDE_NOZZLE_RADIUS × skala klasy kadłuba) w głąb, sponson poza lukami
     // ładowni (cargoBays.js) i strefą mostka lokomotywy; px PNG od środka płótna, y w dół = prawa burta.
     // Lokomotywa ma własny klucz: wpis `megafreighter` czyta układ gracza (applyPlayerEditorEngineLayoutFromStorage
@@ -46,41 +70,34 @@ export const SHIP_EDITOR_DEFAULTS = {
       label: 'Wahadłowiec międzystacyjny',
       frontAxis: '+X',
       sideOnly: true,
-      engines: {
-        main: [],
-        side: [
-          civilSide('side_front_left', 160, -131, 'upper_left'),
-          civilSide('side_front_right', 160, 120, 'upper_right'),
-          civilSide('side_rear_left', -295, -188, 'lower_left'),
-          civilSide('side_rear_right', -295, 176, 'lower_right')
-        ]
-      }
+      engines: { main: SHUTTLE_MAIN, side: SHUTTLE_SIDE }
     },
     container_ship: {
       label: 'Kontenerowiec',
       frontAxis: '+X',
       sideOnly: true,
-      engines: {
-        main: [],
-        side: [
-          civilSide('side_front_left', 375, -221, 'upper_left'),
-          civilSide('side_front_right', 375, 194, 'upper_right'),
-          civilSide('side_rear_left', -612, -231, 'lower_left'),
-          civilSide('side_rear_right', -612, 205, 'lower_right')
-        ]
-      }
+      engines: { main: CONTAINER_MAIN, side: CONTAINER_SIDE }
     },
     long_haul_freighter: {
       label: 'Frachtowiec dalekiego zasięgu',
       frontAxis: '+X',
       sideOnly: true,
-      engines: { main: [], side: LONG_HAUL_SIDE }
+      engines: { main: LONG_HAUL_MAIN, side: LONG_HAUL_SIDE }
     },
+    // Ciężki frachtowiec — własny sprite Z11 (E13): 4 dysze MAIN, SIDE poza lukami ładowni 3 × 8.
     heavy_freighter: {
       label: 'Ciężki frachtowiec',
       frontAxis: '+X',
       sideOnly: true,
-      engines: { main: [], side: LONG_HAUL_SIDE }
+      engines: {
+        main: [trafficMain('main_1', -815, -181), trafficMain('main_2', -815, -71), trafficMain('main_3', -815, 40), trafficMain('main_4', -815, 148)],
+        side: [
+          civilSide('side_front_left', 300, -232, 'upper_left'),
+          civilSide('side_front_right', 300, 195, 'upper_right'),
+          civilSide('side_rear_left', -670, -256, 'lower_left'),
+          civilSide('side_rear_right', -672, 216, 'lower_right')
+        ]
+      }
     },
     // Holownik serwisowy (src/game/serviceTug.js; sprite zastępczy = przebarwiony heavy_freighter_empty.png, px płótna
     // 1774 × 887 od środka): 4 bębny dysz MAIN na rufie (ciąg i plazma skoku z ładunkiem), 4 dysze SIDE poza pokładem
@@ -106,15 +123,7 @@ export const SHIP_EDITOR_DEFAULTS = {
         ]
       },
       lights: {
-        position: [
-          { id: 'tug_nav_bow', x: 850, y: -4, color: '#ffffff', power: 0.8, radius: 4, sequenceGroup: 'edge' },
-          { id: 'tug_nav_port', x: 160, y: -248, color: '#ff2b2b', power: 0.8, radius: 4, sequenceGroup: 'edge' },
-          { id: 'tug_nav_stbd', x: 160, y: 210, color: '#2bff6a', power: 0.8, radius: 4, sequenceGroup: 'edge' },
-          { id: 'tug_beacon_fl', x: -440, y: -262, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' },
-          { id: 'tug_beacon_fr', x: -440, y: 230, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' },
-          { id: 'tug_beacon_al', x: 190, y: -200, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' },
-          { id: 'tug_beacon_ar', x: 190, y: 220, color: '#ffa21f', power: 1.1, radius: 5, sequenceGroup: 'edge' }
-        ],
+        position: [],
         road: [],
         flood: []
       }
@@ -133,6 +142,140 @@ export const SHIP_EDITOR_DEFAULTS = {
         ]
       }
     },
+    // Kadłuby ruchu v2 (E13, 2026-10-22): dane pełnego kadłuba gry dla statków bańki awansowanych do NPC
+    // (src/game/trafficPromotion.js). Cywile — wpis `sideOnly` jak frachtowce wyżej: dysze SIDE (modele i strugi) i dysze
+    // MAIN tylko do obrazu (`trafficCivilHull`, runtime: visual.mainVisualOnly — lot bez zmian); mostek, rdzeń i zbiornik
+    // są w tabelach BRIDGE_LAYOUT_PROPOSALS, REACTOR_CORE_MARKERS i FUEL_TANK_MARKERS. Okręty (przemytnik, rajder,
+    // łowca nagród, kuter policji) — pełny wpis: gniazda (broń dostają po awansie — equipNpcWeapons), dysze MAIN i SIDE.
+    // Dysze MAIN = TRAFFIC_HULLS[].main (te same osie co proxy bańki), SIDE dobrane regułami
+    // tests/freighterSideThrusters.test.mjs (oś ~0,5 R od krawędzi alfy, wydech w pustkę, sponson na kadłubie).
+    // Zrzuty znaczników: .tmp/e13/znaczniki_<kadłub>.png (narzędzie w opisie commita E13).
+    heavy_harvester: trafficCivilHull('Ciężki kombajn górniczy', [trafficMain('main_1', -797, -193), trafficMain('main_2', -838, -96), trafficMain('main_3', -827, -24), trafficMain('main_4', -837, 50), trafficMain('main_5', -797, 145)], [
+      civilSide('side_front_left', 200, -250, 'upper_left'),
+      civilSide('side_front_right', 200, 202, 'upper_right'),
+      civilSide('side_rear_left', -560, -296, 'lower_left'),
+      civilSide('side_rear_right', -560, 248, 'lower_right')
+    ]),
+    belter: trafficCivilHull('Belter', [trafficMain('main_1', -594, -161), trafficMain('main_2', -591, -22), trafficMain('main_3', -594, 116)], [
+      civilSide('side_front_left', 78, -195, 'upper_left'),
+      civilSide('side_front_right', 78, 151, 'upper_right'),
+      civilSide('side_rear_left', -560, -193, 'lower_left'),
+      civilSide('side_rear_right', -560, 148, 'lower_right')
+    ]),
+    surveyor: trafficCivilHull('Zwiadowca złóż', [trafficMain('main_1', -740, -43), trafficMain('main_2', -740, 29)], [
+      civilSide('side_front_left', 24, -176, 'upper_left'),
+      civilSide('side_front_right', 22, 158, 'upper_right'),
+      civilSide('side_rear_left', -450, -253, 'lower_left'),
+      civilSide('side_rear_right', -450, 236, 'lower_right')
+    ]),
+    refinery_tender: trafficCivilHull('Mobilna rafineria', [trafficMain('main_1', -757, -186), trafficMain('main_2', -758, -18), trafficMain('main_3', -757, 150)], [
+      civilSide('side_front_left', 50, -267, 'upper_left'),
+      civilSide('side_front_right', 48, 232, 'upper_right'),
+      civilSide('side_rear_left', -600, -305, 'lower_left'),
+      civilSide('side_rear_right', -600, 269, 'lower_right')
+    ]),
+    tanker: trafficCivilHull('Tankowiec', [trafficMain('main_1', -784, -153), trafficMain('main_2', -806, -17), trafficMain('main_3', -784, 121)], [
+      civilSide('side_front_left', 310, -212, 'upper_left'),
+      civilSide('side_front_right', 308, 179, 'upper_right'),
+      civilSide('side_rear_left', -560, -240, 'lower_left'),
+      civilSide('side_rear_right', -560, 205, 'lower_right')
+    ]),
+    salvage_hauler: trafficCivilHull('Złomiarz', [trafficMain('main_1', -789, -149), trafficMain('main_2', -808, -16), trafficMain('main_3', -789, 118)], [
+      civilSide('side_front_left', 350, -179, 'upper_left'),
+      civilSide('side_front_right', 350, 151, 'upper_right'),
+      civilSide('side_rear_left', -628, -217, 'lower_left'),
+      civilSide('side_rear_right', -628, 186, 'lower_right')
+    ]),
+    // Statki robocze złomowania z kreatora (src/data/workHulls.js): dysze MAIN i SIDE z mocowań projektu.
+    ...workHullRows((v) => trafficCivilHull(v.label, v.main.map(([x, y], i) => trafficMain(`main_${i + 1}`, x, y)),
+      v.side.map(([x, y], i) => civilSide(`side_${x >= 0 ? 'front' : 'rear'}_${y < 0 ? 'left' : 'right'}${i >= 4 ? `_${i}` : ''}`, x, y, `${x >= 0 ? 'upper' : 'lower'}_${y < 0 ? 'left' : 'right'}`)))),
+    construction_tug: trafficCivilHull('Holownik budowlany', [trafficMain('main_1', -727, -132), trafficMain('main_2', -728, -18), trafficMain('main_3', -727, 97)], [
+      civilSide('side_front_left', 308, -160, 'upper_left'),
+      civilSide('side_front_right', 308, 125, 'upper_right'),
+      civilSide('side_rear_left', -638, -173, 'lower_left'),
+      civilSide('side_rear_right', -638, 138, 'lower_right')
+    ]),
+    smuggler: {
+      label: 'Przemytnik',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'smu_main_1', type: 'main', x: 500, y: -15 },
+        { id: 'smu_main_2', type: 'main', x: 90, y: -15 },
+        { id: 'smu_aux_3', type: 'aux', x: -250, y: -160 },
+        { id: 'smu_aux_4', type: 'aux', x: -250, y: 135 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -732, -111), trafficMain('main_2', -730, -11), trafficMain('main_3', -732, 89)],
+        side: [civilSide('side_front_left', 238, -167, 'upper_left'), civilSide('side_front_right', 238, 143, 'upper_right'), civilSide('side_rear_left', -500, -212, 'lower_left'), civilSide('side_rear_right', -500, 189, 'lower_right')]
+      }
+    },
+    pirate_raider: {
+      label: 'Rajder piratów',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'pir_main_1', type: 'main', x: 160, y: -185 },
+        { id: 'pir_main_2', type: 'main', x: 160, y: 178 },
+        { id: 'pir_main_3', type: 'main', x: -140, y: -205 },
+        { id: 'pir_main_4', type: 'main', x: -140, y: 192 },
+        { id: 'pir_aux_5', type: 'aux', x: 30, y: -118 },
+        { id: 'pir_aux_6', type: 'aux', x: 30, y: 98 },
+        { id: 'pir_missile_7', type: 'missile', x: -110, y: -20 },
+        { id: 'pir_missile_8', type: 'missile', x: -250, y: -20 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -784, -122), trafficMain('main_2', -778, -2), trafficMain('main_3', -784, 118)],
+        side: [civilSide('side_front_left', 70, -166, 'upper_left'), civilSide('side_front_right', 70, 163, 'upper_right'), civilSide('side_rear_left', -550, -229, 'lower_left'), civilSide('side_rear_right', -550, 225, 'lower_right')]
+      }
+    },
+    distress_beacon_ship: trafficCivilHull('Statek z boją alarmową', [trafficMain('main_1', -560, -72), trafficMain('main_2', -560, 98)], [
+      civilSide('side_front_left', 126, -163, 'upper_left'),
+      civilSide('side_front_right', 150, 186, 'upper_right'),
+      civilSide('side_rear_left', -390, -166, 'lower_left'),
+      civilSide('side_rear_right', -388, 193, 'lower_right')
+    ]),
+    repair_drone: trafficCivilHull('Dron naprawczy', [trafficMain('main_1', -320, -116), trafficMain('main_2', -320, 34)], [
+      civilSide('side_rear_left', -70, -215, 'lower_left'),
+      civilSide('side_rear_right', -70, 143, 'lower_right')
+    ]),
+    bounty_hunter: {
+      label: 'Łowca nagród',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'bou_main_1', type: 'main', x: 290, y: -5 },
+        { id: 'bou_main_2', type: 'main', x: -410, y: -155 },
+        { id: 'bou_main_3', type: 'main', x: -410, y: 115 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -812, -124), trafficMain('main_2', -812, 115)],
+        side: [civilSide('side_front_left', 118, -150, 'upper_left'), civilSide('side_front_right', 118, 142, 'upper_right'), civilSide('side_rear_left', -560, -213, 'lower_left'), civilSide('side_rear_right', -560, 202, 'lower_right')]
+      }
+    },
+    police_cutter: {
+      label: 'Kuter policji',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'pol_main_1', type: 'main', x: 390, y: -5 },
+        { id: 'pol_main_2', type: 'main', x: -390, y: -5 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -754, -172), trafficMain('main_2', -754, 173)],
+        side: [civilSide('side_front_left', 372, -173, 'upper_left'), civilSide('side_front_right', 374, 172, 'upper_right'), civilSide('side_rear_left', -500, -303, 'lower_left'), civilSide('side_rear_right', -500, 302, 'lower_right')]
+      }
+    },
+    rescue_ship: trafficCivilHull('Statek ratunkowy', [trafficMain('main_1', -770, -172), trafficMain('main_2', -770, 168)], [
+      civilSide('side_front_left', 240, -262, 'upper_left'),
+      civilSide('side_front_right', 240, 258, 'upper_right'),
+      civilSide('side_rear_left', -560, -277, 'lower_left'),
+      civilSide('side_rear_right', -560, 273, 'lower_right')
+    ]),
+    // Promy z ludźmi (workforce W7) — dysze kadłuba bazowego (ten sam sprite do PNG z generatora).
+    crew_shuttle: crewCopyOf('Prom rotacyjny', SHUTTLE_MAIN, SHUTTLE_SIDE),
+    crew_liner: crewCopyOf('Liniowiec kontraktowy', CONTAINER_MAIN, CONTAINER_SIDE),
+    colony_liner: crewCopyOf('Liniowiec dalekiego zasięgu', LONG_HAUL_MAIN, LONG_HAUL_SIDE),
     "capital_carrier": {
     "label": "Legacy Capital Carrier",
     "frontAxis": "+X",
@@ -739,219 +882,11 @@ export const SHIP_EDITOR_DEFAULTS = {
                 ]
             },
             "lights": {
-                "position": [
-                    {
-                        "id": "m_7fdca91",
-                        "x": 739.17,
-                        "y": -78.02,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_l724j73",
-                        "x": 737.12,
-                        "y": 54.41,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_v739zf9",
-                        "x": 544.11,
-                        "y": -178.63,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_ha9rmn6",
-                        "x": 532.82,
-                        "y": 157.07,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_kget8w6",
-                        "x": 344.95,
-                        "y": 263.84,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_y3khhcp",
-                        "x": 347,
-                        "y": -286.43,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_brr8mwk",
-                        "x": 169.39,
-                        "y": -241.26,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_nl0cwpl",
-                        "x": 189.93,
-                        "y": 217.64,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_d5ueyjn",
-                        "x": 21.56,
-                        "y": -242.28,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_g7v3cj6",
-                        "x": 37.99,
-                        "y": 222.78,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_8ueb4x9",
-                        "x": -136.54,
-                        "y": -241.26,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_s74si1h",
-                        "x": -135.51,
-                        "y": -241.26,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_qnqdwe0",
-                        "x": -120.11,
-                        "y": 219.7,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_tj7lz06",
-                        "x": -342.89,
-                        "y": 181.71,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_grzfci4",
-                        "x": -341.87,
-                        "y": 181.71,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_pas2e2h",
-                        "x": -352.13,
-                        "y": -211.48,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_y8wpxwf",
-                        "x": -588.26,
-                        "y": -113.96,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_kyqeh5p",
-                        "x": -587.23,
-                        "y": -113.96,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_7tre6wf",
-                        "x": -589.28,
-                        "y": 98.56,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_jsz3c5p",
-                        "x": -588.26,
-                        "y": 98.56,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_kbqbh9k",
-                        "x": -669.36,
-                        "y": 227.91,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_tr86xny",
-                        "x": -668.33,
-                        "y": 227.91,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    },
-                    {
-                        "id": "m_6d234n2",
-                        "x": -673.46,
-                        "y": -251.52,
-                        "color": "#ff2b2b",
-                        "power": 0.8,
-                        "radius": 4,
-                        "sequenceGroup": "edge"
-                    }
-                ],
+                "position": [],
                 "road": []
             }
         },
-    "terran_supercapital": {"label":"Colossus","frontAxis":"+X","hardpoints":[{"id":"m_ln2vv2j","type":"special","x":-205.25,"y":267.27},{"id":"m_g1n95fu","type":"special","x":-205.25,"y":-268.4},{"id":"m_ftgw4oc","type":"special","x":3.38,"y":-287.57},{"id":"m_82p7wto","type":"special","x":-4.51,"y":-186.08},{"id":"m_ag27wp1","type":"special","x":-6.77,"y":183.82},{"id":"m_gvnaacy","type":"special","x":3.38,"y":284.19},{"id":"m_p9wgqsv","type":"special","x":250.36,"y":-2.26},{"id":"m_n5ps323","type":"special","x":121.79,"y":115.03},{"id":"m_mrh0ojy","type":"special","x":120.67,"y":-118.41},{"id":"m_yompyi1","type":"builtin","x":813.09,"y":0,"rot":90},{"id":"m_ojoupnr","type":"aux","x":694.68,"y":-83.45},{"id":"m_fqhvfks","type":"aux","x":694.68,"y":83.45},{"id":"m_wyfek1e","type":"aux","x":638.3,"y":-113.9},{"id":"m_ck5ywei","type":"aux","x":638.3,"y":113.9},{"id":"m_mu6vgfy","type":"aux","x":507.48,"y":-170.29},{"id":"m_lk6kg92","type":"aux","x":507.48,"y":170.29},{"id":"m_7uls0wm","type":"aux","x":347.34,"y":-183.82},{"id":"m_3qiadym","type":"aux","x":347.34,"y":183.82},{"id":"m_tjzfmaq","type":"aux","x":196.23,"y":-248.1},{"id":"m_y1mdxt5","type":"aux","x":196.23,"y":248.1},{"id":"m_zx54cve","type":"aux","x":49.62,"y":-262.76},{"id":"m_c49qlqn","type":"aux","x":49.62,"y":262.76},{"id":"m_89ztui5","type":"aux","x":-55.26,"y":-318.02},{"id":"m_x7msr2b","type":"aux","x":-55.26,"y":318.02},{"id":"m_kpky966","type":"aux","x":-276.29,"y":-312.38},{"id":"m_6stophf","type":"aux","x":-276.29,"y":312.38},{"id":"m_30u3yz6","type":"aux","x":-424.03,"y":-294.34},{"id":"m_ukfkm7l","type":"aux","x":-424.03,"y":294.34},{"id":"m_n4y488c","type":"aux","x":-549.2,"y":-299.98},{"id":"m_roqdjbk","type":"aux","x":-549.2,"y":299.98},{"id":"m_c8ixo7f","type":"aux","x":797.31,"y":-45.11},{"id":"m_m9vl84p","type":"aux","x":797.31,"y":45.11},{"id":"m_wws9ck4","type":"aux","x":740.92,"y":-72.17},{"id":"m_ml6kufv","type":"aux","x":740.92,"y":72.17},{"id":"m_qdnvrs3","type":"missile","x":-233.44,"y":-89.09},{"id":"m_sfe59bj","type":"missile","x":-233.44,"y":89.09},{"id":"m_lx6pcmd","type":"missile","x":249.23,"y":-76.69},{"id":"m_1zmzyfh","type":"missile","x":249.23,"y":76.69},{"id":"m_jf926ej","type":"missile","x":-500.71,"y":-111.65},{"id":"m_yeyvplk","type":"missile","x":-500.71,"y":111.65},{"id":"m_nficvwx","type":"missile","x":-400.34,"y":-193.97},{"id":"m_qgpsh10","type":"missile","x":-400.34,"y":193.97},{"id":"m_lk2j9zd","type":"main","x":403.73,"y":-178.18},{"id":"m_8o4stnh","type":"main","x":403.73,"y":178.18},{"id":"m_vew3itd","type":"main","x":583.04,"y":-113.9},{"id":"m_in2uw65","type":"main","x":583.04,"y":113.9},{"id":"m_y8z9e0l","type":"main","x":661.98,"y":-76.69},{"id":"m_8z8d45q","type":"main","x":661.98,"y":76.69},{"id":"m_9rm9kfn","type":"main","x":133.07,"y":-252.61},{"id":"m_mp1abmk","type":"main","x":133.07,"y":252.61},{"id":"m_7byxu2w","type":"main","x":422.9,"y":-95.86},{"id":"m_spnbgt0","type":"main","x":422.9,"y":95.86},{"id":"m_84v5032","type":"main","x":498.46,"y":-64.28},{"id":"m_vjmtu7x","type":"main","x":498.46,"y":64.28},{"id":"m_duzet6p","type":"main","x":603.34,"y":-45.11},{"id":"m_7637w33","type":"main","x":603.34,"y":45.11}],"cores":[],"engines":{"main":[{"id":"m_ar69g9f","x":-721.75,"y":-266.14,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_left","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_hi3xkbg","x":-793.92,"y":-196.23,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_left","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_q9mygsd","x":-804.07,"y":-103.75,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_left","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_3b76u4j","x":-809.71,"y":-1.13,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_center","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_d1jlpo2","x":-800.69,"y":102.62,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_right","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_u9h93ku","x":-792.79,"y":193.97,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_right","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_m1shkq2","x":-720.62,"y":266.14,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_right","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179}],"side":[{"id":"m_yg4wgep","x":796.18,"y":43.98,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_plvl0lp","x":483.8,"y":165.78,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_bvywyx3","x":301.1,"y":224.42,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_rcwmxaf","x":301.1,"y":223.29,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_uwqab39","x":5.64,"y":298.85,"deg":0,"offsetX":0,"offsetY":0,"mount":"center_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_0evsfok","x":-321.4,"y":306.74,"deg":0,"offsetX":0,"offsetY":0,"mount":"lower_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_nro9olj","x":-628.15,"y":293.21,"deg":0,"offsetX":0,"offsetY":0,"mount":"lower_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_stlz35y","x":-628.15,"y":-311.25,"deg":180,"offsetX":0,"offsetY":0,"mount":"lower_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_b5igafq","x":-321.4,"y":-321.4,"deg":180,"offsetX":0,"offsetY":0,"mount":"lower_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_pbllkxv","x":2.26,"y":-313.51,"deg":180,"offsetX":0,"offsetY":0,"mount":"center_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_qufqe5a","x":298.85,"y":-235.7,"deg":180,"offsetX":0,"offsetY":0,"mount":"upper_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_sona2zm","x":475.9,"y":-177.05,"deg":180,"offsetX":0,"offsetY":0,"mount":"upper_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_wwilm2n","x":796.18,"y":-59.77,"deg":180,"offsetX":0,"offsetY":0,"mount":"upper_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354}]},"lights":{"position":[{"id":"m_imr6yz5","x":748.81,"y":-58.64,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_3rqc855","x":755.58,"y":58.64,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_o6g3mzj","x":540.18,"y":-151.12,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_wevs1b5","x":540.18,"y":151.12,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_goka74b","x":239.08,"y":-231.18,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_r99eilb","x":234.57,"y":235.7,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_adtnlxs","x":-135.33,"y":-305.61,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_oyux2xm","x":-117.28,"y":296.59,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_3sm7lcq","x":-468.01,"y":-293.21,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_pkr19eo","x":-455.6,"y":294.34,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_0vg6xmv","x":-682.28,"y":-214.27,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"},{"id":"m_qbe6cht","x":-683.4,"y":213.14,"color":"#ff2b2b","power":0.8,"radius":4,"sequenceGroup":"edge"}],"road":[]}},
+    "terran_supercapital": {"label":"Colossus","frontAxis":"+X","hardpoints":[{"id":"m_ln2vv2j","type":"special","x":-205.25,"y":267.27},{"id":"m_g1n95fu","type":"special","x":-205.25,"y":-268.4},{"id":"m_ftgw4oc","type":"special","x":3.38,"y":-287.57},{"id":"m_82p7wto","type":"special","x":-4.51,"y":-186.08},{"id":"m_ag27wp1","type":"special","x":-6.77,"y":183.82},{"id":"m_gvnaacy","type":"special","x":3.38,"y":284.19},{"id":"m_p9wgqsv","type":"special","x":250.36,"y":-2.26},{"id":"m_n5ps323","type":"special","x":121.79,"y":115.03},{"id":"m_mrh0ojy","type":"special","x":120.67,"y":-118.41},{"id":"m_yompyi1","type":"builtin","x":813.09,"y":0,"rot":90},{"id":"m_ojoupnr","type":"aux","x":694.68,"y":-83.45},{"id":"m_fqhvfks","type":"aux","x":694.68,"y":83.45},{"id":"m_wyfek1e","type":"aux","x":638.3,"y":-113.9},{"id":"m_ck5ywei","type":"aux","x":638.3,"y":113.9},{"id":"m_mu6vgfy","type":"aux","x":507.48,"y":-170.29},{"id":"m_lk6kg92","type":"aux","x":507.48,"y":170.29},{"id":"m_7uls0wm","type":"aux","x":347.34,"y":-183.82},{"id":"m_3qiadym","type":"aux","x":347.34,"y":183.82},{"id":"m_tjzfmaq","type":"aux","x":196.23,"y":-248.1},{"id":"m_y1mdxt5","type":"aux","x":196.23,"y":248.1},{"id":"m_zx54cve","type":"aux","x":49.62,"y":-262.76},{"id":"m_c49qlqn","type":"aux","x":49.62,"y":262.76},{"id":"m_89ztui5","type":"aux","x":-55.26,"y":-318.02},{"id":"m_x7msr2b","type":"aux","x":-55.26,"y":318.02},{"id":"m_kpky966","type":"aux","x":-276.29,"y":-312.38},{"id":"m_6stophf","type":"aux","x":-276.29,"y":312.38},{"id":"m_30u3yz6","type":"aux","x":-424.03,"y":-294.34},{"id":"m_ukfkm7l","type":"aux","x":-424.03,"y":294.34},{"id":"m_n4y488c","type":"aux","x":-549.2,"y":-299.98},{"id":"m_roqdjbk","type":"aux","x":-549.2,"y":299.98},{"id":"m_c8ixo7f","type":"aux","x":797.31,"y":-45.11},{"id":"m_m9vl84p","type":"aux","x":797.31,"y":45.11},{"id":"m_wws9ck4","type":"aux","x":740.92,"y":-72.17},{"id":"m_ml6kufv","type":"aux","x":740.92,"y":72.17},{"id":"m_qdnvrs3","type":"missile","x":-233.44,"y":-89.09},{"id":"m_sfe59bj","type":"missile","x":-233.44,"y":89.09},{"id":"m_lx6pcmd","type":"missile","x":249.23,"y":-76.69},{"id":"m_1zmzyfh","type":"missile","x":249.23,"y":76.69},{"id":"m_jf926ej","type":"missile","x":-500.71,"y":-111.65},{"id":"m_yeyvplk","type":"missile","x":-500.71,"y":111.65},{"id":"m_nficvwx","type":"missile","x":-400.34,"y":-193.97},{"id":"m_qgpsh10","type":"missile","x":-400.34,"y":193.97},{"id":"m_lk2j9zd","type":"main","x":403.73,"y":-178.18},{"id":"m_8o4stnh","type":"main","x":403.73,"y":178.18},{"id":"m_vew3itd","type":"main","x":583.04,"y":-113.9},{"id":"m_in2uw65","type":"main","x":583.04,"y":113.9},{"id":"m_y8z9e0l","type":"main","x":661.98,"y":-76.69},{"id":"m_8z8d45q","type":"main","x":661.98,"y":76.69},{"id":"m_9rm9kfn","type":"main","x":133.07,"y":-252.61},{"id":"m_mp1abmk","type":"main","x":133.07,"y":252.61},{"id":"m_7byxu2w","type":"main","x":422.9,"y":-95.86},{"id":"m_spnbgt0","type":"main","x":422.9,"y":95.86},{"id":"m_84v5032","type":"main","x":498.46,"y":-64.28},{"id":"m_vjmtu7x","type":"main","x":498.46,"y":64.28},{"id":"m_duzet6p","type":"main","x":603.34,"y":-45.11},{"id":"m_7637w33","type":"main","x":603.34,"y":45.11}],"cores":[],"engines":{"main":[{"id":"m_ar69g9f","x":-721.75,"y":-266.14,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_left","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_hi3xkbg","x":-793.92,"y":-196.23,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_left","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_q9mygsd","x":-804.07,"y":-103.75,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_left","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_3b76u4j","x":-809.71,"y":-1.13,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_center","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_d1jlpo2","x":-800.69,"y":102.62,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_right","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_u9h93ku","x":-792.79,"y":193.97,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_right","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179},{"id":"m_m1shkq2","x":-720.62,"y":266.14,"deg":90,"offsetX":0,"offsetY":0,"mount":"rear_right","gimbalMinDeg":-45,"gimbalMaxDeg":45,"vfxLengthMin":10,"vfxLengthMax":179}],"side":[{"id":"m_yg4wgep","x":796.18,"y":43.98,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_plvl0lp","x":483.8,"y":165.78,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_bvywyx3","x":301.1,"y":224.42,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_rcwmxaf","x":301.1,"y":223.29,"deg":0,"offsetX":0,"offsetY":0,"mount":"upper_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_uwqab39","x":5.64,"y":298.85,"deg":0,"offsetX":0,"offsetY":0,"mount":"center_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_0evsfok","x":-321.4,"y":306.74,"deg":0,"offsetX":0,"offsetY":0,"mount":"lower_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_nro9olj","x":-628.15,"y":293.21,"deg":0,"offsetX":0,"offsetY":0,"mount":"lower_right","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_stlz35y","x":-628.15,"y":-311.25,"deg":180,"offsetX":0,"offsetY":0,"mount":"lower_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_b5igafq","x":-321.4,"y":-321.4,"deg":180,"offsetX":0,"offsetY":0,"mount":"lower_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_pbllkxv","x":2.26,"y":-313.51,"deg":180,"offsetX":0,"offsetY":0,"mount":"center_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_qufqe5a","x":298.85,"y":-235.7,"deg":180,"offsetX":0,"offsetY":0,"mount":"upper_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_sona2zm","x":475.9,"y":-177.05,"deg":180,"offsetX":0,"offsetY":0,"mount":"upper_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354},{"id":"m_wwilm2n","x":796.18,"y":-59.77,"deg":180,"offsetX":0,"offsetY":0,"mount":"upper_left","gimbalMinDeg":-90,"gimbalMaxDeg":90,"vfxWidthMin":25,"vfxWidthMax":227,"vfxLengthMin":49,"vfxLengthMax":354}]},"lights":{"position":[],"road":[]}},
     "battleship": {
     "label": "Bellator",
     "frontAxis": "+X",
@@ -1355,224 +1290,7 @@ export const SHIP_EDITOR_DEFAULTS = {
         ]
     },
     "lights": {
-        "position": [
-            {
-                "id": "m_49q186m",
-                "x": 252.43,
-                "y": -37.38,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_xdidt2s",
-                "x": 252.43,
-                "y": 37.38,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_66r3y05",
-                "x": 170.09,
-                "y": -68.79,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_m84jdmb",
-                "x": 170.09,
-                "y": 68.79,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_zt43m9s",
-                "x": 101.84,
-                "y": -53.63,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_b4hyyu4",
-                "x": 101.84,
-                "y": 53.63,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_roi1os8",
-                "x": 33.58,
-                "y": -60.13,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_6xkl1ar",
-                "x": 33.58,
-                "y": 60.13,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_sm4kpmq",
-                "x": -20.58,
-                "y": -60.13,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_iny6hrj",
-                "x": -20.58,
-                "y": 60.13,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_0m0gn0j",
-                "x": -76.92,
-                "y": -64.46,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_3l7ftim",
-                "x": -76.92,
-                "y": 64.46,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_rq9ko1q",
-                "x": -135.42,
-                "y": -101.3,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_g5q7kva",
-                "x": -135.42,
-                "y": 101.3,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_b0ht29b",
-                "x": -180.92,
-                "y": -159.8,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_1wiswq0",
-                "x": -180.92,
-                "y": 159.8,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_8ljy6of",
-                "x": -240.51,
-                "y": -161.97,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_y0t6fnz",
-                "x": -240.51,
-                "y": 161.97,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_6jvjm1c",
-                "x": -269.76,
-                "y": -105.63,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_rplbugc",
-                "x": -269.76,
-                "y": 105.63,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_gopk3qw",
-                "x": -305.51,
-                "y": -21.13,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_dkvd17u",
-                "x": -305.51,
-                "y": 21.13,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_rhc0vwh",
-                "x": -305.51,
-                "y": -22.21,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_p71glg5",
-                "x": -305.51,
-                "y": 22.21,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            }
-        ],
+        "position": [],
         "road": [
             {
                 "id": "m_707tuzy",
@@ -1677,80 +1395,7 @@ export const SHIP_EDITOR_DEFAULTS = {
         ]
     },
     "lights": {
-        "position": [
-            {
-                "id": "m_0jnh65j",
-                "x": 961.27,
-                "y": -89.3,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_0kiql97",
-                "x": 961.27,
-                "y": 89.3,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_u1hhdsp",
-                "x": 492.25,
-                "y": -275.17,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_qgnp2di",
-                "x": 492.25,
-                "y": 275.17,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_572tux5",
-                "x": -18.88,
-                "y": -247.58,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_qx1kezr",
-                "x": -18.88,
-                "y": 247.58,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_lz2q6p5",
-                "x": -699.9,
-                "y": -317.28,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            },
-            {
-                "id": "m_g8uschf",
-                "x": -701.35,
-                "y": 468.29,
-                "color": "#ff2b2b",
-                "power": 0.8,
-                "radius": 4,
-                "sequenceGroup": "edge"
-            }
-        ],
+        "position": [],
         "road": []
     }
 },
@@ -2226,4 +1871,10 @@ export const SHIP_EDITOR_DEFAULTS = {
 },
   }
 };
+
+// Światła nawigacyjne każdego kadłuba (src/data/shipNavLights.js): sześć lamp z tabeli i reflektory otoczenia; wpis niesie
+// je dalej — NPC (applyLayoutToNpc, applySideOnlyLayout), gracz i proxy statków ruchu (shipProxyBatch3D.js) świecą tak samo.
+for (const [id, cfg] of Object.entries(SHIP_EDITOR_DEFAULTS.ships)) {
+  cfg.lights = withShipNavLights(id, cfg.lights);
+}
 

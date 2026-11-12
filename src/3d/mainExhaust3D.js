@@ -745,9 +745,11 @@ export const MainExhaust3D = {
   /** Sloty do przejrzenia w jetAt (licznik instancji rysunku). */
   get slotCount() { return jets.hi; },
 
+  // Rysunek partii = siatka widoczna po flush (jakaś struga młodsza niż JET_MAX_LIFE); liczba żywych strug
+  // (`jetCount`) to przegląd 16 384 slotów — tylko dla pomiarów i testów, nie w klatce (klatka workera 2026-11-02:
+  // ~30 µs na klatkę w bitwie, wynik nieczytany).
   getStats() {
-    const live = this.jetCount;
-    return { nozzles: frameNozzles, jets: live, draws: live > 0 ? 1 : 0 };
+    return { nozzles: frameNozzles, draws: mesh && mesh.visible ? 1 : 0 };
   },
 
   /** Siatka do kompilacji shadera na ekranie ładowania. */

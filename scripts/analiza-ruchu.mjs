@@ -14,7 +14,7 @@
 
 import { RESOURCES, RECIPES, PLANET_YIELD, getResourceMass } from '../src/data/resources.js';
 import { STATION_INDUSTRY, STATION_UPKEEP, ECONOMY_CYCLE_SECONDS, lineWeight, upkeepScale } from '../src/game/stationEconomy.js';
-import { VAN_CLASSES } from '../src/game/cargoFleet.js';
+import { VAN_CLASSES } from '../src/game/traffic/shipmentOrders.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
 import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from '../src/data/systemMap.js';
 

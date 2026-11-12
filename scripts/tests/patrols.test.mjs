@@ -10,8 +10,13 @@
 import { createSuite, runIfMain } from './harness.mjs';
 import {
   PATROL_MODEL, laneKey, createPatrolRegistry, collectLevy, budgetOf,
-  recordLaneLoss, planPatrols, patrolStrength, patrolMultiplier, summarizePatrols
+  recordLaneLoss, planPatrols, patrolStrength, patrolMultiplier, summarizePatrols,
+  GARRISON_MODEL, militaryWarshipBerths, garrisonPorts, summarizeGarrison
 } from '../../src/game/traffic/patrols.js';
+import { buildTrafficWorld, stepTrafficWorld } from '../../src/game/traffic/trafficWorld.js';
+import { berthRole, BERTH_ROLE } from '../../src/game/traffic/dockLayout.js';
+import { destroyCourse } from '../../src/game/traffic/trafficDirector.js';
+import { readyShips } from '../../src/game/traffic/shipyards.js';
 
 const TN = 'terra_nova';
 
@@ -118,6 +123,50 @@ export function run() {
   t.check('pokazuje, gdzie boli najbardziej', raport.hotspots.length > 0);
   t.check('i ile zostało w kasie', typeof raport.budgets[TN] === 'number');
   t.check('liczy wydatki', raport.stats.spent > 0);
+
+  // ----------------------------------------------------------
+  t.section('Garnizon: K-7 to port wojskowy');
+
+  // Hale K-7 stały puste: zapas okrętów był liczbą w stoczni, a kampanie nie
+  // miały postoju w porcie. Rotacja pokazuje garnizon przy porcie domowym.
+  const swiat = buildTrafficWorld({ economyScale: 1, capacityMultiplier: 4, seed: 7 });
+  const k7 = swiat.docks.get('earth');
+  t.check('Ziemia ma stanowiska wojskowe dla okrętów', militaryWarshipBerths(k7) > 0);
+  t.check('porty garnizonu to tylko te z halami wojskowymi',
+    garrisonPorts(swiat.stations, swiat.docks, 'terra_nova').every(p => p.berths > 0));
+  let maxZajete = 0;
+  let maxNaRotacji = 0;
+  for (let s = 0; s < 2 * 3600; s += 5) {
+    stepTrafficWorld(swiat, 5);
+    let zajete = 0;
+    for (const b of k7.berths) if (berthRole(b) === BERTH_ROLE.MILITARY && b.occupantId) zajete++;
+    maxZajete = Math.max(maxZajete, zajete);
+    maxNaRotacji = Math.max(maxNaRotacji, summarizeGarrison(swiat.war.garrison).byStation.earth || 0);
+  }
+  const garnizon = summarizeGarrison(swiat.war.garrison);
+  t.note(`rotacje ${garnizon.stats.rotations}, powroty ${garnizon.stats.returns}, `
+    + `K-7 Ziemi max ${maxZajete} z ${militaryWarshipBerths(k7)} stanowisk`);
+  t.check('okręty stają w halach K-7', maxZajete > 0);
+
+  // Okręt garnizonu zestrzelony w grze (`destroyed` z bańki) to strata z zapasu
+  // frakcji — jak w kampanii: zapas mniejszy o jeden, wrak ze złomem w rejestrze.
+  const wizyta = swiat.war.garrison.visits.find(v => v.kind === 'rotation');
+  t.check('jest wizyta garnizonu do zestrzelenia', !!wizyta);
+  if (wizyta) {
+    const zapasPrzed = readyShips(swiat.shipyards, wizyta.factionId);
+    const wrakiPrzed = swiat.war.wrecks.length;
+    t.check('kurs garnizonu da się zniszczyć z gry',
+      !!destroyCourse(swiat.director, wizyta.courseId, { reason: 'player' }));
+    stepTrafficWorld(swiat, 5);
+    t.equal('zapas frakcji mniejszy o okręt', readyShips(swiat.shipyards, wizyta.factionId), zapasPrzed - 1);
+    t.equal('wrak okrętu w rejestrze wojny', swiat.war.wrecks.length, wrakiPrzed + 1);
+    const wrak = swiat.war.wrecks[swiat.war.wrecks.length - 1];
+    t.check('wrak należy do frakcji i niesie złom', wrak.factionId === wizyta.factionId && wrak.scrap > 0);
+    t.equal('strata policzona w garnizonie', summarizeGarrison(swiat.war.garrison).stats.lost, 1);
+  }
+  t.check('rotacja nie zajmuje więcej niż berthShare stanowisk',
+    maxNaRotacji <= Math.floor(militaryWarshipBerths(k7) * GARRISON_MODEL.berthShare)
+      + GARRISON_MODEL.returnCap);
 
   return t.results;
 }

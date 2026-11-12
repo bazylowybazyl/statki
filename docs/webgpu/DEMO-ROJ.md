@@ -51,7 +51,7 @@ statek, wspólny plac dla wszystkich klas). Samodzielne demo (`WebGPURenderer` +
 | `src/3d/swarm/swarmClassTable.js` | tablica klas GPU (`uniformArray`, stała nazwa bloku): wymiary, chwyt nx × ny, lot, zasięgi, obrysy, ramiona (10 × 5 wierszy: bark, cel, kąty złożenia i chwytu liczone raz na CPU, tuleja, wysuw, chwytak podwójny), światła |
 | `src/3d/swarm/swarmDrones.tsl.js` | materiał drona (TSL): poza ramion w wierzchołkach z rozłożenia e i zacisku g (teleskop: człony przesuwane o pół / cały wysuw), chwytak w osiach drona, kadłub z pozy instancji, emisja (stan, dysze z ciągu, wizjer, lampki chwytaków), maska słońca; światła (billboardy HDR, 22 na drona) |
 | `src/3d/swarm/swarmUnits.tsl.js` | kontenery roju — jeden standard 16 × 8 × 8 (materiał kontenerów ładowni z pozą z bufora jednostek) i cienie (dronów, kontaktu) |
-| `src/3d/swarm/swarmSim.js` | **symulacja na GPU** (compute TSL): kernele `kClear` → `kBin` → `kSteer` → `kIntegrate`, pierścień zadań (8 × vec4, do 8 kontenerów chwytu), odczyt stanu (`SwarmReadback`), statystyki; ORCA (program liniowy w tablicach lokalnych) |
+| `src/3d/swarm/swarmSim.js` | **symulacja na GPU** (compute TSL): kernele `kBin` → `kSteer` → `kIntegrate` (dawny `kClear` scalony — E12), pierścień zadań (8 × vec4, do 8 kontenerów chwytu), odczyt stanu (`SwarmReadback`), statystyki; ORCA (program liniowy w tablicach lokalnych) |
 | `src/game/swarm/swarmPort.js` | **port** (bez three): siatki kolumn z komórkami (ładownie — obrys modułu × warstwy, plac — obrys chwytu klasy bloku × poziomy, gniazda), środki komórek i podbloków, poziomy wejścia w szachownicę, pasmo podejścia, warstwy przelotu, mapa przeszkód z masek sprite'ów, rekordy GPU (`SWARM_DRONE`, `SWARM_TASK`, `SWARM_UNIT`, fazy, kody), kontenery w kolumnach (`swarmFillColumns`, `swarmColumnCounts`, `swarmUnitRestPose`) |
 | `src/game/swarm/swarmPlanner.js` | **wieża portu** — księga komórek, przydział chwytów (tryby smart / naive), kurs drona w chwycie i przy odłożeniu, place (obszary towarów, wolne stosy), wyważenie statków |
 | `src/game/swarm/swarmExecCpu.js` | lustro CPU maszyny stanów (bez unikania) z niezależną kontrolą geometrii chwytu (komórka celu liczona z pozy) — testy planisty i scenariuszy |
@@ -147,10 +147,12 @@ Planista mówi KTO, CO i DOKĄD; drony latają same (GPU).
 
 ## Symulacja na GPU
 
-- Krok stały 1/60 s, kilka kroków na klatkę w jednym `renderer.compute(lista)`: `kClear` (siatka i statystyki) →
-  `kBin` (siatka mieszająca xy, komórka 64 j., ≤ 40 na komórkę) → `kSteer` (maszyna stanów, nawigacja, unikanie,
-  zamki, chwyt i odłożenie) → `kIntegrate` (ruch, stan dla sąsiadów, niesione kontenery — każdy w swoim miejscu chwytu,
-  status). Bez wyścigu: `kSteer` czyta stan sąsiadów z kroku poprzedniego.
+- Krok stały 1/60 s, kilka kroków na klatkę w jednym `renderer.compute(lista)`, 3 dispatche na krok: `kBin` (zerowanie
+  statystyk kroku; siatka mieszająca xy, komórka 64 j., ≤ 40 na komórkę) → `kSteer` (maszyna stanów, nawigacja,
+  unikanie, zamki, chwyt i odłożenie, przepełnienie siatki) → `kIntegrate` (ruch, stan dla sąsiadów, niesione
+  kontenery — każdy w swoim miejscu chwytu, status; zerowanie siatki na krok następny). Bez wyścigu: `kSteer` czyta
+  stan sąsiadów z kroku poprzedniego. Do E12 (2026-10-22) zerowanie robił osobny `kClear` — scalenie dało stan po
+  kroku bit w bit (`scripts/webgpu/roj-stan-ab.mjs --krok`), o dispatch mniej na krok.
 - Zadania: pierścień 2 na drona (numer zadania % 2), 8 × vec4 (punkty i kursy chwytu i odłożenia, wejścia, kolumny,
   liczniki „przed”, do 8 kontenerów chwytu), wysyłka zakresami; **status** (faza, wykonane, niesione kontenery,
   czekanie) wraca do planisty trwałym odczytem (`SwarmReadback`: pierścień buforów MAP_READ, epoka sceny) z

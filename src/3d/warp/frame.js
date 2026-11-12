@@ -10,6 +10,8 @@
 // (przylot NPC: rel = pozycja − kamera), czy w przestrzeni widocznej warpa (kop przy
 // skoku gracza: rel = punkt ośrodka − kamera ośrodka). Na GPU idą małe liczby.
 
+import { newSparkRecord } from './sparkRecipes.js';
+
 /** Nowa przegródka ośrodka (bańka / nić zwiastuna / punkt zbierania / pchnięcie). */
 export function newWarpSlot() {
   return {
@@ -22,7 +24,7 @@ export function newWarpSlot() {
 }
 
 /**
- * Tylko przegródki i szczeliny w zasięgu ośrodka (ośrodek istnieje wyłącznie w pudle wokół
+ * Tylko przegródki w zasięgu ośrodka (ośrodek istnieje wyłącznie w pudle wokół
  * kamery — medium.js: setBoxes): reszta wypada z klatki, więc zdarzenie poza kadrem (przylot
  * pirata daleko) nie budzi ośrodka — ani kroku compute, ani draw calla. Zasięg przegródki
  * 4,6 R·asp (pętla baniek w kernelu), w głąb tyle samo — pudło na tej głębokości jest
@@ -57,19 +59,6 @@ export function cullWarpFrameToView(frame, halfPxX, halfPxY, focal, camZ) {
     if (Math.abs(px) < hx && Math.abs(py) < hy) list[n++] = b;
   }
   list.length = n;
-  const seams = frame.seams;
-  let m = 0;
-  for (let j = 0; j < seams.count; j++) {
-    const s = seams.items[j];
-    const r = Math.max(s.halfLen * 1.5, s.halfWidth * 8 + 300);
-    const hx = kx * (camZ + r) + r;
-    const hy = ky * (camZ + r) + r;
-    if (Math.abs(s.x) < hx && Math.abs(s.y) < hy) {
-      if (m !== j) { seams.items[j] = seams.items[m]; seams.items[m] = s; }
-      m++;
-    }
-  }
-  seams.count = m;
 }
 
 class Pool {
@@ -84,8 +73,15 @@ class Pool {
   add() { return this.count < this.items.length ? this.items[this.count++] : null; }
 }
 
+// Szczeliny, szwy i smugi sylwetki (dawne addRift / addSeam / addSeamLens / addSmear, duszki RiftSprites / SmearPool)
+// usunięte w sprzątaniu S1 nowego warpa (2026-10-26) — nikt ich nie karmił od przylotów NPC bez szczelin (2026-10-03).
+// Implozja i soczewka bańki jako fale (style 'akcent' / 'soczewka') — też (jeden warp). Materiały ośrodka i mgławicy
+// mają dalej bloki szczelin (medium.js: setSeams, skyBend.js) — zmiana ich WGSL to osobna decyzja (C2); liczniki 0.
+// Smugi (`streaks`, prototyp przylotu i wylotu „jak w Gwiezdnych Wojnach” — `?warpSW=1`, warpSW.js): kształt GLOW_STREAK
+// duszków; ≥ 48 miejsc (scena „Wojna”: 45 okrętów co 0,12 s), smugi spoza kadru odcinane przy zgłoszeniu.
+// Drobiny przylotu i odlotu NPC (`sparks` — rekordy emisji, sparkRecipes.js / sparks.js): do 3 rekordów na okręt.
 export const WARP_FRAME_CAPS = Object.freeze({
-  bubbles: 16, seams: 8, rifts: 24, seamLens: 8, lens: 8, waves: 24, flashes: 64, glares: 16, smears: 8
+  bubbles: 16, lens: 8, waves: 24, flashes: 64, glares: 16, streaks: 64, sparks: 128
 });
 
 export class WarpFrame {
@@ -93,50 +89,38 @@ export class WarpFrame {
     this.caps = caps;
     // Przegródki ośrodka: referencje do obiektów właścicieli (kolejność = kolejność zgłoszeń).
     this.bubbles = [];
-    // Szczeliny w ośrodku (rozsuwanie, przepływ wnętrza tunelu).
-    this.seams = new Pool(caps.seams, () => ({ x: 0, y: 0, angle: 0, halfLen: 0, halfWidth: 0, push: 0, flow: 0 }));
-    // Szczeliny rysowane (rift.js).
-    this.rifts = new Pool(caps.rifts, () => ({ x: 0, y: 0, angle: 0, halfLen: 0, halfWidth: 0, k: 0, core: null, body: null, dirty: 0, seed: 0, fill: 0 }));
-    // Zgięcie tła: wciąganie w szczeliny i soczewka bańki (tylko mgławica).
-    this.seamLens = new Pool(caps.seamLens, () => ({ x: 0, y: 0, angle: 0, halfLen: 0, band: 0, amp: 0 }));
+    // Zgięcie tła: soczewka bańki (tylko mgławica — hipercruise, warp gracza z `?warpOsrodek=1`).
     this.lens = new Pool(caps.lens, () => ({ x: 0, y: 0, angle: 0, a: 0, b: 0, amp: 0, front: 3 }));
-    // Fale (przezroczysta refrakcja całej klatki — źródła zniekształceń Core3D): kind 0 — fala, 1 — implozja
-    // (naciąg przed skokiem, styl „akcent”), 2 — soczewka bańki (styl „soczewka”: r = półoś w poprzek, asp, kurs dx/dy).
-    this.waves = new Pool(caps.waves, () => ({ x: 0, y: 0, r: 0, width: 0, amp: 0, kind: 0, dx: 1, dy: 0, asp: 1 }));
+    // Fale (przezroczysta refrakcja całej klatki — źródła zniekształceń Core3D: shock).
+    this.waves = new Pool(caps.waves, () => ({ x: 0, y: 0, r: 0, width: 0, amp: 0 }));
     // Błyski (okrągłe) i poprzeczne linie blasku.
     this.flashes = new Pool(caps.flashes, () => ({ x: 0, y: 0, size: 0, k: 0, pal: null, raw: false }));
     this.glares = new Pool(caps.glares, () => ({ x: 0, y: 0, angle: 0, len: 0, k: 0, pal: null }));
-    // Smugi sylwetki (kopia alfy sprite'a rozciągnięta wzdłuż kursu).
-    this.smears = new Pool(caps.smears, () => ({ entity: null, x: 0, y: 0, angle: 0, length: 0, width: 0, total: 1, k: 0, pal: null }));
+    // Smugi (`?warpSW=1`): głowa (x, y), kierunek (jednostkowy), długość wstecz od głowy, szerokość, barwa HDR.
+    this.streaks = new Pool(caps.streaks || 64, () => ({ x: 0, y: 0, dirX: 1, dirY: 0, len: 0, width: 0, r: 0, g: 0, b: 0 }));
+    // Drobiny przylotu i odlotu NPC: rekordy emisji (tor każdej drobiny ze wzoru — sparks.js); pełna pula — rekord pominięty.
+    this.sparks = new Pool(caps.sparks || 128, newSparkRecord);
+    // Kadr do odcinania smug (pół-wymiary pudła osi świata wokół kamery [j.] — ustawia sterownik co klatkę po reset).
+    this.streakView = { on: false, hw: 0, hh: 0 };
     // Gwiazdy (rozciąganie płaskie, front wyjścia) — z gracza.
     this.stars = { stretch: 0, angle: 0, frontOn: 0, frontS: 0, warpTint: 0, refX: 0, refY: 0 };
     this.warpVis = 0;       // poświata rzadkich drobin w ruchu (skok gracza)
     this.mediumFade = 0;    // [1/s] gaszenie całego ośrodka (po wyjściu z warpa)
-    this.shake = 0;         // największy wstrząs klatki (0..1, skala wołającego)
   }
 
   reset() {
     this.bubbles.length = 0;
-    this.seams.reset();
-    this.rifts.reset();
-    this.seamLens.reset();
     this.lens.reset();
     this.waves.reset();
     this.flashes.reset();
     this.glares.reset();
-    this.smears.reset();
+    this.streaks.reset();
+    this.sparks.reset();
+    this.streakView.on = false;
     const st = this.stars;
     st.stretch = 0; st.frontOn = 0; st.frontS = 0; st.warpTint = 0;
     this.warpVis = 0;
     this.mediumFade = 0;
-    this.shake = 0;
-  }
-
-  /** Czy klatka ma cokolwiek do narysowania albo policzenia w ośrodku. */
-  get busy() {
-    return this.bubbles.length > 0 || this.seams.count > 0 || this.rifts.count > 0 || this.waves.count > 0
-      || this.flashes.count > 0 || this.glares.count > 0 || this.smears.count > 0 || this.lens.count > 0
-      || this.seamLens.count > 0 || this.stars.stretch > 0 || this.warpVis > 0;
   }
 
   pushBubble(slot) {
@@ -146,21 +130,7 @@ export class WarpFrame {
   addWave(x, y, r, width, amp) {
     const w = this.waves.add();
     if (!w) return;
-    w.x = x; w.y = y; w.r = r; w.width = width; w.amp = amp; w.kind = 0;
-  }
-
-  /** Implozja: obraz wsysany do punktu (x, y) w promieniu r. */
-  addImplode(x, y, r, amp) {
-    const w = this.waves.add();
-    if (!w) return;
-    w.x = x; w.y = y; w.r = r; w.width = 0; w.amp = amp; w.kind = 1;
-  }
-
-  /** Soczewka bańki: elipsa (półoś w poprzek `across`, wzdłuż × asp), pierścień grubości `width`, kurs (dx, dy). */
-  addBubbleLens(x, y, dx, dy, across, width, asp, amp) {
-    const w = this.waves.add();
-    if (!w) return;
-    w.x = x; w.y = y; w.r = across; w.width = width; w.amp = amp; w.kind = 2; w.dx = dx; w.dy = dy; w.asp = asp;
+    w.x = x; w.y = y; w.r = r; w.width = width; w.amp = amp;
   }
 
   addFlash(x, y, size, k, pal, raw = false) {
@@ -175,35 +145,48 @@ export class WarpFrame {
     g.x = x; g.y = y; g.angle = angle; g.len = len; g.k = k; g.pal = pal;
   }
 
-  addRift(x, y, angle, halfLen, halfWidth, k, pal, dirty, seed, fill) {
-    const r = this.rifts.add();
-    if (!r) return;
-    r.x = x; r.y = y; r.angle = angle; r.halfLen = halfLen; r.halfWidth = halfWidth; r.k = k;
-    r.core = pal.core; r.body = pal.body; r.dirty = dirty; r.seed = seed; r.fill = fill;
+  /** Kadr odcinania smug: pół-wymiary pudła osi świata wokół kamery [j.] (≤ 0 — bez odcinania). */
+  setStreakView(hw, hh) {
+    const v = this.streakView;
+    v.on = hw > 0 && hh > 0;
+    v.hw = v.on ? hw : 0;
+    v.hh = v.on ? hh : 0;
   }
 
-  addSeam(x, y, angle, halfLen, halfWidth, push, flow) {
-    const s = this.seams.add();
-    if (!s) return;
-    s.x = x; s.y = y; s.angle = angle; s.halfLen = halfLen; s.halfWidth = halfWidth; s.push = push; s.flow = flow;
+  /**
+   * Smuga (`?warpSW=1`): głowa (hx, hy) względem kamery, kierunek (dirX, dirY) — smuga ciągnie się `len` [j.] WSTECZ od
+   * głowy, szerokość [j.], barwa HDR (r, g, b). Smuga poza kadrem (pudło z setStreakView + szerokość) nie zajmuje miejsca
+   * w puli. Zwraca true, gdy dodana.
+   */
+  addStreak(hx, hy, dirX, dirY, len, width, r, g, b) {
+    if (!(len > 0) || !(width > 0)) return false;
+    if (!(r > 0.0005 || g > 0.0005 || b > 0.0005)) return false;
+    const l = Math.sqrt(dirX * dirX + dirY * dirY);
+    if (!(l > 1e-9)) return false;
+    const dx = dirX / l;
+    const dy = dirY / l;
+    const v = this.streakView;
+    if (v.on) {
+      const tx = hx - dx * len;
+      const ty = hy - dy * len;
+      const m = width;
+      if (Math.max(hx, tx) + m < -v.hw || Math.min(hx, tx) - m > v.hw
+        || Math.max(hy, ty) + m < -v.hh || Math.min(hy, ty) - m > v.hh) return false;
+    }
+    const s = this.streaks.add();
+    if (!s) return false;
+    s.x = hx; s.y = hy; s.dirX = dx; s.dirY = dy; s.len = len; s.width = width; s.r = r; s.g = g; s.b = b;
+    return true;
   }
 
-  addSeamLens(x, y, angle, halfLen, band, amp) {
-    const s = this.seamLens.add();
-    if (!s) return;
-    s.x = x; s.y = y; s.angle = angle; s.halfLen = halfLen; s.band = band; s.amp = amp;
+  /** Rekord emisji drobin (sparkRecipes.js wypełnia pola) albo null — pula pełna. */
+  addSparks() {
+    return this.sparks.add();
   }
 
   addLens(x, y, angle, a, b, amp, front) {
     const l = this.lens.add();
     if (!l) return;
     l.x = x; l.y = y; l.angle = angle; l.a = a; l.b = b; l.amp = amp; l.front = front;
-  }
-
-  addSmear(entity, x, y, angle, length, width, total, k, pal) {
-    const s = this.smears.add();
-    if (!s) return;
-    s.entity = entity; s.x = x; s.y = y; s.angle = angle; s.length = length; s.width = width;
-    s.total = total; s.k = k; s.pal = pal;
   }
 }

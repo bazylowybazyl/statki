@@ -12,6 +12,7 @@
  */
 
 import { createCompany, addShip, registerCompany, COMPANY_POLICY } from './transportCompanies.js';
+import { FALLBACK_HOME_PORT } from '../../data/markets.js';
 
 const NAMES = [
   'Kolos Logistyka', 'Wenus Frachty', 'Bracia Kowal', 'Konsorcjum Zewnętrzne',
@@ -78,7 +79,7 @@ export function fleetSizeForDemand(tonsPerHour, economyScale = 1) {
  * to wyłącznie puste przeloty do miejsc, gdzie faktycznie jest ładunek.
  */
 export function buildCarriers(registry, ports, economyScale = 1, options = {}) {
-  const activePorts = Array.isArray(ports) && ports.length ? ports : ['earth'];
+  const activePorts = Array.isArray(ports) && ports.length ? ports : [FALLBACK_HOME_PORT];
   // Przewoźnik należy do frakcji swojego portu macierzystego. Bez tego kursy
   // mają `factionId: null`, a wtedy opłata od handlu nie ma komu wpłynąć —
   // i patrole nigdy nie powstają mimo setek przechwytów.

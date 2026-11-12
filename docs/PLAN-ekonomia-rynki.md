@@ -1,0 +1,586 @@
+# PLAN — ekonomia z rynkami (przebudowa ruchu v2)
+
+Spisany 2026-10-21. Źródło prawdy dla sesji przebudowy ekonomii. Sesje raportują orkiestratorowi, a § 8 „Stan” prowadzi orkiestrator.
+
+Poprzednie dokumenty obowiązują tam, gdzie ten plan ich nie zmienia:
+- `docs/BRIEF-ruch-v2.md`: trzy warstwy (rekordy → węzły → bańka) i pułapki, których nie wolno powtarzać;
+- `docs/PLAN-ruch-v2-w-grze.md`: zadania Z1–Z15, port K-7, liczby portów;
+- `docs/SPEC-ekonomia-i-logistyka.md`;
+- `docs/SPEC-kolejkowanie-slotowe.md`.
+
+## 1. Decyzje użytkownika
+
+Z 2026-10-21:
+1. **Nie piszemy nowej ekonomii, tylko przebudowujemy ruch v2** wokół jednego obiektu „rynek”. Cel: nowy rynek dodaje się jednym wpisem w tabeli albo jednym wywołaniem w trakcie gry.
+2. **Stocznie bez własnych podzespołów zaopatrują handlowcy, którzy szukają zysku.** Stocznia bez podzespołów płaci za nie więcej. Podaż ma przyjść z ceny (kupcy, `agentFleets`), a nie z planisty frakcji.
+3. **Węgiel, nikiel i platyna idą w podzespoły.** Ekonomia ma konsumować różne wieżyczki, a nie tylko cztery abstrakcyjne klasy broni.
+4. **Napędy:**
+   - gracz lata trochę za szybko i zostanie zwolniony;
+   - warp zostaje szybki (260 tys. j./s);
+   - dochodzi **hipercruise**, czyli przelot z większym vmax dla statków (gracza i NPC). Napędzają go NOWE RODZAJE SILNIKÓW, które rozpędzają statek do 20–40 tys. j./s. Według decyzji z 2026-10-03 hipercruise przejmuje odcinki `'drive'` rozkazu TRAVEL TO, bez osobnej akcji na mapie.
+5. **Górnicy NPC naprawdę uszczuplają pas i mogą robić w nim wyrwy** widoczne w polu.
+6. **Orkiestracja:** sesje pracują równolegle, orkiestrator przegląda ich wyniki i scala.
+7. **Receptury dostają osobną sesję (E8):** wieżyczki, silniki i nowe rodzaje silników, w tym silniki hipercruise.
+
+Z 2026-10-22 (po fali 1):
+
+8. **Prędkości:**
+   - bojowy Atlasa około 500 j/s, ale nie równo 500 (nieokrągłe wartości także dla innych kadłubów);
+   - dopalacz w walce ok. 1000–1200 j/s;
+   - PRZELOT znika, zastępuje go hipercruise, więc dopalacz w PRZELOCIE przestaje obowiązywać;
+   - warp 100–250 tys. j/s zależnie od napędu warp `warp_mk1`, `warp_mk2`, `warp_mk3`.
+9. **Wpływ hipercruise** na trafienia, tunelowanie i wydajność sprawdza osobna sesja (E9).
+10. **Receptury:** osobna sesja projektuje, jak naprawdę wyglądałyby receptury przy surowcach z kopalni i asteroid (E10). Potem rozmowa z użytkownikiem.
+11. **Wyrwy:**
+    - mgła i pył RZEDNĄ, bo bez asteroid nie ma pyłu; niektóre asteroidy produkują gazy, a niewdrożone demo gazów i mgieł sprawdzi i wpina sesja E11;
+    - tona urobku = tona pasa;
+    - regeneracja wyłączona.
+12. **Więcej piractwa:** cel ok. 15% przechwytów (pasmo 12–20%).
+13. **Zgoda na przerwę:** do bańki (fala 3) w grze nie widać statków ruchu.
+
+Nadal obowiązują wcześniejsze decyzje (bez pytania użytkownika ich nie zmieniamy):
+- wszystko, co lata, ma powód ekonomiczny;
+- rekordy kursów są autorytatywne dla ekonomii, a bańka działa tylko wokół gracza;
+- zator może opóźniać, ale nie głodzić;
+- warp jest nietykalny;
+- brama jest tańsza od warpa, ale nie szybsza;
+- uran jest tylko w Kuiperze;
+- Ziemia nic nie wydobywa;
+- gospodarka działa w skali ×60;
+- K-7 to port wojskowy.
+
+## 2. Stan wyjściowy (2026-10-21)
+
+Pomiar: `node scripts/symulacja-ruchu.mjs 240 1 4 60` (240 min gry, presja piratów ×1, magazyny ×4, skala ×60). Bieg trwa ok. 1 min.
+
+| ziarno | dostawy | przechwycone | skuteczność | szczyt kursów | tick |
+|---|---|---|---|---|---|
+| 7 | 8274 | 5611 (40% rozstrzygniętych) | 60,8% | 4971 | 19,7 ms |
+| 11 | 8327 | 5718 (41%) | 62,0% | 5063 | 21,9 ms |
+| 23 | 8165 | 5717 (41%) | 61,2% | 4962 | 21,9 ms |
+
+Kolejka na redzie na koniec biegu: 21 / 99 / 77 statków (ziarna 7 / 11 / 23). Na wszystkich trzech ziarnach te same 5 stoczni głoduje przez całe 240 min.
+
+Do tego przy ziarnie 7:
+- Ziemia ma Fe 1,4% i Si 3,9%, a Merkury Fe 99,9% i Si 80,9%.
+- Merkury, Wenus, Saturn, Uran i Westa to stocznie bez własnych podzespołów. Ich podzespoły stoją na 0% przez całe 4 h (przyduszenie ×2,6), choć w tym czasie zwodowano 563 okręty.
+- Saturn ma zajęte 25 z 26 stanowisk, a w kolejce czeka 21 statków.
+- Symulacja kończy się komunikatem „BILANS NIE DOMYKA SIĘ”, 8 z 27 stacji jest na skraju.
+- `npm test`: 31 suit, 1668 asercji, wszystkie zielone. Testy bańki i portu też zielone.
+
+Braki strukturalne:
+- **Rynki.**
+  - Nowy rynek wymaga zmian w 5–8 miejscach: węzeł (`systemMap` / `smallBodies` / `PIRATE_OUTPOSTS`), `SYSTEM_INDUSTRY_SPEC`, frakcja, `SHIPYARD_WEIGHT`, `DEFAULT_GATE_HUBS`, lista opuszczonych stacji i `stations[]` w `index.html`.
+  - W trakcie gry nie da się dodać rynku. `addStationNode` i `addStationBuilding` wołają tylko testy, a protokół workera obsługuje `STATION` tylko przy zniszczeniu stacji.
+  - Stacje misyjne piratów nie trafiają do ruchu v2.
+- **Brak jednego modelu rynku.**
+  - Dwie wyceny: `resourcePrice` i `getLocalBasePrice`.
+  - Dwa planisty: `planShipment` z `cargoFleet` i planista dyspozytora.
+  - Dwie produkcje: `runStationEconomy` i `applyEconomyProduction` (`infrastructureUI.js`).
+  - `trafficDirector.js` importuje stary `cargoFleet.js`.
+  - Bez `?trafficV2` gra działa na starej ekonomii.
+- **Pas.**
+  - `trafficFields()` jest wpisane na sztywno: pas sięga 35,5–47 AU, a skały kończą się na 41,5 AU, więc ok. 51% wypraw ląduje w pustce.
+  - Skład pola jest płaski: 5 rud z wagą 1, bez rodzin, Hild i Trojańczyków.
+  - `carbon_ore`, `nickel_ore` i `platinum_ore` nie mają receptur ani popytu.
+  - Górnicy NPC wydobywają urobek z niczego i nie uszczuplają pasa.
+- **Bańka (Z13)** nie jest wpięta i zna tylko ringi oraz siebie nawzajem.
+  - Brak trafień i zderzeń z graczem.
+  - Osobne rejestry stanowisk: gra w `haloPortDocking`, worker osobno, a `berth-hold` istnieje tylko jako komentarz w protokole.
+  - Proxy nie działa w workerze renderu (`new Image()`, `window.SUN`).
+  - Gabaryty kadłubów są tymczasowe.
+  - NPC gry giną 20 tys. j. od gracza, a bańka ma promień 60 tys. j.
+- **Prędkości.** Ruch v2 liczy napęd konwencjonalny 800 j./s i warp 20 tys. j./s. Gracz ma PRZELOT Atlasa do 1500 j./s (z dopalaczem 3000) i warp 260 tys. j./s (`src/data/shipFlightSpecs.js`, `src/game/shipModes.js`).
+
+## 3. Architektura docelowa
+
+### 3.1 Rynek (Market)
+
+- **MarketDef** to jedna tabela danych (`src/data/markets.js`). Pola:
+  - id i nazwa;
+  - rodzaj: planeta, księżyc, małe ciało, placówka, kryjówka albo stacja gracza;
+  - źródło położenia: orbita, ciało rodzica, kąt z gry;
+  - frakcja;
+  - przemysł: odnośnik do specyfikacji albo lista budynków;
+  - stocznia (waga) i brama (hub);
+  - doki: ring K-7, pomosty, megadok albo hangar, plus mnożnik stanowisk;
+  - flagi: opuszczona, kryjówka.
+
+  Tabele rozrzucone dziś po kodzie stają się polami tej definicji: `SHIPYARD_WEIGHT`, `PIRATE_OUTPOSTS`, `DEFAULT_GATE_HUBS`, lista opuszczonych stacji i zapasowe `['earth']`.
+- **`addMarket(world, def)`** zakłada za jednym razem węzeł, gospodarkę z zapasem startowym, doki, redę albo hangar, stocznię, kryjówkę i porty domowe przewoźników. Builder świata to pętla `addMarket` po tabeli, więc start gry i dodanie rynku w trakcie gry idą tą samą ścieżką. Obok niej: `removeMarket`, `setMarketOwner`, `addMarketBuilding`.
+- **Worker** dostaje wiadomości `MARKET_ADD`, `MARKET_BUILDING` i `MARKET_REMOVE`, a most `TrafficBridge.addMarket(def)` i pokrewne.
+- **Jeden model handlu (fala 2).**
+  - Rynek wystawia oferty sprzedaży (zapas ponad rezerwę) i skupu (poniżej celu) z ceną `resourcePrice`, a towar w drodze trzyma jako rezerwacje.
+  - Wszyscy handlują przez to samo API: przewoźnicy frakcji, kupcy, gracz, stocznie, wojna, złomiarze i paser.
+  - Producent sprzedaje, gdy oferta skupu przebija jego cenę rezerwacji; własna stocznia nie ma bezwzględnego pierwszeństwa. Z tego mechanizmu wynika decyzja 2.
+
+### 3.2 Jedna ekonomia
+
+Po fali 2 gra ma jedną symulację: ruch v2 w workerze, bez flagi `?trafficV2`. Usuwamy:
+- vany i tranzyt z `cargoFleet`;
+- `transitController.js`;
+- `updateStationEconomies` i `getLocalBasePrice`;
+- produkcję i pojemności z `infrastructureUI.js`.
+
+Terminal i UI czytają rynek z mostu.
+
+Do czasu bańki (fala 3) gracz nie zobaczy w grze statków ruchu, bo stare vany znikną razem ze starą ekonomią. E2 sprawdza, czy da się na ten czas zostawić je jako widok kursów v2. Jeśli tak, robi to; jeśli nie, zgłasza tę decyzję.
+
+### 3.3 Pas w ekonomii
+
+- **Pola wydobywcze z danych pasa:** `BELT_DEFINITIONS` (przystanki składu), `ASTEROID_YIELD`, szczyty rodzin (`familyPeaks`) i krawędź `mainOuterAu`, a także Hildy, Trojańczycy i Kuiper. Punkt wyprawy losuje się z gęstości pola, a urobek ze składu w tym miejscu.
+- **Uszczuplenie.** Rejestr wydobycia w świecie ruchu jest autorytatywny dla ekonomii i trzyma masę zabraną z każdej komórki lub obszaru.
+  - Po przekroczeniu progu pole dostaje WYRWĘ (mniejsza gęstość albo pusty obszar), w grze i w obrazie.
+  - Wyrwa idzie przez konfigurację świata pasa: `beltWorld` → pole gry i replika obrazu (reguła `pas-asteroid`).
+  - Wydobycie gracza liczy się do tego samego rejestru.
+  - Domyślnie pas się nie regeneruje.
+
+### 3.4 Napędy
+
+Jedna tabela napędów (`src/data/driveModes.js`) obsługuje gracza, NPC gry i ruch v2:
+- tryb bojowy i PRZELOT;
+- **hipercruise**: przejmuje odcinki `'drive'` rozkazu TRAVEL TO. Dają go rodzaje silnika `hypercruise_mk1`, `hypercruise_mk2` i `hypercruise_mk3` z vmax 20 / 30 / 40 tys. j./s. Kontrakt E5 ↔ E8:
+  - E5 może stroić liczby w zakresie 20–40 tys. j./s i dodaje przyspieszenia per klasa kadłuba;
+  - E8 robi z silników towary z recepturami;
+  - id się nie zmieniają;
+- warp: 260 tys. j./s, kosztuje paliwo, nietykalny.
+
+Ruch v2 liczy z tej tabeli czasy, paliwo i ryzyko przechwytu. Propozycja do potwierdzenia przez użytkownika: hipercruise da się przerwać (piractwo żyje na odcinkach poza warpem, przy portach i bramach), warpu nie.
+
+### 3.5 Bańka (fala 3)
+
+Z13 w wersji zwężonej:
+- najpierw jeden port (Ziemia);
+- trafienia i zderzenia z graczem na prostych obrysach 2D;
+- wspólny rejestr stanowisk gra ↔ worker (`berth-hold`);
+- proxy w workerze renderu: blok migawki, bez `window`, rozgrzewka w `Core3D.warmup`;
+- gabaryty z `trafficHullFootprint`;
+- promień bańki zgodny z czasem życia NPC.
+
+Awans do pełnego NPC przyjdzie później.
+
+### 3.6 Wiele układów gwiezdnych (od 2026-11-08)
+
+Podstawa: mapa gwiezdna (`src/game/sector/`, `docs/PLAN-mapa-gwiezdna.md`; demo, do gry niewpięta) i rejestr układów (`src/data/starSystems.js`, reguła `uklady-gwiezdne`). Decyzje użytkownika z 2026-11-07: układów będzie dużo (proceduralne), gospodarki układów są od siebie niezależne, a między układami ruszają się tylko floty kupieckie i wojsko. Dzięki temu koszt rośnie liniowo z liczbą układów. Jedna splątana sieć rynków rosłaby jak N^1,45: 10 kopii Układu Słonecznego w jednym świecie ruchu to 280–315 ms na krok, jeden układ — 8–10 ms.
+
+Kierunek (szczegóły zaprojektuje E18):
+- **Pełna ekonomia ruchu v2 tylko w układzie strony.** Gra ładuje jeden układ na stronę, więc worker ruchu liczy jeden układ, tak jak dziś Układ Słoneczny. Układ Słoneczny zostaje na ręcznych tabelach `src/data/markets.js`, a bramka bilansu (§ 5) pilnuje go jak dotąd.
+- **Rynki układu proceduralnego z jego opisu.** Opis to planety `{ id, type, seed, orbitAU, r }`, pasy i frakcja właściciela. Rodzaj planety wyznacza archetyp przemysłu (`INDUSTRY_ARCHETYPES` w `stationEconomy.js`), pas daje pola wydobywcze, a siedziba frakcji — stocznię. Generator korzysta z tych samych towarów (64), receptur (46) i API (`addMarket`) co Układ Słoneczny, więc nie powstaje druga ekonomia. Wynik jest deterministyczny z ziarna układu.
+- **Układ bez gracza liczy model zbiorczy.** Układ ma jeden wektor towarów: produkcję i zużycie z receptur swoich rynków, zapas i cenę z zapasu. Model liczy się rzadko (np. raz na minutę gry) dla wszystkich układów sektora; przy 160 układach to drobny koszt. Ten sam model nadrabia czas nieobecności gracza w układzie, bez przewijania pełnej symulacji.
+- **Wejście do układu i wyjście.** Przy wejściu pełny świat ruchu startuje z zapasów modelu zbiorczego albo z pełnego zapisu, jeśli gracz był tu niedawno, i przechodzi tę samą rozgrzewkę co dziś (E15) na ekranie ładowania. Przy wyjściu stan idzie do zapisu, a zapasy i ceny — do modelu zbiorczego.
+- **Zapis ekonomii na układ.** Dziś jest jeden klucz `economy`. Pełny zapis, czyli statki w locie, kolejki i rezerwacje, ma układ bieżący i 3 ostatnio odwiedzone (decyzja użytkownika 2026-11-08). Pozostałe układy zapisują tylko stan modelu w tle (zapasy i ceny stacji, czas), a statki dostają od nowa przy wejściu. Dzisiejszy zapis (~15 KB na układ: magazyny, wyrwy, flota frakcji) nie trzyma statków nawet po F5, więc „te same statki” to nowa rzecz w E20. Pomiar E18 w skali gry (×60, po 4 h): 9,9 tys. statków, 1303 kursy, 922 trwające zlecenia i 4958 wraków to 4,2–6,6 MB JSON, czyli 0,28–0,64 MB po gzip na układ (`docs/PROPOZYCJA-ekonomia-ukladow.md` § 4; mój wcześniejszy szacunek ~0,5 MB JSON był ze skali testów ×4). Pełny zapis idzie więc do plików (Electron) albo IndexedDB, nie do localStorage (~5 MB). Wariant „wszystkie odwiedzone” to 45–100 MB po gzip przy 160 układach. Kursy trwają krótko (mediana 6,7 min), więc po ≥ 10 min nieobecności prawie wszystkie statki stoją już w portach. Czas wczytania od liczby układów nie zależy, ale po dłuższej nieobecności statki z zapisu i tak skończyłyby kursy. Floty sektora (konwoje, patrole, piraci) są zawsze wszystkie: mapa gwiezdna liczy je sama, niezależnie od tej liczby. Zapis dostaje pole `systemId`, a `ECONOMY_SAVE_VERSION` rośnie o 1.
+- **Handel między układami prowadzą konwoje sektora.** Konwój ładuje towar tam, gdzie model zbiorczy ma nadwyżkę i niską cenę, i wiezie go tam, gdzie jest niedobór i wysoka cena. Ładowność wynika z liczby frachtowców (`fleetComposition`). Dziś konwój nie niesie towarów, a cel losuje z wagi handlu. Przybycie konwoju zmienia zapasy celu (w układzie strony przez `adjustStationStock` / `stockDelta`). Napad piratów: banda NIESIE zrabowany ładunek do kryjówki. Gracz, który zobaczy napad i pokona bandę, zabiera i łup, i ładunek bandy (decyzja D12).
+- **Granica układu strony to rogi świata.** Konwoje sektora wchodzą i wychodzą punktami skoku (`JUMP_CORNERS`) i lecą prosto do rynków planet: import do odbiorców, eksport od producentów. Rynków granicznych nie ma (decyzja użytkownika D11, 2026-11-08), żeby ruch był przy planetach. Konwój widać w bańce od rogu aż do portu.
+- **Wojsko (później).** Patrole frakcji w sektorze uzupełniają straty z produkcji stoczni frakcji w modelu zbiorczym, a straty patroli tworzą popyt na okręty.
+- **Gracz.** Kredyty i ładownia należą do gracza, nie do układu (zapis gracza, `src/game/playerSave.js`). Gracz handluje między układami tak jak konwoje: kupuje tanio w jednym, sprzedaje drożej w innym. Ograniczają go ładownia i paliwo w strefie.
+- **Obsada (workforce)** działa tak samo w każdym układzie. Źródła to habitaty na planetach `terran` i `ocean`, stacje mieszkalne oraz ringi tam, gdzie są.
+- **Informacja o cenach — przez komputer handlowy (decyzja 2026-11-08).** Mapa gwiezdna cen nie pokazuje. Żeby je zobaczyć, gracz podpina się do komputera, który mówi, kto ile płaci za dany towar. Przykład użytkownika: lód w ładowni, gracz najeżdża na niego i dostaje listę kupców (stacja, układ, cena). Komputer może chwilę liczyć (wskaźnik liczenia), ale musi pokazać wynik. Źródła danych: w układzie strony bufor rynku z mostu (`getTradeEconomy` / `getTradeOffer`), w innych układach model w tle. Dlatego model w tle liczy się na stację (rynek), a nie jeden wektor na układ.
+
+## 4. Zadania
+
+| ID | zadanie | fala | zależy od | pliki (właściciel) |
+|---|---|---|---|---|
+| E1 | Rynek jako jeden obiekt: MarketDef, `addMarket` w trakcie gry, wiadomości workera | 1 | — | nowe `src/data/markets.js` i `src/game/traffic/markets.js`; `trafficWorld.js` (bez `trafficFields`); `travelNetwork.js` (węzły, bez `DRIVE_MODES` / wyceny tras i `randomFieldSpot`); rejestracja stacji w `trafficDirector.js`; `trafficCore.js`; `trafficProtocol.js`; `src/game/trafficBridge.js`; zapasowe id w `agentFleets.js` / `carrierRoster.js` / `transportCompanies.js`; blok „RUCH v2” w `index.html` |
+| E3 | Pas w ekonomii: pola z danych pasa, uszczuplenie, wyrwy | 1 | — | nowy moduł pól wydobywczych; tylko funkcje `trafficFields()` i `randomFieldSpot()`; wydobycie w `trafficDirector.js` (`dispatchMining`, rozładunek urobku); wiadomość wyrw dopisana NA KOŃCU `trafficProtocol.js` i jej obsługa w moście; pliki pasa (`asteroidBeltField.js`, `beltWorld.js`, replika obrazu w `src/3d/asteroids/`); blok pasa i wydobycia w `index.html` |
+| E4 | Ekonomia: stocznie zaopatrywane ceną (cena rezerwacji producenta, kupcy), piractwo, Saturn, bramka bilansu (§ 5), końcowe strojenie | 1 | końcowe strojenie po E5 i E8 | `stationEconomy.js` (`PRICE_MODEL`, progi i rezerwy — bez receptur, archetypów i list konsumpcji); logika licytacji stoczni w `shipyards.js` (bez `WARSHIP_CLASSES`); logika kupców w `agentFleets.js`; `tradeMarket.js`; `piracy.js`; progi nadwyżki w `cargoFleet.js`; planista dyspozytora (bez wydobycia i rejestracji stacji); nowy skrypt bramki w `scripts/` |
+| E8 | Receptury: rafinaty z węgla, niklu i platyny; wieżyczki jako różne towary; silniki jako różne towary, w tym silniki hipercruise `hypercruise_mk1..3` | 1 | kontrakt id silników z E5 (§ 3.4) | `resources.js` (towary, receptury); `INDUSTRY_ARCHETYPES` i wpisy ról w `SYSTEM_INDUSTRY_SPEC` (bez zmiany struktury); listy konsumpcji (`MILITARY_UPKEEP`, `FLEET_DEMAND`) w `stationEconomy.js`; `weaponEconomy.js`; `WARSHIP_CLASSES` w `shipyards.js`; listy konsumpcji w `warDispatcher.js` |
+| E5 | Napędy: jedna tabela, zwolniony gracz, hipercruise, ruch v2 na nowych prędkościach | 1 | — | nowy `src/data/driveModes.js`; `DRIVE_MODES` i wycena tras w `travelNetwork.js`; lot gracza (`src/data/shipFlightSpecs.js`, `src/game/shipModes.js`, `src/game/flight/*`, `src/game/travelNav.js`, bloki lotu, TRAVEL TO i HUD w `index.html`); wejście (`src/input/inputActions.js`, `GameActions`) |
+| E2 | Jedna ekonomia: usunięcie starej ekonomii i flagi `?trafficV2`; `planShipment` i stan zleceń przeniesione z `cargoFleet.js` do ruchu v2; terminal i UI na rynku z mostu; reguła `ruch-v2` | 2 | E1 (strojenie E4 idzie równolegle, bez wspólnych plików) | `trafficDirector.js` (zależność od `cargoFleet`, stan zleceń); `cargoFleet.js` i `transitController.js` (do usunięcia); `infrastructureUI.js`; `index.html` (stara ekonomia, gałęzie `trafficV2`, terminal); `src/game/trafficBridge.js`; nowa reguła `.claude/rules/ruch-v2.md` + wiersz w indeksie `AGENTS.md` |
+| E9 | Hipercruise: trafienia, tunelowanie, wydajność — pomiar i bezpieczne poprawki | 2 | E5 (prędkości przestrajane równolegle) | kolizje i trafienia (`hullBodies.js` i pokrewne, pętle kolizji i pocisków w `index.html`, kolizje `beltWorld`, `haloRingCollision.js`), testy |
+| E10 | Receptury realistyczne — projekt do rozmowy z użytkownikiem, bez kodu | 2 | — | `docs/PROPOZYCJA-receptury-realistyczne.md` |
+| E11 | Gazy i mgły: stan dema (czy gotowe do produkcji, co stoi) i wpięcie do gry | 2 | — (z wyrwami E3: źródła gazu z asteroid) | najpierw ocena i raport; dalej moduły gazu (reguła `wybuchy-gaz`) |
+| E2b | Jeden model handlu: API rynku (oferty, rezerwacje) dla wszystkich — przewoźnicy, kupcy, gracz, stocznie, wojna, złomiarze, paser | 2 | E2 i końcowe strojenie E4 | moduły ruchu v2 (`agentFleets.js`, `shipyards.js`, `scrapperFleets.js`, `piracy.js`, planista) |
+| E6 | Bańka w grze (Z13 zwężone, § 3.5) | 3 | E1, E2, E5 | nowy `src/game/trafficBubble.js`, `materializedFlight.js`, `shipProxyBatch3D.js` + `src/render/`, `haloPortDocking.js`, `index.html` |
+| E7 | Gracz na rynku: terminal na ofertach, komputer handlowy, stacja gracza jako rynek, zapis stanu ekonomii i wyrw | 4 | E2 | `src/ui/`, `index.html`, zapis gry |
+| E12 | Przeładunek w portach: ładownie floty, rój dronów liczony na żywo na GPU, taśmociągi | 4 | E6 (kontrakt `actors.cargo`) | `src/3d/cargo/`, `src/3d/swarm/`, `src/game/swarm/`, `src/game/portCargoFrame.js`, `src/render/blocks/cargoOpsBlock.js` |
+| E13 | Kadłuby ruchu: mostki, rdzenie, zbiorniki paliwa, gniazda i dysze; broń i AI bojowa awansowanych okrętów; sprite'y Z11 | 5 | E6; E12 (ładownia ciężkiego frachtowca) | `src/data/trafficHulls.js`, `hardpointEditorDefaults.js`, `reactorCores.js`, `engineFx.js`, `src/game/trafficPromotion.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html`, `assets/ships/` |
+| E14 | Doki portów bez ringu: dok krzyżowy, dok okrągły, koło z wlotem (jak stacja z Elite Dangerous, płaska) | 5 | E6 | `dockLayout.js`, `DOCK_LAYOUT` w `src/data/markets.js`, `portPaths.js`, nowy moduł 3D doków, kolizje 2D |
+| E15 | Widoczny ruch: rozgrzewka świata ruchu przy ładowaniu, reda i orbita postojowa w bańce, bańka w studni grawitacyjnej i większy promień przy portach | 5 | E6, E14 | `trafficCore.js`, `workerBubble.js`, `materializedFlight.js`, `portParking.js`, `src/game/trafficBubble.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html` |
+| E16 | Workforce — projekt bez kodu: X workforce na budynek, źródła (ringi, strefy zielone Marsa, w przyszłości bazy w asteroidach), promy rotacyjne, skutek niedoboru, bilans | 5 | — | `docs/PROPOZYCJA-workforce.md` |
+| E17 | Grafika statków ruchu: proxy bańki (ruch, zapas floty, reda) z lakierem, oświetleniem v2, oknami i światłami jak pełne kadłuby; bez „wybudzania” przy awansie | 6 | E6, E13, E15 | `src/3d/shipProxyBatch3D.js` / `.tsl.js`, `src/render/blocks/trafficBlock.js` |
+| E18 | Wiele układów — projekt bez kodu (§ 3.6): generator rynków z opisu układu, model zbiorczy układu bez gracza (kalibracja na Układzie Słonecznym: ceny i przepływy modelu kontra pełna symulacja), wejście i wyjście z układu, zapis ekonomii na układ (rozmiar, limit), handel konwojów sektora, granica układu (rogi świata), wojsko | 7 | — | `docs/PROPOZYCJA-ekonomia-ukladow.md` |
+| E19 | Rynki układu proceduralnego z danych układu: generator rynków, świat ruchu z rynków układu przy `?uklad=<id>`, bramka bilansu na 3 układach z ziarna; Układ Słoneczny bez zmian (bramka liczba w liczbę) | 7 | E18; pierwszy układ proceduralny w grze (sesja „Ograniczenie gracza w jednym układzie”, tam ekonomia wyłączona) | nowy moduł rynków układu w `src/game/traffic/`, budowa świata ruchu w `trafficWorld.js`; `starSystems.js` tylko do odczytu |
+| E20 | Model zbiorczy układu i zapis ekonomii na układ: nadrabianie nieobecności, pełny zapis ostatnich układów, start świata ruchu z modelu zbiorczego | 7 | E18 | `src/game/traffic/economySave.js`, nowy moduł modelu zbiorczego |
+| E21 | Handel między układami: ładunek konwojów z modeli zbiorczych, napad zabiera ładunek, rozliczenie przy wejściu do układu, import i eksport rogami świata w układzie strony | 8 | E19, E20, wpięcie strefy w grę (`docs/PLAN-mapa-gwiezdna.md`, „Wpięcie w grę”) | `src/game/sector/sectorFleets.js` (ładunek konwoju, łup niesiony przez bandę — D12; zmiany w `src/game/sector/` uzgadnia sesja mapy gwiezdnej local_626d8e11-5a34-4ec0-834b-a787c4a6aca6), konwoje do rynków planet w ruchu v2 (bez rynku granicznego — D11) |
+| E22 | Kapsuły ratunkowe: zniszczony statek (bez pirackich) po chwili odpala kapsuły, które lecą do najbliższej przyjaznej stacji (prom do portu nadania) i tam znikają. Ludzie z promu wracają do magazynu w chwili dolotu, co zastępuje natychmiastowy powrót z W6 | 6 | W6 (tylko krok promów) | nowy moduł logiki kapsuł w `src/game/`, obraz w `src/3d/` z blokiem migawki, ścieżki śmierci NPC i statków ruchu (`src/game/trafficBubble.js`), reguła `kapsuly-ratunkowe` |
+| E24 | Górnicy i złomiarze w akcji: bańka także przy aktywnych miejscach pracy (punkt wydobycia, wrak celu holownika); górnik z dronami i laserami przy skałach; wraki gry w pobliżu gracza zgłaszane złomiarzom (karencja 5 min, bez wraków, które gracz tnie, holuje albo zbiera, i bez fabularnych); cięcie i hol na prawdziwym wraku, który potem znika | 6 | W6 (`destroyCourse`) | nowy `src/game/trafficSalvage.js`, dekoder `works` w `src/game/trafficBubble.js`, wywołania w bloku bańki `index.html` (opakowanie `onWreckSpawned`), wiadomości `wreck-report` / `wreck-gone` / `wreck-salvaged` w świecie ruchu |
+| E23 | Komputer handlowy „kto ile płaci” (§ 3.6, projekt E18 § 9): E23a — w układzie strony, od razu (najechanie na towar w ładowni → kupcy: stacja, cena, odległość); E23b — inne układy z modelu w tle, wiedza gracza i opóźnienie przekaźników | 6 / 8 | E23a: E7 i most; E23b: E20, E21 | E23a: `src/game/trafficBridge.js` (`findTradePartners`), `src/ui/cockpitUI.js` (karta „Ładownia”), terminal w `index.html` (karta „Handel”), `src/ui/cicTradeLayer.js`; E23b: `trafficCore.js` / `trafficProtocol.js`, zapis gracza |
+
+Fala 1 (E1, E3, E4, E5, E8) rusza równolegle, każda sesja we własnym worktree. Pliki wspólne (`trafficWorld.js`, `travelNetwork.js`, `trafficProtocol.js`, `trafficBridge.js`, `agentFleets.js`, `trafficDirector.js`) dzielimy po FUNKCJACH, jak w tabeli. Konflikty przy scalaniu rozwiązuje orkiestrator.
+
+Kolejność scalania: E1 → E5 → E8 → E3 → E4. E4 kończy strojenie bilansu na prędkościach z E5 i recepturach z E8.
+
+## 5. Bramka bilansu
+
+Bramkę buduje E4, używają jej wszyscy. Skrypt w `scripts/` puszcza symulację na 3 ziarnach (7, 11, 23; 240 min, presja 1, magazyny ×4, skala ×60) i sprawdza progi. Wynik zapisuje w JSON do `.tmp/`, a przy niezaliczeniu kończy się kodem wyjścia ≠ 0.
+
+Progi startowe to propozycja: E4 je stroi, użytkownik akceptuje.
+- przechwycone 12–20% rozstrzygniętych kursów z ładunkiem przy presji ×1 (decyzja z 2026-10-22: więcej piractwa; wcześniej ≤ 15%);
+- żaden surowiec, którego stacja chce, nie stoi na 0% dłużej niż 30 min gry;
+- żadna stocznia nie stoi bez podzespołów dłużej niż 30 min;
+- średnia kolejka na redzie ≤ 2 w każdym porcie;
+- tick ≤ 25 ms przy szczycie kursów.
+
+Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że użytkownik zdecyduje inaczej.
+
+## 6. Zasady dla sesji
+
+- **Worktree.** Każda sesja pracuje we własnym worktree i commituje na swoją gałąź. NIE scala do main i NIE pushuje; scala orkiestrator po przeglądzie.
+- **Plan czytaj z głównego drzewa:** `C:\Users\Szymon\Documents\GitHub\statki\docs\PLAN-ekonomia-rynki.md`, bo w worktree go nie ma. Nie edytuj go: zmiany i wnioski idą do raportu.
+- **node_modules.** Gdy w worktree ich brak, zrób junction do `C:\Users\Szymon\Documents\GitHub\statki\node_modules`. Przed usunięciem worktree usuń sam junction (Delete na linku), bo inaczej kasowanie pójdzie w prawdziwy katalog.
+- **Testy.** Zanim cokolwiek zmienisz, zrób bazę w SWOIM worktree: `npm test` i `node --test "tests/*.test.mjs"`. Świeży worktree ma końce linii CRLF, przez co ok. 9 strażników opartych na regexach pada fałszywie. Raportuj różnicę względem bazy.
+- **Symulacja.**
+  - Przed zmianą zrób bazę: `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60`.
+  - Zmiany zachowania porównuj na co najmniej 3 ziarnach (7, 11, 23): po pierwszej innej decyzji pojedynczy przebieg rozjeżdża się chaotycznie.
+  - Refaktor bez zmiany zachowania musi dać wynik identyczny liczba w liczbę.
+- **Determinizm.** Losowość symulacji tylko z `rng` świata, bez `Math.random`. Nowe id bez liczników na poziomie modułu.
+- **AGENTS.md obowiązuje:** szew gra ↔ render, rozgrzewka pipeline'ów, haki przekrojowe, wizualia przez `fxRandom`. Zrzuty i pomiary zapisuj tylko do `.tmp/` albo scratchpada.
+- **Gameplay testuje użytkownik.** Sesja robi testy, build (`npm run build`; jeśli pada na `AISPACE.html`, użyj tymczasowego configu ze scratchpada z `input: ['index.html']`), pomiary i zrzuty narzędziami `scripts/webgpu/*-gra.mjs`.
+- **Cudze pliki** z tabeli § 4 ruszaj tylko minimalnie i opisz to w raporcie. Gdy praca wymaga większej zmiany w cudzym obszarze, najpierw napisz do orkiestratora.
+- **Raport końcowy** (do 400 słów):
+  - nazwa gałęzi i commity;
+  - co się zmieniło (pliki);
+  - testy w liczbach względem bazy;
+  - symulacja przed i po;
+  - decyzje dla użytkownika;
+  - ryzyka i to, czego nie zrobiono.
+
+## 7. Otwarte (decyduje użytkownik, sesje zgłaszają propozycje)
+
+- prędkości gracza po zwolnieniu i vmax hipercruise (E5 proponuje liczby z uzasadnieniem);
+- czy hipercruise da się przerwać (propozycja: tak, warpu nie);
+- lista wieżyczek jako towarów: rodzaje i liczba pozycji (E8 proponuje);
+- rodzaje silników i ich receptury (E8);
+- domyślne silniki hipercruise gracza i frachtowców ruchu (E5);
+- progi bramki bilansu (§ 5);
+- wygląd wyrw i ewentualna regeneracja pasa (domyślnie brak);
+- statki ruchu widoczne w grze między falą 2 a 3 (§ 3.2);
+- zapis stanu ekonomii i wyrw (E7);
+- wiele układów (§ 3.6) — decyzje użytkownika 2026-11-08: układ bez gracza liczony W TLE; import i eksport w układzie gracza WIDOCZNE (konwoje wchodzą rogami świata i rozładowują się w portach); ceny NIE na mapie gwiezdnej, tylko przez komputer handlowy („kto ile za co płaci”, § 3.6). Pełny zapis (te same statki po powrocie) ma układ bieżący i 3 ostatnio odwiedzone; pozostałe zapisują tylko stan modelu w tle (decyzja po wyjaśnieniu, 2026-11-08). E18 mierzy rozmiar i czas. Projekt E18: wszystkie decyzje D5–D18 rozstrzygnął użytkownik w ankiecie 2026-11-08 (`docs/PROPOZYCJA-ekonomia-ukladow.md` § 10.2a). Rekomendacje przeszły z trzema zmianami: D11 — bez rynków granicznych, konwoje lecą do planet; D12 — banda niesie łup do kryjówki, a gracz może go jej odebrać; D17 — rozgrzewka przy nowej grze zostaje 6–10 s, ze statusem „Stabilizacja gospodarki” dla gracza.
+
+## 8. Stan
+
+- 2026-10-21: plan spisany, ruszyła fala 1 (E1, E3, E4, E5). Tego samego dnia użytkownik dołożył E8 (receptury: wieżyczki, silniki, silniki hipercruise 20–40 tys. j./s); receptury zdjęte z E4.
+- 2026-10-21 E4: bramka bilansu gotowa — `scripts/bramka-bilansu.mjs` (commit cf5b56e3 na gałęzi `claude/e4-ekonomia-bilans-c1e481`). Użycie: `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]`; wynik w `.tmp/bramka-bilansu/`, kod 1 przy niezaliczeniu. Progi jak w § 5, przy czym „stocznia bez podzespołów” mierzy się jako stocznia z pustą pochylnią, a głód jako < 1% magazynu. Rozesłana do E3, E5 i E8 jako kopia bez commita.
+- 2026-10-22 (noc): wszystkie gałęzie fali 1 wyszły z `origin/main` (9d0e61fd), który jest 55 commitów za lokalnym `main`. Sesje E3, E4 i E5 dostały polecenie, żeby przed raportem końcowym zrobić u siebie `git merge main`.
+- 2026-10-22 E1 scalone do main (641f8dc7):
+  - `src/data/markets.js` (`MARKET_DEFS`), `src/game/traffic/markets.js` (`addMarket` / `removeMarket` / `setMarketOwner` / `addMarketBuilding`);
+  - wiadomości workera `market-*` i API mostu;
+  - stacje misyjne piratów pod `?trafficV2` jako rynki.
+  - Sprawdzone po scaleniu: `npm test` 1719 asercji zielone, symulacja na ziarnie 7 identyczna z bazą liczba w liczbę, `node --test` bez nowych porażek (2 testy padają tylko pod obciążeniem, osobno przechodzą).
+  - Uwagi E1: rynek dodany w trakcie gry nie ma własnych przewoźników (obsługują go puste przeloty); śmierć stacji znanej mostowi zgłasza `stationDestroyed`; notatka API dla E2, E6 i E7 to `E1-rynek-API.md` w notatkach sesji.
+- 2026-10-22 E8 scalone do main (34e758f1). Konflikt w `weaponEconomy.js` rozwiązany: blokada `npcOnly` z main plus `weaponGood` z E8.
+  - Treść: 3 rafinaty (nadstop niklu, kompozyt węglowy, katalizator platynowy), 8 rodzin luf (rozmiar = liczba sztuk), silniki `drive_light`, `drive_heavy` i `hypercruise_mk1..3`, nowe składy okrętów.
+  - Po scaleniu: `npm test` 1759 zielone; symulacja na ziarnie 7: 10 862 dostaw, przechwycone 35%, 567 okrętów (tyle samo co w raporcie E8, więc E1 nie zmienia zachowania), tick 33,6 ms.
+  - Tick (+40%) to koszt O(n²) `nextShipmentOrderId` w `cargoFleet.js`; poprawka zlecona E4.
+  - Odkrycie E8: podzespoły okrętowe w ruchu v2 w ogóle nie jeżdżą między stacjami (0 zleceń, także w bazie), więc silniki powstają w stoczniach.
+  - Do akceptacji użytkownika: tabele towarów i składy okrętów (raport E8, `E8-receptury.md`).
+- 2026-10-22 E5 scalone do main (6b816997): `src/data/driveModes.js`, `src/game/flight/hypercruise.js`.
+  - Gracz: PRZELOT do 1200 j./s, dopalacz 1000 / 1800 j./s, hipercruise do 20 tys. j./s w 16 s (Atlas), TRAVEL TO na 30 tys. j. w 12,8 s, Luna w 46 s, blokada masy zatrzymuje statek w 2,8 s.
+  - Ruch v2: szczyt kursów w powietrzu spada z 6285 do 1826, a dostaw jest dwa razy więcej.
+  - Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`. Liczby prędkości czekają na akceptację użytkownika.
+- 2026-10-22 E3 scalone do main (9885ed90): `src/game/traffic/miningFields.js`, rejestr uszczuplenia, wyrwy przez `beltWorld`.
+  - 96% wypraw kończy się w polach ze skałami (wcześniej 21–25%).
+  - Opis: `docs/E3-pas-w-ekonomii.md`. Pokrętła są w `MINING_FIELDS_CONFIG`.
+  - Wygląd wyrw czeka na ocenę użytkownika.
+- 2026-10-22 E4 scalone do main (3d8a3dde): `scripts/bramka-bilansu.mjs`, cena rezerwacji producenta, kupcy zaopatrujący stocznie, piractwo, `nextShipmentOrderId` bez O(n²).
+- **Wynik fali 1 na całości** (bramka `fala1-main`, ziarna 7 / 11 / 23, wobec bazy z § 2):
+  - przechwyty: 5,8–5,9% kursów z ładunkiem (baza ~40%) — zaliczone;
+  - stocznie: najdłuższy postój 0 min (baza: 5 stoczni stało 240 min) — zaliczone;
+  - tick: 22–24 ms przy szczycie ~1400 kursów — zaliczone;
+  - głód: 3–6 pozycji ponad 30 min, najdłużej ok. 40 min (Westa: nadstop niklu i `hypercruise_mk1`; Uran, Westa i Merkury: jeden z napędów) — niezaliczone;
+  - kolejka na redzie: Saturn i Uran 5,2–7,7 (porty bez ringu) — niezaliczone;
+  - dostawy ok. 20 tys. (baza 8,2 tys.), zwodowane 867–913 okrętów.
+- Testy na całości:
+  - `npm test`: 1 błąd. `materializedFlight` („bez wymuszonych przechwytów”) to UKRYTY BŁĄD BAŃKI, który ujawnił inny przebieg ruchu po E3 + E5 (osobno obie gałęzie są zielone). Prom na `luna:dok2:b1` stoi w pozie (odchyłka 0 / 0,7 j., kąt 0), ale kręci się w miejscu (`angVel` 0,161 > 0,07), bo goni punkt stanowiska bliższy niż 1 j. Strażnik wymusza przechwyt po 25 s. Bańki nie ma w grze, więc to pierwszy punkt E6.
+  - `node --test`: 3100 testów, 1 porażka (`cicBeltLayer`, tylko pod obciążeniem; osobno przechodzi).
+  - `npm run build`: przechodzi.
+- Na jutro:
+  - E4: końcowe strojenie (głód nowych towarów E8 w dalekich stoczniach, kolejki Saturna i Urana, saldo `thruster`);
+  - decyzje użytkownika: tabele E8, prędkości E5, wygląd wyrw E3, progi bramki;
+  - fala 2 (E2);
+  - reguła ruchu v2 w `.claude/rules/` z wierszem w indeksie `AGENTS.md` (propozycja E1);
+  - poza falą: 1 pipeline kompilowany synchronicznie w skoku warpa przez pas (`AsteroidBelt:rocksSmear`, z main sprzed fali 1) — brak rozgrzewki w obszarze pasa.
+- 2026-10-22: użytkownik zlecił strojenie E4 i falę 2 na obecnych liczbach. Decyzje (prędkości, receptury, wyrwy, progi bramki, przerwa w widocznym ruchu § 3.2) poda w trakcie, a wtedy przestroimy.
+  - E4: końcowe strojenie na `main` — skup stoczni, kupcy, kolejki Saturna i Urana, saldo `thruster`. Bez `cargoFleet.js` i bez planisty.
+  - E2 ruszyło z worktree wyciętego z lokalnego `main`.
+  - Wspólne API rynku dla wszystkich wydzielone jako E2b. Rusza po E2 i po strojeniu E4, żeby zmiany w kupcach i stoczniach się nie nakładały.
+- 2026-10-22: decyzje użytkownika (§ 1, punkty 8–13) rozesłane:
+  - E5: bojowy ok. 500 (nieokrągły), dopalacz 1000–1200, PRZELOT usunięty, warp Mk1–3 (100–250 tys.);
+  - E8: towary `warp_mk1..3`;
+  - E3: mgła i pył rzedną w wyrwach;
+  - E4: piractwo w paśmie 12–20%;
+  - E2: bez widoku vanów.
+  - Ruszyły nowe sesje E9 (hipercruise a kolizje), E10 (receptury realistyczne) i E11 (gazy i mgły). Wszystkie z worktree wyciętego z lokalnego `main`.
+- 2026-10-22 fala 2 scalona do `main` (78886901): E2, E5, E8, E4, E3, E9, E10, E11 i poprawka przeszkód gazu wybuchów w workerze.
+  - Konflikty rozwiązane przy scalaniu: komentarz w `driveModes.js` (E2 / E5), sufity szwu renderu (E2 + E11: `index:aktualizacja` 114) i podwójny import `gasObst` w workerze.
+  - Testy na całości:
+    - `npm test` 1693 asercje zielone (znany błąd bańki tym razem się nie ujawnił, nadal jest ukryty);
+    - `node --test` bez nowych porażek;
+    - build przechodzi;
+    - start gry w workerze: 0 pipeline'ów sync;
+    - scena gazu w trybie gracza: gaz się rysuje, 0 pipeline'ów sync.
+  - Bramka (`fala2-main`):
+    - zaliczone: przechwyty 15,5–16,3%, głód ≤ 15 min, stocznie 0 min;
+    - niezaliczone: kolejki (Ceres 3,2–3,3, Oberon 2,7) i tick 25–27 ms (mierzony pod obciążeniem).
+- 2026-10-22: sesje nie pytają użytkownika — pytania idą do orkiestratora, a decyzje użytkownika zbierane są w jedną listę.
+- 2026-10-22 użytkownik przyjął wszystkie rekomendacje orkiestratora:
+  - prędkości E5: Atlas 507, dopalacz 1137, warp Atlasa Mk II, krótkie TRAVEL TO według propozycji;
+  - hipercruise w strefie planety ×0,6;
+  - gaz pasa: siarka −30% jasności, gaz zastępuje stare płaty mgły w pasie, etap GK-5b;
+  - receptury E10 w wariancie grywalnym, krokami przez bramkę: Księżyc jako kopalnia, uran tylko z Kuipera przy połowie popytu, reaktor D–He-3, tarcze jako towar, azot z Tytana;
+  - fregata z warpem Mk I;
+  - bańka E6 rusza;
+  - E2b w sesji E2.
+- 2026-10-22 decyzja: hipercruise dostaje OBECNY efekt warpa (struga WARP, smugi, kamera). Nowe efekty warpa robi użytkownik, więc wyglądu warpa nie ruszamy.
+- Zadania po tych decyzjach:
+  - E4: kolejki i tick;
+  - E5: Księżyc ×0,6 i efekt hipercruise;
+  - E9: bezpieczniki hipercruise (płyta ringu, olbrzym);
+  - E10: wdrożenie wariantu grywalnego razem z warpem fregaty i składem warpa;
+  - E11: GK-5b, siarka, jedna mgła;
+  - E2: E2b;
+  - E6: bańka — najpierw prom przy Księżycu.
+- 2026-10-22 do `main` (facd99cc) weszły:
+  - E9: bezpieczniki hipercruise — przebicia płyty Ziemi spadły z 17–42% do 0%;
+  - E11 GK-5b: olbrzymy jako przeszkody gazu, wybuchy i pociski jako źródła gazu, jedna mgła w pasie, siarka −30%, gaz rzednie w wyrwach.
+  - Testy: `npm test` 1693 zielone, `node --test` bez nowych porażek, build przechodzi, start w workerze 0 pipeline'ów sync.
+- 2026-10-22 E6 (sesja uruchomiona przez użytkownika):
+  - krok 0: prom przy Księżycu naprawiony (`e71377f5`); poprawka kursu wygasa na ostatnich j., 312 podejść, 0 wymuszeń;
+  - krok 1, zatwierdzony przez orkiestratora: lot bańki liczy worker ruchu, gra dostaje bufor aktorów i sama liczy trafienia, taran i rejestr stanowisk (`destroyed`, `berth-hold`), proxy rysuje worker renderu; tylko przy Ziemi.
+- 2026-10-22 E5 w `main` (46299757): hipercruise ma OBECNY efekt warpa (plazma WARP, bańka i ośrodek „Nurtu”, smugi, kop kamery) i leci ×0,6 przy planetach.
+  - Luna trwa 75 s; resztę czasu zabiera warp i końcowy dolot.
+  - Przy scalaniu jeden konflikt w regule `statek-gracza`: opis efektu (E5) połączony z bezpiecznikami (E9).
+  - Testy zielone, build przechodzi, w grze 0 pipeline'ów sync (`scripts/webgpu/hipercruise-efekt-gra.mjs`).
+- 2026-10-22 E10: wszystkie 6 kroków receptur zacommitowane, bramki kroków biegną. Czysty pomiar ticku zrobi E4 na końcu, na scalonym `main`, w oknie ciszy.
+- 2026-10-22 E4 w `main` (3d19d01a):
+  - kolejki zaliczone: 1,75–1,96 (`MARKET_DOCK_OVERRIDES`: Ceres ×5, Oberon ×2);
+  - pamięć `stationWantsResource`: symulacja identyczna, tick −30% pod tym samym obciążeniem.
+  - Następne gorące miejsce, `findTradeOpportunities` (24% ticku), przekazane E2 do E2b jako indeks per surowiec bez zmiany wyniku.
+  - Tick (50–68 ms pod obciążeniem innych sesji) zmierzymy w jednym oknie ciszy po E2b, E6 i E10.
+- 2026-10-22 E10, krok 3: głód uranu na Saturnie spadł z 14,4 do 8,7 min, kolejka Ceres wróciła do poziomu bazy.
+- 2026-10-22 E10 w `main` (4f42a2aa): wariant grywalny receptur.
+  - Towary 55 → 63, receptur 46. Nowe: materiał wybuchowy, ruda glinu i glin, ceramika pancerna, ruda ziem rzadkich (Luna ~90%), taśma nadprzewodząca, emiter tarczy (okręty 1 / 3 / 6 / 9), azot (Tytan, Tryton).
+  - Reaktor: 2 taśmy + 1 pręt.
+  - Warp Mk I / II / III: 870 / 4000 / 7000 CR. Fregata ma warp Mk I.
+  - Koszt na punkt siły: 6104 / 6424 / 7276 / 9105 CR.
+  - Bramka po scaleniu: przechwyty 15,0–15,7%, głód maks. 6,8 min, kolejki ≤ 1,47, stocznie 0 min, zwodowane 785–881. Tick czeka na okno ciszy.
+  - Bilans analityczny:
+
+    | surowiec | przed | po |
+    |---|---|---|
+    | uran (na cykl) | 2,40 | 1,15 |
+    | krzem | 130% | 191% |
+    | nikiel (najciaśniejsza nowa ruda) | 131% | 111% |
+
+  - Testy: `npm test` 1699 zielone, build przechodzi.
+- 2026-10-22 do `main` (283129a0) weszły E2b i E4.
+  - E2b — wspólne API rynku:
+    - `marketBook.js`, `marketStock.js`, `director.book`: oferty i rezerwacje dla przewoźników, kupców, gracza, stoczni, wojny, złomiarzy i pasera;
+    - indeks okazji handlowych per surowiec;
+    - domyślny model `surplus`; wariant `reservation` za przełącznikiem, bo nie zalicza bramki (Wenus: kolejka 348–2059, głód rudy 42–71 min); opis A/B w `docs/E2b-api-rynku.md`.
+  - E4 — garnizon K-7: patrole i floty frakcji mają postój i tankowanie w K-7.
+  - Przy scalaniu dwa proste konflikty (`trafficWorld.js`, `warDispatcher.js`).
+  - Bramka na całości (`e2b-e4`, ziarna 7 / 11 / 23):
+
+    | próg | wynik | ocena |
+    |---|---|---|
+    | przechwyty | 15,0–15,7% | zaliczone |
+    | głód | ≤ 6,8 min | zaliczone |
+    | stocznie | 0 min | zaliczone |
+    | kolejki | ≤ 1,47 | zaliczone |
+    | tick | 24,3 / 24,8 / 29,2 ms | dwa ziarna zaliczone; ostatnie do okna ciszy |
+
+  - Testy: `npm test` 1734 zielone, build przechodzi.
+- 2026-10-22 E6 (`claude/frosty-moser-69ca47`):
+  - płynne pozy przy 240 Hz: ekstrapolacja drugiego rzędu, p99 skoku 0,19 j.;
+  - napęd z tabeli napędów;
+  - zapas floty jako encje STOCK na padach K-7;
+  - `berth-hold` gracza.
+  - Czeka na `git merge main` po swojej stronie; scalenie po nim.
+- 2026-10-22 E6 w `main` (9d9db47a): bańka przy Ziemi.
+  - Harness w trybie gracza: 49 statków ruchu, 26 dokowań (24 w zatokach i 2 okręty garnizonu w K-7) obok 6 okrętów zapasu na padach.
+  - Trafienie i taran niszczą cel, a worker oddaje wrak.
+  - Gracz trzyma swoje stanowisko, ruch na nie nie wchodzi.
+  - 0 błędów, 0 pipeline'ów sync. `npm test` 1749 zielone, build przechodzi.
+  - Opis: `docs/E6-banka-w-grze.md`.
+  - Decyzja orkiestratora: zestrzelony okręt garnizonu to strata z zapasu frakcji (księgowanie robi E4). Okręty zapasu (STOCK) zostają nietykalne jako widok zapasu.
+- 2026-10-22 E4 w `main` (06f4d10a): BRAMKA ZALICZONA w całości na 3 ziarnach.
+
+  | próg | wynik |
+  |---|---|
+  | przechwyty | 15,2–15,4% |
+  | głód | 0 pozycji > 30 min, najdłużej 6,3 min |
+  | stocznie | 0 min |
+  | kolejki | 0,79–1,87 |
+  | tick | 11,5–12,3 ms |
+
+  - Tick spadł z 26,4 / 24,8 do 9,9 / 10,1 ms dzięki indeksom: zlecenia po id, manifest wraku per klasa, niedobory tylko po chcianych towarach. Wynik symulacji jest identyczny liczba w liczbę.
+  - Zestrzelony okręt garnizonu zdejmuje okręt z zapasu frakcji i zostawia wrak.
+  - Testy: `npm test` 1755 zielone.
+- Dalej:
+  - ~~E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie~~ — zrobione;
+  - ~~bańka dla pozostałych portów i awans do pełnego NPC~~ — zrobione (E6 etap 2);
+  - ~~E7: gracz na rynku i zapis ekonomii~~ — zrobione.
+- 2026-10-22 następny etap, decyzja użytkownika: „tak”, plus nowa sesja na przeładunek w portach.
+  - E6 (ta sama sesja):
+    - bańka w pozostałych portach: Mars, Jowisz, porty bez ringu, księżyce, Ceres i Westa, kryjówki;
+    - awans aktora do pełnego NPC w walce;
+    - strefa planety ×0,6 w bańce;
+    - kontrakt danych przeładunku z E12.
+  - E7 (w sesji E2):
+    - terminal na ofertach API rynku;
+    - komputer handlowy (agregat z rekordów);
+    - stacja gracza jako rynek (`addMarket` w biegu, budynki);
+    - zapis ekonomii, wyrw i zapasu flot.
+  - E12 (nowa sesja), przeładunek w portach według dem:
+    - ładownie: `dema/ladownia-webgpu.html`, `src/data/cargoBays.js`, `src/3d/cargo/`;
+    - roje dronów przeładunkowych: `dema/roj-webgpu.html`, `src/3d/swarm/`, `src/game/swarm/`;
+    - taśmociągi: budowle Z7, `src/3d/portBuildings/`;
+    - kontenery Z5: `src/data/cargoContainers.js`, `src/game/cargoPortOps.js`;
+    - wszystko podpięte pod dokowanie w bańce E6.
+- 2026-10-22 decyzja użytkownika dla E12: rój dronów w grze liczony NA ŻYWO NA GPU, z symulacji z dema (ORCA, wieża), a nie z analitycznego planu.
+  - Wymagania: sloty stanowisk w jednej puli; statek zastany w połowie postoju startuje ze stanu zgodnego z zegarem kursu, bez przewijania minut w jednej klatce; koniec postoju domyka obraz zgodnie z ekonomią.
+  - Koszt mierzony przy ok. 20 stanowiskach. Jeśli za drogo, symulacja na żywo tylko dla N stanowisk najbliżej kamery, a reszta pokazuje stan z zegara.
+- 2026-10-22 E7 w `main` (078eabc9), z sesji E2:
+  - terminal na księdze rynku (port sprzedaje nadwyżkę, skupuje tylko używane towary do celu zapasu);
+  - komputer handlowy jako warstwa HANDEL w CIC (klawisz H);
+  - stacja gracza jako rynek (API + `DevEconomy`, bez UI budowy i bez modelu 3D);
+  - zapis ekonomii v1: magazyny, wyrwy, floty, stacje gracza; co 20 s i przy zamknięciu.
+  - Testy: `npm test` 1779 zielone, build przechodzi, start w workerze 0 pipeline'ów sync.
+  - Opis: `docs/E7-gracz-na-rynku.md`.
+  - Decyzje dla użytkownika, z rekomendacją orkiestratora:
+    - interfejs budowy stacji gracza (§ 3 notatki E7);
+    - zysk ze stacji: marża portu;
+    - „Nowa gra” czyści zapis ekonomii;
+    - nowe zachowanie terminala;
+    - uzupełnienie kadłubów ruchu (mostki, reaktory, zbiorniki, gniazda) w osobnej sesji.
+- 2026-10-22 E6, etap 2 (`claude/frosty-moser-69ca47`): bańka we wszystkich portach (`world.docks`), strefa planety, kontrakt E12 (`actors.cargo`), awans do pełnego NPC (trafienie gracza, 1 na klatkę, do 8 naraz). Czeka na `git merge main` z E7 po swojej stronie.
+- 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
+- 2026-10-22 E6 etap 2 w `main` (34fcd98a):
+  - bańka we wszystkich portach: ringi Marsa i Jowisza, pomosty, księżyce, Ceres, Westa, kryjówki, stacje gracza;
+  - strefa planety ×0,6 także w locie bańki;
+  - kontrakt przeładunku dla E12 (`actors.cargo`);
+  - awans do pełnego NPC po trafieniu gracza: 1 na klatkę, do 8 naraz, powrót do bańki po walce.
+  - Testy: `npm test` 1781 zielone; `node --test` 3170 testów, 1 porażka (`cicBeltLayer`, budżet czasu pod obciążeniem innych sesji; osobno 10/10); build przechodzi; start w workerze 0 pipeline'ów sync.
+  - Znalezisko spoza bańki: 3 pipeline'y kompilowane synchronicznie od modeli stacji planet (GLB) przy pierwszym teleporcie do odległego portu. Poprawka E6 w `main` (7f5cea29): worker rozgrzewa szablony modeli stacji pod kurtyną ładowania (219 ms), szablon wczytany po limicie — w wolnej chwili. Przegląd 6 portów (Mars, Jowisz, Luna, Ceres, Merkury, Westa): 0 pipeline'ów sync w obu trybach.
+- 2026-10-22 E12 (`claude/e12-przeladunek-c31e74`, de01f388): rój liczony na żywo na GPU (symulacja z dema w puli 8 slotów stanowisk), ładownie floty, stoły i taśmociągi, luk Atlasa z ładunkiem. Koszt CPU +0,4–0,7 ms przy budżecie 0,3 ms.
+  - Decyzja orkiestratora:
+    - scalić kernele `kClear` i `kBin`;
+    - krok roju tylko przy slocie w kadrze, więc poza portem koszt 0;
+    - liczba slotów z presetu grafiki: Niska 0, Średnia 4, Wysoka i Ultra 8.
+  - Kroku 1/30 s nie bierzemy, bo zmienia dynamikę dema.
+  - Kontrakt E6 jest już w `main`, więc bramka `?przeladunekDemo=1` znika: przeładunek widać domyślnie, a `?przeladunek=0` zostaje do A/B.
+- 2026-10-22 E12, runda 2 (27eeaaed): przeładunek domyślnie, także w zatokach Marsa i Jowisza; 3 kernele na krok (wynik w szumie A/A), krok tylko przy pracy, sloty z presetu (`cargoSwarmSlots`), cienie dronów.
+  - Koszt (A/B z `?przeladunek=0`): CPU workera w szumie (±0,2 ms), GPU +0,07–0,24 ms przy 14 stanowiskach, poza portem 0.
+  - Próbne scalenie z `main`: testy zielone (poza `cicBeltLayer` pod obciążeniem), build, start w workerze 0 sync, przegląd 6 portów 0 sync i 0 błędów. Rozgrzewka przy ładowaniu dłuższa o ok. 0,9 s (flush workera 1659 → 2565 ms).
+  - Niezależny przegląd kodu znalazł błędy obrazu: `snap()` cofa przeniesione kontenery, slot zakładany w fazie przechwytu (przesunięta ładownia), nieaktualny odczyt po ponownym użyciu slotu, resztki slotu na cudzym stanowisku, podwójna `SwarmSim` z rozgrzewki, alokacje co klatkę, `?przeladunek=0` nie wyłącza rozgrzewki. Scalenie wstrzymane do poprawek (runda 3).
+  - Decyzja orkiestratora: ciężki frachtowiec (1320 kontenerów, 48 dronów przenosi ok. 970) dostaje 96 dronów na slot pola MEGA, jak scena „wymiana” w demie; postój bez zmian, więc ekonomia i bramka nietknięte. Resztka na koniec okna chowa się za zamkniętymi wrotami albo poza kadrem.
+- 2026-10-22 decyzje użytkownika (lista po E6 i E7):
+  1. Budowa stacji gracza — nie na tym etapie. Stacja gracza wyjdzie z fabuły, późno; interfejs budowy i model 3D odłożone, hak `?dev` zostaje.
+  2. Zysk ze stacji idzie do frakcji: stacja Terra Novy zarabia dla Terra Novy. Gracz jest oficerem — po kilku misjach w Atlasie zostaje zdradzony i zaczyna od zera.
+  3. „Nowa gra” czyści zapis ekonomii (zadanie dla sesji E2).
+  4. Nowy terminal zostaje: rudę sprzedaje się w hucie.
+  5–7. Nowa sesja E13: dane kadłubów ruchu (mostki, rdzenie, zbiorniki, gniazda), potem broń i AI bojowa awansowanych okrętów; sprite'y Z11 wpięte.
+  8. Nowa sesja E14: modele doków portów bez ringu — dok krzyżowy, dok okrągły i koło z wlotem (jak stacja z Elite Dangerous, tylko płaska).
+  - Po zakończeniu pracy sesji komputer ma się wyłączyć (polecenie użytkownika).
+- 2026-10-23 E12 w `main` (c542b208), runda 3:
+  - poprawione znaleziska przeglądu: koniec postoju bez `snap` (wieża bez nowych zadań od zamykania wrót, ładownia chowa się za domkniętymi wrotami), slot po przechwycie, odczyt ważny od dołączenia slotu, własna kopia stanowiska, jedno `ensure()`, bez alokacji w klatce, `?przeladunek=0` bez importu i rozgrzewki, kamery 3D i maskowanie; testy regresji padają na starej puli;
+  - 96 dronów przy polach MEGA: ciężki frachtowiec 1320 / 1320 kontenerów w ~60 s, koniec postoju bez skoku (skrzydła wrót przenikają się ze skórą);
+  - koszt: CPU w szumie, GPU +0,06 ms przy 14 stanowiskach, poza portem 0; ładowanie średnio +0,33 s (przebiegi bez przeładunku różnią się o 0,7 s). Rozgrzewka kerneli na żądanie odrzucona (przestój ~140 ms w grze).
+  - Po scaleniu: `npm test` 1781 zielone, build, start w workerze 0 sync. Przegląd portów i `rynek-gra` pokazały synchroniczny pył kosmiczny (`spaceDust:fg`, `:ortho`) w pierwszej klatce przy obciążeniu — E12 sprawdza A/B z `?przeladunek=0`.
+- 2026-10-23 E2 w `main` (8601b039): „Nowa gra” od zera — świat ruchu przy starcie strony zawsze świeży, zapis ekonomii nakłada się tylko po wyborze przed startem (`economy-restore`), start bez wyboru kasuje stary zapis. `rynek-gra`: zapis → wczytanie (34 rynki, 6 wyrw, stacja gracza), zapis → Nowa gra (0 wyrw, bez stacji gracza). `npm test` 1792 zielone, build.
+  - Do decyzji użytkownika: „Wczytaj grę” w menu jest wyłączone, więc zapis ekonomii wczytuje dziś tylko hak `DevEconomy.loadEconomy()`. Rekomendacja orkiestratora: włączyć „Wczytaj grę”, gdy będzie pełny zapis gry (statek, fabuła, ekonomia).
+- 2026-10-23 E13 w `main` (a39d6a4b): kadłuby ruchu v2 jako pełne kadłuby gry.
+  - 18 kadłubów (15 z zadania + łowca, kuter policji, ratownik z Z11): mostki (poziom z pola kadłuba, modele poziomów Terra Novy), rdzenie, zbiorniki paliwa, gniazda broni, dysze MAIN i SIDE (MAIN cywili tylko obraz — lot bez zmian); strażnik `tests/trafficHullData.test.mjs`.
+  - Okręty po awansie (garnizon K-7, łowca, policja, rajder, przemytnik) walczą bronią z gniazd i mózgiem klasy (`TRAFFIC_COMBAT_HULLS`); uraza do gracza (`playerGrudge`) — wrogie graczowi bez względu na reputację, cel tylko widoczny gracz; reputacja spada za zestrzelenie; hulk mostka nie wraca do bańki.
+  - Sprite'y Z11 wpięte, ciężki frachtowiec z ładownią 3 × 8 (E12: 96 dronów, 1536 zadań, koniec postoju bez skoku). Klasy stanowisk bez zmian — bramka niepotrzebna.
+  - Znane: okręt awansowany w hali K-7 wylatuje bez ścieżki doku; mostki mają też frachtowce cywilne i vany gry na tych samych sprite'ach.
+- 2026-10-23 E6 w `main` (6804c26b): statek przy końcu kursu odlatuje ze stanowiska (odłączanie, korytarz, lot poza bańkę — flaga `DEPARTED`), zamiast znikać w jednej klatce. Odlatujący nie przyjmuje obrażeń i nie awansuje (bez kursu nie ma czego rozliczyć).
+  - Po scaleniu E13 i E6: `npm test` 1792 zielone; `node --test` 3208, 2 porażki czasowe pod obciążeniem (`cicBeltLayer`, potrójny bufor 1000 Hz — oba skaczą też w bazie); build; start w workerze 0 sync; `ruch-banka-gra --query renderWorker=1 --odlot 1`: odlot ciężkiego frachtowca `undock` → `fly` bez zniknięcia, awans lotniskowca garnizonu z wrakiem, taran, powrót do bańki, fregata po awansie z bronią i mózgiem klasy; 0 sync, 0 błędów.
+- 2026-10-23 poprawka rozgrzewki z sesji E12 w `main` (9cdc8ac0): synchroniczny pył kosmiczny (oraz pył hal K-7 i maska słońca) przy starcie pod obciążeniem nie pochodził z E12 — ten sam wyścig był przy `?przeladunek=0`. Moduły z hakiem passa odsłaniają siatki dopiero w passie, a ich wpis mógł czekać w kolejce rejestru; klatka zero dokańcza teraz kolejkę (`Core3D.warmup.drainNow()`, bez wpisów `'after'`). `start-sync-gra --stres 150`: 5 → 0 sync.
+- 2026-10-23 E14 (`claude/e14-doki-portow-96f445`, 5bdae064 / 2b860d9f / 60e4b278): doki portów bez ringu.
+  - Przydział (według liczby stanowisk): krzyż — 14 księżyców, Gniazdo Hildy, Złomowisko, stacja gracza; okrąg — Luna, Oberon, Merkury, Wenus, Uran; koło z wlotem — Saturn, Westa, Ceres (szczelina z 4 pasami, obraca się tylko piasta). Kryjówki misji bez budowli. Stacja planety zostaje w węźle, budowla stoi obok.
+  - Gospodarka bez zmian (symulacja na ziarnie 7 identyczna). Kolizje 2D (`src/game/portDockWorld.js`), ścieżki bańki z objazdem budowli i korytarzem wylotu, pas bez skał wokół doków, reguła `doki-portow`.
+  - Koszt: GPU +0,01–0,03 ms, CPU workera +0,04–0,36 ms, start +72 ms; 0 sync, 0 błędów. Zrzuty: `.tmp/e14/worker2/` w worktree E14.
+  - Ryzyka: przy kole więcej chwilowych nałożeń kadłubów przed szczeliną, lampki stanowisk świecą stale, NPC odbijają się od brył (bez objazdu), `?szew=inline` nie rysuje doków.
+  - Przed scaleniem: `git merge main` (5 konfliktów) i sprawdzenie odlotu E6 (`DEPARTED`) przez korytarz wylotu doku.
+- 2026-10-23 E14 w `main` (63c10099), po scaleniu z `main` i poprawce odlotu (151b0af3): odlot po końcu kursu (`DEPARTED`) wychodzi wylotem budowli, przy kole szczeliną (0 kroków w bryle); symulacja na ziarnie 7 identyczna z `main`; testy, start i przegląd portów czyste.
+- **Stan 2026-10-23: wszystkie zadania E1–E14 są w `main`.** Do decyzji użytkownika zostaje „Wczytaj grę” (rekomendacja: przy pełnym zapisie gry). Znane ryzyka do późniejszych zadań: okręt awansowany w hali K-7 wylatuje bez ścieżki doku; NPC odbijają się od brył doków bez objazdu; lampki stanowisk doków świecą stale; przy kole więcej chwilowych nałożeń kadłubów przed szczeliną; odlatujący statek (`DEPARTED`) nie przyjmuje obrażeń.
+- 2026-10-23 użytkownik: ruchu w grze prawie nie widać. Diagnoza orkiestratora:
+  - zimny start: świat ruchu rusza pusty — w powietrzu 91 kursów po 15 min gry, 248 po 30 min, 741 po 60 min (`SEED=7 … 60 1 4 60`); harnessy maskowały to rozgrzewką 40 min;
+  - bańka tylko 60 tys. j. od gracza i do 180 tys. j. od portu; statki bez kursu na redzie i orbicie postojowej nierysowane.
+  - Decyzja użytkownika: bez osobnych cywilnych NPC (druga, udawana ekonomia). Sesja E15: rozgrzewka świata ruchu przy ładowaniu (~60 min świata w tle w workerze), reda i orbita postojowa w bańce (nietykalne jak STOCK), bańka w studni grawitacyjnej i większy promień przy portach — bez zmiany ekonomii.
+- 2026-10-23 decyzja użytkownika — WORKFORCE: każdy budynek potrzebuje X workforce, żeby funkcjonować; workforce produkują ośrodki ludności — ringi (Ziemia, Mars, Jowisz) i Mars ze strefami zielonymi, w przyszłości bazy w asteroidach; workforce wożą cywilne statki (ruch w jednej ekonomii, bez osobnych NPC). Sesja E16: projekt bez kodu (`docs/PROPOZYCJA-workforce.md`) z listą decyzji na strzała.
+- 2026-10-23 E16 w `main` (d4da6c85): `docs/PROPOZYCJA-workforce.md` — model C (obsada jako zapas towaru `workforce`, rotacja jako zużycie, kontrakt `T` = 45 min), wydajność `e = r` od progu 0,2; popyt ~305 tys. obsady, podaż ringów Ziemi / Marsa / Jowisza i stref zielonych Marsa 521 tys./h (zapas 28%); ~420 kursów pasażerskich / h (+~130 statków w powietrzu, prom co ~11–19 s przy ringach); szacunek bramki: przechwyty 14,6–15,9%, kolejki +0,1–0,3, tick +8–10%. Plan W0–W7. Czeka na decyzje użytkownika D1–D14 (§ 9 dokumentu).
+- 2026-10-23 użytkownik przyjął rekomendacje workforce D1–D14 (`docs/PROPOZYCJA-workforce.md` § 9): model C, kontrakt 45 min, `e = r` od progu 0,2, habitat Ceres jako pierwsza baza w asteroidzie (W6), bez priorytetów obsady, port bez dławienia w W3, osobne promy, porwania z okupem i ekspozycja ×0,5, obsada kryjówek tylko z porwań, moduł pasażerski Atlasa ~300, załoga gracza = naprawy i przeładowanie wież, nowy próg bramki obsady (≥ 0,95 średnio, żaden rynek < 0,8 dłużej niż 30 min), tabela X i podaż jak w dokumencie, sprite'y promów w W7. Wdrożenie W0–W2 zlecone sesji E16 (koordynacja plików z E15).
+- 2026-10-23 E15 w `main` (da04209a): rozgrzewka świata ruchu 60 min w tle w workerze zaraz po starcie strony (9,5–10,3 s CPU workera, koniec przed 30. sekundą gry; bańka rusza po rozgrzewce), statki bez kursu w bańce (`PARKED`, nietykalne: reda za ringiem, orbita postojowa za dokiem E14, nadmiar zapasu floty na redzie wojskowej), bańka 100 tys. j. przy porcie i w studni planety (limit 512 encji). Zimny start: przy Ziemi po 30 s gry 301 encji (129 w locie, 142 na redzie, 30 zapasu), po 5 min 362; wcześniej ~90 kursów w całym układzie dopiero po 15 min. Gospodarka identyczna z bazą (3 ziarna), koszt w szumie (GPU ±0,05 ms, krok bańki 0,13 ms). Ryzyka: statek z orbity z kursem z innego portu znika bez lotu; wyrwy z zapisu dodają się do urobku z rozgrzewki (wczytanie zapisu dziś tylko hakiem); postój bez dryfu.
+- 2026-10-23 workforce W0–W2 w `main` (0f91bc43, sesja E16): towar `workforce` (`src/data/workforce.js`, `src/game/workforce.js`), obsada budynków, ośrodki ludności, rotacja kontraktów 45 min, promy `crew-*` na obecnych sprite'ach frachtowców (postoje 60 / 60 s, powroty `returning`); produkcja jeszcze nie zależy od obsady (`e = 1`). Bramka na 3 ziarnach po każdym kroku: przechwyty 15,0–15,4%, głód ≤ 10,1 min, kolejki ≤ 1,04, obsada ≥ 0,996, stocznie 0 min. ~470 kursów z ludźmi / h (projekt 420). W grze po zimnym starcie: 8 promów przy Ziemi, 9–10 przy Marsie, 6–8 przy Lunie; 0 sync, 0 błędów. Odstępstwa: minimalna partia (192 osoby albo 5% obsady), kupcy nie wożą ludzi, przechwyt promu = łup do kryjówki (porwania z okupem w W4).
+- 2026-10-23 użytkownik: „przyleciał ogromny transportowiec i tylko kilka dronów go obsługiwało”. Wzór liczby dronów: `max(2, warstwy / 8, byTime)` do 96 — przy długim postoju duży statek dostaje mało dronów; do tego sloty z presetu (Średnia 4). Zbadanie i poprawka obrazu (bez zmiany ekonomii) zlecone E12.
+- 2026-10-23 użytkownik: wlot Atlasa w duży frachtowiec bańki odpycha albo od razu go niszczy, zamiast ciąć jak dawniej silnikiem belek; pyta o „niewrażliwe”. Zlecone E6: awans do pełnego NPC na belkach PRZED kontaktem (czas do zderzenia), pierwszeństwo taranu w limicie awansu, SAT z odpychaniem tylko awaryjnie; STOCK, `PARKED` i `DEPARTED` przestają być nietykalne (strata zapasu frakcji albo statku firmy).
+- 2026-10-26 w `main`:
+  - E6 (294cc842): taran w statki bańki — awans do NPC na belkach przed kontaktem (czas do zetknięcia < 0,75 s; taran na początku kolejki, zapas 4 ponad limit 8), SAT tylko awaryjnie (megafrachtowiec, warp, hipercruise); bez nietykalnych — STOCK, `PARKED`, `DEPARTED` biorą obrażenia i awansują (`entity-hold`, `entity-lost`: strata zapasu frakcji przez `settleGarrisonLosses` albo statku firmy `loseShip`). W grze: ciężki frachtowiec przecięty, fregata zapasu i statek z redy jako wraki na belkach; symulacja ziarna 7 identyczna.
+  - E12 runda 4 (f189d336): megafrachtowiec ma ładownię (wcześniej 0 własnych dronów — to zobaczył użytkownik), plac stanowiska za burtą najszerszego statku, drony z wielkości statku (min. 0,6·√kontenerów, do 96), pierwszeństwo dużych statków do slotu roju, pojemność slotu 3072; GPU +0,11 ms przy 14 stanowiskach.
+- 2026-10-26 w `main`: zmiany sesji „Pierwsza misja kampanii” (hala domowa Atlasa C-01) zapisane przez orkiestratora (b9ec52cb, zielone), na nich E6 (0fd88d0a: megafrachtowiec awansuje na belki, próg z gotowości kadłuba i prędkości zbliżania, kontakt miękki, bez wybuchu w pierwszej klatce) i E12 runda 5 (cdf28953: zegar roju sumuje zaległy czas — wcześniej rój tracił 13–40% czasu; pełna ładownia w oknie postoju 97–100% przy tempie ×4; „bezczynny” capital to był załadunek 1% przy 2 stosach — teraz 8 dronów, ~22 s). Po scaleniu: `npm test` 1888, `node --test` bez nowych porażek, start w workerze 0 sync, taran z awansem i wrakiem, 0 błędów.
+- 2026-10-28 użytkownik: „tak, zaczynaj” — workforce W3 (skutek niedoboru, nowy próg obsady) i W4 (porwania z okupem) zlecone E16 (commit po każdym kroku). Zgłoszenie: statki ruchu i w dokach są szare, bez lakieru i oświetlenia, „wybudzają się” dopiero z bliska — nowa sesja E17 (proxy bańki do wyglądu pełnych kadłubów, w partii, bez skoku przy awansie).
+- 2026-10-28 w `main`:
+  - workforce W3–W4 (2e56afa4, E16): skutek niedoboru obsady — `e = r` od progu 0,2, ale pełna moc od obsady 0,95 (odstępstwo od D3 zatwierdzone przez orkiestratora: przy czystym `e = r` wahania obsady 0,97–0,99 dławiły produkcję o 1–3% i kolejka Wenus przekraczała próg); porwania promów z okupem, ekspozycja promów ×0,5, obsada kryjówek tylko z porwań. Bramka na 3 ziarnach: obsada ≥ 0,996, kolejki ≤ 1,6, przechwyty 14,9–15,4%. Blokada Wenus 60 min: obsada 0,72 po 30 min, 0,50 po 55 min, powrót w 5–10 min.
+  - E6 (3d4d0949): każdy wolny odcinek ścieżki bańki idzie przez router ringu — rajder Hilda → Mimas nie tnie już płyty ringu Ziemi (ukryty błąd znaleziony przez E16).
+  - E17 w toku: kadłub proxy = pełny kadłub (lakier, oświetlenie v2, lampy), „wybudzanie” to był awans do NPC; dochodzą lampy cywilów, potem E17b — modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże, cień SDF) na proxy bliżej kamery.
+- 2026-10-28 E17 w `main` (4cd6c8dc): proxy statków ruchu rysuje fragmentem pełnego kadłuba (oświetlenie v2, mapa powierzchni, lakier, glow, lampy) — wcześniej klasyczny model z otoczeniem 0,24 × cień 0,4, w cieniu hal prawie czarny; „wybudzanie” to był awans do NPC. Lampy pozycyjne cywilów (`src/data/trafficHullLights.js`, proxy i NPC), lampy gasną pod zamkniętym dachem hali K-7, przejścia proxy ↔ NPC bez skoku. Koszt: CPU aktualizacji +0,1 ms w porcie, GPU w szumie; 0 sync, 0 błędów. Dalej E17b: modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże, cień SDF) na proxy bliżej kamery.
+- 2026-11-08 stan:
+  - E17b gotowe na gałęzi `claude/e17-grafika-ruchu-096962` (8 commitów, a6dcc868…a06d2905): na proxy statków ruchu dysze SIDE, obudowa rdzenia, mostek, wieże 11 okrętów w spoczynku, cień SDF i światła siatki efektów (lampy hali K-7); koszt CPU workera +0,03–0,09 ms w hali, GPU w szumie, 0 sync. Jeszcze nie w `main`: od 10-28 main przesunął się o ~160 commitów i wyszły 4 konflikty (reguły `mostki-reaktor` i `ruch-banka`, `src/3d/hexShips3D.js`, `src/3d/shipProxyBatch3D.tsl.js`). Sesja E17 scala main do swojej gałęzi, potem scalenie do main i weryfikacja.
+  - Workforce W5–W7 (karta „Kadry”, gracz i habitat, sprite'y promów) nie ruszone — czekają na decyzję użytkownika.
+  - „Wczytaj grę” rozwiązane poza tym planem: zapis gracza (18814aa9, `src/game/playerSave.js`, klucz `game`) z przyciskiem „Wczytaj” w menu.
+  - Mapa gwiezdna i rejestr układów w `main` (demo, do gry niewpięte). Nowy rozdział § 3.6 „Wiele układów gwiezdnych”, zadania E18–E21 (§ 4), decyzje w § 7.
+- 2026-11-08 E17b w `main` (d09512d6). Sesja E17 najpierw scaliła main do gałęzi (1c2e9bf4): w regułach zostały obie wersje, cień proxy idzie przez pulę rekordów kandydatów z main, a materiał proxy ma i `uNavPhase` (światła nawigacyjne), i `uGridOwner` (światła hali). Scalenie do main bez ruszania niezacommitowanej pracy dwóch innych sesji w folderze `statki` (`index.html`: tylko hunki E17b, cudze zmiany identyczne przed i po). Na scalonym drzewie testy E17b ze strażnikami 220/220 i `npm test` 1908. Sesja E17 na tym samym drzewie: `node --test` bez nowych porażek, gra w workerze 0 sync, proxy i NPC na redzie wyglądają tak samo (mostek, obudowa rdzenia, dysze SIDE, lampy nawigacyjne, smuga cienia).
+- 2026-11-08 użytkownik: workforce W5–W7 w osobnej sesji (`workforce-w5-w7`, start z main przed E17b; przed W7 `git merge main`). Decyzje do § 3.6 i § 7: układ bez gracza w tle, import i eksport widoczne, ceny tylko przez komputer handlowy z listą kupców; pełny zapis — do wyjaśnienia. E18 (projekt, sesja `e18-projekt-ekonomii-wie`) dostała te decyzje.
+- 2026-11-08 użytkownik: kapsuły ratunkowe w osobnej sesji (E22, `kapsuly-ratunkowe`). Kapsuły dostają statki, poza pirackimi; statek „umiera”, potem odpala kapsuły, które lecą do stacji. W6 (sesja `workforce-w5-w7`) zostawia tylko natychmiastowy powrót ludzi z promu do portu nadania, w jednej funkcji; E22 przeniesie go na dolot kapsuły. Zatwierdzone dla W6: kabiny pasażerskie jako osobne gniazdo w refit ręcznym (Atlas 300 osób, 6000 CR roboczo, bez ton ładowni), stan załogi „przydział frakcji” / „własna” z hakiem `PlayerCrew.betray()` w zapisie gracza.
+- 2026-11-08 E18 w `main` (1f15fa70): projekt `docs/PROPOZYCJA-ekonomia-ukladow.md`.
+  - Generator: sektor z ziarna 1 daje 26 układów rdzenia ze 121 rynkami (po 2–8 na układ); 126 układów pogranicza bez gospodarki.
+  - Model w tle na rynek, kalibracja na Sol (3 ziarna, godziny 1–4): zapełnienie par różni się o 3,4–3,5 pkt, cena skupu o 3,4–3,5%, najlepszego kupca trafia w 86–87% towarów. Koszt 2,3–4,1 µs na rynek i krok 60 s.
+  - Wejście do układu z modelu: rozgrzewka 10 min (~1,2–1,8 s CPU) zamiast 60 min.
+  - Zapis ze statkami w skali gry: 4,2–6,6 MB JSON, 0,28–0,64 MB po gzip na układ.
+  - Konwoje: ładowność 4,5–18 tys. t, a 76 z 92 kierunków ma opłacalny pełny ładunek.
+  - Komputer handlowy: 95 µs na towar przy 1500 rynkach.
+  - Numeracja: komputer handlowy to E23, bo E22 to kapsuły.
+  - Decyzje: rekomendacje D6–D12 i D14–D18 przyjęte przez orkiestratora; D5 i D13 do użytkownika.
+  - Zgłoszenie E18: pełna symulacja Układu Słonecznego po ~6–8 h traci połowę kursów i zapasu stali (bramka bilansu liczy 4 h). Proponuję osobną sesję: bramka do 8–10 h i przyczyna (flota przewoźników, kapitał firm, wyczerpanie pól?).
+- 2026-11-08 ankieta użytkownika D5–D18 (projekt E18, § 10.2a). Rekomendacje przeszły poza trzema decyzjami:
+  - D11: rynków granicznych nie ma — konwoje lecą rogiem świata prosto do rynków planet;
+  - D12: banda piratów niesie zrabowany ładunek do kryjówki, a gracz może go odebrać razem z ładunkiem bandy;
+  - D17: rozgrzewka nowej gry zostaje 60 min pełnego świata (6–10 s), ze statusem „Stabilizacja gospodarki” na ekranie ładowania i w grze, jeśli trwa dłużej. Status zrobi sesja E23a.
+  - D8: użytkownik rozumie import jako towary bez złoża albo producenta w układzie.
+- 2026-11-08 workforce W5–W6 w `main` (95f09f2e, gałąź `claude/workforce-w5-w7-d90cdd` do b1877b57).
+  - W5: karta KADRY w terminalu, obsada w CIC HANDEL, kontrakty obsady w ofercie portu (bufor `tick.crew`).
+  - W6: kabiny pasażerskie gracza (osobne gniazdo, Atlas 300 osób, 6000 CR roboczo), kontrakty i załoga po zdradzie (`api.crew.betray()` / `mode()`), habitat i Ceres jako pierwsza baza w asteroidzie oraz `returnFerryPassengers` w `destroyCourse`.
+  - Bramka sesji na 3 ziarnach: przechwyty 14,1–14,5%, obsada ≥ 0,998, kolejka Wenus ≤ 1,85, tick ≤ 19,1 ms.
+  - Na main: `npm test` 1950, testy obszaru 81/81, start gry w workerze z 0 pipeline'ów synchronicznych. W7 (kadłuby promów na obecnych sprite'ach i prompty Z11) w toku.
+- 2026-11-08 ruszyły sesje z kart:
+  - „Zanik gospodarki Sol po 6–8 h” (biegi 12 h po kolei, BelowNormal; liczby deterministyczne, czas ticku tylko w ciszy);
+  - E24 „Górnicy i złomiarze w akcji” (rozpoznanie: większości górników nie widać, bo bańka żyje tylko przy portach i w studniach; złomiarze biorą tylko `war.wrecks`; warianty A–E zatwierdzone, z karencją 5 min dla wraków gracza);
+  - E23a „Komputer handlowy” (plus status „Stabilizacja gospodarki”, D17).
+- 2026-11-08 sesja „Zanik gospodarki” (gałąź `claude/festive-panini-f7024e`): przyczyną zaniku był `maintainFleet`. Każdą stratę (piraci biorą duże ładunki) odkupywał najtańszym vanem, więc ładowność floty spadła w 12 h z 2,70 do 0,55 mln t, a za nią zgasły promy z obsadą i produkcja.
+  - Poprawka: odkup tej samej klasy, ryzyko kadłuba 0,4 we frachcie, do 4 zakupów na cykl. Wariant długi bramki: `--godziny N`.
+  - Na gałęzi bramka 4 h zaliczona. Po scaleniu z main (W5–W6) NIE: ziarno 7 ma kolejkę Wenus 2,02 > 2, reszta zalicza.
+  - Do main nie weszło. Sesja poprawia przepustowość portów (Wenus, Ziemia w biegu 12 h), potem bilans stali (huty sprzedają nadwyżkę dopiero od 70% magazynu; stal po 10 h ~60% stanu z 2–4 h).
+- 2026-11-08 koniec zaniku gospodarki w `main` (d75a6050).
+  - Flota: odkup tej samej klasy, ryzyko kadłuba we frachcie, do 4 zakupów na cykl.
+  - Stal: plan liczył przetop złomu na Marsie jako największe źródło stali (waga 2,90), a złomu brak. Wsad bez stałego źródła (`UNPLANNED_INPUTS`) nie wchodzi już do podaży planu, a pokrycie stali samymi hutami z rudy wzrosło z 0,927 do 1,052.
+  - Bramka 4 h razem z W5–W6 zaliczona: przechwyty 14,6–15,4%, kolejka ≤ 1,52, tick ≤ 11 ms. Wariant długi 12 h (na gałęzi): stal 106%, kursy 133–141%, obsada 100%, ładowność 98–100%. `npm test` 1961.
+  - Notatka: `docs/POMIAR-zanik-gospodarki-2026-11-08.md`.
+  - Zostaje: kolejki w biegu 12 h (Wenus 8–9, Ziemia do 9,5; ruch po 7. h +40%) — sesja robi przepustowość portów — i głód kryjówek (O₂, stal; tak samo w bazie).
+- 2026-11-08 porty Wenus i Westy w `main` (1f6919d8): `berthMultiplier` 4, czyli koło jak na Saturnie. Kolejka w biegu 12 h przy Wenus spadła z 8–11 do ~2. Bramka 4 h zaliczona z zapasem (kolejka 0,81 / 0,73 / 0,87, Io; tick ≤ 10,9 ms); `npm test` 1961.
+  - Wygląd większych doków Wenus i Westy w grze do sprawdzenia jutro (w nocy bez harnessu GPU).
+  - Do decyzji użytkownika — Ziemia w biegu 12 h ma kolejkę 5–6. Przyczyna: 16 hal capital K-7 jest wojskowych i stoi pustych, a frachtowce heavy i mega dzielą 16 stanowisk mega. Warianty: (a) heavy na wolnych halach K-7 (zmienia „K-7 = port wojskowy”), (b) więcej cywilnych stanowisk mega w zatokach Ziemi (układ hal i obraz).
+  - Głód kryjówek w biegu 12 h (O₂, stal) taki sam jak w bazie — osobne zadanie.
+- 2026-11-08 na jutro, scalenie po przeglądzie (wszystko w commitach):
+  - E24 górnicy i złomiarze: `claude/elastic-chaplygin-bede66` @ 6876eca4; decyzje: obraz wraków wojen w tle, wolniejszy hol w bańce.
+  - E23a komputer handlowy i status „Stabilizacja gospodarki”: `claude/blissful-lehmann-95c2ef` @ 6edfa5b8.
+  - W7 i kapsuły — wg ich ostatnich commitów.
+- 2026-11-10 scalenie do `main` na prośbę użytkownika („scal teraz”), commit `846232fa`:
+  - gałęzie: W7 `claude/workforce-w5-w7-d90cdd` @ 92024f2b, E23a `claude/blissful-lehmann-95c2ef` @ 6edfa5b8, kapsuły K1–K5 `claude/kapsuly-ratunkowe-250fdb` @ 6a4fc607, E24 `claude/elastic-chaplygin-bede66` @ 44e67b39 (ze sceną `?scena=holowanie` i `?hol=1200|wolny`).
+  - Konflikty: `trafficDirector.js` — K4 usunęło `returnFerryPassengers` (ludzie z promu wracają kapsułami), wzięta wersja kapsuł; dopiski kapsuł i E24 w `index.html`, `render.worker.js`, `trafficBridge.js`, `trafficCore.js` i `AGENTS.md` zostają oba (bloki migawki `pods` i `trafficWork`, wiadomości `pods-target` i `salvage-taken`). Sufit szwu renderu `index:aktualizacja` 121 (kapsuły mieściły się w zapasie, E24 podniósł do 120).
+  - Po scaleniu: `npm test` 1973 zielone; `node --test` bez nowych porażek; bramka 4 h zaliczona (ziarna 7, 11, 23): przechwyty 14,6–14,8%, głód ≤ 6,5 min, kolejka ≤ 0,87, tick ≤ 13,6 ms, obsada ≥ 0,999; start gry w workerze 0 pipeline'ów synchronicznych (start i po 120 krokach), 0 błędów strony i workera.
+  - Niesprawdzone po scaleniu: przegląd w grze (`rynek-gra`, `ruch-banka-gra`, scena holowania, kapsuły w bańce) i wygląd większych doków Wenus i Westy.
+  - Decyzje użytkownika otwarte: reda Ziemi (a / b wyżej), E24 — obraz wraków wojen w tle i wolniejszy hol w bańce.

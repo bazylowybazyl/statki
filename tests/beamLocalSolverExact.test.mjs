@@ -10,7 +10,7 @@ import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js'
 import { buildBeamStructure } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
 import { beamSolverScratch, prepareBeamConstraints, projectBeamConstraints, projectBeamConstraints2D } from '../src/game/beamConstraintSolver3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 import { setPlanarHeading } from '../src/game/beamFlightControls2D.js';
 import { referenceSolveLocal, referencePrepareBeamConstraints, referenceProjectBeamConstraints } from './helpers/beamLocalSolverReference.mjs';
 

@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { weaponsForHull } from './helpers/hullWeapons.mjs';
+const MASTER_WEAPONS = weaponsForHull('atlas');
 import { ciwsShotHitsRocket, ciwsRocketReach } from '../src/game/rocketIntercept.js';
 import { loadIndexFunction } from './helpers/indexSource.mjs';
 
@@ -216,6 +217,7 @@ test('killRocketThreat (index.html): rakieta 3D — intercept, kanwa — efekt i
   const calls = [];
   const scope = {
     window: { rocketSystem3D: { pdHit: (rb, cause, dmg) => { calls.push(['3d', cause, dmg]); return 2; } } },
+    SND: null, // scena dźwięków: poza nią warstwy nie ma (hak `if (SND)`)
     ActiveCarrier: { set: () => {}, clear: () => {} },
     writeCarrierVelocity: () => null,
     SimClock: { sim: 0 },
@@ -235,6 +237,7 @@ test('killRocketThreat (index.html): torpeda kanwy z pdHp traci punkty jak rakie
   const calls = [];
   const scope = {
     window: { RocketPdTune: { dmgMul: { ciws: 1, laser: 0.5, flak: 0.025, other: 1 } } },
+    SND: null,
     ActiveCarrier: { set: () => {}, clear: () => {} },
     writeCarrierVelocity: () => null,
     SimClock: { sim: 0 },

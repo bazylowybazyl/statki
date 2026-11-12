@@ -12,6 +12,8 @@ paths:
 
 ## Systemy F — „specjale F” (2026-10-08; `src/data/shipSystems.js`, `src/game/shipSystem.js`, `src/ai/npcShipSystem.js`)
 
+- Zasięg naturalny kadłuba (`src/data/shipRanges.js`) jest mnożnikiem w `weaponRangeFor` / `weaponRangeMul`, przed źródłami `system` / `fit`. To cecha klasy, niezależna od gniazd S/M/L/Capital. Sufit modułu ogranicza dopiero jego dodatkową premię klasy broni i nie skraca zasięgu naturalnego kadłuba. Ogień NPC, sprawdzenie „cel w zasięgu” szybkiego ognia i dystans bojowy używają tego samego helpera.
+
 - Decyzje użytkownika: Atlas — SZARŻA (domyślnie) albo SILNIKI MANEWROWE, Terra Nova (Custos, Hasta, Bellator, Citadella, Colossus) — ZRYW SILNIKÓW, piraci (Marauder, Reaver, Iron Skull, supercapital herszta) — SZYBKI OGIEŃ; Iron Skull i Colossus mają szarżę jako drugą opcję. Kadłub bez wpisu (Corvus, megafrachtowiec) — F to rakieta jak dawniej.
 
 - Dane: `HULL_SHIP_SYSTEMS` (kadłub → systemy do wyboru, pierwszy = domyślny; klucz = id kadłuba gracza albo profil renderu NPC przez aliasy `terran_*`), `SHIP_SYSTEMS[kadłub]` = domyślny (zgodność wstecz). API pod fitowanie: `shipSystemFor`, `shipSystemOptionsFor`, `shipSystemDefFor(kadłub, id)` (walidacja wyboru); gracz: `setPlayerShipSystem(id[, kadłub])` → `PLAYER.hullSystems[kadłub]` (zapis w `loadout` i UI wyboru — fitowanie), konsola `cyclePlayerShipSystem()`, próby `?fsys=maneuver`.

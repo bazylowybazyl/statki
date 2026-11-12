@@ -8,8 +8,8 @@
 // ramion Y → TARAN rzędu okrętów przy ramieniu A → alarm: DRONY z hangarów habitatu (gracz odpala swoje — Z),
 // ZEGAR STARTÓW (kilkanaście okrętów z załogą odchodzi od pomostów po kolei, w połowie rozgrzewania strzela ze
 // stanowiska; reszta stoi w remoncie, bez załogi) i SUPERCAPITAL HERSZTA z zatoki przy zbiornikach (66% — przyspiesza
-// starty, 33% — ucieka i ładuje skok; mostek = słaby punkt) → HABITAT (finał: bęben pęka, dysk mieszkalny i część
-// techniczna implodują, ogień idzie rurami) → podsumowanie w polu. Bez podpowiedzi: ZBIORNIKI PALIWA (P) wysadzone
+// starty, 33% — ucieka i ładuje skok; mostek = słaby punkt) → HABITAT (finał z etapów: wyłom w mieście, wieża pada na
+// wieżowce i przebija dysk, reaktory antygrawitacyjne — baza spada na planetoidę) → podsumowanie w polu. Bez podpowiedzi: ZBIORNIKI PALIWA (P) wysadzone
 // w dowolnej chwili zapalają rurociąg — reakcja łańcuchowa niszczy okręty w stanowiskach (decyzja użytkownika).
 // Dalej misja 2 „Odwet” (mission02.js) — kampania: src/game/story/campaign.js.
 //
@@ -51,8 +51,9 @@ export const MISSION01_HINTS = Object.freeze({
   flight: { keys: ['W', 'S', 'A', 'D', 'Q', 'E'], title: 'Sterowanie', text: 'Atlas stoi dziobem do bramy, silniki główne są zimne. W — zapłon i ciąg naprzód (najpierw dym z dysz, potem płomień), S — wstecz, A / D — obrót, Q / E — ruch na boki. Wyprowadź Atlasa naprzód przez bramę G-01.' },
   scoutBay: { keys: ['H'], title: 'Fregata zwiadu', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła; czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. W ładowni Atlasa czeka fregata zwiadu: H — wrota się otwierają, fregata wylatuje, a ty przejmujesz jej stery i kamerę (Atlas stoi w miejscu). Jej wzrok sięga 10 km. Niezamaskowanego Atlasa obrona zobaczy z ~9 km — podleć nim najwyżej do skraju mgły.' },
   scoutFly: { keys: ['W', 'S', 'A', 'D', 'I', 'X', '3', '4', 'T', 'H'], title: 'Zwiad', text: 'W / S — prędkość, A / D — skręt, Q / E — w bok. I — maskowanie fregaty (obrona jej nie widzi; pęka przy trafieniu i taranie). 3 — OKO: sonda odsłania mgłę w kole pod kursorem (do 22 km od fregaty, z baterii). 4 — DALEKI SKAN w stronę kursora: klin do 70 km zostawia echa — przybliżone położenie, klasę masy i liczbę obiektów. X — skan: fala oznacza wrogie kontakty w 10 km od fregaty. T nad kontaktem — oznacz go (trzymaj T i przeciągnij kursor — kilka naraz). Obleć bazę dookoła — to, co leży za habitatem, widać dopiero z drugiej strony. Bez maskowania obrona wykryje fregatę bliżej niż ~3 km od bazy. H — fregata sama wraca do ładowni.' },
-  scout: { keys: ['PPM', 'M'], title: 'Mgła wojny', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła. Czujniki grawitacyjne pokazują dużą masę, ale nie mówią, czym jest. Rozpoznaj ją: PPM w pustej przestrzeni → DRON ZWIADU (leci w punkt i odsłania mgłę wokół siebie; także mapa CIC, M) albo podejdź ostrożnie — niezamaskowanego Atlasa obrona wykryje z ~9 km.' },
-  warp: { keys: ['CapsLock', '9', 'A', 'D', 'Shift'], title: 'Skok warp', text: 'Kurs jest wyznaczony; TRAVEL TO może wykonać podróż sam. Jeśli przejmiesz stery, A / D obróć dziób według wskaźnika WARP. Zielony kurs (±5°): naciśnij CapsLock (albo 9) — komputer doprecyzuje kierunek i sam wyjdzie przy punkcie kursu. Poza zielonym pasmem wyjście jest ręczne (CapsLock / 9 jeszcze raz). Shift to dopalacz.' },
+  czujka: { keys: ['PPM'], title: 'Czujka', text: 'Trzymaj PPM i wskaż kursorem kierunek. Struna czujki drga tym mocniej, im silniejszy sygnał technologiczny w tę stronę — ząbki na strunie to okręty w namiarze (duże — budowle); czerwień znaczy, że oni mają ciebie. Błona wokół Atlasa wybrzusza się ku planetom. Szare X-y w przestrzeni to kontakt: wiesz, że coś tam jest, ale nie wiesz co. Puść PPM — czujka gaśnie. Menu rozkazów jest teraz pod Alt + PPM.' },
+  scout: { keys: ['Alt', 'PPM', 'M'], title: 'Mgła wojny', text: 'Widzisz tylko to, co jest w zasięgu wzroku Atlasa i twojej floty — dalej jest mgła. Czujniki mają kontakt, ale nie mówią, czym jest. Rozpoznaj go: Alt + PPM w pustej przestrzeni → DRON ZWIADU (leci w punkt i odsłania mgłę wokół siebie; także mapa CIC, M) albo podejdź ostrożnie — niezamaskowanego Atlasa obrona wykryje z ~9 km.' },
+  warp: { keys: ['CapsLock', '9', 'A', 'D', 'Shift'], title: 'Skok warp', text: 'Kurs jest wyznaczony; TRAVEL TO może wykonać podróż sam. W studni grawitacji Ziemi skok nie ruszy — najpierw odleć za jej brzeg (TRAVEL TO wyprowadzi okręt sam). Jeśli przejmiesz stery, A / D obróć dziób według wskaźnika WARP. Dziób do 20° od kursu (zielone pasmo to ±5°): naciśnij CapsLock (albo 9) — komputer obróci dziób na kurs i sam wyjdzie przy punkcie kursu. Dalej od kursu skok idzie do celu przed dziobem albo awaryjnie 400 km w dziób. CapsLock / 9 w skoku — wyjście od razu. Shift to dopalacz.' },
   cloak: { keys: ['I'], title: 'Maskowanie', text: 'I — maskowanie. Czujniki i działa piratów cię nie widzą. Pęka przy strzale, taranie i trafieniu; energia wystarcza na minutę.' },
   sneak: { keys: [], title: 'Podejście', text: 'Nie strzelaj. Wleć w lejek między ramionami bazy i ustaw się na początku rzędu okrętów przy lewym ramieniu — znacznik na ekranie.' },
   ram: { keys: ['F', '4'], title: 'Szarża albo broń wbudowana', text: 'Okręty stoją w rzędzie prostopadle do pomostu — leć wzdłuż ramienia, w połowie ich długości. F — szarża: kilka sekund pełnej mocy kosztem całego ładunku reaktora; rozpędzony Atlas miażdży kadłuby po kolei. Albo 4 — Hexlance (BUILT-IN): naładuj i odpal wzdłuż dziobu — pręt przebija rząd na wylot. Jedno i drugie zdejmuje maskowanie.' },
@@ -60,7 +61,7 @@ export const MISSION01_HINTS = Object.freeze({
   drones: { keys: ['Z'], title: 'Drony piratów', text: 'Z habitatu wystartowały drony. Z — wypuść myśliwce z hangarów Atlasa: same wybierają drony i okręty wroga; drugie Z — atak, trzecie — powrót. Obrona punktowa (CIWS) też je zestrzeliwuje.' },
   weapons: { keys: ['LPM', 'T', '1', '2', '3'], title: 'Broń', text: 'Działa burtowe strzelają same do wszystkiego w zasięgu. LPM — salwa baterii głównej w kursor (komputer wyprzedza cel przy kursorze), T — cel priorytetowy dla całego okrętu (trzymaj T i przeciągnij kursor po wrogach — kilka naraz; rakiety same biorą to, co strzela do ciebie), 1–3 — która grupa jest w ręku.' },
   bridge: { keys: ['LPM', '2'], title: 'Słaby punkt', text: 'MOSTEK supercapitala jest oznaczony. Zniszczony mostek = okręt bez dowodzenia: dryfuje i nie walczy. Bateria główna w ręku (2) i salwy LPM prosto w mostek — gdy pole tarczy zgaśnie albo pęknie.' },
-  builtin: { keys: ['4', 'F'], title: 'Habitat', text: 'Habitat to otwarty bęben — ściana, grodzie i szyb. 4 — Hexlance przebija go na wylot; szarża F wgniata ścianę. Zniszczony bęben pociągnie za sobą dysk mieszkalny pod spodem.' }
+  builtin: { keys: ['4', 'F'], title: 'Habitat', text: 'Habitat to miasto wieżowców wokół wieży. 4 — Hexlance przebija wieżowce na wylot; szarża F toruje drogę do podstawy wieży. Trafiona wieża runie na miasto i przebije dysk pod nim. Bazę nad planetoidą trzymają dwa reaktory antygrawitacyjne na pomostach.' }
 });
 
 // Fazy misji 1 w kolejności (część kampanii — src/game/story/campaign.js).
@@ -175,7 +176,6 @@ export async function mission01(ctx) {
   if (run('scout')) {
     const off = 4200;
     const massOffset = { x: Math.cos(site.axis + 2.1) * off, y: Math.sin(site.axis + 2.1) * off };
-    const massAt = { x: site.building.x + massOffset.x, y: site.building.y + massOffset.y };
     api.fog.mass(massId, {
       x: site.building.x, y: site.building.y,
       offset: massOffset,
@@ -186,33 +186,29 @@ export async function mission01(ctx) {
     });
     api.say(frigate ? D.massContactScout : D.massContact, 'radio');
     watchAlarm();
-    let droneSent = false;
-    ctx.spawn(async (sub) => { await sub.event('droneLaunched'); droneSent = true; });
-    const scoutGoing = () => droneSent || api.scout.launched();
-    api.ui.marker('mass', massAt, 'Nieznana masa', {
-      action: frigate ? { text: 'H → fregata zwiadu' } : { mouse: 'rmb', text: 'PPM → dron zwiadu' }
-    });
+    // CZUJKA (2026-11-11, decyzja użytkownika: „po przylocie nigdzie kamera nie leci. Gracz klika PPM i pokaże mu się,
+    // gdzie są wrogowie, i będzie musiał tam polecieć”): bez przelotu kamery i bez znacznika miejsca — kierunek pokazuje
+    // czujka na PPM (struna z zębami grup w namiarze, kontakty jako obłok X-ów; src/ui/czujkaView.js).
     // budowle bazy rozpoznane przez stronę gracza (zbiorniki i magazyn leżą za habitatem — trzeba oblecieć)
     const total = api.site.structureCount(site);
     const reconDone = () => api.site.structuresSeen(site) >= total;
     api.ui.objective('scout', frigate
-      ? 'Rozpoznaj sygnaturę masy — fregata zwiadu z ładowni (H)'
-      : 'Rozpoznaj sygnaturę masy — dron zwiadu (PPM) albo ostrożne podejście',
+      ? 'Znajdź wroga czujką (trzymaj PPM) i rozpoznaj go fregatą zwiadu z ładowni (H)'
+      : 'Znajdź wroga czujką (trzymaj PPM) i rozpoznaj go — dron zwiadu (Alt + PPM) albo ostrożne podejście',
     // licznik budowli od startu fregaty (do 2026-10-11 dopiero od pierwszej rozpoznanej budowli)
     frigate && total > 0 ? () => (api.scout.launched() ? `budowle ${api.site.structuresSeen(site)} / ${total}` : '') : undefined);
-    hint(frigate ? 'scoutBay' : 'scout', () => spotted || api.site.scouted(site) || api.scout.controlling());
-    if (frigate) {
-      ctx.spawn(async (sub) => {
-        await sub.until(() => api.scout.controlling() || spotted);
-        if (!spotted) hint('scoutFly', () => spotted || reconDone() || !api.scout.controlling());
-      });
-    }
-    await api.cinema.lookAt(massAt, {
-      viewHeight: 30000, inSec: 1.8, holdSec: 30, outSec: 1.4,
-      holdUntil: () => scoutGoing() || spotted || api.site.scouted(site)
+    const scoutStarted = () => spotted || api.site.scouted(site) || api.scout.controlling();
+    ctx.spawn(async (sub) => {
+      // najpierw czujka (do pierwszego użycia), potem zwiad
+      hint('czujka', () => api.sensors.czujkaUsed() || scoutStarted());
+      await sub.until(() => api.sensors.czujkaUsed() || scoutStarted());
+      if (spotted || api.site.scouted(site)) return;
+      if (!api.scout.controlling()) hint(frigate ? 'scoutBay' : 'scout', scoutStarted);
+      if (!frigate) return;
+      await sub.until(() => api.scout.controlling() || spotted);
+      if (!spotted) hint('scoutFly', () => spotted || reconDone() || !api.scout.controlling());
     });
     await ctx.until(() => spotted || api.site.scouted(site));
-    api.ui.marker('mass', null);
     if (!spotted) api.say(D.identified, 'radio');
     // OBLOT BAZY fregatą (wzrok 10 km): ostrzeżenie w celu misji, gdy fregata podchodzi pod zasięg wykrycia.
     if (frigate && !spotted && total > 0 && !reconDone() && !api.scout.lost()) {
@@ -254,11 +250,12 @@ export async function mission01(ctx) {
   }
 
   // Wątki niezależne od faz (od wejścia do bazy): zbiorniki paliwa → reakcja łańcuchowa (bez podpowiedzi — gracz sam
-  // musi się domyślić), magazyn → premia; habitat → finał (rozpad i ogień w rurach od środka).
+  // musi się domyślić, i tylko to zapala rury), magazyn → premia; habitat → finał (rozpad, sam nie zapala rur).
+  // Po HP 0 habitatu gra sama kończy budowle (puszczenie kotwic, index.html): to już nie zasługa gracza, stąd osłony na site.chain.habitat.
   let chainKills = 0;
   ctx.spawn(async (sub) => {
     await sub.until(() => site.structureDestroyed('fuel') || site.chain.fuel || site.chain.burnt.has('P'));
-    if (site.chain.fuel || site.chain.burnt.has('P')) return;
+    if (site.chain.fuel || site.chain.burnt.has('P') || site.chain.habitat) return;
     api.ui.banner('REAKCJA ŁAŃCUCHOWA', 3);
     api.say(D.chainReaction, 'radio');
     chainKills = await api.site.fuelChain(site, 'P');
@@ -267,6 +264,7 @@ export async function mission01(ctx) {
   let warehouseDown = false;
   ctx.spawn(async (sub) => {
     await sub.until(() => site.structureDestroyed('warehouse'));
+    if (site.chain.habitat && !site.chain.fuel) return;
     warehouseDown = true;
     api.site.collapse?.(site, 'warehouse');
     api.ui.banner('MAGAZYN ZNISZCZONY', 2.4);
@@ -276,11 +274,25 @@ export async function mission01(ctx) {
     await sub.until(() => site.structureDestroyed('piers'));
     api.site.collapse?.(site, 'piers');
   });
+  // reaktory antygrawitacyjne na pomostach (2026-11-11, w miejscu dawnych wieżowców): etap finału habitatu — padły,
+  // kawałek pęka z wybuchem
+  const reactors = site.dock?.layout?.antigravs || [];
+  for (const [i, h] of reactors.entries()) {
+    ctx.spawn(async (sub) => {
+      await sub.until(() => site.structureDestroyed(h.structure));
+      if (site.chain.habitat) return;
+      api.site.collapse?.(site, h.structure);
+      api.ui.target(`antigrav-${i}`, null);
+      const left = reactors.filter((q) => !site.structureDestroyed(q.structure)).length;
+      api.ui.banner(left > 0 ? `REAKTOR ANTYGRAWITACYJNY ZNISZCZONY · ZOSTAŁ ${left}` : 'REAKTORY ANTYGRAWITACYJNE ZNISZCZONE', 2.4);
+    });
+  }
   let chainDone = false;
   ctx.spawn(async (sub) => {
     await sub.until(() => site.buildingDestroyed());
     api.ui.target('yard', null);
-    // podsumowanie po ogniu w rurach (okręty w stanowiskach liczą się do reakcji); misja pominięta — bez czekania
+    reactors.forEach((h, i) => api.ui.target(`antigrav-${i}`, null));
+    // podsumowanie po upadku i ogniu w rurach, jeśli biegnie od zbiorników; misja pominięta — bez czekania
     await api.site.chainExplosion(site, { waitFuel: run('aftermath') });
     api.say(D.shipyardDown, 'radio');
     api.journal.step(6);
@@ -528,8 +540,23 @@ export async function mission01(ctx) {
   if (run('shipyard')) {
     if (!site.buildingDestroyed()) {
       api.ui.target('yard', site.station, 'Habitat piratów', { radius: site.buildingRadius, primary: true });
-      api.ui.objective('yard', 'Zniszcz habitat bazy — broń wbudowana (4) albo taran', () => `${Math.round(site.buildingHpFrac() * 100)}%`);
-      hint('builtin', () => site.buildingHpFrac() < 0.9 || site.buildingDestroyed());
+      // etapy finału (gra): wyłom w mieście, zwalona wieża, reaktory — w dowolnej kolejności; bez etapów (atrapa) — punkty
+      const stages = site.habitatStages();
+      if (stages) {
+        reactors.forEach((h, i) => {
+          if (!site.structureDestroyed(h.structure)) api.ui.target(`antigrav-${i}`, site.structures[h.structure], h.label.charAt(0).toUpperCase() + h.label.slice(1), { group: 'Reaktory' });
+        });
+        const mark = (done) => (done ? '✓' : '—');
+        api.ui.objective('yard', 'Zniszcz habitat: wyłom w mieście, podstawa wieży (zwal ją na wieżowce), reaktory antygrawitacyjne na pomostach — broń wbudowana (4) albo taran', () => {
+          const s = site.habitatStages();
+          if (!s) return '';
+          return `wyłom ${s.breach}/${s.breachNeed} · wieża ${mark(s.tower)} · reaktory ${s.reactors}/${s.reactorsTotal}`;
+        });
+        hint('builtin', () => (site.habitatStages()?.done || 0) > 0 || site.buildingDestroyed());
+      } else {
+        api.ui.objective('yard', 'Zniszcz habitat bazy — broń wbudowana (4) albo taran', () => `${Math.round(site.buildingHpFrac() * 100)}%`);
+        hint('builtin', () => site.buildingHpFrac() < 0.9 || site.buildingDestroyed());
+      }
     }
   } else {
     api.dev.destroyStation(site.station);
@@ -561,7 +588,8 @@ export async function mission01(ctx) {
       ['Supercapital herszta', bossText, bossResult === 'escaped' ? 'neg' : bossDown ? 'pos' : '']
     ];
     if (site.chain.fuel || chainKills > 0) stats.push(['Reakcja łańcuchowa', `${chainKills} okrętów`, 'pos']);
-    stats.push(['Magazyn piratów', warehouseDown ? 'zniszczony' : 'cały', warehouseDown ? 'pos' : '']);
+    // wiersz tylko za zasługę gracza: po HP 0 habitatu magazyn pada z bazą (puszczenie kotwic) i nie jest już „cały”
+    if (warehouseDown) stats.push(['Magazyn piratów', 'zniszczony', 'pos']);
     await api.ui.summary({ title: 'MISJA WYKONANA', subtitle: M.title, reward, stats });
   }
   api.journal.complete();

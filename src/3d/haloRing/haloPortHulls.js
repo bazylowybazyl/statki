@@ -35,6 +35,12 @@ const OUTLINE = freeze({
     [0.472912, 0.042986], [0.448081, 0.08371], [0.206546, 0.237557], [-0.238149, 0.278281], [-0.319413, 0.282805],
     [-0.400677, 0.246606], [-0.454853, 0.205882], [-0.470655, 0.074661]
   ]),
+  heavy: poly([
+    [-0.476325, -0.220406], [-0.471251, -0.245209], [-0.412627, -0.294814], [-0.351747, -0.328636], [-0.26832, -0.326381],
+    [0.101466, -0.308343], [0.251409, -0.270011], [0.464487, -0.082864], [0.485908, -0.040023], [0.483089, 0.014092],
+    [0.46336, 0.04566], [0.251973, 0.228298], [0.101466, 0.325254], [-0.185457, 0.325254], [-0.354002, 0.291432],
+    [-0.464487, 0.214769], [-0.474634, 0.20124], [-0.476325, 0.185457]
+  ]),
   mega: poly([
     [-0.490971, -0.011312], [-0.475169, -0.210407], [-0.380361, -0.300905], [-0.274266, -0.300905], [0.066591, -0.278281],
     [0.224605, -0.260181], [0.414221, -0.124434], [0.459368, -0.08371], [0.490971, -0.020362], [0.488713, 0.070136],
@@ -52,11 +58,10 @@ export const HALO_PLAYER_HULLS = freeze({
     engines: freeze({ stern: 0.463, z: freeze([-0.0658, 0, 0.0658]) }), tune: TUNE_K7
   }),
   heavy_freighter: freeze({
-    // w katalogu ruchu v2 bez własnego sprite'a — zastępczo frachtowiec
-    // dalekiego zasięgu w skali ciężkiego (1800 j.)
-    id: 'heavy_freighter', name: 'Ciężki frachtowiec', cls: 'CAPITAL', sprite: '/assets/long_haul_freighter.png', stand: true,
-    w: 1800, h: 900, outline: OUTLINE.longHaul, fit: freeze({ length: 1800, beam: 660 }),
-    engines: freeze({ stern: 0.47, z: freeze([-0.17, 0, 0.17]) }),
+    // Sprite Z11 (E13, 2026-10-23): obrys kolizji z alfy, 4 bębny dysz na rufie.
+    id: 'heavy_freighter', name: 'Ciężki frachtowiec', cls: 'CAPITAL', sprite: '/assets/ships/heavy_freighter.png', stand: true,
+    w: 1800, h: 900, outline: OUTLINE.heavy, fit: freeze({ length: 1800, beam: 660 }),
+    engines: freeze({ stern: 0.47, z: freeze([-0.204, -0.08, 0.045, 0.167]) }),
     tune: freeze({ acc: 135, speed: 600, speedIn: 200, turn: 0.42, turnIn: 0.26, torque: 0.9 })
   }),
   megafreighter: freeze({

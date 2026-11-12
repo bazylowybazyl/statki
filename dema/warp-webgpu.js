@@ -1,5 +1,11 @@
 // dema/warp-webgpu.js — demo WebGPU: warp „Nurt” (propozycja 2).
 //
+// WYCOFANE (2026-10-26, sprzątanie S1 nowego warpa „podniesiony świat”): demo archiwalne — warp gry to jeden warp
+// („Pęd” + soczewka świata, mapa C; dema/warp-ped.html, docs/webgpu/WARP-SOCZEWKA.md). Własne kopie ośrodka, szczelin,
+// rulonu i postu zostają bez zmian; ciała idą przez mapWorldLens gry (dziś mapa C bez stanu: bez trybów przejścia,
+// trzymania celu przy krawędzi i stożka za celem), więc planety NIE wyglądają jak dawniej ani jak w grze. Demo się buduje
+// i uruchamia; nie stroić na nim warpa gry.
+//
 // Bańki warpa nie rysujemy. Przestrzeń ma ośrodek — miliony drobin materii
 // międzyplanetarnej liczonych na GPU (warp-webgpu/medium.js) — i bańkę widać
 // po tym, co z nim robi: przed dziobem ściska go (turkus), za rufą rozrzedza

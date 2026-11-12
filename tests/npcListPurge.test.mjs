@@ -34,7 +34,6 @@ test('index.html: z npcs wypada tylko martwy NPC misji po utworzeniu wraku', () 
   assert.equal(finished({ dead: true, mission: true, beamHull: {} }), false, 'kadłub na belkach jeszcze żyje');
   assert.equal(finished({ dead: false, mission: true, beamHull: null }), false);
   assert.equal(finished({ dead: true, mission: false, beamHull: null }), false, 'cywil się odrodzi');
-  assert.equal(finished({ dead: true, mission: true, beamHull: null, isCargoVan: true }), false, 'frachtowiec sprząta rekord');
   assert.equal(finished(hulk), false, 'hulk po mostku');
   ship.dead = true;
   ship.mission = true;

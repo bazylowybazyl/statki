@@ -17,6 +17,10 @@
  * Statek leci po ŚCIEŻCE (bufor punktów, `portPaths.js`), nie do punktu:
  *   - przy ringu „Halo” trasę układa `ringRouter.js` — płyta ringu tylko przez
  *     tranzyty, dookoła planety łukiem za halami, w strefie portu promieniowo;
+ *   - przy budowli doku portu bez ringu (E14: krzyż, okrąg, koło) trasa z
+ *     przestrzeni objeżdża dysk zapasu budowli (`dockDiscs`: styczna → łuk →
+ *     styczna) i wchodzi lejkiem na oś podejścia stanowiska; punkty dyspozytora
+ *     w dysku (kolejka, punkty manewrowe) wypycha `resolveCore`;
  *   - w porcie: punkt czekania → brama / wylot → pas albo aleja → skręt → pole
  *     STOP; przechwyt w oknie stanowiska (jak `PortDocking`: capital 145 × 180,
  *     reszta 70 × 55, ≤ 30 j./s, ≤ 7°) i 1,1 s dociągnięcia pozy;
@@ -48,16 +52,18 @@ import {
   currentStage, stageProgress, STAGE_KIND, COURSE_STATUS,
   completeCurrentStage, syncActorStageProgress, attachActor, detachActor
 } from './courseRegistry.js';
-import { DRIVE_MODES, getNode } from './travelNetwork.js';
+import { DRIVE_MODES, driveModeFor, getNode } from './travelNetwork.js';
+import { HYPERCRUISE_TUNE } from '../../data/driveModes.js';
 import { hullFootprint } from './dockLayout.js';
 import { needsService } from './portControl.js';
 import {
-  PATH_STRIDE, WP, createPath, pathReset, pathFinalize, pathApplyCornerSpeeds, pathAddFlags,
+  PATH_STRIDE, WP, createPath, pathReset, pathPush, pathFinalize, pathApplyCornerSpeeds, pathAddFlags,
   pathPointAt, pathFind, createPortIndex, addPortLayout, findPortEntry, findPortEntryAt,
   portApproachPoint, writeInbound, writeOutbound, berthCaptureOk, inPortCap,
   CAPTURE_DEFAULTS, PORT_PATH_SPEED
 } from './portPaths.js';
-import { routeRing, ringAt, isRingCorePoint, ringFunnelPoint } from './ringRouter.js';
+import { ringAt, isRingCorePoint, ringFunnelPoint } from './ringRouter.js';
+import { routeAroundDiscs, pushDockDisc } from './dockDetour.js';
 
 const TAU = Math.PI * 2;
 const S = PATH_STRIDE;
@@ -95,6 +101,11 @@ export const FLIGHT_DEFAULTS = Object.freeze({
   separationStrength: 0.55,
   /** Ile encji wolno utrzymywać naraz. Bańka ma być ograniczona, nie nieskończona. */
   maxActors: 400,
+  /**
+   * Holownik z wrakiem na linie (E24, kurs złomiarza `salvageMode: 'tow'`, przelot powrotny) leci najwyżej tyle [j./s];
+   * 0 — bez limitu (prędkość trybu etapu jak każdy przelot). Gra ustawia z adresu `?hol=` (`config.bubble`).
+   */
+  towHaulSpeed: 0,
   /** Poza tym ułamkiem promienia bańki encja wraca do rekordu (histereza). */
   releaseMargin: 1.25,
   /** Wyprzedzenie punktu celowania [s] i jego granice w swobodnym locie [j.]. */
@@ -122,6 +133,12 @@ export const FLIGHT_DEFAULTS = Object.freeze({
   undockWaitMax: 60,
   /** Kurs odrzucony przy materializacji (ścieżka poza bańką) — przerwa [s]. */
   materializeCooldown: 2,
+  /**
+   * Odlot po końcu kursu przy stanowisku (rozładunek u celu — ostatni etap przewozu): encja odłącza się, wychodzi
+   * korytarzem i leci tyle [j.] od portu (poza bańkę — tam ją zwalnia krok 1), najwyżej `departTimeout` s.
+   */
+  departDistance: 90000,
+  departTimeout: 240,
   /** Obrót na redzie / w kolejce względem obrotu w porcie. */
   holdTurnRatio: 0.5
 });
@@ -174,22 +191,91 @@ function wrapPi(a) {
   return v;
 }
 
-/** Klasa jednostki → gabaryty z prawdziwych kadłubów gry. */
+/**
+ * Klasa jednostki → gabaryty z prawdziwych kadłubów gry: obrys kadłuba proxy
+ * (`trafficHullFootprint` przez `hullFootprint` — klasa kursu przechodzi przez
+ * rejestr kadłubów ruchu, frachtowiec „capital” to ciężki frachtowiec, nie
+ * kontenerowiec). Ten sam obrys mieści statek na stanowisku i dostaje trafienia.
+ */
 function actorSize(unitClass) {
   const size = hullFootprint(unitClass);
   return { length: Math.max(40, size.length), width: Math.max(20, size.width) };
 }
 
-/** Prędkość przelotowa etapu — warp leci swoją, reszta konwencjonalną. */
-function cruiseFor(stage) {
-  if (stage?.kind !== STAGE_KIND.TRAVEL) return DRIVE_MODES.conventional.speed;
-  const speed = DRIVE_MODES[stage?.mode]?.speed;
-  return Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+/**
+ * Klasa ładowni kursu (`TRAFFIC_CLASS_DRIVE`: silnik hipercruise, klasa lotu, napęd warp) — z kadłuba
+ * przewoźnika (`hullForVanClass`) albo z klasy kursu bez statku (`VAN_CLASSES.npcType`).
+ */
+export const VAN_CLASS_OF_UNIT = Object.freeze({
+  inter_station_shuttle: 'van', 'freighter-small': 'van',
+  container_ship: 'hauler', 'freighter-medium': 'hauler',
+  long_haul_freighter: 'bulk', 'freighter-large': 'bulk',
+  heavy_freighter: 'heavy', 'freighter-capital': 'heavy',
+  megafreighter: 'mega'
+});
+
+/**
+ * Napęd etapu z jednej tabeli (`src/data/driveModes.js` przez `driveModeFor`): hipercruise i warp wg klasy
+ * ładowni kursu — prędkość silnika klasy (van Mk II 30 tys. j./s, reszta Mk I 20 tys.) i rozpęd z
+ * `HYPERCRUISE_BY_CLASS` (5–12 s do 20 tys.), te same liczby, którymi rekord liczy czas odcinka. Postój
+ * i brama — konwencjonalny.
+ */
+function driveFor(stage, course) {
+  if (stage?.kind !== STAGE_KIND.TRAVEL) return DRIVE_MODES.conventional;
+  const vanClass = course?.payload?.vanClassId || VAN_CLASS_OF_UNIT[course?.unitClass] || null;
+  return driveModeFor(stage?.mode, vanClass) || DRIVE_MODES.conventional;
+}
+
+/**
+ * Prędkość przelotowa etapu — z napędu kursu; brama i nieznany tryb lecą konwencjonalnym. Holownik z wrakiem
+ * na linie (kurs złomiarza w trybie hol, `salvageMode`, przelot powrotny) — najwyżej `towHaulSpeed` konfiguracji bańki
+ * (E24; 0 = bez limitu — prędkość trybu jak każdy przelot; `?hol=wolny` w grze = prędkość z rachunku złomiarzy).
+ */
+function cruiseFor(stage, course, config = null) {
+  const speed = driveFor(stage, course).speed;
+  const v = Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+  const cap = Number(config?.towHaulSpeed) || 0;
+  if (cap > 0 && course?.salvageMode === 'tow' && stage && stage === course.stages?.[course.stages.length - 1]
+    && stage.kind === STAGE_KIND.TRAVEL) return Math.min(v, cap);
+  return v;
+}
+
+/** Napęd etapu na encję: prędkość przelotowa i — gdy tabela je ma (hipercruise) — rozpęd i hamowanie. */
+function applyDrive(actor, stage, course, config = null) {
+  const mode = driveFor(stage, course);
+  actor.cruise = cruiseFor(stage, course, config);
+  actor.driveCruise = actor.cruise;
+  actor.mode = stage?.mode || null;
+  actor.driveAccel = mode.accel > 0 ? mode.accel : 0;
+  actor.driveDecel = mode.decel > 0 ? mode.decel : 0;
+}
+
+/** Rozpęd w swobodnym locie: z tabeli napędu, inaczej ułamek prędkości przelotowej. */
+function freeAccel(cfg, actor) {
+  return actor.driveAccel > 0 ? actor.driveAccel : actor.cruise * cfg.accelRatio * actor.accelScale;
+}
+
+/** Hamowanie w swobodnym locie: z tabeli napędu, inaczej ułamek prędkości przelotowej. */
+function freeBrake(cfg, actor) {
+  return actor.driveDecel > 0 ? actor.driveDecel : actor.cruise * cfg.brakeRatio * actor.accelScale;
 }
 
 // ============================================================
 // Bańka
 // ============================================================
+
+/**
+ * Strefa planety (jak lot gracza, E5): w studni grawitacyjnej `zoneAt(x, y)` < 1 (planety 0,3 — `zonePropsForId`
+ * gry). Hipercruise nie schodzi niżej niż `HYPERCRUISE_TUNE.minZone` (0,6), warp bierze mnożnik wprost, lot
+ * konwencjonalny i port — bez strefy. Liczone w każdym kroku lotu (zależy od miejsca, nie od etapu); zwolnienie
+ * w strefie hamuje hamowaniem napędu, nie skokiem.
+ */
+function applyZone(bubble, actor) {
+  if (!bubble.zoneAt || (actor.mode !== 'hypercruise' && actor.mode !== 'warp')) return;
+  const z = bubble.zoneAt(actor.x, actor.y);
+  const k = actor.mode === 'hypercruise' ? Math.max(HYPERCRUISE_TUNE.minZone, Math.min(1, z)) : Math.min(1, z);
+  actor.cruise = actor.driveCruise * (k > 0 ? k : 1);
+}
 
 /**
  * Opcje: wszystko z `FLIGHT_DEFAULTS` oraz
@@ -198,11 +284,14 @@ function cruiseFor(stage) {
  *                albo gotowy indeks `ports` (`createPortIndex`),
  *   `holdPose` — `(course, stage, out) → bool`: miejsce i kurs w kolejce portu
  *                (bez niego: pozycja z dyspozytora, dziób od planety),
- *   `records`  — `{ attach, detach, sync, complete }` zamiast courseRegistry.
+ *   `records`  — `{ attach, detach, sync, complete }` zamiast courseRegistry,
+ *   `zoneAt`   — `(x, y) → mnożnik strefy` (studnie planet; `applyZone`), bez niego — bez strefy.
  */
 export function createBubble(options = {}) {
-  const { rings = null, ports = null, docks = null, holdPose = null, records = null, ...rest } = options;
-  return {
+  const {
+    rings = null, ports = null, docks = null, holdPose = null, records = null, zoneAt = null, departTarget = null, ...rest
+  } = options;
+  const bubble = {
     config: { ...FLIGHT_DEFAULTS, ...rest },
     /** `courseId` → encja. */
     actors: new Map(),
@@ -210,7 +299,15 @@ export function createBubble(options = {}) {
     list: [],
     rings: Array.isArray(rings) ? rings : [],
     ports: ports?.entries instanceof Map ? ports : createPortIndex(docks || ports || null),
+    /** Dyski zapasu budowli doków (E14): [x, y, keepR, promień łuku objazdu] × n. */
+    dockDiscs: new Float64Array(0),
     holdPose: typeof holdPose === 'function' ? holdPose : null,
+    zoneAt: typeof zoneAt === 'function' ? zoneAt : null,
+    /**
+     * `(course, actor, out) → bool` (E15): odlot po końcu kursu leci na miejsce postoju statku (`out`: x, y,
+     * angle — slot redy / orbity, `workerBubble.js`) i tam znika; bez haka albo `false` — 90 tys. j. od portu.
+     */
+    departTarget: typeof departTarget === 'function' ? departTarget : null,
     records: { ...DEFAULT_RECORDS, ...(records || {}) },
     pathPool: [],
     /** `courseId` → czas bańki, do którego kurs się nie materializuje. */
@@ -225,6 +322,21 @@ export function createBubble(options = {}) {
       replans: 0, forcedStages: 0, waits: 0
     }
   };
+  refreshDockDiscs(bubble);
+  return bubble;
+}
+
+// Stałe objazdu dysków (DOCK_ARC_STEP, DOCK_ARC_MARGIN) — `dockDetour.js` (wspólne z kapsułami ratunkowymi).
+
+/** Dyski zapasu budowli doków z układów w indeksie portów (`layout.model`). */
+function refreshDockDiscs(bubble) {
+  const list = [];
+  for (const layout of bubble.ports.layouts.values()) {
+    const m = layout?.model;
+    if (!m || !(m.keepR > 0)) continue;
+    pushDockDisc(list, m.x, m.y, m.keepR);
+  }
+  bubble.dockDiscs = Float64Array.from(list);
 }
 
 /** Podmienia ringi (np. po przesunięciu planet albo zmianie układu). */
@@ -237,6 +349,7 @@ export function setBubblePorts(bubble, docks) {
   if (!docks) return;
   const iterable = docks instanceof Map ? docks.entries() : Object.entries(docks);
   for (const [stationId, layout] of iterable) addPortLayout(bubble.ports, stationId, layout);
+  refreshDockDiscs(bubble);
 }
 
 function takePath(bubble) {
@@ -270,6 +383,15 @@ function createActor(bubble, course) {
     speed: 0,
     cruise: DRIVE_MODES.conventional.speed,
     mode: null,
+    /** Rozpęd i hamowanie z tabeli napędu (hipercruise) [j./s²]; 0 = ułamek prędkości przelotowej. */
+    driveAccel: 0,
+    driveDecel: 0,
+    /** Prędkość przelotowa napędu bez strefy (`cruise` = ta × mnożnik strefy planety — `applyZone`). */
+    driveCruise: DRIVE_MODES.conventional.speed,
+    /** Ruch faktyczny ostatniego kroku (pakowanie bufora encji w workerze ruchu — E6). */
+    effVx: 0,
+    effVy: 0,
+    effSeen: false,
     /** Poza z początku ostatniego `updateBubble` — interpolacja renderu. */
     prevX: 0,
     prevY: 0,
@@ -410,8 +532,14 @@ const _q = { x: 0, y: 0, angle: 0, index: 1 };
 const _hold = { x: 0, y: 0, angle: 0 };
 const _pose = { along: 0, across: 0, angle: 0 };
 const _rec = { x: 0, y: 0 };
+/** Miejsce postoju po odlocie (`departTarget`, E15). */
+const _depart = { x: 0, y: 0, angle: 0 };
 
-/** Punkt abstrakcyjny (środek planety z ringiem) → lejek w stronę `towards`. */
+/**
+ * Punkt abstrakcyjny (środek planety z ringiem) → lejek w stronę `towards`.
+ * Punkt dyspozytora w dysku zapasu budowli doku (kolejka, punkt manewrowy,
+ * zwolnione stanowisko) → promieniowo za dysk — trasa do niego objeżdża budowlę.
+ */
 function resolveCore(bubble, x, y, tx, ty, out) {
   const rings = bubble.rings;
   if (rings.length && isRingCorePoint(rings, x, y)) {
@@ -420,7 +548,34 @@ function resolveCore(bubble, x, y, tx, ty, out) {
   }
   out.x = x;
   out.y = y;
+  const discs = bubble.dockDiscs;
+  for (let i = 0; i < discs.length; i += 4) {
+    const dx = x - discs[i];
+    const dy = y - discs[i + 1];
+    const r = discs[i + 2];
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= r * r) continue;
+    const d = Math.sqrt(d2);
+    const ux = d > 1e-6 ? dx / d : 1;
+    const uy = d > 1e-6 ? dy / d : 0;
+    out.x = discs[i] + ux * (r + 300);
+    out.y = discs[i + 1] + uy * (r + 300);
+    break;
+  }
   return out;
+}
+
+/**
+ * Trasa A → B: objazd dysków budowli doków (styczna → łuk → styczna, krótszą
+ * stroną — jak `pushDetour` ringu), potem router ringu. Dysk, w którym leży koniec
+ * odcinka, nie jest objeżdżany (punkty portu — wejście lejkiem, wyjście za dysk —
+ * są poza nim; reszta przeszła przez `resolveCore`). KAŻDY wolny odcinek — także do
+ * zejścia na objazd dysku — idzie przez router ringu (`pushDiscDetour`): przelot między
+ * portami bez ringu (rajd z kryjówki Hildy na Mimasa) objeżdża dyski przy obu końcach,
+ * a prosta między nimi potrafi przeciąć płytę ringu planety po drodze.
+ */
+function routeAround(bubble, path, ax, ay, bx, by, vmax, flags) {
+  routeAroundDiscs(path, bubble.rings, bubble.dockDiscs, ax, ay, bx, by, vmax, flags);
 }
 
 /** Czy postój to obsługa w porcie znanym bańce (dyspozytor przydzieli miejsce). */
@@ -460,7 +615,7 @@ function beginPath(bubble, actor) {
     actor.docked = false;
     pathReset(path, e.x, e.y);
     if (writeOutbound(e, path, actor) > 0) pathAddFlags(path, path.count - 1, OUT_END);
-    actor.corridorOut = e.corridor;
+    actor.corridorOut = e.corridorOut || e.corridor;
     actor.outGateX = e.gateX;
     actor.outGateY = e.gateY;
     actor.outOutX = e.outX;
@@ -516,9 +671,9 @@ function planTravel(bubble, network, course, stage, actor) {
   let vEnd = 0;
   let fEnd = WP.STOP;
   if (next) {
-    const brake = actor.cruise * bubble.config.brakeRatio * actor.accelScale;
+    const brake = freeBrake(bubble.config, actor);
     if (next.kind === STAGE_KIND.TRAVEL) {
-      vEnd = Math.min(actor.cruise, cruiseFor(next));
+      vEnd = Math.min(actor.cruise, cruiseFor(next, course, bubble.config));
       fEnd = 0;
     } else if (next.pos) {
       const dist = Math.hypot(next.pos.x - ex, next.pos.y - ey);
@@ -531,7 +686,7 @@ function planTravel(bubble, network, course, stage, actor) {
       fEnd = 0;
     }
   }
-  routeRing(path, bubble.rings, ax, ay, ex, ey, vEnd, fEnd);
+  routeAround(bubble, path, ax, ay, ex, ey, vEnd, fEnd);
   actor.endKind = fEnd & WP.STOP ? END_STOP : END_PASS;
   finishPath(bubble, actor);
 }
@@ -592,8 +747,14 @@ function planDwell(bubble, network, course, stage, actor) {
     }
     beginPath(bubble, actor);
     portApproachPoint(entry, actor, _p);
-    routeRing(path, bubble.rings, lastX(path), lastY(path), _p.x, _p.y,
-      Math.min(actor.portCap, PORT_PATH_SPEED.approach), WP.WAIT);
+    const vWait = Math.min(actor.portCap, PORT_PATH_SPEED.approach);
+    if (entry.funnelX === entry.funnelX) {
+      // Budowla doku: z przestrzeni do lejka za dyskiem zapasu, dalej osią podejścia do punktu czekania.
+      routeAround(bubble, path, lastX(path), lastY(path), entry.funnelX, entry.funnelY, vWait, 0);
+      pathPush(path, _p.x, _p.y, vWait, WP.WAIT | WP.PORT);
+    } else {
+      routeAround(bubble, path, lastX(path), lastY(path), _p.x, _p.y, vWait, WP.WAIT);
+    }
     // Pas: punkt czekania leży dalej niż punkt podejścia — ten zostaje w szkielecie;
     // aleja i pomost: punkt czekania TO punkt podejścia.
     writeInbound(entry, path, actor, entry.lane ? 0 : 1);
@@ -616,7 +777,7 @@ function planDwell(bubble, network, course, stage, actor) {
     }
     resolveCore(bubble, _hold.x, _hold.y, actor.x, actor.y, _p);
     beginPath(bubble, actor);
-    routeRing(path, bubble.rings, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP | WP.HOLD);
+    routeAround(bubble, path, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP | WP.HOLD);
     actor.holdAngle = Number.isFinite(_hold.angle) ? _hold.angle : actor.angle;
     actor.endKind = END_HOLD;
     if (actor.phase !== ACTOR_PHASE.UNDOCK) setPhase(actor, ACTOR_PHASE.FLY);
@@ -645,7 +806,7 @@ function planDwell(bubble, network, course, stage, actor) {
     return;
   }
   beginPath(bubble, actor);
-  routeRing(path, bubble.rings, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP);
+  routeAround(bubble, path, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP);
   actor.endKind = END_STOP;
   if (actor.phase !== ACTOR_PHASE.UNDOCK) setPhase(actor, ACTOR_PHASE.FLY);
   finishPath(bubble, actor);
@@ -709,11 +870,20 @@ function materialize(bubble, network, course, focus, inner) {
   const stage = currentStage(course);
   if (!stage) return null;
   const actor = createActor(bubble, course);
-  actor.cruise = cruiseFor(stage);
-  actor.mode = stage.mode || null;
+  applyDrive(actor, stage, course, bubble.config);
   const ok = stage.kind === STAGE_KIND.TRAVEL
     ? placeTravel(bubble, network, course, stage, actor)
     : placeDwell(bubble, network, course, stage, actor);
+  // Gra oddała kurs z pozą (E6: NPC po walce wraca do bańki) — encja startuje tam, gdzie był NPC, a nie
+  // w miejscu rekordu, i dostaje ścieżkę od nowa (przelot albo podejście na stanowisko). Poza ważna tylko
+  // w etapie, w którym gra oddała kurs (rekord poza bańką biegnie dalej).
+  const vs = course.viewState;
+  if (vs && vs.handoff) {
+    course.viewState = null;
+    if (ok && vs.stageIndex === course.stageIndex && Number.isFinite(vs.x) && Number.isFinite(vs.y)) {
+      handoffPose(bubble, network, course, stage, actor, vs);
+    }
+  }
   const dx = actor.x - focus.x;
   const dy = actor.y - focus.y;
   if (!ok || dx * dx + dy * dy > inner * inner) {
@@ -732,6 +902,24 @@ function materialize(bubble, network, course, focus, inner) {
   addActor(bubble, actor);
   bubble.stats.materialized++;
   return actor;
+}
+
+/** Encja w pozie oddanej przez grę: lot od tego miejsca, bez stanowiska pod sobą. */
+function handoffPose(bubble, network, course, stage, actor, vs) {
+  freeBerth(actor);
+  actor.dockedEntry = null;
+  actor.docked = false;
+  actor.phase = ACTOR_PHASE.FLY;
+  actor.phaseTime = 0;
+  actor.x = vs.x;
+  actor.y = vs.y;
+  actor.angle = Number.isFinite(vs.angle) ? vs.angle : actor.angle;
+  actor.speed = Math.max(0, Number(vs.speed) || 0);
+  if (stage.kind === STAGE_KIND.TRAVEL) {
+    planTravel(bubble, network, course, stage, actor);
+    // Postęp etapu przy zwolnieniu liczy się od postępu rekordu w chwili oddania, nie od zera.
+    actor.pathStart = stageProgress(course);
+  } else planDwell(bubble, network, course, stage, actor);
 }
 
 function placeTravel(bubble, network, course, stage, actor) {
@@ -860,7 +1048,7 @@ function speedProfile(bubble, actor, i, s, stopIdx, precise, dt = 0) {
   const d = path.data;
   const n = path.count;
   const cfg = bubble.config;
-  const brakeFree = actor.cruise * cfg.brakeRatio * actor.accelScale;
+  const brakeFree = freeBrake(cfg, actor);
   const bPort = actor.accelPort;
   let vmax = precise ? Math.min(actor.cruise, actor.portCap) : actor.cruise;
   if (n < 2) return 0;
@@ -980,9 +1168,19 @@ function followPath(bubble, actor, dt) {
   let desired = dxT * dxT + dyT * dyT > 1 ? Math.atan2(dyT, dxT) : Math.atan2(uy, ux);
   if (reverse) desired += Math.PI;
   let over = 0;
-  if (i === stopIdx && along > len) {
-    over = along - len;
-    desired = Math.atan2(uy, ux) + (reverse ? Math.PI : 0);
+  if (i === stopIdx) {
+    // Przy punkcie stopu liczy się kurs osi (okno przechwytu: ≤ 7°), a odchyłka
+    // w poprzek mieści się w oknie — poprawka pościgu wygasa liniowo na
+    // ostatnich `look` jednostkach i od punktu dziób trzyma oś. Przejście musi
+    // być CIĄGŁE: przełącznik „przed punktem pościg, za nim oś” skakał co krok,
+    // gdy statek przeskakiwał pole STOP o ułamek jednostki i cofał się na nie —
+    // kurs drgał o atan(w poprzek / look), `angVel` nie schodził pod próg
+    // przechwytu i stanowisko łapał dopiero strażnik po 25 s (prom przy
+    // pomoście, krok 0,2 s).
+    const axis = Math.atan2(uy, ux) + (reverse ? Math.PI : 0);
+    const w = clamp((len - along) / look, 0, 1);
+    desired = axis + wrapPi(desired - axis) * w;
+    if (along > len) over = along - len;
   }
   const omega = precise ? actor.turnPort : actor.turnFree;
   const err = wrapPi(desired - actor.angle);
@@ -1022,11 +1220,19 @@ function followPath(bubble, actor, dt) {
     desiredSpeed = reverse ? back : -back;
   }
 
-  const accel = precise ? actor.accelPort : actor.cruise * cfg.accelRatio * actor.accelScale;
-  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej.
+  const accel = precise ? actor.accelPort : freeAccel(cfg, actor);
+  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej. Napęd z tabeli
+  // (hipercruise) hamuje swoim hamowaniem, dopóki statek TRZYMA profil — przy zwolnieniu w strefie planety
+  // (limitem jest przelot, nie stop) i na profilu stopu. Nad profilem stopu (materializacja w biegu tuż
+  // przed punktem, dyskretny krok) hamuje awaryjnie jak dawniej — inaczej przelatywał punkt o kilometr
+  // i cofał się po 40 j./s, aż strażnik wymusił etap.
+  const v0a = v0Abs(actor);
+  const onProfile = vmax >= actor.cruise - 1 || v0a <= vmax * 1.02 + 5;
   const brake = precise
-    ? Math.max(actor.accelPort, (v0Abs(actor) - actor.portCap) * cfg.brakeRatio * actor.accelScale)
-    : Math.max(actor.cruise, v0Abs(actor)) * cfg.brakeRatio * actor.accelScale;
+    ? Math.max(actor.accelPort, (v0a - actor.portCap) * cfg.brakeRatio * actor.accelScale)
+    : (actor.driveDecel > 0 && v0a <= actor.driveCruise && onProfile
+      ? actor.driveDecel
+      : Math.max(actor.cruise, v0a) * cfg.brakeRatio * actor.accelScale);
   const v0 = actor.speed;
   const speedingUp = v0 >= 0 ? desiredSpeed > v0 && desiredSpeed > 0 : desiredSpeed < v0 && desiredSpeed < 0;
   const lim = (speedingUp ? accel : brake) * dt;
@@ -1148,7 +1354,8 @@ function updateCorridors(bubble, dt) {
         c = a.corridorOut;
       } else if (a.waitIndex > 0 && a.corridorIn) {
         if (a.wp <= a.waitIndex) a.corridorState = IN_OUTSIDE;
-        else if (a.wp <= a.cornerIndex) a.corridorState = IN_COMMITTED;
+        // Budowla doku (E14): wchodzący zostaje w korytarzu aż do pola — po skręcie w stanowisko też go widać.
+        else if (a.wp <= a.cornerIndex || a.entry?.kind === 'model') a.corridorState = IN_COMMITTED;
         if (a.corridorState) c = a.corridorIn;
       }
     }
@@ -1195,27 +1402,54 @@ function updateCorridors(bubble, dt) {
     }
   }
 
-  // Gęsiego: za encją przed sobą w tym samym korytarzu i kierunku.
+  // Gęsiego: za encją przed sobą w tym samym korytarzu i kierunku. W budowli doku (E14: pierścienie koła,
+  // aleje krzyża — za punktem czekania i w drodze do wyjścia) „przed” i „w poprzek” po kierunku jazdy encji,
+  // nie po osi ujścia; kolejka przed ujściem — po osi, jak w K-7. Wychodzący w budowli ustępuje wchodzącym
+  // za punktem czekania (w kole przecina ich pierścień), nigdy odwrotnie — bez wzajemnego czekania.
+  const modelCorridors = bubble.ports.modelCorridors;
   for (let i = 0; i < port.length; i++) {
     const a = port[i];
     const outbound = a.corridorState === OUT_MOVING;
     const c = outbound ? a.corridorOut : a.corridorIn;
-    const ox = outbound ? a.outOutX : a.inOutX;
-    const oy = outbound ? a.outOutY : a.inOutY;
+    const byMotion = a.corridorState !== IN_OUTSIDE && !!modelCorridors && modelCorridors.has(c);
+    let ox = outbound ? a.outOutX : a.inOutX;
+    let oy = outbound ? a.outOutY : a.inOutY;
+    if (byMotion) {
+      const v = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+      ox = v > 1 ? a.vx / v : Math.cos(a.angle);
+      oy = v > 1 ? a.vy / v : Math.sin(a.angle);
+    }
+    const dockA = byMotion ? modelCorridors.get(c) : null;
     for (let j = 0; j < port.length; j++) {
       if (i === j) continue;
       const b = port[j];
       const bOut = b.corridorState === OUT_MOVING;
-      if (bOut !== outbound) continue;
-      if ((bOut ? b.corridorOut : b.corridorIn) !== c) continue;
-      // Wchodzący: przed nim ten, kto głębiej; wychodzący: ten, kto bliżej ujścia.
-      const ahead = outbound ? a.depth - b.depth : b.depth - a.depth;
+      const sameLane = bOut === outbound && (bOut ? b.corridorOut : b.corridorIn) === c;
+      const giveWay = !sameLane && outbound && byMotion && b.corridorState === IN_COMMITTED
+        && modelCorridors.get(b.corridorIn) === dockA;
+      if (!sameLane && !giveWay) continue;
+      // Wchodzący: przed nim ten, kto głębiej; wychodzący: ten, kto bliżej ujścia; budowla doku — ten przed dziobem.
+      const ahead = byMotion ? (b.x - a.x) * ox + (b.y - a.y) * oy
+        : outbound ? a.depth - b.depth : b.depth - a.depth;
+      // Budowla doku: ustępuje się temu przed dziobem; gdy dwaj mają się nawzajem przed dziobem (naprzeciw,
+      // włączanie na pierścień), jedzie kurs o niższym numerze — porządek liniowy, bez wzajemnego czekania.
+      if (byMotion && sameLane) {
+        const bv = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+        const fbx = bv > 1 ? b.vx / bv : Math.cos(b.angle);
+        const fby = bv > 1 ? b.vy / bv : Math.sin(b.angle);
+        const backX = a.x - b.x;
+        const backY = a.y - b.y;
+        const mutual = backX * fbx + backY * fby > 0
+          && Math.abs(backX * fby - backY * fbx) <= (a.width + b.width) * 0.5 + 120;
+        if (mutual && a.courseId < b.courseId) continue;
+      }
       if (ahead <= 0) continue;
       const rx = b.x - a.x;
       const ry = b.y - a.y;
       const lateral = Math.abs(rx * oy - ry * ox);
-      if (lateral > (a.width + b.width) * 0.5 + 120) continue;
-      const gap = ahead - (a.length + b.length) * 0.5 - 80;
+      // Ustępowanie: wchodzący jedzie w poprzek drogi wychodzącego — w poprzek liczy się jego długość.
+      if (lateral > (a.width + (giveWay ? b.length : b.width)) * 0.5 + (giveWay ? 250 : 120)) continue;
+      const gap = giveWay ? ahead - (a.length + b.width) * 0.5 - 200 : ahead - (a.length + b.length) * 0.5 - 80;
       const cap = gap > 0 ? gap * 0.7 + 4 : 0;
       if (cap < a.speedCap) a.speedCap = cap;
     }
@@ -1226,8 +1460,11 @@ function updateCorridors(bubble, dt) {
 // Separacja (swobodny lot)
 // ============================================================
 
-function freeFlying(actor) {
+function freeFlying(actor, cfg) {
   if (actor.phase !== ACTOR_PHASE.FLY || !actor.path || actor.path.count < 2) return false;
+  // Ostatni odcinek przed punktem stopu bez rozpychania: kilka kursów z tym samym punktem (węzeł stacji,
+  // punkt postoju) odpychało się tuż przed nim siłą ∝ przelotowi i żaden nie dochodził — wymuszony etap.
+  if (actor.endKind !== END_PASS && actor.distance < cfg.separationRadius * 2) return false;
   const flags = actor.path.data[actor.wp * S + PF];
   return (flags & (PORTISH | WP.WAIT)) === 0;
 }
@@ -1267,7 +1504,7 @@ function separate(bubble, dt) {
   let any = 0;
   for (let k = 0; k < n; k++) {
     const a = list[k];
-    if (!freeFlying(a)) { next[k] = -2; continue; }
+    if (!freeFlying(a, bubble.config)) { next[k] = -2; continue; }
     const gx = Math.floor(a.x / cell);
     const gy = Math.floor(a.y / cell);
     cx[k] = gx;
@@ -1317,8 +1554,7 @@ function enterStage(bubble, network, course, actor) {
   const stage = currentStage(course);
   actor.stageIndex = course.stageIndex;
   if (!stage) return;
-  actor.cruise = cruiseFor(stage);
-  actor.mode = stage.mode || null;
+  applyDrive(actor, stage, course, bubble.config);
   actor.dwell = Math.max(0, Number(course.stageElapsed) || 0);
   actor.pathStart = 0;
   if (stage.kind === STAGE_KIND.DWELL) planDwell(bubble, network, course, stage, actor);
@@ -1330,9 +1566,94 @@ function enterStage(bubble, network, course, actor) {
 
 /** Domyka bieżący etap. Zwraca true, gdy kurs się skończył (encja do usunięcia). */
 function finishStage(bubble, network, registry, course, actor, events) {
-  if (bubble.records.complete(registry, course, events)) return true;
+  // Kurs skończony przy stanowisku (rozładunek u celu): statek nie znika z pola — odlatuje bez kursu.
+  if (bubble.records.complete(registry, course, events)) return !beginDeparture(bubble, network, course, actor);
   enterStage(bubble, network, course, actor);
   return false;
+}
+
+/**
+ * Odlot encji, której kurs skończył się przy stanowisku: `departed` (bez kursu — gra dostaje flagę `DEPARTED`),
+ * odłączanie (UNDOCK, sekwencja stanowiska), wyjście korytarzem i lot od portu trybem pierwszego przelotu kursu.
+ * Zwalnia ją krok 1 (poza bańką), koniec ścieżki albo `departTimeout`. Encja w locie (koniec kursu w punkcie, nie
+ * przy stanowisku) — false: znika jak dotąd.
+ */
+function beginDeparture(bubble, network, course, actor) {
+  const e = actor.dockedEntry;
+  if (!e || (actor.phase !== ACTOR_PHASE.DOCKED && actor.phase !== ACTOR_PHASE.UNDOCK)) return false;
+  actor.departed = true;
+  actor.departTime = 0;
+  actor.entry = null;
+  actor.stageIndex = -1;
+  let mode = null;
+  for (const s of course.stages || []) if (s.kind === STAGE_KIND.TRAVEL && s.mode) { mode = s.mode; break; }
+  applyDrive(actor, { kind: STAGE_KIND.TRAVEL, mode: mode || 'conventional' }, course);
+  beginPath(bubble, actor);
+  const path = actor.path;
+  const ax = lastX(path);
+  const ay = lastY(path);
+  // Kierunek: od środka portu przez koniec korytarza (pomost, hala, zatoka); bez węzła — tyłem od stanowiska.
+  // Budowla doku (E14): od środka BUDOWLI przez koniec wylotu (za dyskiem zapasu) — od węzła linia szłaby przez
+  // budowlę (szczelina koła i ramię 0 krzyża patrzą na węzeł); trasa objeżdża dyski innych budowli.
+  const node = getNode(network, e.stationId);
+  const from = e.kind === 'model' && e.dock?.model ? e.dock.model : node;
+  let dx = ax - (from ? from.x : e.x);
+  let dy = ay - (from ? from.y : e.y);
+  let d = Math.sqrt(dx * dx + dy * dy);
+  if (!(d > 1)) {
+    dx = -Math.cos(e.angle);
+    dy = -Math.sin(e.angle);
+    d = 1;
+  }
+  const far = bubble.config.departDistance;
+  if (bubble.departTarget && bubble.departTarget(course, actor, _depart)) {
+    // Statek staje na redzie tego portu (E15): ostatni odcinek wzdłuż osi slotu (dziób jak u postoju), stop na
+    // slocie; encja znika na końcu, a w tym samym buforze stoi tam statek postoju (`workerBubble.js`).
+    const back = Math.max(actor.length * 1.5, 300);
+    const px = _depart.x - Math.cos(_depart.angle) * back;
+    const py = _depart.y - Math.sin(_depart.angle) * back;
+    routeAround(bubble, path, ax, ay, px, py, actor.cruise, 0);
+    pathPush(path, _depart.x, _depart.y, 0, WP.STOP);
+    actor.endKind = END_STOP;
+  } else {
+    routeAround(bubble, path, ax, ay, ax + dx / d * far, ay + dy / d * far, actor.cruise, 0);
+    actor.endKind = END_PASS;
+  }
+  finishPath(bubble, actor);
+  bubble.stats.departures = (bubble.stats.departures || 0) + 1;
+  return true;
+}
+
+/** Krok encji po końcu kursu (`beginDeparture`). Zwraca true, gdy ma zniknąć. */
+function stepDeparture(bubble, actor, dt) {
+  actor.departTime += dt;
+  if (actor.phase === ACTOR_PHASE.UNDOCK) {
+    stepUndock(actor, dt);
+    return false;
+  }
+  actor.phaseTime += dt;
+  applyZone(bubble, actor);
+  const result = followPath(bubble, actor, dt);
+  return result === STEP_REACHED || actor.departTime > bubble.config.departTimeout;
+}
+
+/** Odłączanie przy stanowisku: sekwencja stanowiska, potem lot (gdy korytarz wolny — `undockHold`). */
+function stepUndock(actor, dt) {
+  actor.phaseTime += dt;
+  actor.speed = 0;
+  actor.vx = 0;
+  actor.vy = 0;
+  const e = actor.dockedEntry;
+  const need = e?.sequence?.undock ?? 4.2;
+  if (actor.phaseTime < need) return;
+  if (actor.undockHold) {
+    actor.waitTime += dt;
+    return;
+  }
+  actor.waitTime = 0;
+  actor.phase = ACTOR_PHASE.FLY;
+  actor.phaseTime = 0;
+  actor.docked = false;
 }
 
 /** Postój naliczany: obsługa przy stanowisku albo w punkcie bez doku. */
@@ -1441,21 +1762,7 @@ function stepActor(bubble, network, registry, course, actor, dt, events) {
       return false;
     }
     case ACTOR_PHASE.UNDOCK: {
-      actor.phaseTime += dt;
-      actor.speed = 0;
-      actor.vx = 0;
-      actor.vy = 0;
-      const e = actor.dockedEntry;
-      const need = e?.sequence?.undock ?? 4.2;
-      if (actor.phaseTime < need) return false;
-      if (actor.undockHold) {
-        actor.waitTime += dt;
-        return false;
-      }
-      actor.waitTime = 0;
-      actor.phase = ACTOR_PHASE.FLY;
-      actor.phaseTime = 0;
-      actor.docked = false;
+      stepUndock(actor, dt);
       return false;
     }
     default:
@@ -1464,6 +1771,7 @@ function stepActor(bubble, network, registry, course, actor, dt, events) {
 
   // Lot po ścieżce.
   actor.phaseTime += dt;
+  applyZone(bubble, actor);
   const result = followPath(bubble, actor, dt);
 
   // Strażnik postępu: liczy się droga po ścieżce, nie prędkość — statek, który
@@ -1575,13 +1883,18 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
   // 1. Zwolnij to, co wyszło poza bańkę albo przestało być aktywne.
   for (let k = list.length - 1; k >= 0; k--) {
     const a = list[k];
+    const dx = a.x - focus.x;
+    const dy = a.y - focus.y;
+    // Odlot po końcu kursu: bez rekordu — poza bańką po prostu znika.
+    if (a.departed) {
+      if (dx * dx + dy * dy > outer * outer) removeActor(bubble, a);
+      continue;
+    }
     const course = activeCourses.get(a.courseId);
     if (!course || course.status !== COURSE_STATUS.ACTIVE) {
       removeActor(bubble, a);
       continue;
     }
-    const dx = a.x - focus.x;
-    const dy = a.y - focus.y;
     if (dx * dx + dy * dy > outer * outer) release(bubble, network, course, a);
   }
 
@@ -1596,6 +1909,13 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
       if (course.actorId || bubble.actors.has(course.id)) continue;
       if (course.status !== COURSE_STATUS.ACTIVE) continue;
       if (!recordPosition(network, course, _rec)) continue;
+      // Kurs oddany przez grę z pozą (E6) — w bańkę wchodzi tam, gdzie był NPC, nie w miejscu rekordu
+      // (postój bez `fromPos` stoi w rekordzie od razu w punkcie docelowym, często poza bańką).
+      const vs = course.viewState;
+      if (vs && vs.handoff && vs.stageIndex === course.stageIndex && Number.isFinite(vs.x) && Number.isFinite(vs.y)) {
+        _rec.x = vs.x;
+        _rec.y = vs.y;
+      }
       const dx = _rec.x - focus.x;
       const dy = _rec.y - focus.y;
       if (dx * dx + dy * dy > inner * inner) continue;
@@ -1616,6 +1936,10 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
     updateCorridors(bubble, step);
     for (let k = list.length - 1; k >= 0; k--) {
       const a = list[k];
+      if (a.departed) {
+        if (stepDeparture(bubble, a, step)) removeActor(bubble, a);
+        continue;
+      }
       const course = activeCourses.get(a.courseId);
       if (!course || course.status !== COURSE_STATUS.ACTIVE) {
         removeActor(bubble, a);
@@ -1626,6 +1950,27 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
     separate(bubble, step);
   }
   return events;
+}
+
+/**
+ * Zwalnia encję JEDNEGO kursu do rekordu (z postępem etapu) — gdy kurs przejmuje ktoś inny (w workerze ruchu:
+ * `attach` z gry, awans do NPC — E6). Zwraca true, gdy encja była.
+ */
+export function releaseBubbleCourse(bubble, network, course) {
+  const actor = course ? bubble?.actors?.get(course.id) : null;
+  if (!actor) return false;
+  release(bubble, network, course, actor);
+  return true;
+}
+
+/**
+ * Usuwa encję ODLOTU (po końcu kursu, bez rekordu — `beginDeparture`) od razu: jej statek dostał nowy kurs, który
+ * przejmuje pozę (E15, `workerBubble.js`). Stanowisko pod nią się zwalnia. Zwraca true, gdy encja była w bańce.
+ */
+export function dropDepartedActor(bubble, actor) {
+  if (!bubble || !actor?.departed || !(actor.slot >= 0) || bubble.list[actor.slot] !== actor) return false;
+  removeActor(bubble, actor);
+  return true;
 }
 
 /**

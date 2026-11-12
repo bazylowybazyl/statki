@@ -1,4 +1,4 @@
-# Generator map planet i wielka kopalnia ringu
+# Generator map planet i wielki gryz Ziemi
 
 Mapy Ziemi i Marsa w grze są wypiekane offline z prawdziwych danych wysokości (2026-10-08, decyzje
 użytkownika: Ziemia **prawdziwa** — rozpoznawalne kontynenty, Mars — **stały wygląd**, dziura po materiale
@@ -15,9 +15,12 @@ na ring — „może 3D”, zrobiona jako bryła).
   metropolii, odkrywki w górach, pola odkrywkowe na dnie, drogi; nocą huty, pojedyncze posterunki robotów.
   Chmury rzadkie, pył i łukowe fronty burz piaskowych (barwa w chmurach — shader bierze chromę tekstury).
   Atmosfera zapylona (mgiełka płowa, `PLANET_MAPS.earth.haze` / `menuAir`).
-- **Wielka kopalnia ringu** na Saharze (20,5° N, 13,5° E): ~1 700 km średnicy, 13 tarasów o nierównej
-  szerokości, dno 38 km, szyb do gorącej skały (+45 km, ~900 °C — żarzy się, w dzień słabiej), wał hałd,
-  spiralne drogi, trzy tory wyrzutni masy. Bryła 3D z przewyższeniem ×3.
+- **Wielki gryz** (2026-10-21, zastępuje dawną kopalnię na Saharze): kula o promieniu 0,46 R ze środkiem na
+  powierzchni w 10° N 15° E (jezioro Czad) — głębokość ~2 930 km (do granicy jądra), otwór ~5 900 km, ~3,2% masy
+  Ziemi (~2,6 Księżyca, ~15 ringów litych jak narysowany). Odsłonięty płaszcz (~2 500 K na dnie) to surowiec i źródło
+  energii (~10¹⁹ W promieniowania); otwór TRZYMANY polem siłowym na ścianach (klamry nad otworem z prototypu usunięte — decyzja użytkownika 2026-10-22) (bez
+  nich gryz zapadłby się w minuty — ~80 GPa u podstawy ścian). Brzeg ze śladami zębów (9 łuków), hałdy, huty,
+  fronty koparek, cztery tory wyrzutni masy. Bryła 3D w realnej skali (bez przewyższenia).
 - **Mars w trakcie terraformacji**: młody ocean na północnych nizinach (poziom −3 900 m MOLA, ~17%),
   morza Hellas i Argyre, jeziora w kraterach, zieleń od brzegów i równika w górę stoków (porosty → mech →
   trawa → las), rude wyżyny i Tharsis bez zmian, mniejsze czapy, miasta z polami, chmury i fale zawietrzne
@@ -49,26 +52,82 @@ python -m venv .tmp/venv-planety
 Wyjście: `public/assets/planety/solar/{earth,mars}/{earth,mars}_hf_{color,night,water,normal,clouds}.jpg`
 (8192 × 4096, równoodległe: kolumna 0 = 180° W, wiersz 0 = biegun N). Podglądy 2048 px w `.tmp/planety/podglad-*`.
 Moduły: `wspolne.py` (siatka, szum 3D na kuli bez szwów, normalne z wysokości, zapis), `ziemia.py`, `mars.py`,
-`dziura.py` (profil kopalni + wypiek barw i świateł).
+`gryz.py` (brzeg gryzu — lustro β — i wypiek jego okolic; `--gryz <R>` w `ziemia.py` = inny rozmiar do A/B).
 
 ## Gra
 
 - Ścieżki i ustawienia map: `src/3d/planetMaps.js` (`PLANET_MAPS`: mapy, `pit`, `haze`, `menuAir`,
   `specular`, `cloudOpacity`). A/B ze starymi zdjęciami NASA: `?planety=stare` albo
-  `localStorage.sc_planet_maps = 'stare'` (bez dziury i bez map Marsa).
-- **Dziura (bryła)**: kula Ziemi wycina obszar dziury (`uPitMode = 1`: discard dla s < `EARTH_PIT_CUT_S`), w tym
-  miejscu leży ŁATA — siatka z profilu (`earthPit3D.js`, `earthPitShape.js`), dziecko siatki kuli (doba, soczewka
-  warpa, skala grupy działają same), ten sam materiał i mapy co kula (`uPitMode = 2`), więc szew nie widać.
-  Na łacie fragment liczy normalną ze wzoru profilu (tarasy ostre przy każdej gęstości siatki), cień
-  samorzucany marszem promienia ku słońcu po bryle, światło nieba w cieniu, detal skały szumem i żar szybu
-  z siecią pęknięć (`earthPit.tsl.js`). To samo w tle menu (`menuBackdrop3D.tsl.js`, `pitMode`).
-- **Profil = JEDNO źródło danych, TRZY kopie wzoru**: `src/data/earthPit.js` (blok JSON między znacznikami
-  `/*EARTH_PIT*/` — czyta go też Python), `scripts/planety/dziura.py` (`profil`), `src/3d/earthPitShape.js`
-  (`earthPitProfileCpu`, siatka łaty) i `src/3d/earthPit.tsl.js` (`earthPitProfile`). Zmiana wzoru = zmiana we
-  wszystkich trzech; zmiana liczb = ponowne wypieczenie Ziemi. Test `tests/earthPit.test.mjs`.
+  `localStorage.sc_planet_maps = 'stare'` (bez gryzu i bez map Marsa).
+- **Gryz (bryła)**: kula Ziemi wycina obszar gryzu (`uPitMode = 1`: discard bliżej środka C niż β + `cutPad`), w tym
+  miejscu leży ŁATA — ściany i dno (kula β) z kołnierzem brzegu (`earthBite3D.js`, `earthBiteShape.js`); dziecko siatki
+  kuli (doba, soczewka warpa, skala grupy działają same), ten sam graf co kula (`uPitMode = 2`). Klamry nad otworem
+  z prototypu usunięte (2026-10-22, „wywal te 4 paski”); na dnie staje elektrownia „KOREK” (osobna sesja).
+  Kształt analityczny, więc fragment liczy wprost normalną z gradientu β, cień ścian (drugie przecięcie promienia ku
+  słońcu z kulą gryzu), barwę skał, żar (płyty skorupy jeziora płaszcza z jasnymi szwami, rzeki, huty),
+  pole siłowe ścian i światło dna (`earthBite.tsl.js`); detal drobniejszy niż piksel gaśnie do średniej. Chmury nad
+  otworem wycięte, poświata limbu gaśnie nad otworem i nad wyciętym limbem (wcięcie w obrysie: płaskie cięcie z łukami
+  zębów, β²/2 ≈ 680 km). To samo w tle menu (`menuBackdrop3D.tsl.js`, `pitMode`, poświata z `bite: true`).
+- **β = JEDNO źródło danych, TRZY kopie wzoru**: `src/data/earthBite.js` (blok JSON między znacznikami
+  `/*EARTH_BITE*/` — czyta go też Python), `scripts/planety/gryz.py` (`beta_brzeg`), `src/3d/earthBiteShape.js`
+  (`earthBiteRadius`, siatki) i `src/3d/earthBite.tsl.js` (`betaNode`). Zmiana wzoru = zmiana we wszystkich trzech;
+  zmiana liczb = ponowne wypieczenie Ziemi. Test `tests/earthBite.test.mjs`.
+- **A/B rozmiaru gryzu (2026-10-21)**: demo `dema/planety-webgpu.html?gryz=0.30&mapyGryz=.tmp/planety-gryz/030`
+  (przyciski „gryz: 0,30 R / 0,46 R”), mapy `ziemia.py --szer 8192 --wyj .tmp/planety-gryz/030 --gryz 0.30`, kadry
+  `node scripts/webgpu/gryz-demo.mjs --tag gryz030 --query "gryz=0.30&mapyGryz=.tmp/planety-gryz/030"` (kadry jak w grze:
+  oś doby pionowo, słońce z boku; z bliska; noc). Porównane: dawna kopalnia, 0,30 R (1 911 km, otwór ~3 840 km, wcięcie
+  w obrysie ~290 km), 0,46 R (2 930 km, ~5 900 km, ~680 km) — wybrane 0,46 R, wcięcie fizyczne (pogłębione wymagałoby
+  środka kuli gryzu nad powierzchnią: płytsza misa, szerszy otwór). Kula wycina z powierzchni czaszę, więc na limbie
+  obrys jest PŁASKIM cięciem (β²/2), nie wklęsłym „jabłkiem z profilu”.
 - Chmury: barwa z chromy tekstury (biel = chmura, brąz = pył), jasność niesie maska — dawne białe mapy bez zmian.
 - Zrzuty w prawdziwej grze: `node scripts/webgpu/planety-mapy-gra.mjs [--tag nowe] [--query planety=stare --tag stare]
-  [--obok stare]` (menu, cała Ziemia, dziura w dzień, przy brzegu tarczy, przy terminatorze, z bliska, Mars).
+  [--obok stare]` (menu, cała Ziemia, gryz w dzień, przy brzegu tarczy, na brzegu, przy terminatorze, z bliska, Mars).
+
+## Elektrownia „KOREK” w gryzie i doba Ziemi wokół osi ringu (2026-10-22)
+
+Prośba użytkownika: „wymodeluj ją porządnie — production ready… windy, promień, obudowa dziury — megaprojekt godny gry
+AAA”; „winda ma być do ringu planetarnego”. Decyzja po dwóch pytaniach: ring rozgrywki stoi, ZIEMIA OBRACA SIĘ WOKÓŁ
+OSI RINGU (`src/3d/earthSpin.js`) — ring w jej układzie równikowy, liny i promień przekaźnikowy stałe; z Ziemią kręci się
+szyna w wewnętrznej krawędzi ringu (płaszcz pierścienia orbitalnego). Stan i zasady: reguła `planety`, kontrakt
+i kierunek artystyczny: `docs/BRIEF-korek.md`.
+
+- Wymiary (R Ziemi = 37 800 j.): korek — promień 0,13 R (~830 km), wierzch 0,053 nad dnem gryzu, krater wylotu 0,073;
+  odbiornik 1,075 R od środka Ziemi (pierścień 0,05 R); ring — wewnętrzna krawędź 1,1058 R (41 800 j.); liny wind
+  0,15–0,59 R (kotwice w azymutach 0, 60, …, 300 ramy gryzu, najwyżej ~32° nad płaszczyzną ringu); przekaźnik ~0,19 R.
+- Kadr gry: biegun obrotu ku kamerze, gryz (10° N) krąży przy krawędzi tarczy (wcięcie w obrysie na ±25° obwodu);
+  w ramie gryzu zawsze ten sam rzut (z północy ~10° nad płaszczyzną elektrowni) — fasada południowej korony.
+- Budżet końcowy (test `tests/earthBitePlant.test.mjs`): metal 583 tys. wierzchołków po rundzie 5 (limit 600 tys.), przepływ 79 tys.
+  (150 tys.), razem z dodatkami 665 tys. (900 tys.); 9 rysunków (metal, przepływ, promień ×3, przekaźnik ×2, kabiny —
+  36 instancji, linie energii wind). Budowa brył ~0,5–0,9 s CPU (rozgrzewka ekranu ładowania). WGSL fragmentu: metal
+  ~74 tys. znaków, budowa grafu ~0,1 s (pułapka 40: `plantVar`).
+- Pomiar w grze (`node scripts/webgpu/korek-gra.mjs`, RTX 5080, kadr całego gryzu przy zoomie 0,032): GPU klatki 0,61 ms
+  bez elektrowni, 0,90–1,02 ms z elektrownią (~0,3–0,4 ms); pipeline'y synchroniczne 0, błędy konsoli 0 — w trybie
+  `off` i w workerze renderu.
+- Przebieg pracy: 4 rundy ról (MAT, CORK, LINING, ELEV, ORBIT, BEAM) z krytykiem — oceny kadrów gry 5 → 7,5 → 8,5 → 9,
+  szczegółów 6,5 → 7,5 → 8 → 8,5. Zrzuty dema: `node scripts/webgpu/slup-demo.mjs --tylko gra,szczegoly` (grupy ról:
+  mat, cork, lining, orbit, beam, elev).
+- Runda 5 (resztki krytyka 5, 2026-10-22): łopaty radiatorów bez ramki (listwa tylko na czole końca, kolektor — ciemna
+  stal); windy — dok wózka i głowica z wręgami, zaczepami, ramą wrót, wąską listwą grzbietu i oknami galerii, szyna
+  z własnym uv i kratownicą pod spodem przy wózkach, cewki z własnym uv (kontrakt: COIL z < 0), światła pozycyjne jako
+  oprawa z jedną soczewką (windy, obudowa, korek); fasada — okna grupami, klatki schodowe, rzędy świateł odcinkami,
+  pilastry w nieregularnym rytmie (symetrycznym wokół osi bramy); noc — A/B: brązowe wypełnienie dawała szeroka poświata
+  lamp (średnia jasność kadru 30 → 12,5 bez niej; światło jeziora ~1–3 poziomy), teraz ciemna baza z plamami
+  naświetlaczy; okna z bliska — `windowPane` (rama, szprosy, głębia, bursztyn zamiast kremu). Metal 583 tys.
+  wierzchołków; w grze (`korek-gra.mjs`, tryb `off`) GPU klatki 0,61 ms bez elektrowni, 0,95–1,07 ms z nią,
+  pipeline'y synchroniczne 0, błędy 0.
+- Wnętrze gryzu w słońcu (2026-10-22, uwagi krytyka: ściana jak beżowo-liliowy marmur w poziome pasy — okładzina
+  elektrowni jak klatka na gołej skale, jama bez głębi; jezioro w słońcu jak beżowe błoto z białymi żyłami): ściana to
+  ciemna skała płaszcza bez pasów (smugi wzdłuż spadku, sadza ku brzegowi, szkliwo i czerwony żar przy jeziorze, światło
+  jeziora skupione przy dnie), jezioro — prawie czarna skorupa, szwy z żółtobiałym rdzeniem i pomarańczowymi brzegami,
+  żar po cieniu ringu (dzień = noc); welon mgiełki w jamie słabszy (`pitAir` 0,15) i bez zabarwienia (niebieskawy dawał
+  liliowy połysk), kamera w jamie (kadry szczegółów) bez powietrza; pole siłowe słabsze (siła 0,32 → 0,24, siatka heksów
+  poza plamami naporu 0,08 → 0,025 — na ciemnej skale ta sama waga w kadrze co dawniej na jasnej).
+  Migotanie w kadrach gry (sam gryz, kadr przesunięty o 0,37 px, wnętrze wcięcia): średnia |A − B| 4,0 → 1,1, 1,9 → 0,6,
+  1,1 → 0,4, 1,3 → 0,8 (względem jasności bez wzrostu poza kadrem z góry tarczy: 0,012 → 0,019 — heksy pola na ciemnej
+  skale). Nocą ściany ciemnieją ku górze (dawniej cała misa równo pomarańczowa), jezioro bez zmian. Zrzuty:
+  `gryz-demo.mjs`, `slup-demo.mjs --tylko gra,szczegoly,cork,lining` i `--korek 0` (sam gryz), `korek-gra.mjs`.
+- Otwarte: poza elektrownią spód ringu z bliska (ring „Halo”). Tło menu ma własną Ziemię z obrotem wokół Y — bez
+  elektrowni.
 
 ## Merkury i Wenus: rola w ekonomii na mapie (2026-10-08)
 
@@ -336,7 +395,7 @@ metalu i krzemianu; materiał metalness 0,45.
 ## Demo (2026-10-09)
 
 `dema/planety-webgpu.html` (`npm run dev` → /dema/planety-webgpu.html): wypieczone mapy wszystkich ciał na materiałach
-GRY, bez kopii shaderów — powierzchnia, chmury i poświata z `planet3d.assets.tsl.js`, dziura jako bryła (`earthPit3D.js`),
+GRY, bez kopii shaderów — powierzchnia, chmury i poświata z `planet3d.assets.tsl.js`, gryz jako bryła (`earthBite3D.js`),
 żywy Jowisz (`jupiterAtmosphere.js`, suwak tempa), księżyce (`moonSurface.tsl.js`); post jak w grze (bloom gry → ACES →
 sRGB). Własny `WebGPURenderer` (jak `niebo-webgpu`), kula o promieniu 1 z biegunem N na +Y, słońce względem kamery
 („pora dnia”: 0 — pełnia, ±90° — terminator, 180° — noc). Widok MAPA — warstwy wypieku płasko (dzień, noc ze
@@ -353,7 +412,7 @@ konsola `window.__planety`.
   Szwy łat mozaik Voyager/Galileo (Europa, Ganimedes) zostają widoczne jako proste krawędzie kontrastu.
 - Jowisz: obrys GRS na mapie to nieidealna elipsa — jądro obraca się wewnątrz stałego owalu, kołnierz tylko płynie;
   pełny obrót całej plamy wymagałby mapy tła bez GRS (inpainting). Festony i owale spoza listy jadą z pasem.
-- Z bliska (domyślny zoom przy ringu) teksel mapy 8K ma ~6 px — poza dziurą Ziemia nie ma detalu z shadera
+- Z bliska (domyślny zoom przy ringu) teksel mapy 8K ma ~6 px — poza gryzem Ziemia nie ma detalu z shadera
   (tło menu ma szum `dn`). AGENT: detal powierzchni planety z bliska (szum wg klasy powierzchni).
 - Dema (`dema/halo_ring_demo_env.js`, `dema/warp-webgpu/planets.js`) czytają stare mapy.
 - Małe ciała: w gęstym polu skał tarcza ciemnieje razem z okrętami (maska słońca z mrokiem pola) — Ceres w polu
@@ -365,5 +424,7 @@ konsola `window.__planety`.
   Horizons). Stacja stolicy (model Marsa) rysuje się dużo szerzej niż `hitR`.
 - Merkury / Wenus: kotwice wyciągów orbitalnych to tylko ślad na mapie — sam wyciąg (lina na orbitę) w 3D nie
   istnieje. Strona nocna wychodzi tylko przy położeniu słońca, w którym planeta ma noc w kadrze (planety tła).
-- Strona nocna dziury zależy od położenia Ziemi względem Słońca (doba obraca kulę wokół osi pionowej ekranu,
-  dziura leży na 20,5° N).
+- Strona nocna gryzu zależy od położenia Ziemi względem Słońca (doba obraca kulę wokół osi pionowej ekranu,
+  gryz leży na 10° N).
+- Gryz: tarcza cienia słońca i podkład radaru zostają pełnym kołem (świadomie — reguła `planety`); słup konwekcyjny
+  nad otworem (pył, popiół, pioruny) — osobna sesja, do decyzji użytkownika.

@@ -23,11 +23,23 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `hullDesignSystems.js` (sieć systemów: kto z kim), `hullDesignSystemSlots.js` (sloty systemów presetów),
   `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster, martwe kable `markPipeNetPower`), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
   (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania), `hullDesignClass.js` (klasa
-  okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`.
-- `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
-- Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`,
-  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs`, `tests/hullDesignDreadnought.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
-  podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`.
+  okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`;
+  `hullDesignBuild.js` (budowa etapami z pamięcią — § „Budowa: worker i pamięć etapów”) z workerem
+  `hullDesignBuild.worker.js` i klientem strony `hullDesignBuildClient.js`, `hullDesignHalf.js` (float16 bez three),
+  `hullDesignPaint.js` (pędzel — § „Warstwa barw”), `hullDesignCargo.js` (ładunek statków cywilnych — § „Statki
+  cywilne”), `freighters/` (presety frachtowców: zestaw `freighterKit.js`, rejestr `index.js`, plik na frachtowiec),
+  `workships/` (statki robocze złomowania: zestaw `workKit.js`, rejestr, plik na statek) i `hullDesignWorkRig.js`
+  (osprzęt roboczy dla gry) — § „Statki robocze (złomowanie)”,
+  `warships/` (okręty z plików w tym samym formacie — superkapitał Hyperion, § „Superkapitał linii Atlasa”).
+- `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól; mapy i passy barw), `hullDecalAtlas.js`.
+- Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami) z dwoma interfejsami: STOCZNIA
+  (domyślny, przyjazny: `dema/kreator-kadluba-stocznia.js` — § „Stocznia”) i WARSZTAT (pełny panel narzędzi,
+  `?ui=warsztat`), podgląd przeciągania `dema/kreator-kadluba-podglad.js`, testy `tests/hullDesign.test.mjs`,
+  `tests/hullDesignBuild.test.mjs`, `tests/hullDesignPaint.test.mjs`,
+  `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs`, `tests/hullDesignDreadnought.test.mjs`, `tests/hullDesignCargo.test.mjs`, `tests/hullDesignWorkships.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
+  podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`,
+  sprawdzenie jednego presetu z podglądem CPU `scripts/kreator-sprawdz-preset.mjs`, zrzuty frachtowców
+  `scripts/webgpu/kreator-frachtowce.mjs`, zrzuty i plansza statków roboczych `scripts/webgpu/kreator-robocze.mjs`.
 
 ## Decyzje użytkownika
 
@@ -38,11 +50,82 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   jest z klocków (etap 1B): IoU alfy ze sprite'em ≥ 0,9 (test), najwyżej 60 klocków na połowę okrętu.
 - Systemy (rdzeń, mostki, silniki, ładownie, zbiorniki) mają stałe miejsca dla klasy i kadłuba; kable i rury wynikają
   z systemów i biegną rowami między płytami (etap 1C).
+- Edytor jak w Spore (2026-10-21): elementy przeciąga się z przyjaznej palety kart na okręt (drag & drop), BEZ siatki
+  i kolorowych („zielonych”) obrysów — widać sam okręt i elementy; dużo podstawowych kształtów z przeciąganiem
+  i powtarzaniem, żeby przyjemnie budowało się też od zera. Dawny panel zostaje jako „Warsztat”.
 - Klasa okrętu z mostka i rdzenia (etap 2, 2026-10-21, `docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md`): klasy I–VI (Fregata,
   Niszczyciel, Krążownik, Pancernik, Kapitał — lotniskowiec to rola, Superkapitał); Atlas poza drabiną (unikat fabularny
   klasy VI); limity mostka TWARDE (edytor nie pozwala ich przekroczyć), moc rdzenia — limit MIĘKKI (urządzenia ponad moc
   gasną wg priorytetu gracza, zapas mocy w napęd); liczby z tabel propozycji, moc rdzeni skalibrowana na domyślnym
   uzbrojeniu NPC.
+- Malowanie barwami nacji (2026-10-23): „teksturowanie osobno, żeby można było »malować« barwami nacji” — warstwa barw
+  (paleta nacji, pędzel, naklejki) zmienia się bez przebudowy kadłuba; piraci mają własny znak BEZ czaszek.
+- Statki cywilne — frachtowce (2026-10-27): rola cywilna na tych samych progach powierzchni I–VI z cywilnymi nazwami klas;
+  frachtowce o RÓŻNYCH KSZTAŁTACH — „średnio mi się podobają te frachtowce z gry” (sprite'y ruchu mają jedną anatomię),
+  więc presety ich nie odwzorowują; paleta „Frachtowiec”; ładunek jako warianty ładowni (stelaż kontenerów, zasobniki)
+  i zbiorniki ładunku (walce, kule); zakres — demo kreatora (wpięcie do ruchu v2 to osobny etap).
+- Statki robocze złomowania (2026-11-10): złomowanie to proces — złapać i usztywnić wrak → wypompować paliwo →
+  zdemontować silniki, reaktor, bronie → pociąć kadłub; lasery tnące i dźwigi siedzą w ZWYKŁYCH GNIAZDACH BRONI, jeden
+  statek może mieć i lasery, i dźwigi (tnie, łapie i ładuje do własnej ładowni albo do statku obok); „od góry” (dźwig
+  + ładownia otwarta od góry) i „rampą / paszczą” to RÓŻNE sposoby ładowania; statki: złomiarz, paszcza, młyn (daje
+  surowiec „złom”, nie stal), rafineria przy młynie, frachtowiec z rampą jak w samolocie transportowym, dźwig
+  z damperami.
+- Superkapitał linii Atlasa (2026-10-27): „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa
+  (czerń / szary)”; szkic Atlasa to „bardziej battleship — za krótki na superkapitała” — preset bierze ze szkicu UKŁAD
+  sekcji, nie proporcje (dłuższy, smukły kadłub w limicie klasy VI).
+
+## Budowa: worker i pamięć etapów
+
+- Każda zmiana projektu → `requestBuild(fast)` (historia + `scheduleBuild`) → worker budowy: etapy z pamięcią po
+  kluczu wejścia (`hullDesignBuild.js`: rozwinięcie → GEOMETRIA (bryły rozwinięte, styl, detal, rozdzielczość) →
+  rowki → SIEĆ (moduły, rury, ustawienia sieci + geometria) → MOC (martwe kable) → klasa / receptura / mocowania →
+  PAKIETY tekstur float16 → przy pełnej budowie alfa fizyki i komórki). Klucze pomijają odwołania `part` / `castle`
+  i `mirrorOf`. Kontrola sieci, systemy i spójność ramy (`res.checks`, `field.integrity`) przychodzą PO obrazie —
+  panele odświeżają się drugi raz; kod strony nie liczy `hullFrameIntegrity` na nowym polu sam (bierze ostatnią znaną).
+- Nowa ścieżka edycji woła `requestBuild` (jak dotąd); nowe pole projektu czytane przez etap → do klucza tego etapu
+  (`kGeo` / `kPipes` w `hullDesignBuild.js`), inaczej pamięć odda stary wynik. Pakiety (`packHull*`) muszą dawać te
+  same bity co ścieżka bez pakietów w `HullComposer.setDesign` (test `hullDesignBuild`).
+- Przeciąganie (`fast`): pole w połowie rozdzielczości, sieć z poprzedniego podglądu na tej samej siatce (`pipesStale`;
+  A* dopiero po puszczeniu), kompozytor `render()` bez odczytu, obraz z celów kompozytora na kwadzie podglądu (ciało gry
+  ukryte `hideHexVisual`), BEZ ciała gry. Nowsza praca przerywa starszą na granicy etapu, gdy nowa albo trwająca jest
+  pełna; podgląd w toku kończy się i pokazuje.
+- Pole na stronie (`S.field`) ma `levels`, `loops`, `grid`, pudła, `expanded`, `pipeNet`, `packed` — bez `oct`,
+  `dome`, `groove`, `pipeTex` (są tylko w pakietach). Ciało gry: alfa fizyki i komórki z workera, albedo i mapa
+  powierzchni z odczytu (ALB, SURF; emisja na żądanie widoku — `readEmission`), kanwy CPU (`willReadFrequently`:
+  odczyt kanwy z GPU w `createHull` czekał na kolejkę), kanwy i kadłub w osobnych zadaniach.
+- Miniatury palety (`composerExclusive`) zajmują kompozytor między budowami (`S.thumbBusy`); po nich cele kompozytora
+  mają cudze mapy — `composer.mapsRev` ≠ `S.mapsRev`, ścieżka barw robi wtedy pełny render z pakietów `S.field`.
+- Pomiar: `node scripts/webgpu/kreator-plynnosc.mjs` (rytm 60 Hz — bez niego headless zapycha kolejkę GPU; długie zadania
+  ma być 0 przy edycjach Custosa…Colossusa), liczby — `docs/KREATOR-KADLUBA.md` § „Płynność edycji”.
+
+## Warstwa barw (malowanie barwami nacji)
+
+- Kompozytor: GEO, EMIS (bez barwy okien — siła okien w kanale A; okna i mostek dokładają `winE`, nie `winC`) i SURF to
+  MAPY (tylko kształt); BASE, ALB i EOUT — PASSY BARW (`p.colors`). Barwy: `setColors(design, pędzel)` (paleta
+  z nadpisaniami `design.paint` + tabela pędzla w wierszach 12+ `U.pal`, mapa pędzla przy nowym kluczu), `setDecals`,
+  `renderColors()`, `bakeColors()`; gra (etap 3, niewpięte) — `bakeLiveries` (mapy raz, barwy po kolei).
+- Nowa barwa używana w passach map → przenieś ją do passu barw (jak okna: siła w mapie, barwa w ALB / EOUT), inaczej
+  zmiana palety nie odświeży obrazu ścieżką barw.
+- Palety (`HD_PALETTES`): Terra Nova, frakcje gry (`HD_FACTION_PALETTE`: mars, inner, belt, outer, pirate), Atlas,
+  Atlas — czerń (`atlasDark`: grafit i szarość sprite'a Atlasa, emblemat `wing`), Cywilny, Frachtowiec, Roboczy (`work`). Żadna barwa poza oknami nie może zapalać `hullGlowMask` (test `hullDesignPaint`); `glowSafeLinear` ścisza
+  niebieski do 0,38 przy czerwonym < 0,25 (zgodnie z maską). Emblemat nacji `HD_PALETTE_EMBLEM` (piraci — `raider`,
+  bez czaszek), barwa `HD_PALETTE_EMBLEM_COLOR`; emblemat z wyboru palety ma `nation: true`.
+- Pędzel: `paint` na klocku (nie wycięciu) albo kasztelu — slot `HD_PAINT_SLOTS` albo '#rrggbb' (`normalizeHullPaint`);
+  płyty w tej barwie zamiast płyty / nadbudówki palety (`plateC`). Raster `hullPaintLayer` na siatce pola (2 × 2
+  próbki; R — indeks w tabeli, A — pokrycie), barwy slotów rozwiązuje kompozytor z palety w chwili wypieku. Nowy
+  element do malowania → `hullPaintStrokes` + walidacja w normalizacji.
+- Warstwa barw nie zmienia geometrii: `hullDesignShapeKey` pomija `palette`, `paint` (projekt, klocki, kasztele),
+  `decals` i `name`. Nowe pole tylko-barwne → dopisz do pomijanych; pole zmieniające kształt, sieć albo mapy NIE może
+  być na tej liście (ścieżka barw pokazałaby stary kształt).
+- WYGLĄD kompozytora — `bevel`, `round`, `panels`, `windows` i „okna → albedo” — nie zmienia pola, sieci ani ciała gry
+  (żaden czysty moduł ich nie czyta): `hullDesignLookKey` je pomija, a ścieżka wyglądu (`runColors(rev, true)`) robi
+  wszystkie passy na polu i pakietach ostatniej budowy, albedo i mapę powierzchni kopiuje na GPU do skóry
+  (`HullSurface._entries` — gdy wysłana; inaczej z odczytu). Pole i sieć od zera należą się tylko przy `detail`,
+  gęstość sieci liczy samą sieć. Nowe pole czytane przez czyste moduły NIE może trafić do pomijanych.
+- Demo, ścieżka barw (`runColors`): ten sam klucz kształtu co POKAZANY pełny obraz (`S.shownShapeKey`; podgląd go
+  zeruje) i wolna budowa → passy barw, albedo z celu ALB kopiowane na GPU do tekstury skóry kadłuba
+  (`acquireHullVisualTexture` + `copyTextureToTexture`, mipmapy robi three), kanwa CPU odczytem w tle tylko poza
+  przeciąganiem. Obraz = pełna przebudowa (0 różnych bajtów — `kreator-barwy.mjs`, `zgodnosc`).
 
 - Drednoty (2026-10-21, `docs/BRIEF-drednot.md`): klasa VII ponad drabiną, TYLKO NPC — gracz jej nie wybierze; drednot
   Terra Novy i piracki „Vengeance” w kreatorze z klocków (styl floty, „bez czitowania”, rama w jednym kawałku) do oceny.
@@ -51,8 +134,13 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 
 - Format: bryła `{ kind: 'block', shape: 'rect' | 'trap' | 'tri' | 'arc', x, y (środek), w, h (PEŁNE wymiary — inaczej niż
   'rect' i kasztele), rot (rad, przyciągany do 45°), flip, level (domyślnie 1), op, gap, mirror, c / a / b / arc / ri }`.
-  Mało rodzajów, wpis palety (`HD_BLOCK_PALETTE`) = ustawienie parametrów. Nowy kształt: wpis palety; nowy rodzaj — dopiero
-  gdy parametry nie wystarczą (`normalizeBlock`, `blockLocalLoops`, `blockGridViolations`, `hullBlockPaletteId`, test).
+  Mało rodzajów, wpis palety (`HD_BLOCK_PALETTE`) = ustawienie parametrów. Nowy kształt: wpis palety (z `group` —
+  `HD_BLOCK_PALETTE_GROUPS`) i rozpoznanie w `hullBlockPaletteId` (test: każdy wpis rozpoznaje się jako on sam); nowy
+  rodzaj — dopiero gdy parametry nie wystarczą (`normalizeBlock`, `blockLocalLoops`, `blockGridViolations`,
+  `hullBlockPaletteId`, test). Paleta: 22 kształty w grupach Proste / Skosy i kliny / Łuki — sześciokąt, romb i grot to
+  prostokąt z fazami do połowy krótszego boku, ośmiokąt — fazy ~0,29 boku, owal — elipsa w pudle, łuk i narożnik — łuk
+  z pierścieniem. `hullBlockPaletteId` patrzy też na proporcje (kwadrat, belka ≥ 4 : 1, kolec, owal), więc nazwa klocka
+  zmienia się z rozmiarem.
 - SIATKA: klocki w j. świata na siatce projektu `design.grid` — krok ustalany przy tworzeniu projektu
   (`hullDesignGridStep(detail)`: ~4 jd, potęga dwójki), potem stały. Suwak `detail` zmienia detal (rowy, płyty, nity), nie
   rozmiar okrętu. Strażnik: wymiary i parametry co krok, krawędzie pudła na siatce przy obrocie co 90°, środek co pół kroku
@@ -67,10 +155,59 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   z pola: rowek w płycie, w alfie półprzezroczysta kreska). Dlatego klocki łączą się sumą geometryczną (`polygonUnion`:
   kawałki krawędzi poza innymi wielokątami, wspólna krawędź o przeciwnym kierunku znika), a nie przez pole. Bryły spoza
   klocków (wielokąty, części) łączą się dalej `min` — stykające się dokładnie dają szew.
-- Edytor (demo, narzędzie N): mysz i klawisze w sekcji „KLOCKI” na końcu `dema/kreator-kadluba-webgpu.js`; haki w kodzie
+- Edytor warsztatu (narzędzie N): mysz i klawisze w sekcji „KLOCKI” na końcu `dema/kreator-kadluba-webgpu.js`; haki w kodzie
   dema są jednolinijkowe (`blockDown` / `blockDrag` / `blockUp`, `drawBlocks`, `syncBlockPanel`). R / F / X / Del działają
   tylko w narzędziu Klocki (poza nim R to rowek). Cofanie: zrzut JSON w `requestBuild` bez przeciągania — nowa ścieżka edycji
   ma po zakończeniu zmiany wołać `requestBuild(false)` (inaczej nie trafi do historii).
+
+## Stocznia (przyjazny edytor dema)
+
+- `dema/kreator-kadluba-stocznia.js` (`installShipyard(api)`; `api` = `shipyardApi()` w demie — stan, budowa, historia,
+  `pick`, przekształcenia, fabryki elementów, `composerExclusive`). Domyślny interfejs; `?ui=warsztat` albo przycisk
+  „Warsztat” — dawny panel (wybór pamięta `localStorage` `kreator.ui`). Skrypt zrzutów ładuje warsztat, etap `stocznia`
+  przełącza sam (`__kreator.setUi`). Haki w demie: `installShipyard` przy starcie, `shipyard.draw(cam)` w `render()`,
+  `shipyard.insets()` w `fit()`, `shipyard.refresh()` w `loadPreset`, bramka `S.ui === 'stocznia'` na początku obsług
+  myszy i klawiszy warsztatu (`onDown`, `onMove`, `onUp`, `onWheel`, klawisze, `onBlockKey`) — nowa obsługa warsztatu
+  też ją dostaje.
+- Malowanie: „Barwy nacji” — klik: paleta + emblemat nacji (`applyNationEmblem`: emblematy z `nation` albo poprzedniej
+  nacji podmienione w miejscu z barwą nacji, bez nich — para na pancerzu za śródokręciem); „Pędzel” (karty `brush:*`:
+  sloty, Własna barwa = kolor naklejek, Gumka) — uzbrojona karta jak stempel, klik albo przeciągnięcie po klockach
+  i kasztelach (`paintTargetAt`: kasztel, potem wierzchni klocek pod modułami) maluje `paint`, w trakcie
+  `S.drag = { kind: 'stocznia-pedzel' }` + `requestBuild(true)` (ścieżka barw), na koniec jeden wpis cofania.
+- Z lewej paleta kart (Kształty, Systemy, Ładunek, Uzbrojenie, Detale, Malowanie): przeciągnięcie karty na okręt stawia element
+  (duch z kopią lustra w trakcie), klik w kartę — STEMPEL (klik na okręcie — kopia, przeciągnięcie — rząd stykających
+  się kopii), kółko przy stawianiu klocka — rozmiar ×1–×4. Na okręcie: element pod kursorem świeci, przeciągnięcie
+  przesuwa (Shift — kopia), upuszczenie na paletę usuwa, Esc przerywa; kółko nad zaznaczonym — rozmiar; Ctrl+D — powiel
+  (po przesunięciu kopii kolejne powtarza przesunięcie), Ctrl+C / V — schowek; tło — przesuw widoku, Ctrl / Shift —
+  ramka. Z prawej karta okrętu (klasa, rozmiar, gniazda, moc, wartość, lista kontrolna systemów, edytor gniazda),
+  „Od zera” — kadłub wybranej klasy z kilem na osi.
+- Bez siatki i obrysów poziomów (decyzja użytkownika): rysuje się tylko podświetlenie, zaznaczenie (akcent), duch,
+  uchwyty i ramka; „Kontury” (O) — cienkie białe obrysy wszystkich elementów. Uchwyty rozmiaru tylko na klocku,
+  który na ekranie ma ≥ 34 px krótszego boku — mniejszy chwyta się w całości (uchwyt zasłaniał środek: zamiast
+  przesuwać, rozciągał).
+- Wybór: moduły, części, kasztele i naklejki przed klockami, z klocków — wierzchni (ostatni na liście; `pick` dema
+  bierze pierwszy). Moduły, kasztele i naklejki stawia się tylko na kadłubie (pole ramy ostatniej budowy ≤ 0) —
+  upuszczone obok wracają; klocki wszędzie, z MAGNESEM: nowy klocek do 48 px od burty dosuwa się do niej po gradiencie
+  pola ramy z zakładką pół kroku siatki (rama w jednym kawałku), Alt — bez magnesu, wycięcia nie przywierają.
+- Nowy element palety: wpis w `buildCatalog` + fabryka w `makeObject` (moduły, kasztele, części i naklejki przez fabryki
+  dema `newModule` / `newCastle` / `newPart` / `newDecal` — wspólne z warsztatem) + projekt miniatury `thumbDesign`.
+  Zmiana z interfejsu kończy się `requestBuild(false)`; w trakcie przeciągania `S.drag = { kind: 'stocznia…' }`
+  i `requestBuild(true)`. Stan trzymający obiekty projektu czyści się przy nowym obiekcie `S.design` (cofanie, preset,
+  straż limitów mostka — `syncDesign`).
+- Miniatury kart: ten sam kompozytor co okręt (projekt z jednym elementem w detalu 0,6, bez sieci), w barwach i stylu
+  projektu, w tle — tylko przez `composerExclusive` (S.busy; zmiana projektu czeka w `S.pending`), wstrzymane
+  w trakcie przeciągania. Drugie `composer.setDesign` poza `runBuild` bez tej osłony = wyścig z budową okrętu.
+- Statki cywilne w Stoczni: lista presetów w grupach `HD_PRESET_GROUPS` (`presetOptionsHtml` — wspólny ze Warsztatem);
+  „Od zera” ma wiersz klas cywilnych (`newShip(lv, role)`: rola 'civil', paleta 'freight', długi wąski kil, detal
+  z typowej długości klasy `NEW_CIVIL_LENGTH`); karta okrętu — przełącznik „Wojskowy / Cywilny” (`setRole`, jeden wpis
+  cofania), nazwy klas wg roli, dla cywila „Ładowność” (S.recipe.cargo) i pozycja „Ładownia” na liście kontrolnej;
+  klucz karty `U.statsKey` zawiera rolę. Zakładka „Ładunek” (6 zakładek): karty `mod:cargo:v0..v3`,
+  `mod:cargo_tank:v0..v1` (makeObject ustawia v / n po `newModule`; karty ładunku powiększone `CARGO_CARD_SCALE`, bo
+  kontener ma stały rozmiar 16 × 8 j.), suwak „Załadunek” (`S.drag = { kind: 'stocznia-zaladunek' }` + `requestBuild(true)`
+  — ścieżka wyglądu, na koniec jeden wpis cofania). Malowanie: palety bez emblematu w grupie „Barwy cywilne”.
+  Warsztat: wiersz `#modvar-row` — wariant (v) i n ładowni / zbiornika ładunku (`S.moduleVar`, `applyModVariant`).
+  Haki zrzutów: `__kreator.load(projekt)`, `stocznia.role / load / card`, `harness.newShip(lv, role)`; etap `stocznia`
+  w `scripts/webgpu/kreator-kadluba-demo.mjs` sprawdza też część cywilną (raport → `stocznia.cywilne`).
 
 ## Flota TN z klocków — zasady
 
@@ -176,6 +313,132 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   haki `reactorDemoCoresFrom` po wypieku, `reactorDemoSync` w `render()`, `window.__kreator.reactor3D`); zrzuty
   `--etapy reaktor` (z modelem, samo gniazdo, na tle okrętu).
 
+## Mostek: gniazdo poziomu (v 2)
+
+- Moduł `bridge`: v 0 — rysunek kompozytora (pas szyb, talerz radaru), v 2 — GNIAZDO MOSTKA Terra Novy (domyślne `v`
+  wpisu, nowy moduł w demie dostaje je z poziomem klasy projektu): płyta pokładu w obrysie modelu 3D poziomu
+  (`src/data/bridgeLevels.js`, ośmiokąt z fazą poziomu), szczelina, rama z nitami i żółtymi skosami, mocowania modelu
+  (poziom + 1 na burtę, od IV — dziób i rufa), belki poziomu przy dziobowym brzegu, przepust kabli. Gra stawia na nim
+  model 3D poziomu (`src/3d/bridge3D.js`, reguła `mostki-reaktor`).
+- Poziom: `bridgeLevel` projektu (I–VI) ma pierwszeństwo, przy 0 albo klasie ponad drabiną modeli (drednot VII, tylko
+  NPC) — `lv` modułu (domyślnie I; mostki drednota mają różne poziomy). `normalizeHullDesign`
+  (`bridgeSocketModule`) wpisuje `lv`, pół-wymiary `w, h` = obrys / 2 i `rim` (szczelina + rama, `HD_BRIDGE_SOCKET`) —
+  zmiana poziomu mostka w projekcie zmienia moduł; surowe `w, h` modułu v 2 nic nie znaczą. Bryła modułu (poziom 3)
+  sięga ramy (faza poziomu + rim · (2 − √2)), trasy sieci omijają ramę (`pipeModuleSdf` z `rim`). Kompozytor: `B.z` =
+  poziom + faza / 100.
+- Presety TN mają mostek v 2 ze slotów (`SOCKET` w `hullDesignSystemSlots.js`), miejsca = strefy gry
+  (`BRIDGE_LAYOUT_PROPOSALS`, `tests/bridgeLevels.test.mjs`): Custos −42, Hasta −64, Bellator −217, Citadella −339
+  (środek rufowego kasztelu — kratka i kapsuły kasztelu zdjęte), Colossus −150 (napis TERRA NOVA skrócony). Gniazdo
+  nie nachodzi na obudowę reaktora, zbiorniki, gniazda broni i dysze (test); przy zbiorniku zostaje rów dla rury paliwa
+  (Hasta: mostek −64, przy −67 przyłącze zbiornika szło po płycie). Fregata z klocków ma dalej mostek v 0.
+- Demo: sekcja „MOSTEK 3D” w `dema/kreator-kadluba-webgpu.js` — mostki na belkach kadłuba projektu z gniazd v 2
+  (`attachBeamBridges`, skala 1) i `Bridge3D` jak w grze (rozgrzewka w starcie, haki `bridgeDemoAttach` po budowie,
+  `bridgeDemoSync` w `render()`, `window.__kreator.setBridge3D(false)` — samo gniazdo); zrzuty `--etapy mostek`
+  (flota TN z modelem i bez, galeria I–VI na jednym kadłubie — `--tylko mostki`).
+- Do decyzji: w trybie „poziom z powierzchni” (`bridgeLevel` 0) gniazdo bierze `lv` modułu, a klasa — powierzchnię
+  i gniazda (`hullDesignLevels`); mogą się rozjechać.
+
+
+## Statki cywilne i ładunek (frachtowce)
+
+- Rola projektu `role` ('military' domyślnie | 'civil', `normalizeHullDesign`; w kluczu kształtu). Cywil: nazwy klas
+  `SHIP_CLASSES[].civil` (I Prom … VI Megafrachtowiec; `shipClassLabel(level, role)`), te same progi powierzchni, klasa VI
+  bez górnego limitu powierzchni (`shipClassAreaMax` — `shipClassCheck` / `classForHull` z `role`; wynik kontroli ma
+  `areaMax`, straż akcji `hullDesignLimitBreach` go używa), bez tarczy w `shipPowerBalance` (frachtowce bez tarczy
+  i pancerza — FREIGHTER_BUILD gry), receptura bez ostrzeżenia „Brak gniazd uzbrojenia”. Nowa ścieżka klasy / limitu
+  podaje `role` projektu dalej.
+- ŁADUNEK (`hullDesignCargo.js`): kontener = kontener gry (`CARGO_CONTAINER` 16 × 8 j., `CARGO_TONNES_DEFAULT` t —
+  src/data/cargoBays.js). `cargo` v 2 — STELAŻ KONTENERÓW, v 3 — ZASOBNIKI n × n kontenerów (`n`, domyślnie 2); siatkę
+  (`hullCargoGrid`: rama `frameDu` jd, odstęp 1 j., wyśrodkowana) liczy JS (receptura `cargo`, mocowania `cargoBays`
+  z `containers`) i kompozytor tą samą formułą ze stałych `HD_CARGO` — zmiana rachunku = zmiana obu. `cargo_tank` (kod 15)
+  — zbiornik ŁADUNKU (v 0 walce w n rzędach, v 1 kule; `cargo` v 4 — KOSZ, § „Statki robocze”): w sieci tylko kabel pompy (`HD_POWER_LOAD`), bez roli w
+  `HD_SYSTEM_ROLE` — ładunek nie płynie do reaktora; `fuel_tank` to paliwo okrętu (rury do rdzenia, w grze wybuch
+  z miejsca zbiornika), na ładunek się nie nadaje. Oba są w `HD_SYSTEM_TYPES` (lock w presetach).
+- ZAŁADUNEK `cargoLoad` (0–1) to WYGLĄD: `hullDesignLookKey` go pomija (ścieżka wyglądu bez workera), kompozytor czyta go
+  z uniformu `U.cargo.x` — komórka stelaża / zasobnika pusta (gniazdo z szyną i narożnikami zaczepów), gdy jej hash ≥
+  załadunek. Pole, sieć i ciało gry bez zmian (test `hullDesignCargo`).
+- Kompozytor: łańcuch gałęzi modułów kończy się `ElseIf(type < 13.5)` — ładownia (v < 1,5 — wrota / klapa, wyżej —
+  stelaż / zasobniki), `ElseIf(type < 15.5)` — zbiornik ładunku; kod bez gałęzi NIE rysuje się (dawniej końcowe `Else`
+  łapało go jako ładownię). `B.z` modułu: ładownia — kontenerów na bok komórki, zbiornik — rzędów. Barwy kontenerów to
+  stałe liniowe bez niebieskiego ponad maskę `hullGlowMask`.
+- PRESETY FRACHTOWCÓW: plik na frachtowiec w `freighters/` (`export default { key, label, cls, make }`, `null` — w budowie,
+  rejestr go pomija), helpery `freighterKit.js` (`freighter()` — rola cywilna, paleta „Frachtowiec”, wygląd cywilny;
+  klocki, systemy, ładunek, napisy armatora). `HD_PRESETS` dokłada je z grupą 'civil' (`HD_PRESET_GROUPS`), klasa
+  `cls` idzie do `applySystemSlots(key, d, { cls })` (nie do `HD_PRESET_CLASS`), więc sloty i testy presetów nie importują
+  rejestru. Frachtowiec spełnia te same warunki co każdy preset (testy na `HD_PRESET_KEYS`); jeden sprawdza
+  `node scripts/kreator-sprawdz-preset.mjs --plik src/game/hullDesign/freighters/<klucz>.js --png .tmp/kreator/plan`
+  (bez rejestru — błąd innego pliku go nie zatrzyma; podgląd CPU: poziomy, moduły, siatka kontenerów, trasy sieci).
+
+## Statki robocze (złomowanie)
+
+- Stan: sześć presetów w demie kreatora (grupa `work` — „Statki robocze” w `HD_PRESET_GROUPS`). W GRZE są jako
+  zwykłe kadłuby ze sprite'a (punkt „KADŁUBY GRY” niżej) — sam kreator dalej nie jest wpięty (gra nie buduje kadłuba
+  z projektu).
+  RUCHOME części (wysięgnik, dźwig, szczęki, walce, klapa rampy, podpora dampera) NIE są kadłubem — to modele gry na
+  mocowaniach; kreator daje statyczny kadłub z GNIAZDAMI pod nie i wygląd „zamknięty”.
+- MODUŁY-GNIAZDA (`HD_MODULES`, kody 16–20, każdy z gałęzią w kompozytorze i kablem w `HD_POWER_LOAD`; bez `lock`):
+  `rig` — OBROTNICA (okrągła, r): v 0 wysięgnik z laserem tnącym, v 1 dźwig (pas ostrzegawczy, szersze jarzmo). To
+  ZWYKŁE GNIAZDO BRONI — wpis w `HD_MOUNT_MODULES` (główne, `size`, domyślnie M), więc liczy się do limitów mostka
+  i bilansu mocy, a w mocowaniach wychodzi jako `hardpoints` typu `main`; `maw` — PASZCZA (dwie zamknięte szczęki
+  z zębatą linią podziału, otwiera się ku +x modułu); `mill` — GARDZIEL MŁYNA (n walców tnących, osie w poprzek osi
+  x modułu; `B.z` = n); `ramp` — RAMPA (zawias po −x modułu, klapa opada ku +x; rufowa: rot π); `damper` — GNIAZDO
+  DAMPERA (schowana stopa, wysuw ku +x). Kierunek gniazda = oś +x modułu (`rot`), jak dysza SIDE.
+- KOSZ — `cargo` v 4: ładownia OTWARTA OD GÓRY (dźwig wkłada z góry), widać złom; zasyp rośnie z `cargoLoad` (wygląd —
+  jak stelaż), ładowność liczona jak stelaż (`hullCargoGrid`), `isTopCargo`. Wrota / klapa (v 0 / v 1) to ładownia
+  ZAMKNIĘTA — wnętrze, do którego wchodzi się paszczą albo rampą (komora paszczy, tunel rampowca). `v` modułu: 0–4.
+- Detal gniazd skaluje się z ROZMIAREM MODUŁU (zęby paszczy, tarcze walców, listwy rampy, kawałki złomu), nie tylko
+  z jd — gniazdo ma 20–300 j.; stały krok w jd dawał na dużym module jednolitą fakturę. Obrotnica stoi NA płycie:
+  dokłada `PN_SLAB` (pod modułem kompozytor nie rysuje grubej płyty — bez tego wyglądała jak wnęka).
+- KONTRAKT DLA GRY — `hullDesignWorkRig(field)` (`hullDesignWorkRig.js`): osprzęt w UŁAMKACH DŁUGOŚCI kadłuba L,
+  początek w środku sylwetki, x — dziób, y — prawa burta (w kreatorze y > 0) — ten sam układ co zestaw złomiarza NPC
+  gry. Pola (tylko te, które statek ma): `front`, `maw` + `mawR` + `mawLen`, `mounts` + `mountR` (obrotnice
+  wysięgników), `cranes` + `craneR`, `hold` + `holdSize` + `holdTop` (+ `holds`), `ramp` + `rampSize` + `rampDir`,
+  `mill` + `millSize` + `millRolls`, `dampers` + `damperDir`, `ports` (złącza przeładunku = pierścienie `well` v 0).
+  Liczy się z POZYCJI MODUŁÓW (nie z ręcznych liczb), wymiary w osiach OKRĘTU; długość z `hullSilhouetteBox`
+  (przejście pola ramy przez zero — `field.bounds` to pudło komórek siatki z zapasem teksela, ~0,2% za długie); oś
+  okrętu z lustrem to y = 0. Nowe gniazdo ruchomej części → typ modułu + pole w `hullDesignWorkRig` + test.
+- PRESETY: plik na statek w `workships/` (`export default { key, label, cls, make }`, rejestr `index.js` →
+  `HD_WORKSHIP_PRESETS` / `HD_WORKSHIP_CLASS`; `hullDesignPreset` bierze klasę presetów z plików z jednej mapy), zestaw
+  `workKit.js` (eksportuje dalej zestaw frachtowców; `workship()` — rola cywilna, paleta „Roboczy”; `boom`, `crane`,
+  `maw`, `mill`, `ramp`, `damper`, `bin`, `coupling`). Każdy o INNEJ sylwetce (test: proporcje i zestaw osprzętu
+  różne parami): złomiarz III — widły z zatoką roboczą, 4 wysięgniki, kosz, 2 dźwigi; paszcza IV — wieloryb, komora
+  na cały niszczyciel (Hasta); młyn III — lej z gardzielą, 2 kosze, złącza na burtach; rafineria IV — grzebień
+  z pomostami zbiorników i złączami po obu burtach; frachtowiec z rampą VI — tunel na cały pancernik (Bellator),
+  gondole na wysięgnikach poza rampą; dźwig IV — ponton z obrotnicą L i 4 damperami. Wymiary komór pilnuje test na
+  pudłach presetów TN — zmiana obrysu Hasty albo Bellatora może wymagać powiększenia komory.
+- KADŁUBY GRY (`work_<klucz>`, 2026-11-11): sprite piecze kompozytor — `node scripts/webgpu/kreator-kadluby-gry.mjs`
+  → `assets/ships/work/<klucz>.png` (cały obraz projektu, dłuższy bok 1774 px), a tabele kadłuba liczy
+  `hullDesignGameHull.js` z mocowań projektu i zapisuje `src/data/workHulls.js` (plik GENEROWANY:
+  `node scripts/kreator-kadluby-tabele.mjs --zapisz`; test `tests/workHulls.test.mjs` porównuje go z rachunkiem).
+  Tabele gry biorą wpisy przez `workHullRows(...)`: profil renderu (długość = obraz projektu / 0,6), `TRAFFIC_HULLS`
+  (URL sprite'a jako literał), wpis edytora (dysze MAIN i SIDE), `ENGINE_FX_DEFAULTS`, rdzeń, zbiornik paliwa, strefa
+  mostka (obrys modelu poziomu klasy), lampy (para dziobowa i rufowa nie szersza niż „najszersza”), pancerz, rama
+  cywilna NPC, `DEV_HULL_SPAWNS`, model 3D z automatu (obrysy: `node scripts/webgpu/obrysy-floty.mjs`) i osprzęt
+  złomiarski `SCRAP_RIGS` (`rig` — ułamki SZEROKOŚCI PŁÓTNA od środka płótna, bo kotwica statku w grze = środek
+  sprite'a; `hullDesignWorkRig` liczy od środka sylwetki). Zmiana presetu statku roboczego albo wyglądu kompozytora →
+  wypiek + tabele + obrysy (trzy polecenia wyżej), inaczej test tabeli pada. Klasa `tug` świata ruchu = `work_zlomiarz`
+  (reguła `zlomowanie`); pozostałe pięć stoi w scenie `?scena=holowanie` na postoju (`TOW_SCENE.props`).
+- Stocznia: karty „Osprzęt roboczy” w zakładce Systemy (`WORK` w `dema/kreator-kadluba-stocznia.js`), „Kosz na złom”
+  w Ładunku, paleta „Roboczy” w barwach cywilnych; Warsztat: warianty obrotnicy i liczba walców w `MOD_VARIANTS`.
+- Do decyzji użytkownika (tabele i lista: `docs/KREATOR-KADLUBA.md` § „Statki robocze złomowania”): czy obrotnica
+  zostaje gniazdem głównym (limity i pobór jak działo), kosz zamiast zasobników u młyna, złącze przeładunku jako
+  pierścień `well`, nazwy i klasy statków.
+
+## Superkapitał linii Atlasa (Hyperion)
+
+- `src/game/hullDesign/warships/hyperion.js` (klucz `hyperion`, grupa 'tn', klasa VI w `HD_PRESET_CLASS`): 2428 × 488 j.
+  (~5 : 1), ~873 tys. j² (w drabinie — limit VI 900 tys.), paleta `atlasDark`. Od rufy, jak szkic Atlasa
+  (`scripts/blender/atlas/szkic-uzytkownika-v2.jpg`): 5 gondol MAIN, szeroki blok rufowy z nadbudówką (mostek v 2 VI,
+  4 specjalne 2 × 2, 6 głównych), rdzeń v 2 przed nadbudówką, DŁUGA szyja z wcięciami (wrota `hangar` + pola siłowe —
+  paski bez niebieskiego ponad maskę), sekcja dziobowa z luku (`cargo` v 0), widły z zaokrąglonymi końcami; 44 gniazda
+  (20 głównych, 4 specjalne, 2 rakietowe, 18 obrony punktowej), ciężkich 28 z 32.
+- Dodatkowa długość idzie w szyję i sekcję dziobową; okrągłe rzeczy (gondole, wieże, rdzeń, końce wideł) zostają
+  okrągłe. Pliki z `warships/` używają zestawu klocków frachtowców (`freighterKit.js`), ale same budują obiekt projektu
+  (rola wojskowa, wygląd TN: `windows` 0, `bevel` 1,9).
+- Podkład do odwzorowania sylwetki: maska szkicu `scripts/blender/atlas/szkic-maska.png` (biały = wnętrze; skala Atlasa
+  1,19 j./px, oś = wiersz 493, x 0 = kolumna 946,5), rozciągana wzdłuż / w poprzek (`--skala sx,sy` w
+  `kreator-sprawdz-preset.mjs` — IoU i czerwony obrys na podglądzie). Hyperion: `--skala 1.580,0.790`, IoU ~0,83.
+
 ## Jak sprawdzić
 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
@@ -184,10 +447,30 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   [--detale 1,1.25,3.2]` (cały okręt, A/B z Colossusem, dziób, rufa, burta, sponson, sieć, panel klasy; czasy wypieku
   i pamięć w `raport.json` → `drednot`). Szybki podgląd układu bez GPU (poziomy, moduły, sieć) — wystarczy
   `buildHullField` + `pipeNetworkCheck`; preset drednota liczy się w Node ~0,5 s (z siecią ~0,8 s).
+- Testy budowy i barw: `node --test tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`; statki cywilne
+  i ładunek: `node --test tests/hullDesignCargo.test.mjs`; statki robocze i kontrakt osprzętu:
+  `node --test tests/hullDesignWorkships.test.mjs`.
+- Statki robocze: jeden preset — `node scripts/kreator-sprawdz-preset.mjs --plik src/game/hullDesign/workships/<klucz>.js
+  --png .tmp/kreator/robocze`; zrzuty z kompozytora, zbliżenia gniazd, Stocznia i PLANSZA wszystkich w jednej skali
+  z tabelami osprzętu — `node scripts/webgpu/kreator-robocze.mjs --out .tmp/kreator/robocze [--tylko k1,k2]`
+  (`plansza.png`, `osprzet.json`, `raport.json`).
+- Frachtowce: jeden preset — `node scripts/kreator-sprawdz-preset.mjs <klucz> --png .tmp/kreator/plan` (bez przeglądarki;
+  z podkładem: `--maska <png> --skala sx[,sy] --x0 <px> --y0 <px>`); zrzuty z kompozytora —
+  `node scripts/webgpu/kreator-frachtowce.mjs --out .tmp/kreator/frachtowce [--tylko k1,k2] [--projekt plik.json]
+  [--kadry "x,y,zoom;…"]` (cały okręt, dodatkowe kadry, zbliżenie ładunku, załadunek 0,5 i 0; `--projekt` — każdy
+  projekt, także wojskowy, np. `--tylko hyperion --kadry "-860,0,1.5;900,0,1.5"`).
+- Płynność: `node scripts/webgpu/kreator-plynnosc.mjs --out .tmp/kreator-plynnosc/<katalog> [--tylko custos,bellator,colossus]
+  [--profil suwak]` (długie zadania strony — 0, przerwa klatek, czas do obrazu, hash albedo; A/B — ten sam skrypt
+  w worktree drugiej wersji, przebiegi na przemian); barwy nacji i pędzel:
+  `node scripts/webgpu/kreator-barwy.mjs --out .tmp/kreator/barwy [--tylko bellator,colossus]` (czas zmiany barw do GPU,
+  zrzuty nacji, pędzel prawdziwą myszą, zgodność ścieżki barw z pełną przebudową).
 - Klasy: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` (panel klasy, gniazda
   Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
   [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`), gniazdo obudowy
-  reaktora z modelem 3D (`reaktor`); raport `raport.json`
+  reaktora z modelem 3D (`reaktor`), gniazdo mostka z modelem 3D poziomu i galeria I–VI (`mostek`); raport `raport.json`
   (pipeline'y synchroniczne w klatkach — ma być 0, błędy konsoli).
-- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki`.
+- Stocznia: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy stocznia --tylko stocznia --out .tmp/kreator/stocznia`
+  (prawdziwa mysz przez CDP: karta → okręt, stempel z rzędem, Ctrl+D, usunięcie na paletę, moduł poza kadłubem,
+  Shift+przeciągnij, od zera; liczniki w `raport.json` → `stocznia`).
+- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki` (`&ui=warsztat` — pełny panel).

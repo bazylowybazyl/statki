@@ -7,8 +7,12 @@
 // POLE: jeden bufor storage vec4 na grę (FIELD_CAP komórek): per ciało SLOT = pudło komórek kratownicy
 // (cmin, cdim) — kadłub cały, wrak tylko pudło swoich węzłów. Komórka: (dx, dy, dz, stan) w układzie
 // ciała, stan 1 — żywy węzeł TEGO ciała, 0,5 — komórka, której w pierwotnej konstrukcji nie było,
-// 0 — węzeł martwy albo w innym kawałku (wraku). Zapis tylko zmienionych komórek, wysyłka zakresami
-// (zakresyWysylki.js — wiele rozłącznych wycinków w jednej klatce).
+// 0 — węzeł martwy albo w innym kawałku (wraku). Zapis tylko zmienionych komórek. Wysyłka ROZRZUTEM (2026-10-29,
+// niżej): indeksy zmienionych komórek na liście, raz na klatkę krok Core3D.fx kopiuje ich wartości do małego bufora
+// i kernel compute przepisuje je do pola — zmienione komórki odłamów leżą rozrzucone po całym slocie, a zakres
+// lo..hi slotu wysyłał 20–40× więcej bajtów (upadek bazy piratów: 1–2 MB na krok); bez kroku (Node, testy, przed
+// rozgrzewką) i przy przepełnieniu listy — zakresy (zakresyWysylki.js — wiele rozłącznych wycinków w jednej klatce).
+// Lustro ciała w workerze bez nowej strony węzłów (body.nodesSeq) nie jest przeglądane — przegląd nic by nie zapisał.
 //
 // WIERZCHOŁEK (siatka w układzie CIAŁA — ta sama poza co skóra sprite'a w hexShips3D): pozycja =
 // uOff + pozycja modelu (środek sprite'a = 0, skala sprite'a) + Σ w·d / Σ w (w — wagi rogów komórki
@@ -22,7 +26,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, attribute, uniform, storage, vec2, vec3, vec4, float, int, floor, select, varyingProperty, max, mix, clamp,
-  smoothstep, sin, time, texture, fract, positionLocal, hash
+  smoothstep, sin, time, texture, fract, positionLocal, hash, attributeArray, instanceIndex, If
 } from 'three/tsl';
 import { zbierzZakresy } from '../zakresyWysylki.js';
 import { hullDamagePool, sampleHullDamage } from '../hullDamageMap.tsl.js';
@@ -44,7 +48,120 @@ function ensureField() {
   if (_attr) return;
   _data = new Float32Array(FIELD_CAP * 4);
   _attr = new THREE.StorageBufferAttribute(_data, 4);
+  _attr.name = 'hullSkin3DField';   // etykieta bufora GPU (sonda wysyłek workera)
   _node = storage(_attr, 'vec4', FIELD_CAP).toReadOnly().setName('hullSkin3DField');
+}
+
+// A/B (__worldSkinOptions.fieldScatter / fieldSkip, adres ?poleRozrzut=0 / ?polePomin=0): scatter = false — wysyłka
+// zakresem lo..hi slotu (jak przed 2026-10-29), skip = false — lustro przeglądane w każdej klatce.
+export const HULL_SKIN_FIELD_OPTIONS = { scatter: true, skip: true };
+// Narastająco: scans / skips — przeglądy węzłów ciała i pominięte (lustro bez nowej strony węzłów), cells — zapisane
+// komórki, scattered — komórki na liście rozrzutu, rangeCells — komórki wysłane zakresami z zapisu pola (bez kroku albo
+// przy przepełnieniu), overflow — zapisy ciała z przepełnioną listą, flushes / flushCells — dispatche rozrzutu
+// i przepisane komórki; dispatch — wątki ostatniego dispatchu.
+export const HULL_SKIN_FIELD_STATS = { scans: 0, skips: 0, cells: 0, scattered: 0, rangeCells: 0, overflow: 0,
+  flushes: 0, flushCells: 0, dispatch: 0 };
+
+// ---------------------------------------------------------------------------
+// Wysyłka rozrzutem: lista indeksów komórek zmienionych od ostatniego dispatchu (bez powtórzeń — znacznik `_pend`),
+// wartości kopiowane z `_data` dopiero przy dispatchu (komórka zapisana dwa razy przed dispatchem idzie raz, ostatnią
+// wartością; slot zwolniony i przydzielony od nowa — też bieżącą). Kolejność z zakresami (przydział slotu, zapis bez
+// kroku) bez znaczenia: obie drogi niosą tę samą bieżącą wartość z `_data`.
+// ---------------------------------------------------------------------------
+const SCATTER_CAP = 1 << 16;   // komórek na dispatch (wartości 1 MB + indeksy 256 KB); upadek bazy: do ~10 tys. na krok
+let _sc = null;
+
+function ensureScatter() {
+  if (_sc) return _sc;
+  ensureField();
+  const idx = attributeArray(SCATTER_CAP, 'uint').setName('hullSkin3DScatterIdx').toReadOnly();
+  const val = attributeArray(SCATTER_CAP, 'vec4').setName('hullSkin3DScatterVal').toReadOnly();
+  idx.value.name = 'hullSkin3DScatterIdx';
+  val.value.name = 'hullSkin3DScatterVal';
+  const field = storage(_attr, 'vec4', FIELD_CAP).setName('hullSkin3DFieldRW');
+  const uCount = uniform(0, 'uint');
+  const kernel = Fn(() => {
+    const i = instanceIndex;
+    If(i.lessThan(uCount), () => {
+      field.element(idx.element(i)).assign(val.element(i));
+    });
+  })().compute(SCATTER_CAP);
+  _sc = {
+    idx, val, uCount, kernel,
+    idxArr: idx.value.array, valArr: val.value.array,
+    idxRange: permanentUpdateRange(idx.value), valRange: permanentUpdateRange(val.value),
+    pend: new Uint8Array(FIELD_CAP), n: 0,
+    live: false   // krok już przeszedł przez GPU (rozgrzewka albo klatka) — od tej chwili zapis idzie na listę
+  };
+  return _sc;
+}
+
+// Zakres wysyłki na stałe (jak mapa ran / siatka świateł: three czyści listę po wysyłce — tu nie), długość co dispatch.
+function keepUpdateRanges() {}
+function permanentUpdateRange(attr) {
+  const range = { start: 0, count: attr.array.length };
+  attr.updateRanges.length = 0;
+  attr.updateRanges.push(range);
+  attr.clearUpdateRanges = keepUpdateRanges;
+  return range;
+}
+
+function scatterFlush(renderer) {
+  const sc = _sc;
+  if (!sc || !renderer) return;
+  sc.live = true;
+  const n = sc.n;
+  if (!n) return;
+  const I = sc.idxArr, V = sc.valArr, P = sc.pend, D = _data;
+  for (let k = 0; k < n; k++) {
+    const gi = I[k], o = gi * 4, q = k * 4;
+    P[gi] = 0;
+    V[q] = D[o]; V[q + 1] = D[o + 1]; V[q + 2] = D[o + 2]; V[q + 3] = D[o + 3];
+  }
+  sc.idxRange.count = n;
+  sc.valRange.count = n * 4;
+  sc.idx.value.needsUpdate = true;
+  sc.val.value.needsUpdate = true;
+  sc.uCount.value = n;
+  // dispatch zaokrąglony w górę do potęgi dwójki (three przelicza siatkę grup przy każdej zmianie liczby); nadmiarowe
+  // wątki wychodzą na warunku
+  let d = 64;
+  while (d < n) d *= 2;
+  renderer.compute(sc.kernel, d);
+  sc.n = 0;
+  const FS = HULL_SKIN_FIELD_STATS;
+  FS.flushes++;
+  FS.flushCells += n;
+  FS.dispatch = d;
+}
+
+/** Diagnostyka i testy: stan listy rozrzutu ({ idxArr, valArr, uCount, kernel, n, live }) albo null. */
+export function hullSkinScatterState() { return _sc; }
+// Narzędzia (gpu-baza-gra.mjs — w workerze): atrybut pola (odczyt bufora GPU i porównanie z kopią CPU), lista rozrzutu.
+if (typeof window !== 'undefined') {
+  window.__hullSkinFieldDiag = { attribute: () => _attr, scatter: () => _sc, stats: HULL_SKIN_FIELD_STATS, options: HULL_SKIN_FIELD_OPTIONS };
+}
+
+let _fxStep = null;
+/**
+ * Krok klatki efektów (Core3D.addFxStep) z wysyłką rozrzutem: rozgrzewka (ekran ładowania — pipeline kernela i bufory,
+ * także pola) i dispatch listy raz na klatkę, przed passami. Rejestracja: prewarmHexShips3D (strona w trybie off
+ * i worker renderu). Bez kroku pole idzie zakresami.
+ */
+export function hullSkinFieldFxStep() {
+  if (_fxStep) return _fxStep;
+  _fxStep = {
+    name: 'pole skóry 3D (rozrzut)',
+    update(ctx) { scatterFlush(ctx?.renderer); },
+    warm(ctx) {
+      const sc = ensureScatter();
+      if (!ctx?.renderer) return;
+      sc.uCount.value = 0;
+      ctx.renderer.compute(sc.kernel, 64);
+      sc.live = true;
+    }
+  };
+  return _fxStep;
 }
 
 function allocCells(n) {
@@ -495,7 +612,11 @@ export function ensureHullSkinSlot(hull, occ) {
     on: true,
     last: new Float32Array(n * 4).fill(-1e9),
     revision: -1,
-    wroteFrame: -1
+    wroteFrame: -1,
+    wroteSleep: false,
+    // wejścia ostatniego przeglądu (lustro ciała: numer stanu węzłów, magazyn, latticeMin, komórka) — bez zmiany
+    // przegląd nic by nie zapisał
+    nodesSeq: -1, store: null, lmx: NaN, lmy: NaN, lmz: NaN, lcs: NaN
   };
   // Stan początkowy: komórki pierwotnej konstrukcji = GONE (inny kawałek), reszta = NEVER.
   const d = body.dims, dxy = d.x * d.y;
@@ -520,8 +641,8 @@ export function releaseHullSkinSlot(hull) {
 
 /**
  * Zapis pola z węzłów ciała (przesunięcie względem spoczynku w komórkach kratownicy, stan). Tylko komórki
- * zmienione od ostatniego zapisu; zakres do wysyłki. uOff = latticeMin + anchorD (środek sprite'a w
- * układzie ciała). Zwraca liczbę zapisanych komórek.
+ * zmienione od ostatniego zapisu; wysyłka rozrzutem (lista komórek, krok hullSkinFieldFxStep) albo zakresem.
+ * uOff = latticeMin + anchorD (środek sprite'a w układzie ciała). Zwraca liczbę zapisanych komórek.
  */
 export function writeHullSkinField(hull) {
   const st = hull.__skin3D;
@@ -533,6 +654,23 @@ export function writeHullSkinField(hull) {
   if (body.isSleeping && st.revision === hull.revision && st.wroteSleep) return 0;
   st.revision = hull.revision;
   st.wroteSleep = !!body.isSleeping;
+  const FS = HULL_SKIN_FIELD_STATS;
+  // Lustro ciała (worker renderu) bez nowej strony węzłów od ostatniego przeglądu, z tym samym magazynem, latticeMin
+  // i komórką: każda komórka porównałaby się z tym samym `last` co poprzednio — przegląd nic by nie zapisał. Worker
+  // rysuje do 240 kl/s, a węzły zmienia krok gry (60 Hz). Ciała gry (tryb off, Node) numeru nie mają — przegląd zawsze.
+  const seq = body.nodesSeq;
+  if (seq !== undefined && HULL_SKIN_FIELD_OPTIONS.skip && seq === st.nodesSeq && s === st.store
+      && lm.x === st.lmx && lm.y === st.lmy && lm.z === st.lmz && cs === st.lcs) {
+    FS.skips++;
+    return 0;
+  }
+  st.nodesSeq = seq === undefined ? -1 : seq;
+  st.store = s;
+  st.lmx = lm.x; st.lmy = lm.y; st.lmz = lm.z; st.lcs = cs;
+  FS.scans++;
+  const sc = HULL_SKIN_FIELD_OPTIONS.scatter && _sc && _sc.live ? _sc : null;
+  const pend = sc ? sc.pend : null, list = sc ? sc.idxArr : null;
+  let n = sc ? sc.n : 0, overflow = false;
   const x0 = st.cmin.x, y0 = st.cmin.y, z0 = st.cmin.z;
   const cdx = st.cdim.x, cdy = st.cdim.y, cdz = st.cdim.z;
   const last = st.last;
@@ -551,12 +689,27 @@ export function writeHullSkinField(hull) {
     }
     if (Math.abs(last[o4] - dx) < 0.02 && Math.abs(last[o4 + 1] - dy) < 0.02 && Math.abs(last[o4 + 2] - dz) < 0.02 && last[o4 + 3] === state) continue;
     last[o4] = dx; last[o4 + 1] = dy; last[o4 + 2] = dz; last[o4 + 3] = state;
-    const o = (st.offset + li) * 4;
+    const gi = st.offset + li, o = gi * 4;
     _data[o] = dx; _data[o + 1] = dy; _data[o + 2] = dz; _data[o + 3] = state;
     if (li < lo) lo = li;
     if (li > hi) hi = li;
     wrote++;
+    if (sc && !pend[gi]) {
+      if (n < SCATTER_CAP) { pend[gi] = 1; list[n++] = gi; }
+      else overflow = true;
+    }
   }
-  if (wrote > 0) zbierzZakresy(_attr, (st.offset + lo) * 4, (hi - lo + 1) * 4);
+  if (sc) sc.n = n;
+  FS.cells += wrote;
+  if (wrote > 0) {
+    // bez kroku rozrzutu albo z przepełnioną listą — zakres lo..hi (komórki już na liście dostaną tę samą wartość)
+    if (!sc || overflow) {
+      zbierzZakresy(_attr, (st.offset + lo) * 4, (hi - lo + 1) * 4);
+      FS.rangeCells += hi - lo + 1;
+      if (overflow) FS.overflow++;
+    } else {
+      FS.scattered += wrote;
+    }
+  }
   return wrote;
 }

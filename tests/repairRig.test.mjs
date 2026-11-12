@@ -289,6 +289,25 @@ test('rig: ten sam wynik przy 120 i 60 Hz (komórki, materiał, punkty, udział)
   assert.deepEqual(b, a);
 });
 
+test('rig: tempo pracy z załogi nosiciela (env.workRate, workforce W6 — D11) — wolniej, ten sam wynik', () => {
+  const run = (rate) => {
+    const dt = 1 / 60;
+    const e = damagedAtlas({ dt });
+    const cargo = { scrap: 4, steel: 10, hull_plate: 1 };
+    const rig = new RepairRig({ carrier: e, cargo, drones: 8, env: { workRate: () => rate } });
+    rig.launch();
+    const t = runRig(e, rig, dt, 600);
+    const r = { t, cells: rig.stats.cellsRegrown, ratio: HullBodies.structuralState(e).ratio };
+    release(e);
+    return r;
+  };
+  const full = run(1);
+  const slow = run(0.5);
+  assert.equal(slow.ratio, 1, 'konstrukcja cała także przy połowie załogi');
+  assert.equal(slow.cells, full.cells);
+  assert.ok(slow.t > full.t * 1.3, `praca ${full.t.toFixed(1)} s → ${slow.t.toFixed(1)} s`);
+});
+
 test('rig: komórka zajęta przez inne ciało — dron jej nie odbudowuje, materiał wraca', () => {
   const e = damagedAtlas({ cut: false, angVel: 0, vx: 0, vy: 0 });
   let calls = 0;

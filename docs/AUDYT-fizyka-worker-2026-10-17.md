@@ -1,5 +1,8 @@
 # Audyt: fizyka w workerze — duże bitwy po wdrożeniu renderu w workerze (2026-10-17)
 
+> Stan na 2026-11-02: etap 0 i interpolacja NPC są w `main`, worker symulacji nie jest zaczęty (§ 11). Decyzje
+> po aktualizacji — § 8: otwarta jest tylko D1 (rada: jeszcze nie), D2–D3 czekają na D1, D4 i D5 nie wymagają decyzji.
+
 Zgłoszenie: render w workerze jest trybem domyślnym („jest kop”), ale „w dużych bitwach fizyka dalej lubi opóźniać” —
 czy robić worker dla fizyki. Zrzut PerfHUD użytkownika: 159 „fps”, klatka p50 / p95 3,2 / 11,4 ms, fizyka 2,96 ms na
 klatkę = **6,82 ms na krok @ 60 Hz**, rysowanie 3,06 ms (U hex 2,07), 145 NPC (70 wrogów / 75 sojuszników),
@@ -423,15 +426,90 @@ harnessu, CDP do workera dla nowych).
 
 Etap 4 — pomiar w oknie 144 / 240 Hz, opóźnienie wejścia, A/B rozgrywki (taran, broń, AI), decyzja o trybie domyślnym.
 
-## 8. Do decyzji użytkownika
+## 8. Do decyzji użytkownika (stan 2026-11-02)
 
-- **D1** kierunek: najpierw etap 0 (D + E + interpolacja NPC) i pomiar, czy od razu plan pełnego workera symulacji.
-- **D2** krok symulacji w workerze: 60 Hz jak dziś czy 120 Hz (taran wierniejszy — pomiar z 2026-09-24: 400 j/s 95,0% →
-  90,7% zniszczenia celu; w workerze CPU fizyki nie zabiera klatek).
-- **D3** opóźnienie wejścia przy workerze: do +1 kroku (≤ 16,7 ms przy 60 Hz, ≤ 8,3 ms przy 120 Hz) — do przyjęcia?
-- **D4** narzędzia: tryb `page` (symulacja na wątku gry) domyślny dla harnessu jak przy renderze, przenosiny tylko
-  kluczowych skryptów.
-- **D5** interpolacja NPC (§ 6 G): w toku w sesji audytu renderu — do przyjęcia po jej A/B.
+Lista z 2026-10-17 sprawdzona z kodem (§ 11) i z dwoma pomiarami. Pierwszy to etap 0 przy monitorze 240 Hz (§ 10).
+Drugi to klatka workera renderu w bitwie przy bazie piratów, 5120 × 1440, monitor na 120 Hz
+(`AUDYT-klatka-workera-2026-11-02.md` § 6).
+
+| | pytanie z 10-17 | stan | czy decydujesz |
+|---|---|---|---|
+| D1 | najpierw etap 0 czy od razu worker symulacji | etap 0 zrobiony i zmierzony; zostaje: budować worker symulacji czy nie | **tak** — rada: jeszcze nie |
+| D2 | krok 60 czy 120 Hz w workerze | dotyczy tylko workera symulacji | nie teraz — wraca, jeśli D1 = tak |
+| D3 | opóźnienie wejścia przy workerze | dotyczy tylko workera symulacji | nie teraz — wraca, jeśli D1 = tak |
+| D4 | narzędzia przy workerze | sprawa techniczna, rozstrzygnięta wzorem renderu w workerze | nie |
+| D5 | interpolacja NPC | w `main` od 2026-10-17, domyślnie włączona | nie — załatwione |
+
+### D1 — czy przenosić całą symulację do osobnego wątku (do decyzji)
+
+Prosto: gra ma dziś dwa wątki. **Wątek gry** liczy fizykę, AI, pociski i interfejs, a na koniec składa obraz na ekran.
+**Worker renderu** rysuje 3D. Worker symulacji byłby trzecim wątkiem. Zabrałby wątkowi gry fizykę, AI i pociski, a wątek
+gry zostałby z interfejsem, wejściem, dźwiękiem i składaniem obrazu.
+
+Co by dał:
+- w najcięższych scenach obraz przestałby gubić klatki przez fizykę;
+- fizyka dostałaby cały rdzeń procesora — bitwy 3–5 razy większe, zanim gra zwolni;
+- chwilowe szczyty fizyki przestałyby zatrzymywać obraz, kamerę i interfejs. Chodzi o rozpad budowli i szyję
+  habitatu: dziś to klatki po 40–70 ms (`AUDYT-przestoje-2026-10-15.md`), bo kroki po 10–14 ms liczą się w tej samej
+  klatce co obraz. W workerze taki krok mieści się w budżecie 16,7 ms, więc nie zwolniłby nawet ruch świata. Dopiero
+  krok dłuższy niż 16,7 ms (większy rozpad, kilka naraz) na chwilę spowolniłby świat, ale nadal nie obraz. Samo
+  niszczenie zostaje bez zmian: ten sam wynik i ten sam koszt, tylko na innym rdzeniu. Budowle liczą się dalej w jednej
+  symulacji z okrętami i pociskami, bo pociski je trafiają, a okręty taranują. Osobny wątek dla samego silnika belek
+  odpada (§ 5.3); na koszt rozpadów celuje solver lokalny na GPU (`AUDYT-przestoje-2026-10-15.md` § 6).
+
+Ile kosztuje: tyle co przenosiny renderu do workera (25–35 etapów), tylko trudniej. Rdzeń symulacji to ~370 funkcji
+i ~8,6 tys. linii w `index.html`. Ten plik zmienia każda sesja, więc przez cały czas tej pracy inne zmiany w grze będą
+się z nią zderzać. Każdy klawisz, klik w panelu, komunikat i dźwięk musi przejść przez nową „pocztę” między wątkami,
+a narzędzia pomiarowe trzeba przestawić.
+
+Co mówią pomiary:
+- **Przy 240 Hz** w szczycie bitwy klatki gubi worker renderu, nie fizyka. Tak wyszło 10-17 po etapie 0: 123–160 obrazów
+  na sekundę w obu wersjach. Pomiar z 11-02 przy 5120 × 1440 dał szczyt workera 4,3–4,6 ms, a klatka przy 240 Hz ma
+  4,17 ms. Sam worker symulacji nic by tu nie dał.
+- **Przy 120 Hz** worker renderu ma zapas: 4,4–4,6 ms z 8,33 ms. Tak był ustawiony Twój monitor w Windows przy pomiarze
+  z 11-02 (bitwa przy bazie piratów, 5120 × 1440). Obraz w szczycie spada jednak do 101–113 klatek na sekundę zamiast
+  120. Tym razem winny jest wątek gry: pętla p50 5,5 ms, p95 7,8 ms, a fizyka przy bazie kosztuje +0,6 ms na krok.
+
+Rada: **worker symulacji jeszcze nie.** Przy 120 Hz brakuje 7–19 klatek na sekundę, i to tylko w szczycie najcięższej
+sceny. Żeby spadki zniknęły, klatka wątku gry z krokiem musi schudnąć mniej więcej o 1–2 ms — to robota na dni, nie
+tygodnie. Pierwszy podejrzany: przy 120 Hz między krokami jest tylko jedna wolna klatka. Tymczasem sufit pracy AI poza
+krokiem (`AiOffStepTune.maxMs` = 2 ms) dobrano przy 240 Hz, gdzie wolne klatki są trzy. Mózgi, które się nie zmieszczą,
+dolicza krok. Do sprawdzenia licznikiem `__aiOffStep.inlN`: krok w szczycie 11-02 wyniósł 3,0–3,6 ms, a 10-17 przy
+240 Hz — 2,2 ms. Przy 240 Hz kolejność jest inna: najpierw klatka workera renderu (`AUDYT-klatka-workera-2026-11-02.md`
+§ 5).
+
+Worker symulacji wraca na stół w trzech przypadkach:
+- zechcesz bitew wyraźnie większych niż testowe 166–331 okrętów;
+- zechcesz kroku fizyki 120 Hz dla dokładniejszego taranu (D2);
+- tańsze poprawki nie wystarczą.
+
+Potrzebne od Ciebie są dwie rzeczy: czy przyjmujesz „jeszcze nie” i na ilu Hz grasz, 120 czy 240 (ustawienie Windows
+albo limit klatek w opcjach grafiki). Od Hz zależy, który wątek odciążać najpierw.
+
+### D2 i D3 — krok 120 Hz i opóźnienie wejścia (nie teraz)
+
+Obie dotyczą tylko workera symulacji i wracają razem z D1 = tak.
+
+- **D2** — ile razy na sekundę fizyka w workerze ma liczyć świat: 60 razy, jak dziś, czy 120 razy. Przy 120 taran liczy
+  się dokładniej (pomiar z 2026-09-24, 400 j/s: 95,0% → 90,7% zniszczenia celu). Na wątku gry 120 Hz jest skreślone
+  (§ 4.4), bo podwaja koszt fizyki i psuje rytm klatek. W workerze kosztowałoby tylko jego własny rdzeń, nie klatki
+  obrazu.
+- **D3** — przy workerze naciśnięty klawisz trafia do najbliższego kroku fizyki, więc statek może zareagować później
+  niż dziś: najwyżej o 16,7 ms przy 60 Hz (o 8,3 ms przy 120 Hz), średnio o ~8 ms. Pytanie brzmi: czy to akceptujesz.
+
+### D4 — narzędzia przy workerze (nie do decyzji)
+
+To sprawa techniczna. Skrypty pomiarowe i testy gry liczyłyby domyślnie symulację na wątku gry, żeby nie przepisywać
+~100 narzędzi. Przy renderze w workerze przyjęto to samo: narzędzia domyślnie idą w trybie `off`
+(`window.__RENDER_MODE_DEFAULT`), a tryb gracza włącza `--query renderWorker=1`. To działa, więc przy workerze
+symulacji będzie tak samo.
+
+### D5 — interpolacja NPC (załatwione)
+
+Wdrożone 2026-10-17 i domyślnie włączone w trybie gracza. Obce okręty, wraki, wieże i mostki są rysowane między krokami
+fizyki, więc przy 120–240 Hz nie skaczą co 2–4 klatki (`src/game/renderPoses.js`, A/B `?npcLerp=0`). Na tym stoją już
+zegary pocisków i efektów (`projectileClockOf`, `Core3D.frameNowMs`). Nic tu do decyzji, chyba że w grze zobaczysz
+drgające obce okręty.
 
 ## 9. Pliki
 
@@ -443,7 +521,8 @@ Etap 4 — pomiar w oknie 144 / 240 Hz, opóźnienie wejścia, A/B rozgrywki (ta
   `docs/AUDYT-wydajnosc-2026-10-11.md`, `docs/AUDYT-przestoje-2026-10-15.md`, `docs/PLAN-render-worker.md`,
   `docs/webgpu/RW-WORKER-STAN.md`, `docs/AUDYT-render-worker-2026-10-17.md` (strona ↔ worker renderu, ten sam dzień:
   poprawka zamarzania obrazu, interpolacja NPC `src/game/renderPoses.js`, stały wiek obrazu `src/render/framePacer.js`,
-  prawdziwe kl/s w PerfHUD — w drzewie roboczym, bez commita).
+  prawdziwe kl/s w PerfHUD — dziś w `main`), `docs/AUDYT-klatka-workera-2026-11-02.md` (klatka workera renderu,
+  bitwa przy bazie piratów przy 120 Hz — § 8).
 
 ## 10. Etap 0 — wyniki (2026-10-17, ta sama maszyna, tryb renderu `worker`, krok 60 Hz)
 
@@ -536,3 +615,59 @@ Po etapie 0 klatka z krokiem mieści się w budżecie 240 Hz w ~70–77% przypad
 2 × V1 gubione obrazy idą dziś z workera renderu w szczycie walki, nie z kroku fizyki. Worker symulacji (§ 6 A) ma
 sens dopiero przy bitwach, w których suma pracy wątku gry na 1/60 s przekracza ~16 ms (zrzut użytkownika: krok 6,8 ms
 + 4 × 3,3 ms reszty), albo dla kroku 120 Hz (D2).
+
+## 11. Stan w kodzie (2026-11-02)
+
+### 11.1 Wdrożone (w `main`)
+
+- **Etap 0, wariant E** (§ 10.1; commit `01f0e996` z 2026-10-17). Mózgi AI i utrzymanie taktu liczą się w klatkach bez
+  kroku (`AiOffStepTune`, `runAiOffStep`, `npcAiMaintenance`, `aiOffStepEligible`, `npc.__brainTick`; A/B `?aiPoza=0`).
+  Tak samo warstwa informacyjna (`stepFrameInfo`), stan UI stacji (`stepStationUiState`) i integralność
+  (`runIntegrityPass` / `runPendingIntegrity`). Kokpit pomija klatkę z krokiem przy monitorze > ~110 Hz, a kamera
+  gracza 2 liczy się w `loop()` (`updateCamera2`). Zasada przekrojowa jest w `AGENTS.md` („Mózgi NPC liczą się też
+  w klatkach bez kroku…”), opis w regule `flota-ai`.
+- **Z wariantu D**: CIWS × rakiety przez siatkę (`RocketThreatGrid` w `src/game/rocketIntercept.js`, złoty test
+  `tests/rocketThreatGrid.test.mjs`).
+- **Wariant G**: interpolacja NPC (`src/game/renderPoses.js`, `tests/renderPoses.test.mjs`), włączona w trybach
+  z migawką (`npcRenderLerpOn`). Na niej stoją zegary obrazu pocisków (`projectileClockOf`, `src/game/carrierVelocity.js`).
+- **Zamarzanie obrazu workera w bitwie 331 okrętów** (§ 4.6) — naprawione w audycie renderu. Pakujący pamięta generację
+  slotu ciała (`_bodyGenSeen`, `src/render/snapshotPack.js`), a `renderPage` osłania każdy moduł osobno (`modFail`).
+- **Stare rusztowanie `src/physics/`** (`PhysicsBridge`, `?workerPhysicsV2`, § 5.1) — usunięte 2026-10-19 razem
+  z silnikiem heksów (`9b8cc194`).
+- Narzędzia: `scripts/fizyka-kroki.mjs` (`--okno 1`, `--ab N`, `--query`), `scripts/fizyka-kroki-analiza.mjs`,
+  `scripts/szew-symulacji.mjs`.
+
+### 11.2 Niezrobione
+
+- **Reszta wariantu D** (zysk mały, § 10.1): promienie kolizji i tarcz liczone raz na krok (`stampBulletCollisionRadii`,
+  `getEntityShieldRadiusTowards`, ~0,15–0,25 ms na krok), `pairFilter` silnika belek (~0,09 ms), próbkowanie liczników
+  PerfHUD (`performance.now` w rdzeniu kroku: 89 razy, było 84).
+- **Etap 0 planu SW (§ 7) poza SW-06**:
+  - SW-01, strażnik szwu (`tests/szewSymulacji.test.mjs`) — brak, jest tylko narzędzie;
+  - SW-02 — w części: z kroku wyszły skan, czujniki, CIC, UI stacji i kamera P2, a w rdzeniu zostały stan stacji
+    (`stationUI` ×39), `InfrastructureUI` ×12, `hudSystem` ×6 i cel kamery;
+  - SW-03, kolejka zdarzeń symulacja → strona — brak (komunikaty `pushZoneMessage` ×57 w rdzeniu, toasty, dźwięk ×7);
+  - SW-04, wejście jako dane kroku — brak (32 odczyty wejścia w rdzeniu: `Input.keyHeld` ×18, `mouse.x / y` ×10,
+    gałka ×2…);
+  - SW-05, rozkazy strona → symulacja — brak.
+- **Etapy 1–4** (moduły `src/sim/`, lustra symulacji, worker, pomiar i tryb domyślny) — nie zaczęte. Nie ma `src/sim/`
+  ani przełączników `?sim=` / `?simWorker=`.
+
+### 11.3 Szew symulacji (`node scripts/szew-symulacji.mjs`, porównanie z § 5.2)
+
+| | 2026-10-17 | 2026-11-02 |
+|---|---|---|
+| `index.html` | 32,4 tys. linii, 1169 funkcji | 34,8 tys. linii, 1278 funkcji |
+| rdzeń kroku | 378 funkcji / 8,9 tys. linii | 374 / 8,6 tys. |
+| granice UI w rdzeniu | 10 | 6 |
+| odwołania do UI w rdzeniu | 155 | 122 |
+| odczyty wejścia w rdzeniu | 26 | 32 |
+| dźwięk w rdzeniu | 7 | 7 |
+| `window` w rdzeniu | 97 | 91 |
+| `Math.random` w rdzeniu | 24 | 16 |
+| wszystko osiągalne z kroku | 552 funkcje / 12,7 tys. linii (DOM 422) | 380 / 8,7 tys. (DOM 4) |
+
+Od 10-17 szew zwęził się po stronie interfejsu: budowniczy paneli stacji nie są już osiągalni z kroku, ubyły 4 granice
+UI i 33 odwołania. Za to przybyło 6 odczytów wejścia w kroku. Liczby idą po identyfikatorach, z góry, razem z drogą
+dawnego harmonogramu (`?aiPoza=0`). Mózgi AI poza krokiem liczą się dziś w `loop()`; przy workerze symulacji
+przeszłyby do niego razem z krokiem, bo to dalej symulacja.

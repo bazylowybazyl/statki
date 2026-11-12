@@ -702,6 +702,17 @@ export function fillGiantGrid(plan, grid, dims, z0 = 0, z1 = dims.nz, kOffset = 
   return exact;
 }
 
+/**
+ * Pola wpisu olbrzyma w `giants.entries`, które czytają obraz pasa (widoczność, soczewka skoku — x, y, halfX, halfY),
+ * gaz przestrzeni i kolizje. Ten sam kształt na stronie (`BeltGiants`) i w workerze renderu (`addGiant`) — worker
+ * podawał samo { id, giant }: pas liczył widoczność z undefined (NaN) i w trybie worker olbrzymy się nie rysowały,
+ * a kolizje strony działały (2026-10-30).
+ */
+export function giantEntryFields(plan, x, y) {
+  const hx = plan.half[0], hy = plan.half[1];
+  return { x, y, plan, halfX: hx, halfY: hy, radius: Math.hypot(hx, hy) };
+}
+
 // ---------------------------------------------------------------------------
 // Zapytania (CPU)
 

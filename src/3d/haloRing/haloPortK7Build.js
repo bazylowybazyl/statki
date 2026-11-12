@@ -403,7 +403,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   // ---- dach (K-7 buildRoof) — osobny zestaw, zanika przy statku w hali;
   // styl z profilu planety: 'k7' (Ziemia), 'ecumene' (Mars: wolny port
   // KEPLER z dema ECUMENE), 'fable' (Jowisz: płyty, radiatory i hangary
-  // z dema ringu Fable)
+  // z dema orbital_ring_demo_2)
   f.set = 'roof';
   f.tag = 'roof';
   plate(plates, l.footprint, 711, 82, M.dark, 'roof');
@@ -536,7 +536,7 @@ function buildEcumeneRoof(f, l) {
   }
 }
 
-// Jowisz (ring Fable): dach z ciemnych płyt kadłuba, pola radiatorów (ciemne
+// Jowisz (styl hal „fable” z dema orbital_ring_demo_2): dach z ciemnych płyt kadłuba, pola radiatorów (ciemne
 // lamele z czerwonym żarem), hangary serwisowe z bursztynowymi bramami,
 // anteny z czerwonymi światłami, wieże kontroli z cyjanowymi oknami.
 function buildFableRoof(f, l) {
@@ -599,7 +599,7 @@ function buildEcumeneWalls(f, l) {
   }
 }
 
-// Jowisz (Fable): rurociągi (stal i ciemny metal) wzdłuż ścian, lamele
+// Jowisz (styl „fable”): rurociągi (stal i ciemny metal) wzdłuż ścian, lamele
 // radiatorów pod nimi, światła pozycyjne czerwone/zielone — pod płaszczyzną.
 function buildFableWalls(f, l) {
   const M = K7_MAT;

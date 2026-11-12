@@ -22,8 +22,9 @@ test('terran carrier editor defaults include full hardpoints engines and lights'
   assert.equal(carrier.hardpoints.length, 40);
   assert.equal(carrier.engines.main.length, 6);
   assert.equal(carrier.engines.side.length, 4);
-  assert.equal(carrier.lights.position.length, 23);
+  assert.equal(carrier.lights.position.length, 6);
   assert.equal(carrier.lights.road.length, 0);
+  assert.equal(carrier.lights.flood.length, 5);
 
   assert.deepEqual(
     carrier.engines.main.find(engine => engine.id === 'm_dqyb8h8'),
@@ -59,16 +60,6 @@ test('terran carrier editor defaults include full hardpoints engines and lights'
       vfxLengthMax: 354
     }
   );
-  assert.deepEqual(
-    carrier.lights.position.find(light => light.id === 'm_7fdca91'),
-    {
-      id: 'm_7fdca91',
-      x: 739.17,
-      y: -78.02,
-      color: '#ff2b2b',
-      power: 0.8,
-      radius: 4,
-      sequenceGroup: 'edge'
-    }
-  );
+  assert.equal(carrier.lights.position[0].id, 'nav_bow_l');
+  assert.equal(carrier.lights.position[0].color, '#ff2b2b');
 });

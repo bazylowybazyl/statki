@@ -6,12 +6,17 @@ import { Core3D } from './core3d.js';
 import { Destruction3D } from '../vfx/destruction3D.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from './fx/fxRandom.js';
+import { requestIdle } from './harmonogram.js';
+import { WARP_WORLD_LENS, WARP_LENS_ANCHORS, lensAnchorPoint, lensWorldInFrame } from './warp/worldLens.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
-// prepareStations3D już było (ekran ładowania) — szablon wczytany później rozgrzewa się od razu.
+// prepareStations3D / warmStationTemplates3D już było — szablon wczytany później rozgrzewa się w wolnej chwili.
 let stationsWarmRequested = false;
+// Faza wpisów rozgrzewki szablonów: ekran ładowania (prepareStations3D, przed flush) — bez fazy; szablony
+// rozgrzewane w tle (tryb worker, szablon wczytany po limicie) — 'after'.
+let stationsWarmPhase = null;
 
 let stationKeySequence = 0;
 const STATION_KEY_PROP = '__station3DKey';
@@ -118,7 +123,8 @@ function getTemplate(stationId, path) {
       placeholder.materials = [];
       placeholder.loading = false;
       // wczytany po ekranie ładowania (limit prepareStations3D) — rozgrzewka w tle, zanim stacja wejdzie w kadr
-      if (stationsWarmRequested) warmStationTemplate(placeholder, path);
+      // (wypiek rozpadu szablonu to ~100 ms CPU — w wolnej chwili, nie w callbacku wczytania w środku klatki)
+      if (stationsWarmRequested) requestIdle(() => warmStationTemplate(placeholder, path), { timeout: 2000 });
       resolveLoaded(true);
     },
     undefined,
@@ -152,8 +158,9 @@ function warmStationTemplate(entry, path) {
   const reg = Core3D.warmup;
   if (reg && typeof reg.add === 'function') {
     const name = String(path).split('/').pop();
-    reg.add({ name: `stacje: bryła ${name}`, objects: root, layer: 2 });
-    reg.add({ name: `stacje: cień ${name}`, objects: root, shadow: true });
+    const phase = stationsWarmPhase ? { phase: stationsWarmPhase } : null;
+    reg.add({ name: `stacje: bryła ${name}`, objects: root, layer: 2, ...phase });
+    reg.add({ name: `stacje: cień ${name}`, objects: root, shadow: true, ...phase });
   }
   return true;
 }
@@ -168,7 +175,7 @@ export async function prepareStations3D(stations, { timeoutMs = 10000 } = {}) {
   stationsWarmRequested = true;
   const byPath = new Map();
   for (const station of stations) {
-    if (!station || isPirateStation(station) || station.ringPort) continue;
+    if (!station || isPirateStation(station) || isPlayerStation(station) || station.ringPort) continue;
     const urls = getModelUrlsForStation(station);
     const path = urls ? urls.find(Boolean) : null;
     if (path && !byPath.has(path)) byPath.set(path, getTemplate(station.id, path));
@@ -189,6 +196,34 @@ export async function prepareStations3D(stations, { timeoutMs = 10000 } = {}) {
   if (typeof Core3D.warmup?.run === 'function') Core3D.warmup.run('wypiek stacji: szablony i bryły', build);
   else build();
   return warmed;
+}
+
+/**
+ * Szablony GLB modeli stacji w tle, BEZ składania brył (faza rozgrzewki 'after'). Tryb worker: strona nie woła
+ * prepareStations3D (stacje rysuje worker z luster, bryły powstają leniwie przy wejściu w kadr) — bez tego pierwsza
+ * stacja modelu w kadrze (teleport do odległego portu) wczytywała GLB i kompilowała pass FG i cień w klatce. Worker
+ * woła to przy przygotowaniu sceny po klatce zero (lustra stacji już są) i czeka na wczytanie z limitem — wypiek
+ * rozpadu i kompilacje idą pod kurtyną ładowania; szablon wczytany później — w wolnej chwili. Zwraca obietnicę
+ * wczytania szablonów (true, gdy wszystkie gotowe przed limitem `timeoutMs`).
+ */
+export async function warmStationTemplates3D(stations, { timeoutMs = 10000 } = {}) {
+  if (!Core3D.isInitialized || !Array.isArray(stations)) return false;
+  stationsWarmRequested = true;
+  stationsWarmPhase = 'after';
+  const byPath = new Map();
+  for (const station of stations) {
+    if (!station || isPirateStation(station) || isPlayerStation(station) || station.ringPort) continue;
+    const urls = getModelUrlsForStation(station);
+    const path = urls ? urls.find(Boolean) : null;
+    if (path && !byPath.has(path)) byPath.set(path, getTemplate(station.id, path));
+  }
+  if (!byPath.size) return true;
+  let timer = 0;
+  const all = Promise.all([...byPath.values()].map((entry) => entry.loaded));
+  const done = await Promise.race([all.then(() => true), new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); })]);
+  clearTimeout(timer);
+  for (const [path, entry] of byPath) warmStationTemplate(entry, path);
+  return done;
 }
 
 function cloneTemplate(stationId, path) {
@@ -235,6 +270,15 @@ function getModelUrlsForStation(station) {
     return MODEL_URLS.earth;
   }
   return null;
+}
+
+/**
+ * Stacja gracza (E7, `style: 'player'` — pole lustra stacji): na razie znacznik 2D na kanwie, bez bryły 3D. Klon
+ * modelu dołożony w biegu kompilowałby się w klatce (rozgrzewka obejmuje bryły z ekranu ładowania) — model
+ * stacji gracza i jego rozgrzewka to osobne zadanie.
+ */
+function isPlayerStation(station) {
+  return station?.style === 'player';
 }
 
 function isPirateStation(station) {
@@ -341,6 +385,35 @@ function ensureStationRecord(station) {
   return record;
 }
 
+const STATION_LENS_MIN_PX = 3;     // [px bufora] promień obrazu stacji w soczewce, od którego się rysuje (projekt D § 5.3)
+// Warstwa stacji w soczewce: pass TŁA (Core3D renderPassBg — warstwa 1, kamera perspektywy jak pass FG, rysowany przed
+// passem gry). Ta sama projekcja co FG — przełączenie nie przestawia wysokich części bryły (perspektywa → ortho dawała
+// skok z · odstęp / camZ), zmienia się tylko kolejność: stacja pod statkiem (E3, wzór HALO_GAME.lensLayers).
+const STATION_LENS_LAYER = 1;
+const _lensPt = { x: 0, y: 0, k: 1 };
+
+/** Kotwica soczewki ciała stacji (planeta / małe ciało — `station.planet.id`; lustro workera: opis `planet: { id }`). */
+function stationLensAnchor(station) {
+  const id = station?.planet?.id;
+  if (id == null) return null;
+  const a = WARP_LENS_ANCHORS[String(id)];
+  if (!a || !a.on) return null;
+  // zasięg rzeczy przypiętych — decyzja wejścia ciała w soczewkę widzi stację w kadrze (worldLens.js: attachR)
+  const dx = (Number(station.x) || 0) - a.rx;
+  const dy = (Number(station.y) || 0) - a.ry;
+  const reach = Math.sqrt(dx * dx + dy * dy) + Math.max(0, Number(station.r) || Number(station.baseR) || 0) * 2.8;
+  if (reach > a.reach) a.reach = reach;
+  return a.real < 0.999 ? a : null;
+}
+
+/** Warstwy stacji w soczewce: pass tła (1 — pod kadłubami, ta sama perspektywa co FG), poza nią FG (2). Tylko przy zmianie. */
+function setStationLensLayers(record, group, on) {
+  if (!!record.lensLayers === on) return;
+  record.lensLayers = on;
+  if (on) group.traverse((child) => { child.layers.set(STATION_LENS_LAYER); });
+  else Core3D.enableForeground3D(group);
+}
+
 function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group || !Core3D.scene) return;
@@ -356,6 +429,7 @@ function updateRecordTransform(record, station, devScale, visible) {
     // STACJA NA WIERZCH!
     Core3D.enableForeground3D(group);
     group.userData.fgCategory = 'stations';
+    record.lensLayers = false;
   }
 
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
@@ -380,9 +454,26 @@ function updateRecordTransform(record, station, devScale, visible) {
     record.lastPivotKey = pivotKey;
   }
 
-  group.scale.setScalar(effectiveScale);
-
-  group.position.set(station.x, -station.y, -100);
+  // SOCZEWKA ŚWIATA (DECYZJE E1, etap 3A): stacja przy planecie / małym ciele jedzie w skoku za obrazem swojego ciała
+  // (kotwica worldLens.js: WARP_LENS_ANCHORS[id ciała] — ta sama skala i punkt co ring i dok portu) i schodzi pod
+  // statek: pass tła (STATION_LENS_LAYER — perspektywa jak FG, przed passem gry; FG rysuje się nad kadłubami — E3),
+  // z jak poza soczewką (rzut bez zmian). Obraz mniejszy niż STATION_LENS_MIN_PX (3 px) — schowany (stolica Unii przy
+  // Ceres ~14 px, reszta ~2 px).
+  const lens = stationLensAnchor(station);
+  if (lens) {
+    lensAnchorPoint(lens, station.x, station.y, _lensPt);
+    const k = Math.max(0, _lensPt.k);
+    const worldR = effectiveScale * geometryRadius * k;
+    group.scale.setScalar(Math.max(1e-6, effectiveScale * k));
+    group.position.set(_lensPt.x, -_lensPt.y, -100);
+    setStationLensLayers(record, group, true);
+    const zoom = Number(WARP_WORLD_LENS.zoom) || 0;
+    visible = visible && worldR * zoom >= STATION_LENS_MIN_PX && lensWorldInFrame(WARP_WORLD_LENS, _lensPt.x, _lensPt.y, worldR);
+  } else {
+    setStationLensLayers(record, group, false);
+    group.scale.setScalar(effectiveScale);
+    group.position.set(station.x, -station.y, -100);
+  }
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset += 0.002;
@@ -403,7 +494,7 @@ export function initStations3D(_sceneIgnored, stations) {
 
   for (const station of stations) {
     // port ringu (Ziemia, Mars) zastępuje stację — bez bryły 3D (haloRingPlanets.js)
-    if (!station || isPirateStation(station) || station.ringPort) continue;
+    if (!station || isPirateStation(station) || isPlayerStation(station) || station.ringPort) continue;
 
     const urls = getModelUrlsForStation(station);
     if (!urls) continue;
@@ -420,6 +511,7 @@ export function initStations3D(_sceneIgnored, stations) {
           // STACJA NA WIERZCH!
           Core3D.enableForeground3D(record.group);
           record.group.userData.fgCategory = 'stations';
+          record.lensLayers = false;   // warstwy soczewki skoku ustawia od nowa updateRecordTransform
       }
       station._mesh3d = record.group;
       continue;
@@ -482,7 +574,7 @@ export function updateStations3D(stations, cullInfo = null) {
 
   for (const station of stations) {
     // port ringu (Ziemia, Mars) zastępuje stację — bez bryły 3D (haloRingPlanets.js)
-    if (!station || isPirateStation(station) || station.ringPort) continue;
+    if (!station || isPirateStation(station) || isPlayerStation(station) || station.ringPort) continue;
     const urls = getModelUrlsForStation(station);
     if (!urls) continue;
     const path = urls.find(Boolean);

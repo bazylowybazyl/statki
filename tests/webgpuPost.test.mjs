@@ -285,32 +285,37 @@ test('Core3D._renderPost: bloom (pass compute) przed postem w kubełku bloom, pi
   assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [0, 1]);
 });
 
-test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zamiast przepełnienia puli three', () => {
+test('zegar GPU: brama znaczników na granicy klatki Core3D — klatka bez pomiaru zamiast przepełnienia puli three', async () => {
+  const { createZegarGpuKlatki } = await import('../src/3d/zegarGpuKlatki.js');
   let polls = 0;
   const pool = { maxQueries: 2048, currentQueryIndex: 0 };
   const backend = { trackTimestamp: true, timestampQueryPool: { render: pool } };
+  // info.frame stoi (worker renderu: takt rAF three nie ma związku z renderami) — granicę klatki wyznacza Core3D
   const renderer = { info: { frame: 1 }, backend };
+  const clock = createZegarGpuKlatki();
   // gpuTimerSampleEvery = 1: każda klatka z próbką (próbkowanie co N klatek — osobno niżej)
-  const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuTimestampFeature: true, gpuTimerSampleEvery: 1 });
+  const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuClock: clock, _gpuTimestampFeature: true, gpuTimerSampleEvery: 1 });
   // atrapa zlecenia: three zeruje pulę synchronicznie na starcie rozwiązywania
   fake._gpuTimerPollType = (type) => { polls++; backend.timestampQueryPool[type].currentQueryIndex = 0; fake._gpuTimerPending[type] = true; };
+  const next = () => clock.frameEnd(); // koniec klatki Core3D (render() / para podzielonego ekranu)
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls], [true, 0], 'miejsce jest — bez zmian');
-  pool.currentQueryIndex = 1800; renderer.info.frame = 2;
+  pool.currentQueryIndex = 1800; next();
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls, pool.currentQueryIndex], [true, 1, 0], 'brak miejsca, bez zlecenia w locie — zlecenie od razu');
-  pool.currentQueryIndex = 1800; renderer.info.frame = 3;
+  pool.currentQueryIndex = 1800; next();
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls], [false, 1], 'zlecenie w locie — klatka bez znaczników (initTimestampQuery nic nie dopisuje)');
   assert.equal(fake.gpuTimerSupported, true, 'PerfHUD dalej widzi cechę timestamp-query');
   fake._gpuTimerPending.render = false;
+  renderer.info.frame = 50;
   fake._gpuTimerGate();
-  assert.equal(backend.trackTimestamp, false, 'decyzja raz na klatkę rAF (drugi renderSingle tej klatki)');
-  renderer.info.frame = 4;
+  assert.equal(backend.trackTimestamp, false, 'decyzja raz na klatkę Core3D (drugi render podzielonego ekranu; takt rAF three bez znaczenia)');
+  next();
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls, pool.currentQueryIndex], [true, 2, 0], 'wynik przyszedł — pomiar wraca');
-  // Zadanie 23: seria renderów w JEDNEJ klatce rAF (dema, narzędzia) — miejsce sprawdzane przy każdym
-  // renderze (na jeden pełny render), nie tylko na granicy klatki.
+  // Zadanie 23: seria renderów w JEDNEJ klatce (dema, narzędzia) — miejsce sprawdzane przy każdym renderze (na jeden
+  // pełny render), nie tylko na granicy klatki.
   fake._gpuTimerPending.render = false;
   pool.currentQueryIndex = 1990;
   fake._gpuTimerGate();
@@ -326,32 +331,35 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   backend.timestampQueryPool.compute = compute;
   fake._gpuTimerPending.render = false;
   fake._gpuTimerPending.compute = true;
-  renderer.info.frame = 5;
+  next();
   pool.currentQueryIndex = 0;
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, compute.trackTimestamp], [true, false], 'compute bez miejsca i ze zleceniem w locie — bez znaczników compute');
   fake._gpuTimerPending.compute = false;
-  renderer.info.frame = 6;
+  next();
   fake._gpuTimerGate();
   assert.deepEqual([compute.trackTimestamp, compute.currentQueryIndex, polls], [true, 0, 4], 'compute bez miejsca, bez zlecenia — zlecenie od razu');
-  // Zadanie 23: próbka czasu GPU co gpuTimerSampleEvery klatek (znaczniki kosztują CPU na każdy pass) — klatka
+  // Zadanie 23: próbka czasu GPU co gpuTimerSampleEvery klatek Core3D (znaczniki kosztują CPU na każdy pass) — klatka
   // bez próbki idzie bez znaczników, także jej kolejne rendery; domyślnie co 4. klatkę.
   assert.equal(Core3D.gpuTimerSampleEvery, 4);
   fake.gpuTimerSampleEvery = 4;
   fake._gpuTimerPending.render = false; fake._gpuTimerPending.compute = false;
   pool.currentQueryIndex = 0; compute.currentQueryIndex = 0;
-  renderer.info.frame = 7;
+  next();
+  while (clock.fid % 4 !== 1) next();
   fake._gpuTimerGate();
-  assert.equal(backend.trackTimestamp, false, 'klatka 7 — bez próbki');
+  assert.equal(backend.trackTimestamp, false, 'klatka bez próbki');
   fake._gpuTimerGate();
   assert.equal(backend.trackTimestamp, false, 'drugi render klatki bez próbki — dalej bez znaczników');
-  renderer.info.frame = 8;
+  while (clock.fid % 4 !== 0) next();
   fake._gpuTimerGate();
-  assert.equal(backend.trackTimestamp, true, 'klatka 8 — próbka');
+  assert.equal(backend.trackTimestamp, true, 'co 4. klatka Core3D — próbka');
   // bez cechy timestamp-query brama nic nie włącza
-  const noFeature = Object.assign(Object.create(Core3D), { renderer: { info: { frame: 9 }, backend: { trackTimestamp: false } }, _gpuTimestampFeature: false, _gpuTimerGateFrame: -1 });
+  const noFeature = Object.assign(Object.create(Core3D), { renderer: { info: { frame: 9 }, backend: { trackTimestamp: false } }, _gpuTimestampFeature: false, _gpuTimerGateFrame: -1, _gpuClock: createZegarGpuKlatki() });
   noFeature._gpuTimerGate();
   assert.equal(noFeature.renderer.backend.trackTimestamp, false);
-  assert.match(bodyOf(core, '\n  renderBackdrop(camera) {'), /this\._gpuTimerGate\(\);/);
-  assert.match(bodyOf(core, '  _configureRenderer(renderer) {'), /this\._gpuTimestampFeature = renderer\.backend\?\.trackTimestamp === true;/);
+  assert.match(bodyOf(core, '\n  renderBackdrop(camera) {'), /this\._gpuTimerGate\(\);[\s\S]*this\._gpuTimerFrameEnd\(\);/);
+  const cfg = bodyOf(core, '  _configureRenderer(renderer) {');
+  assert.match(cfg, /this\._gpuTimestampFeature = renderer\.backend\?\.trackTimestamp === true;/);
+  assert.match(cfg, /this\._installGpuFrameClock\(renderer\);/);
 });

@@ -71,6 +71,9 @@ export const RET_F64 = Object.freeze({
   W_MSG_RENDERS: 17,
   W_MSG_LAG_SUM: 18,      // suma opóźnień wiadomości `frame` (wysyłka strony → odbiór w workerze, ms epoki) i ich liczba
   W_MSG_N: 19,
+  // opóźnienie kolejki GPU (2026-10-28): od końca zgłoszeń klatki workera do onSubmittedWorkDone — próbka co kilka klatek,
+  // jedno zapytanie w locie. Rośnie ponad okres klatki, gdy GPU nie nadąża (compute, wysyłki, praca spoza znaczników)
+  GPU_QUEUE_MS: 20,
   COUNT: 32
 });
 
@@ -193,6 +196,22 @@ export function retBeginStats(v) {
 /** Koniec zapisu statystyk (render): licznik parzysty. */
 export function retEndStats(v) {
   Atomics.add(v.i32, RET_I32.SEQ_STATS, 1);
+}
+
+/**
+ * Zegar GPU klatki z Core3D renderu (pisze render, po każdej klatce): ms, liczniki wyników znaczników i skala w użyciu —
+ * pod seqlockiem, więc gra czyta licznik zawsze razem z jego próbką. Czyta rozdzielczość dynamiczna strony
+ * (Core3D strony w trybie worker nie ma urządzenia ani próbek) i PerfHUD.
+ */
+export function retWriteGpuClock(v, core) {
+  const f = v.f64;
+  retBeginStats(v);
+  if (Number.isFinite(core.gpuFrameMs)) f[RET_F64.GPU_FRAME_MS] = core.gpuFrameMs;
+  if (Number.isFinite(core.gpuComputeMs)) f[RET_F64.GPU_COMPUTE_MS] = core.gpuComputeMs;
+  f[RET_F64.GPU_FRAME_SAMPLES] = core.gpuFrameSamples | 0;
+  f[RET_F64.GPU_COMPUTE_SAMPLES] = core.gpuComputeSamples | 0;
+  f[RET_F64.PIXEL_RATIO] = Number(core.renderScale) || 0;
+  retEndStats(v);
 }
 
 /**

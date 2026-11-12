@@ -56,13 +56,15 @@ import {
   abs, clamp, cos, sin, dFdx, dFdy, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
 } from 'three/tsl';
-import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
+import { MAX_SHADER_SHIP_LIGHTS } from '../game/shipLightRuntime.js';
+import { NAV_LIGHT_LOOK } from '../data/shipNavLights.js';
+import { navBlinkNode } from './tsl/navBlink.js';
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
 import { fxNoise } from './fx/noise.js';
-import { zbierzZakres } from './zakresyWysylki.js';
+import { zbierzZakres, zbierzZakresy, scalZakresy } from './zakresyWysylki.js';
 import { cloakDistOffset, hullCloakSurface } from './cloak/cloakTSL.js';
 import { CLOAK_LOOK_OFF } from '../game/cloakLook.js';
 // Oświetlenie v2 (2026-10-06): model PBR kadłubów, mapa powierzchni ze sprite'a (hullSurface.js).
@@ -231,6 +233,9 @@ export function decodeHullPatchShade(raw) {
 // stref. Materiał czyta slot od `uLightBase` (w vec4) do liczników z uniformów.
 export const HULL_LIGHT_SLOT_VEC4 = MAX_SHADER_SHIP_LIGHTS * 3 + MAX_ENGINE_ZONES;
 export const HULL_LIGHT_ZONE_OFFSET = MAX_SHADER_SHIP_LIGHTS * 3;
+// scalanie zakresów wysyłki slotów lamp (commit): zakresy oddalone o mniej niż tyle liczb (~32 KB float32, ~10 slotów)
+// idą jednym writeBuffer
+const HULL_LIGHT_RANGE_GAP = 8192;
 export const HULL_LIGHT_SLOTS = 1024;
 
 export const HullLightStore = {
@@ -242,7 +247,7 @@ export const HullLightStore = {
   _next: 0,
   _dirty: false,
   _warned: false,
-  stats: { acquired: 0, released: 0, exhausted: 0, ranges: 0 },
+  stats: { acquired: 0, released: 0, exhausted: 0, ranges: 0, rangesSent: 0 },
 
   _ensure() {
     if (this.attribute) return;
@@ -291,15 +296,20 @@ export const HullLightStore = {
   /** Zakres [startVec4, startVec4 + countVec4) slotu do wysłania na GPU. */
   markDirty(slot, startVec4, countVec4) {
     if (!(slot >= 0) || !(countVec4 > 0)) return;
-    const attr = this.attribute;
-    attr.addUpdateRange((slot * this.slotVec4 + startVec4) * 4, countVec4 * 4);
+    // zakres z puli (zbierzZakresy — stykający się z ostatnim go rozszerza), scalanie i jedna wersja w commit
+    zbierzZakresy(this.attribute, (slot * this.slotVec4 + startVec4) * 4, countVec4 * 4, true);
     this._dirty = true;
     this.stats.ranges++;
   },
 
-  /** Raz na klatkę (updateHexShips3D): jedna wersja atrybutu na wszystkie zakresy. */
+  /**
+   * Raz na klatkę (updateHexShips3D): jedna wersja atrybutu na wszystkie zakresy, zakresy slotów oddalone o mniej niż
+   * HULL_LIGHT_RANGE_GAP liczb scalone — three wysyła każdy zakres osobnym writeBuffer (w bitwie ~130 slotów lamp
+   * zmienia podpis co klatkę: ~130 wywołań na klatkę, klatka workera 2026-11-02).
+   */
   commit() {
     if (!this._dirty || !this.attribute) return;
+    this.stats.rangesSent = scalZakresy(this.attribute, HULL_LIGHT_RANGE_GAP);
     this.attribute.needsUpdate = true;
     this._dirty = false;
   }
@@ -319,12 +329,22 @@ export const HullLightStore = {
 // uLodOpacity, uBillboardLighting), 9 (uSpriteSize.xy, uDmgWorld.xy), 10 (uLightDir.xyz, uLacquerWeight),
 // 11 (uShipLightCount, uEngineZoneCount, uLightBase, uLacquerGlint), 12 uDmgSlot, 13 (uGridOwner, widoczność),
 // 14–16 uWarpA / uWarpB / uWarpC, 17–21 uCloakA..E (maskowanie, src/game/cloakLook.js — 2026-10-04;
-// E — heksy-ekrany, 2026-10-05), 22 uBayCut (otwarty luk ładowni w uv sprite'a — 2026-10-11).
+// E — heksy-ekrany, 2026-10-05), 22 uBayCut (otwarty luk ładowni w uv sprite'a — 2026-10-11),
+// 23 uPowerA (czoło fali, lampy pokładowe i reflektory, nawigacyjne, tryb bojowy), 24 uPowerB (migotanie, liczba
+// WŁASNYCH lamp payloadu) — stan zasilania okrętu (src/game/shipPower.js, 2026-11-11).
 // Slot 0 = zera (trzymacze grafu, rozgrzewka, pula pełna).
 // Partie kadłubów (hullSkinBatch.js): numer slotu w atrybucie wierzchołka, siatka kadłuba (nośnik
 // macierzy i material.uniforms) poza sceną — zapis co render niezależnie od rodzica, z flagą widoczności
 // (niewidoczny kadłub zwija się w wierzchołku — bez przepisywania indeksów partii).
-export const HULL_OBJECT_SLOT_VEC4 = 23;
+export const HULL_OBJECT_SLOT_VEC4 = 25;
+/** Stan zasilania „praca” (kadłub bez stanu, trzymacze grafu): czoło fali > 1, pełne lampy, rejs; wszystkie lampy własne. */
+export const HULL_POWER_ON_A = Object.freeze({ x: 2, y: 1, z: 1, w: 0 });
+export const HULL_POWER_ON_B = Object.freeze({ x: 0, y: 1e6, z: 0, w: 0 });
+/** Miękkość czoła fali lamp pokładowych = SHIP_POWER_TUNE.waveEdge (src/game/shipPower.js; strażnik w tests/shipDeckLights3D.test.mjs). */
+export const DECK_WAVE_EDGE = 0.12;
+/** Lampy pokładowe w trybie bojowym: przygaszona czerwień (barwa × mnożnik). */
+export const DECK_BATTLE_RGB = Object.freeze([1.0, 0.16, 0.08]);
+export const DECK_BATTLE_GAIN = 0.55;
 export const HULL_OBJECT_SLOTS = 1024;
 const _hullMV = new THREE.Matrix4();
 
@@ -399,6 +419,18 @@ export const HullObjectStore = {
       const u = mesh.material?.uniforms;
       if (!u) continue;
       const o = slot * stride;
+      // kadłub partii niewidoczny (poza kadrem, smuga, ukryty): sama flaga widoczności — reszty slotu nikt nie czyta
+      // (wierzchołek zwinięty), a przy powrocie w kadr pełny zapis idzie w tej samej klatce (commit co render;
+      // klatka workera 2026-11-02: ~60 ze 170 kadłubów bitwy niewidocznych, 92 liczby na kadłub)
+      if (batched && !mesh.visible) {
+        if (A[o + 53] !== 0) {
+          A[o + 53] = 0;
+          if (slot < lo) lo = slot;
+          if (slot > hi) hi = slot;
+          n++;
+        }
+        continue;
+      }
       _hullMV.multiplyMatrices(inv, mesh.matrixWorld);
       const m = _hullMV.elements;
       for (let k = 0; k < 16; k++) A[o + k] = m[k];
@@ -436,6 +468,11 @@ export const HullObjectStore = {
       A[o + 84] = ke.x; A[o + 85] = ke.y; A[o + 86] = ke.z; A[o + 87] = ke.w;
       const bc = u.uBayCut ? u.uBayCut.value : null;
       A[o + 88] = bc ? bc.x : 0; A[o + 89] = bc ? bc.y : 0; A[o + 90] = bc ? bc.z : 0; A[o + 91] = bc ? bc.w : 0;
+      // Zasilanie okrętu (hexShips3D.js: syncEntityPowerUniforms) — trzymacze opcjonalne (bez nich: praca).
+      const pa = u.uPowerA ? u.uPowerA.value : HULL_POWER_ON_A;
+      const pb = u.uPowerB ? u.uPowerB.value : HULL_POWER_ON_B;
+      A[o + 92] = pa.x; A[o + 93] = pa.y; A[o + 94] = pa.z; A[o + 95] = pa.w;
+      A[o + 96] = pb.x; A[o + 97] = pb.y; A[o + 98] = pb.z; A[o + 99] = pb.w;
       if (slot < lo) lo = slot;
       if (slot > hi) hi = slot;
       n++;
@@ -505,6 +542,10 @@ function objectStoreNodesFor(slot) {
     uCloakE: v(21),
     // Otwarty luk ładowni: (u0, v0, u1, v1) w uv sprite'a; u1 ≤ u0 — wyłączone.
     uBayCut: v(22),
+    // Zasilanie okrętu: A = (czoło fali, lampy pokładowe i reflektory, nawigacyjne, tryb bojowy), B = (migotanie,
+    // liczba własnych lamp payloadu, —, —).
+    uPowerA: v(23),
+    uPowerB: v(24),
     hullVisible: v(13).y,
     // Siatka komórek kadłuba w uv sprite'a (płyty łat polowych; 0 — nieznana).
     uCellGrid: v(13).zw
@@ -530,6 +571,8 @@ export const HULL_WARP_OFF = Object.freeze({
 // Sprite kadłuba: dziób w stronę +u (spriteRotation = 0 dla wszystkich profili).
 function hullWarp(ctx, out, alpha) {
   const P = ctx.P;
+  // Proxy statków ruchu (E17) nie ma danych warpa — gałąź pominięta przy budowie.
+  if (!P.uWarpC) return;
   If(P.uWarpC.w.greaterThan(0.5), () => {
     const A = P.uWarpA;
     const B = P.uWarpB;
@@ -582,7 +625,7 @@ function hullDamageLacquer(ctx, weight) {
 // wiązki) jako DODATKOWE światła poszycia (× albedo z osmaleniem, normalna ctx.worldNormal,
 // punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
 function hullEffectLights(ctx) {
-  if (!ctx.damage) return vec3(0.0);
+  if (!ctx.effectLights) return vec3(0.0);
   // Oświetlenie v2: ten sam BRDF co słońce i zanik skupiony do jądra (błysk lufy nie bieli całego
   // kadłuba); klasyczny — model dema broni (Lambert z zawinięciem, Blinn–Phong). Jednolity warunek.
   const out = vec3(0.0).toVar();
@@ -649,6 +692,8 @@ function hullTearFray(tear, uvNode, P) {
 // opts.perObject  węzły per kadłub — bufor storage slotu (hullObjectStoreNodes / hullBatchStoreNodes, zadanie 23)
 // opts.tear       float|null — rozdarcie narożnika (partie skór belek): poszarpany brzeg dziur, hullTearFray
 // opts.patchCode  bool — `shade` niesie kod łaty polowej (decodeHullPatchShade; skóra belek)
+// opts.cutDiscard (uv) => void — własne wycięcie skóry zamiast uBayCut (proxy statków ruchu: luk z przenikaniem wrót)
+// perObject.uRotCS vec2 (cos, sin) obrotu — zamiast cos / sin z uRotation (proxy: z atrybutu instancji)
 function hullFragmentNode(opts) {
   const P = opts.perObject;
   if (!P) throw new Error('hexShips3D.tsl: hullFragmentNode bez węzłów per kadłub (opts.perObject)');
@@ -662,6 +707,7 @@ function hullFragmentNode(opts) {
       Discard();
     });
 
+    if (opts.cutDiscard) opts.cutDiscard(spriteUV);
     // Otwarty luk ładowni (fregata zwiadu Atlasa, src/3d/cargo/scoutBay3D.js): w prostokącie otworu skóra znika —
     // wnętrze luku stoi pod nią, wrota (wierzch z wycinka sprite'a) rysuje osobna bryła.
     if (P.uBayCut) {
@@ -709,6 +755,8 @@ function hullFragmentNode(opts) {
     }
 
     const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P, patchK };
+    // Światła efektów z siatki (błyski, trafienia, światła pola i LAMPY HALI K-7): skóra z mapą ran i proxy statków ruchu.
+    ctx.effectLights = opts.effectLights === undefined ? ctx.damage : opts.effectLights === true;
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -738,8 +786,8 @@ function hullFragmentNode(opts) {
       // Łata: nowa płyta jest płaska (relief paneli sprite'a jej nie dotyczy).
       if (patchK) localNormal.assign(normalize(mix(localNormal, vec3(0.0, 0.0, 1.0), patchK.mul(HULL_PATCH_LOOK.flatten))));
 
-      const c = cos(P.uRotation).toVar();
-      const s = sin(P.uRotation).toVar();
+      const c = (P.uRotCS ? P.uRotCS.x : cos(P.uRotation)).toVar();
+      const s = (P.uRotCS ? P.uRotCS.y : sin(P.uRotation)).toVar();
       const worldNormal = normalize(vec3(
         localNormal.x.mul(c).sub(localNormal.y.mul(s)),
         localNormal.x.mul(s).add(localNormal.y.mul(c)),
@@ -880,8 +928,8 @@ function hullFragmentNode(opts) {
       });
 
       // --- LAMPY STATKU (payload shipLightRuntime, slot w HullLightStore) ---
-      // Typ w barwie.a: 0 lampa pozycyjna, 1 reflektor dziobu, 2 rozlew grupy lamp
-      // innego statku (bez rdzenia), 3 reflektor otoczenia.
+      // Typ w barwie.a: 0 lampa pozycyjna, 1 reflektor dziobu, 2 rozlew lampy innego
+      // statku (bez rdzenia), 3 reflektor otoczenia. Typ 0 i 2 mają w lightExtra.x kod migania.
       Loop({ start: int(0), end: int(P.uShipLightCount), type: 'int', condition: '<' }, ({ i }) => {
         const k = base.add(i.mul(3)).toVar();
         const lightData = lights.element(k).toVar();
@@ -895,30 +943,61 @@ function hullFragmentNode(opts) {
         const lampColor = lightColor.xyz;
         const lightType = lightColor.w.toVar();
 
-        // Typ 2: grupa lamp pozycyjnych INNEGO statku — sama poświata na pancerzu
-        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad środkiem grupy (N·L, GGX).
+        // Błysk świateł nawigacyjnych: ta sama chwila co billboard lampy (shipLights3D); między błyskami nie oświetlają.
+        // Przypisane przed gałęzią typu 2 (pułapka 29: zmienna powstaje w miejscu pierwszego użycia).
+        const blink = float(0.0).toVar();
+        blink.assign(navBlinkNode(uTime, lightExtra.x, P.uNavPhase));
+
+        // ZASILANIE OKRĘTU (2026-11-11, src/game/shipPower.js): własne lampy (pierwsze uPowerB.y payloadu) × kanał
+        // zasilania — nawigacyjne × nav, reflektory × lampy; cudze bez zmian. Typ 4 — LAMPA POKŁADOWA
+        // (src/data/shipDeckLights.js): świeci w dół na blachę wokół siebie; jasność = kanał lamp × fala od reaktora
+        // (czoło uPowerA.x, odległość lampy od reaktora lightExtra.x) × migotanie (ziarno lightExtra.y, siła uPowerB.x),
+        // barwa: rejs (barwa lampy) → bojowa przygaszona czerwień (uPowerA.w). Zmienne bez .toVar() (pułapka 29).
+        If(lightType.greaterThan(3.5), () => {
+          const wave = smoothstep(0.0, 1.0, P.uPowerA.x.sub(lightExtra.x).div(DECK_WAVE_EDGE).add(0.5));
+          const fk = floor(uTime.mul(17.0).add(lightExtra.y.mul(7.13)));
+          const fh = fract(sin(fk.mul(12.9898).add(lightExtra.y.mul(78.233))).mul(43758.5453));
+          const flick = select(fh.lessThan(P.uPowerB.x.mul(0.6)), float(0.08), float(1.0));
+          const lvl = P.uPowerA.y.mul(wave).mul(flick).toVar();
+          const battle = vec3(DECK_BATTLE_RGB[0], DECK_BATTLE_RGB[1], DECK_BATTLE_RGB[2]);
+          const col = mix(lampColor, battle, P.uPowerA.w).mul(mix(float(1.0), float(DECK_BATTLE_GAIN), P.uPowerA.w)).toVar();
+          If(pbr, () => {
+            const spread = max(radiusPx.mul(4.0), lightExtra.z).toVar();
+            const fo = hullLampFalloff(toFrag, max(radiusPx.mul(HL.uLamp.y), spread.mul(0.1)), spread.mul(0.35), spread);
+            const E = col.mul(power).mul(lvl).mul(fo.att).mul(HL.uLamp.x).toVar();
+            finalColor.addAssign(armorRgb.mul(E).mul(max(dot(localNormal, fo.dir), 0.0))
+              .add(E.mul(hullGgx(localNormal, fo.dir, surfRough)).mul(HL.uMat.y)));
+            finalColor.addAssign(col.mul(power).mul(lvl).mul(smoothRev(radiusPx, 0.0, distPx)).mul(HL.uLamp.w));
+          }).Else(() => {
+            const xr = clamp(distPx.div(max(1.0, lightExtra.z)), 0.0, 1.0);
+            const spill = float(1.0).sub(xr.mul(xr));
+            finalColor.addAssign(col.mul(power).mul(lvl).mul(spill.mul(spill)).mul(armorRgb.mul(0.5).add(0.02)));
+          });
+          Continue();
+        });
+
+        // Typ 2: lampa pozycyjna INNEGO statku albo światło świata — sama poświata na pancerzu
+        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad lampą (N·L, GGX).
         If(lightType.greaterThan(1.5).and(lightType.lessThan(2.5)), () => {
           If(pbr, () => {
             const spread = max(1.0, lightExtra.z).toVar();
             const fo = hullLampFalloff(toFrag, spread.mul(0.45), spread.mul(0.6), spread);
-            const E = lampColor.mul(power).mul(fo.att).mul(HL.uLamp.x).toVar();
+            const E = lampColor.mul(power).mul(blink).mul(fo.att).mul(HL.uLamp.x).toVar();
             finalColor.addAssign(armorRgb.mul(E).mul(max(dot(localNormal, fo.dir), 0.0))
               .add(E.mul(hullGgx(localNormal, fo.dir, surfRough)).mul(HL.uMat.y)));
           }).Else(() => {
             const xr = clamp(distPx.div(max(1.0, lightExtra.z)), 0.0, 1.0);
             const spill = float(1.0).sub(xr.mul(xr));
-            finalColor.addAssign(lampColor.mul(power).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
+            finalColor.addAssign(lampColor.mul(power).mul(blink).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
           });
           Continue();
         });
 
-        // Sekwencja „pasa startowego”: ta sama formuła co billboardy blasku
-        // (shipLights3D), stałe z NAV_LIGHT_CHASE, przebieg od dziobu ku rufie (+).
-        const localPhase = clamp(lightData.x.div(max(1.0, spriteSize.x)), 0.0, 1.0);
-        const chase = fract(uTime.mul(NAV_LIGHT_CHASE.speed).add(localPhase.mul(NAV_LIGHT_CHASE.phaseGain))).toVar();
-        const chasePulse = smoothstep(0.0, NAV_LIGHT_CHASE.attack, chase)
-          .mul(float(1.0).sub(smoothstep(NAV_LIGHT_CHASE.hold, NAV_LIGHT_CHASE.release, chase)));
-        const sequenceMul = select(lightType.greaterThan(0.5), float(1.0), mix(float(NAV_LIGHT_CHASE.rest), float(1.35), chasePulse));
+        // Lampa pozycyjna świeci na własną blachę tylko w błysku, reflektor stale.
+        // Zasilanie: lampa własna (indeks < liczby własnych) × kanał — reflektory × lampy, nawigacyjna × nav.
+        const ownLamp = step(float(i).add(0.5), P.uPowerB.y);
+        const sequenceMul = select(lightType.greaterThan(0.5), mix(float(1.0), P.uPowerA.y, ownLamp),
+          blink.mul(NAV_LIGHT_LOOK.hullGain).mul(mix(float(1.0), P.uPowerA.z, ownLamp)));
 
         const core = smoothRev(radiusPx, 0.0, distPx);
         // Lampa pozycyjna rozlewa się szerzej niż reflektor: 9 promieni zamiast 7.
@@ -972,7 +1051,7 @@ function hullFragmentNode(opts) {
             const coneMask = smoothstep(coneCos, min(0.999, coneCos.add(0.16)), angleCos);
             const nearMask = float(1.0).sub(smoothstep(radiusPx.mul(0.8), radiusPx.mul(2.2), distPx));
             const beam = frontMask.mul(rangeMask).mul(coneMask).mul(float(1.0).sub(nearMask));
-            finalColor.addAssign(lampColor.mul(power).mul(beam).mul(select(lightType.greaterThan(2.5), float(0.3), float(0.16))));
+            finalColor.addAssign(lampColor.mul(power).mul(beam).mul(sequenceMul).mul(select(lightType.greaterThan(2.5), float(0.3), float(0.16))));
           });
         });
       });
@@ -1003,6 +1082,18 @@ function hullFragmentNode(opts) {
 
     return vec4(out, alpha);
   })();
+}
+
+/**
+ * Fragment pełnego kadłuba dla PROXY statków ruchu v2 (E17, shipProxyBatch3D.tsl.js): ten sam graf co skóra belek
+ * (oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z HullLightStore, maska słońca, ośrodek
+ * pasa, światła efektów z siatki — błyski, światła pola i lampy hali K-7, E17b) — bez mapy ran, maskowania, warpa
+ * i żaru (to ma dopiero NPC po awansie).
+ * `perObject` — węzły wartości z instancji (klucze jak objectStoreNodesFor + uRotCS), tekstury per obiekt z
+ * `material.uniforms` (uSprite, uSurfaceMap, uShapeMap, uNormalMap). Zmieniając fragment kadłuba, zmieniasz i proxy.
+ */
+export function hullProxyFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard = null }) {
+  return hullFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false, effectLights: true });
 }
 
 // Fragment warstwy DIST maskowania: RG — przesunięcie tła w px bufora (osie sceny), B / A — maska ekranu

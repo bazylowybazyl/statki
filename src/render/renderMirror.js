@@ -45,8 +45,9 @@ export class MirrorEntity {
     this.isRingSegment = false; this.isCapitalShip = false; this.isBridgeHulk = false;
     this.lightsOff = false; this.roadLightsOff = false;
     this.__lightsHidden = false; this.__enginesHidden = false; this.__turretsHidden = false;
-    this.__editorBoost = false; this.__fSysBoost = false; this.__warpPreview = false;
+    this.__editorBoost = false; this.__fSysBoost = false; this.__warpPreview = false; this.__hyperMode = undefined;
     this.fogHidden = false;
+    this.lensDot = false;   // kropka soczewki skoku gracza zamiast skóry (ENT_FLAG.LENS_DOT — hexShips3D: HexBodyLensBatch)
     this.state = undefined; this.phase = undefined;
     this.id = undefined; this.uid = undefined; this.name = undefined;
     this.type = undefined; this.shipFrame = undefined; this.activeHullId = undefined;
@@ -58,6 +59,9 @@ export class MirrorEntity {
     this.thrusterInput = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
     this.input = { main: 0, thrustY: 0 };
     this.engineIgn = null;
+    // stan zasilania (src/game/shipPower.js — { state, t } albo null = PRACA), migotanie, reflektor, alarm, światło bojowe
+    this.shipPower = null;
+    this.__powerFlick = 0; this.__spotAng = undefined; this.__alarmCode = 0; this.__battleLights = false;
     // tarcza, maskowanie (stan gry)
     this.shield = null;
     this.cloak = null;
@@ -131,16 +135,19 @@ export class RenderMirror {
     const nEnt = v.head[HEAD.N_ENT] | 0;
     if (this._seen.length < nEnt) { const a = new Int32Array(Math.max(nEnt, this._seen.length * 2)); a.set(this._seen); this._seen = a; }
     const stride = v.listStride;
+    const listData = v.listData, listCount = v.listCount, seen = this._seen, entities = this.entities;
     for (let l = 0; l < LIST.COUNT; l++) {
       const out = this.lists[l];
       out.length = 0;
       if (l === LIST.STATIONS) continue;
-      const n = v.listCount[l];
+      const n = listCount[l];
       const base = l * stride;
       for (let i = 0; i < n; i++) {
-        const s = v.listData[base + i];
+        const s = listData[base + i];
         if (s < 0) continue;
-        const m = this._entity(v, s, k);
+        // encja już uzgodniona z tej strony (listy pochodne: SEEN ⊂ RENDER, NPCS_SEEN ⊂ NPCS…) — bez drugiego
+        // wejścia w _entity (klatka workera 2026-11-02: ~5 wejść na encję na stronę, ~0,05 ms w bitwie)
+        const m = seen[s] === k ? entities[s] : this._entity(v, s, k);
         if (m) out.push(m);
       }
     }
@@ -215,11 +222,15 @@ export function applyEntityPage(rm, m, v, s) {
   m.__fSysBoost = (flags & ENT_FLAG.FSYS_BOOST) !== 0;
   m.__warpPreview = (flags & ENT_FLAG.WARP_PREVIEW) !== 0;
   m.fogHidden = (flags & ENT_FLAG.FOG_HIDDEN) !== 0;
+  m.lensDot = (flags & ENT_FLAG.LENS_DOT) !== 0;
   const dict = rm.dict;
   m.state = dict.value(i32[bi + EI.STATE]);
   m.phase = dict.value(i32[bi + EI.PHASE]);
   m.model3DProfileId = dict.value(i32[bi + EI.MODEL3D]);
   m.fighter = (flags2 & ENT_FLAG2.FIGHTER) !== 0;
+  m.__hyperMode = (flags2 & ENT_FLAG2.HYPER_ACTIVE) !== 0 ? 'active'
+    : (flags2 & ENT_FLAG2.HYPER_CHARGING) !== 0 ? 'charging'
+    : (flags2 & ENT_FLAG2.HYPER_DROP) !== 0 ? 'drop' : undefined;
   m.weaponTier = dict.value(i32[bi + EI.WEAPON_TIER]);
   m.faction = dict.value(i32[bi + EI.FACTION]);
   m.factionId = dict.value(i32[bi + EI.FACTION_ID]);
@@ -263,6 +274,16 @@ export function applyEntityPage(rm, m, v, s) {
     m.engineIgn.t = und(f64[b + EF.IGN_T]);
     m.engineIgn.hot = (flags & ENT_FLAG.IGN_HOT) !== 0;
   } else m.engineIgn = null;
+  const pws = i32[bi + EI.PWR_STATE];
+  if (pws >= 0) {
+    if (!m.shipPower) m.shipPower = { state: 0, t: 0, serial: 0 };
+    m.shipPower.state = pws;
+    m.shipPower.t = und(f64[b + EF.PWR_T]) || 0;
+  } else m.shipPower = null;
+  m.__powerFlick = f64[b + EF.PWR_FLICK] || 0;
+  m.__spotAng = und(f64[b + EF.SPOT_ANG]);
+  m.__alarmCode = i32[bi + EI.ALARM] | 0;
+  m.__battleLights = (flags2 & ENT_FLAG2.BATTLE_LIGHTS) !== 0;
   // tarcza
   if (flags & ENT_FLAG.HAS_SHIELD) {
     if (!m.shield) m.shield = { max: 0, val: 0, state: undefined, activationProgress: 0, hardness: undefined, show: undefined, forceOff: false, impacts: [], impactId: 0, _impPool: [] };
@@ -501,6 +522,11 @@ export function applyDescriptor(m, desc, resourceOf, bridgeBackends = null, brid
 function applyCores(rm, v) {
   const out = rm.cores;
   out.length = 0;
+  // Rdzenie na lustrze gospodarza (`reactorCores` — jak w grze; zasilanie z siatki belek, src/game/hullPower.js):
+  // listy gospodarzy z poprzedniej strony od zera.
+  const prevHosts = rm._coreHosts || (rm._coreHosts = []);
+  for (let i = 0; i < prevHosts.length; i++) if (prevHosts[i].reactorCores) prevHosts[i].reactorCores.length = 0;
+  prevHosts.length = 0;
   const n = v.head[HEAD.N_CORES] | 0;
   const f64 = v.coreF64, i32 = v.coreI32, U = v.coreU8, dict = rm.dict;
   for (let i = 0; i < n; i++) {
@@ -523,6 +549,11 @@ function applyCores(rm, v) {
     const hs = i32[bi + CORE.I32.HOST_SLOT];
     const hm = hs >= 0 ? rm.entities[hs] : null;
     c.host = hm && hm.gen === (i32[bi + CORE.I32.HOST_GEN] >>> 0) ? hm : null;
+    if (c.host) {
+      if (!c.host.reactorCores) c.host.reactorCores = [];
+      if (c.host.reactorCores.length === 0) prevHosts.push(c.host);
+      c.host.reactorCores.push(c);
+    }
     c.state = dict.value(i32[bi + CORE.I32.STATE]);
     const inv = dict.value(i32[bi + CORE.I32.INVALID]);
     c.invalid = inv === undefined ? null : inv;

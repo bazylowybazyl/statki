@@ -1,16 +1,16 @@
 // Radar taktyczny kokpitu — demo (przebudowa 2026-10-07). Moduły gry 1:1: src/ui/radar/* (tracker, tarcza,
 // podkład terenu, zbieracz), prawdziwe pole pasa asteroid (AsteroidBeltField), prawdziwy kolider ringu „Halo”
-// (HaloRingCollider — płyta, tranzyty, ściany K-7) i prawdziwy suchy dok piratów (placeDryDock). Sceny:
+// (HaloRingCollider — płyta, tranzyty, ściany K-7) i prawdziwa baza piratów (placePirateBase). Sceny:
 //   1 — PAS: rdzeń pola pasa głównego, piraci, myśliwce, rakiety lecące na okręt, sygnatura masy, olbrzym;
 //   2 — PORT: Ziemia z ringiem i halą K-7, sojusznicy, cel podróży;
-//   3 — DOK: suchy dok piratów z parkingiem, eskorta, cel misji.
+//   3 — BAZA: baza piratów z pomostami, eskorta, cel misji.
 // Klawisze: X — impuls skanera, + / − — zasięg, O — H-UP / N-UP, 1/2/3 — scena, spacja — pauza.
 import { CockpitRadar } from '../src/ui/radar/cockpitRadar.js';
 import { createRadarFeed } from '../src/ui/radar/radarFeed.js';
 import { AsteroidBeltField } from '../src/game/asteroidBeltField.js';
 import { findBeltCores } from '../src/game/asteroidBeltGiants.js';
 import { HaloRingCollider } from '../src/game/haloRingCollision.js';
-import { placeDryDock } from '../src/game/story/shipyardLayout.js';
+import { placePirateBase } from '../src/game/story/pirateBaseSite.js';
 import pirateDestroyerUrl from '../src/assets/ships/piratedestroyer.png';
 import pirateFrigateUrl from '../src/assets/ships/piratefrigate.png';
 import pirateBattleshipUrl from '../src/assets/ships/piratebattleship.png';
@@ -140,21 +140,20 @@ function setupScene(name) {
     sim.travel = { x: gx + Math.cos(own.angle) * 160000, y: gy + Math.sin(own.angle) * 160000, label: 'Pas — pole 4' };
     return;
   }
-  if (name === 'dok') {
+  if (name === 'baza') {
     const center = { x: 0, y: 0 };
     const axis = 0.25;
-    const dock = placeDryDock(center, axis);
-    const st = { id: 'PIR_YARD', name: 'Suchy dok piratów', x: 0, y: 0, r: 600, radius: dock.radius, hitShapes: dock.hitShapes,
-      hallShapes: [dock.hallArea], isPirate: true, friendly: false, hp: 16000, maxHp: 16000, _dockGone: new Set() };
+    const base = placePirateBase(center, axis);
+    const st = { id: 'PIR_BASE', name: 'Baza piratów', x: 0, y: 0, r: 600, radius: base.radius, hitShapes: base.hitShapes,
+      isPirate: true, friendly: false, hp: 16000, maxHp: 16000, _dockGone: new Set() };
     sim.stations.push(st);
-    sim.story.set('dok', { entity: st, label: 'Suchy dok', radius: dock.radius });
+    sim.story.set('baza', { entity: st, label: 'Baza piratów', radius: base.radius });
     own.pos.x = -Math.cos(axis) * 11000 + Math.sin(axis) * 1500;
     own.pos.y = -Math.sin(axis) * 11000 - Math.cos(axis) * 1500;
     own.angle = axis + 0.15;
     own.vel.x = Math.cos(axis) * 160; own.vel.y = Math.sin(axis) * 160;
     own.angVel = 0.01;
-    for (const s of dock.parked || []) void s;
-    // eskorta wylatuje z hali
+    // eskorta wylatuje z bazy
     for (let i = 0; i < 4; i++) makeShip(i ? 'frigate' : 'destroyer', 1200 + i * 700, -2600 - i * 400, Math.PI + axis - 0.3 + i * 0.2, 240, { turn: 0.06 });
     const flag = makeShip('supercapital', 2400, -1200, Math.PI + axis, 60, { name: 'Iron Skull' });
     sim.story.set('flag', { entity: flag, label: 'Okręt flagowy' });
@@ -335,7 +334,7 @@ window.addEventListener('keydown', (ev) => {
   if (k === 'o') radars.forEach((r) => r.toggleOrient());
   if (k === '1') setupScene('pas');
   if (k === '2') setupScene('port');
-  if (k === '3') setupScene('dok');
+  if (k === '3') setupScene('baza');
   if (k === ' ') { sim.paused = !sim.paused; ev.preventDefault(); }
   syncUi();
 });

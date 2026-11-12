@@ -30,7 +30,6 @@ const WIZUALIA = [
   'src/vfx/canvasParticleSystem.js',
   'src/vfx/destruction3D.js',
   'src/vfx/shatterShaderBake.js',
-  'src/buildings/shipyardVisuals.js',
   'src/game/superweapon.js',
   // efekty z dem (zadania 12, 17–22) — od początku na fxRandom
   'src/3d/sparkSystem3D.js',
@@ -62,7 +61,7 @@ test('wizualia gry nie wołają Math.random gry (fxRandom — warstwa efektów)'
   for (const p of WIZUALIA) assert.doesNotMatch(code(p), /Math\.random/, `${p}: Math.random w module wizualnym`);
   // Przeniesione moduły naprawdę losują — z fxRandom (strumień renderu) albo, liczone na wątku głównym, z fxRandomGame
   // (strumień gry, RW-20: collisionSparks, canvasParticleSystem, superweapon).
-  for (const p of WIZUALIA.slice(0, 15)) assert.match(code(p), /fxRandom(?:Game)?\.next\(\)/, `${p}: brak fxRandom`);
+  for (const p of WIZUALIA.slice(0, 14)) assert.match(code(p), /fxRandom(?:Game)?\.next\(\)/, `${p}: brak fxRandom`);
   for (const p of ['src/vfx/collisionSparks.js', 'src/vfx/canvasParticleSystem.js', 'src/game/superweapon.js']) {
     assert.match(code(p), /fxRandomGame\.next\(\)/, `${p}: wątek główny — strumień gry`);
     assert.doesNotMatch(code(p), /\bfxRandom\.next\(/, `${p}: bez strumienia renderu`);
@@ -77,15 +76,17 @@ test('hullBodies: wygląd odłamka ginącego węzła z fxRandom (fizyka rozpadu 
 });
 
 // RW-20: wątek główny losuje wizualia ze strumienia GRY (fxRandomGame), nie ze strumienia renderu.
-test('index.html: cząstki kanwy (ślad pocisku, iskry wyrzutni rakiet, start myśliwca) i ton dźwięku z fxRandomGame', () => {
+test('index.html: cząstki kanwy (ślad pocisku, iskry wyrzutni rakiet, start myśliwca) i losowość warstwy dźwięku z fxRandomGame', () => {
   const html = readIndexHtml();
   assert.match(html, /import \{ fxRandomGame \} from "\.\/src\/game\/fxRandomGame\.js";/);
   assert.doesNotMatch(html, /\bfxRandom\.next\(/, 'index.html bez strumienia renderu');
-  for (const header of ['function spawnBulletTrail(b, count, frameDt) {', 'function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {']) {
+  for (const header of ['function spawnBulletTrail(b, count, frameDt) {']) {
     const fn = sliceFunction(html, header);
     assert.doesNotMatch(fn, /Math\.random/, header);
     assert.match(fn, /fxRandomGame\.next\(\)/, header);
   }
+  // warstwy dźwięku (gra i hala K-7) losują wariant, ton i głośność ze strumienia gry
+  assert.ok((html.match(/rand: \(\) => fxRandomGame\.next\(\)/g) || []).length >= 2, 'rand warstw dźwięku');
   assert.match(html, /const aa = Math\.atan2\(baseDir\.y, baseDir\.x\) \+ \(fxRandomGame\.next\(\) - 0\.5\) \* 0\.9;/, 'iskry wyrzutni rakiet');
   assert.match(html, /const spread = \(fxRandomGame\.next\(\) - 0\.5\) \* 0\.5;/, 'cząstki startu myśliwca');
 });

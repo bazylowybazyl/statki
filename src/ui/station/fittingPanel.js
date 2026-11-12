@@ -77,7 +77,7 @@ export function createFittingPanel(root, api) {
     if (w.mountType === 'special_missile' || w.category === 'superweapon') return 'SPEC';
     if (w.category === 'rocket' || w.category === 'torpedo') return 'RAKIETY';
     if (w.weaponClass === 'sniper') return 'SNAJPER';
-    const r = Number(w.baseRange) || 0;
+    const r = weaponRangeWithModule(w, api.currentModule(), api.hull().id);
     if (r <= 4500 && (CLOSE_CATS.has(w.category) || id === 'special_plasma_gatling' || r <= 3600)) return 'BLISKI';
     if (r <= 4500) return 'LINIA';
     return 'DALEKI';
@@ -118,6 +118,10 @@ export function createFittingPanel(root, api) {
             <div class="fit-opts" data-ref="optModule"></div>
             <div class="fit-m-sub">SYSTEM F</div>
             <div class="fit-opts" data-ref="optSystem"></div>
+            <div class="fit-m-sub">ZBIÓRKA</div>
+            <div class="fit-opts" data-ref="optLoot"></div>
+            <div class="fit-m-sub">KABINY</div>
+            <div class="fit-opts" data-ref="optCabins"></div>
             <div class="fit-m-sub">CHIPY</div>
             <div class="fit-opts" data-ref="optChips"></div>
           </div>
@@ -342,6 +346,8 @@ export function createFittingPanel(root, api) {
       <span class="fit-kv">gniazda <b>${filled}/${hull.hardpoints.length}</b></span>
       <span class="fit-kv">moduł <b>${moduleDef ? esc(moduleDef.label) : (api.moduleSlots() > 0 ? 'wolny' : 'brak gniazda')}</b></span>
       <span class="fit-kv">F <b>${esc(api.currentSystemLabel())}</b></span>
+      <span class="fit-kv">zbiórka <b>${esc(api.currentLootGearLabel ? api.currentLootGearLabel() : '—')}</b></span>
+      <span class="fit-kv">kabiny <b>${esc(api.currentCabinsLabel ? api.currentCabinsLabel() : '—')}</b></span>
       <span class="fit-kv">tarcza <b>${fmt(s.shieldMax)}</b></span>
       <span class="fit-kv" data-ref-ammo>amunicja <b>${ammo.max > 0 ? `${ammo.have}/${ammo.max}` : '—'}</b></span>
       <span class="fit-grow"></span>
@@ -376,7 +382,7 @@ export function createFittingPanel(root, api) {
       for (const [id, n] of parts) {
         if (!id) { lines.push({ n, text: `puste — ${SLOT[type].label.toLowerCase()}`, r: '', cls: 'empty' }); continue; }
         const def = W[id];
-        const r = def?.mountType === 'hangar' ? '' : `${km(weaponRangeWithModule(def, plan.module))} km`;
+        const r = def?.mountType === 'hangar' ? '' : `${km(weaponRangeWithModule(def, plan.module, api.hull().id))} km`;
         const wanted = !!plan.preset?.slots?.[type]?.want?.some(([w]) => w === id);
         lines.push({ n, text: nameOf(id), r, cls: plan.buy.has(id) ? 'buy' : (!wanted ? 'sub' : '') });
       }
@@ -649,7 +655,7 @@ export function createFittingPanel(root, api) {
     const selHps = hull.hardpoints.filter((h) => state.sel.has(h.id));
     ref.selHead.innerHTML = `ZAZNACZONE: <b>${n} × ${SLOT[t].label}</b> · brakujące sztuki kupowane przy montażu`;
     const ids = Object.keys(W).filter((id) => W[id].mountType === t && id !== 'fighter_bay' && selHps.every((h) => api.fits(id, h)))
-      .sort((a, b) => weaponRangeWithModule(W[a], api.currentModule()) - weaponRangeWithModule(W[b], api.currentModule()));
+      .sort((a, b) => weaponRangeWithModule(W[a], api.currentModule(), api.hull().id) - weaponRangeWithModule(W[b], api.currentModule(), api.hull().id));
     const selIds = selHps.map((h) => h.mount || null);
     const rows = ['<div class="fit-wrow head"><span>BROŃ</span><span>PASMO</span><span class="num">ZASIĘG</span><span class="num">DPS</span><span class="cnt">HANGAR</span><span class="num">CENA</span></div>'];
     for (const id of ids) {
@@ -661,7 +667,7 @@ export function createFittingPanel(root, api) {
       rows.push(`<div class="fit-wrow${curRow ? ' cur' : ''}" data-id="${esc(id)}">
         <span class="nm">${esc(nameOf(id))}</span>
         <span class="band" style="--bc:${BAND[band] || '#ccc'}">${band}</span>
-        <span class="num">${isHangar ? '—' : `${km(weaponRangeWithModule(W[id], api.currentModule()))} km`}</span>
+        <span class="num">${isHangar ? '—' : `${km(weaponRangeWithModule(W[id], api.currentModule(), api.hull().id))} km`}</span>
         <span class="num">${isHangar ? '—' : fmt(weaponDps(W[id]))}</span>
         <span class="cnt">${isHangar ? '∞' : (have > 0 ? `×${have}` : '0')}</span>
         <span class="num price">${isHangar ? '—' : (price != null ? fmt(price) : 'brak')}</span></div>`);
@@ -708,6 +714,46 @@ export function createFittingPanel(root, api) {
       b.disabled = !s.builtin && !s.installed && !s.owned && s.price > api.credits();
       b.onclick = () => { const r = api.setSystem(s.id); if (r?.message) toast(r.message); render(); };
       ref.optSystem.appendChild(b);
+    }
+    // Gniazdo ZBIÓRKA (kontenery-łup, src/data/lootGear.js): wiązka albo drony — jeden wybór, część jak moduł.
+    if (ref.optLoot && api.lootGear) {
+      ref.optLoot.innerHTML = '';
+      const gear = api.lootGear();
+      const cur = gear.find((g) => g.installed)?.id || null;
+      const none = el('button', `fit-opt${!cur ? ' on' : ''}`, 'PUSTE<small>bez sprzętu kontenerów nie da się zebrać</small>');
+      none.type = 'button';
+      none.onclick = () => { const r = api.setLootGear(null); if (r?.message) toast(r.message); render(); };
+      ref.optLoot.appendChild(none);
+      for (const g of gear) {
+        const tag = !g.ready ? 'wkrótce' : (g.installed ? 'założony' : (g.owned ? 'w hangarze' : cr(g.price)));
+        const b = el('button', `fit-opt${g.installed ? ' on' : ''}`, `${esc(g.label)} <span class="tag">${tag}</span><small>${esc(g.desc || '')}</small>`);
+        b.type = 'button';
+        b.disabled = !g.ready || (!g.installed && !g.owned && g.price > api.credits());
+        b.onclick = () => { const r = api.setLootGear(g.id); if (r?.message) toast(r.message); render(); };
+        ref.optLoot.appendChild(b);
+      }
+    }
+    // Gniazdo KABINY (workforce W6, src/data/playerCrew.js): kabiny pasażerskie na kontrakty rotacyjne (karta KADRY).
+    if (ref.optCabins && api.cabins) {
+      ref.optCabins.innerHTML = '';
+      const cabins = api.cabins();
+      if (!cabins.length) ref.optCabins.appendChild(el('div', 'fit-none', 'Ten kadłub nie ma miejsca na kabiny.'));
+      else {
+        const cur = cabins.some((c) => c.installed);
+        const none = el('button', `fit-opt${!cur ? ' on' : ''}`, 'PUSTE<small>bez kabin terminal nie wyda kontraktu rotacyjnego</small>');
+        none.type = 'button';
+        none.onclick = () => { const r = api.setCabins(false); if (r?.message) toast(r.message); render(); };
+        ref.optCabins.appendChild(none);
+        for (const c of cabins) {
+          const tag = c.installed ? 'założone' : (c.owned ? 'w hangarze' : cr(c.price));
+          const b = el('button', `fit-opt${c.installed ? ' on' : ''}`,
+            `${esc(c.label)} · ${c.capacity} os. <span class="tag">${tag}</span><small>${esc(c.desc || '')}</small>`);
+          b.type = 'button';
+          b.disabled = !c.installed && !c.owned && c.price > api.credits();
+          b.onclick = () => { const r = api.setCabins(true); if (r?.message) toast(r.message); render(); };
+          ref.optCabins.appendChild(b);
+        }
+      }
     }
     ref.optChips.innerHTML = '';
     const chips = api.chips();
@@ -833,7 +879,7 @@ export function createFittingPanel(root, api) {
     const wid = hp.mount;
     const def = wid ? W[wid] : null;
     ref.tip.innerHTML = `<div class="t1">${SLOT[hp.effType]?.label || hp.effType} · ${side}${hp.destroyed ? ' · ZNISZCZONE' : ''}</div>${def
-      ? `${esc(nameOf(wid))}${def.mountType === 'hangar' ? '' : ` · ${km(weaponRangeWithModule(def, api.currentModule()))} km · ${fmt(weaponDps(def))} DPS`}`
+      ? `${esc(nameOf(wid))}${def.mountType === 'hangar' ? '' : ` · ${km(weaponRangeWithModule(def, api.currentModule(), api.hull().id))} km · ${fmt(weaponDps(def))} DPS`}`
       : '<span class="muted">puste</span>'}`;
     ref.tip.style.display = 'block';
     const wrap = ref.hull.parentElement.getBoundingClientRect();

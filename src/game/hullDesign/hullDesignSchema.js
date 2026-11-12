@@ -64,6 +64,10 @@
 //   npc     projekt okrętu TYLKO DLA NPC (drednoty): dopuszcza klasę VII i rdzeń R7 (NPC_SHIP_CLASSES); bez pola poziomy
 //           kończą się na drabinie gracza (VI / R6).
 //   powerPriority  kolejność kategorii urządzeń w kolejce mocy (POWER_CATEGORIES; brak — POWER_PRIORITY_DEFAULT).
+//   role    'military' (domyślna) | 'civil' — statek cywilny (frachtowiec): nazwy klas cywilne, bez wymogu broni
+//           i tarczy, klasa VI bez limitu powierzchni (src/data/shipClasses.js — SHIP_ROLES).
+//   cargoLoad  załadunek 0–1 (domyślnie 1): ile komórek stelaży i zasobników ma kontenery — WYGLĄD (hullDesignLookKey
+//           go pomija; src/game/hullDesign/hullDesignCargo.js).
 //
 // GNIAZDA BRONI (etap 2): moduł `mount` { slot: main | aux | missile | special | builtin, size: S | M | L | Capital,
 // weapon?: id z MASTER_WEAPONS | '' (puste) — brak pola = typowa broń gniazda }; wieże turret_s / m / l to gniazda
@@ -72,6 +76,7 @@
 import { HD_PARTS, expandHullPart } from './hullDesignParts.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { MOUNT_SIZES, POWER_CATEGORIES, SHIP_CLASS_MAX, SHIP_CLASS_NPC_MAX } from '../../data/shipClasses.js';
+import { BRIDGE_LEVEL_MAX, bridgeLevel } from '../../data/bridgeLevels.js';
 import { expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
 import { expandCastle, normalizeCastle } from './hullDesignCastles.js';
 
@@ -129,26 +134,60 @@ export const HD_MODULES = Object.freeze({
   // OBUDOWY Terra Novy (domyślny, `v` wpisu): ośmiokąt o apotemie r = obrys kołnierza obudowy 3D, w której gra rysuje
   // reaktor (src/3d/reactor3D.js; marker gry: hr = r w px PNG — src/data/reactorCores.js); sieć jak przy v 1
   reactor: Object.freeze({ code: 6, label: 'Reaktor', r: 24, v: 2, parts: { reactor_core: 1 } }),
-  bridge: Object.freeze({ code: 7, label: 'Mostek', w: 26, h: 19, level: 3, parts: { avionics: 2, life_support: 1 } }),
+  // mostek: v 0 — rysunek kompozytora (pas szyb, talerz radaru), 2 — GNIAZDO MOSTKA Terra Novy (domyślny, `v` wpisu):
+  // płyta pokładu w obrysie modelu 3D poziomu `lv` (I–VI, src/data/bridgeLevels.js — pół-wymiary w, h = obrys / 2,
+  // ośmiokąt z fazą poziomu), szczelina i rama; w, h i poziom wyznacza poziom mostka projektu (bridgeLevel; 0 — `lv`
+  // modułu) — normalizeHullDesign. Gra rysuje na nim model 3D poziomu (src/3d/bridge3D.js), obrys = strefa mostka
+  bridge: Object.freeze({ code: 7, label: 'Mostek', w: 26, h: 19, v: 2, level: 3, parts: { avionics: 2, life_support: 1 } }),
   vent: Object.freeze({ code: 8, label: 'Kratka', w: 14, h: 6, parts: {} }),
   hangar: Object.freeze({ code: 9, label: 'Wrota hangaru', w: 38, h: 32, parts: { hull_plate: 1 } }),
   well: Object.freeze({ code: 10, label: 'Pierścień', r: 20, parts: { hull_plate: 0.5 } }),
   // SYSTEMY (sieć systemów: src/game/hullDesign/hullDesignSystems.js): zbiornik paliwa (v 0 — walec poziomy we wnęce
   // maszynowni, wzdłuż osi modułu; 1 — kula), dysza boczna SIDE (gniazdo w poszyciu przy burcie: wydech wzdłuż +x
-  // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa)
+  // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa, 2 — stelaż
+  // kontenerów, 3 — zasobniki n × n kontenerów, 4 — KOSZ otwarty od góry ze złomem; src/game/hullDesign/hullDesignCargo.js)
   fuel_tank: Object.freeze({ code: 11, label: 'Zbiornik paliwa', w: 26, h: 11, parts: { hull_plate: 1 } }),
   thruster_side: Object.freeze({ code: 12, label: 'Dysza SIDE', w: 9, h: 7, parts: { thruster: 1 } }),
   cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } }),
   // GNIAZDO BRONI (etap 2): podstawa w stylu TN pod wieżę gry (wieżę rysuje gra) — kompozytor rysuje ją jak kapsułę
   // wieży (główne, specjalne, wbudowane), okrągłą płytę (pomocnicze) albo pokrywę wyrzutni (rakietowe)
   mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } }),
+  // ZBIORNIK ŁADUNKU (statki cywilne — tankowce): v 0 — walce wzdłuż osi modułu, 1 — kule; n — rzędów w poprzek.
+  // Ładunek, nie paliwo okrętu: w sieci tylko kabel pompy (bez rur do reaktora — to robi `fuel_tank`)
+  cargo_tank: Object.freeze({ code: 15, label: 'Zbiornik ładunku', w: 44, h: 16, parts: { hull_plate: 1 } }),
+  // GNIAZDA STATKÓW ROBOCZYCH (złomowanie; presety src/game/hullDesign/workships/, kontrakt dla gry hullDesignWorkRig.js):
+  // miejsca pod RUCHOME części, które gra stawia jako modele na mocowaniach — kreator rysuje wygląd „zamknięty”.
+  //   rig    — OBROTNICA (pierścień podstawy): v 0 — wysięgnik z laserem tnącym, v 1 — dźwig. To zwykłe gniazdo broni
+  //            (HD_MOUNT_MODULES: główne, rozmiar `size`) — lasery tnące i dźwigi siedzą w gniazdach broni
+  //   maw    — PASZCZA: dwie zamknięte szczęki z zębatą linią podziału we wnęce; otwiera się ku +x modułu (dziób)
+  //   mill   — GARDZIEL MŁYNA: wlot z n walcami tnącymi (osie w poprzek osi x modułu; n — pole modułu, domyślnie 2)
+  //   ramp   — RAMPA: zamknięta klapa z zawiasem po stronie −x modułu, opada ku +x (rampa rufowa: rot = π)
+  //   damper — GNIAZDO DAMPERA: schowana stopa wysuwanej podpory (wysuw ku +x modułu)
+  rig: Object.freeze({ code: 16, label: 'Obrotnica', r: 16, parts: { weapon_mount: 1 } }),
+  maw: Object.freeze({ code: 17, label: 'Paszcza', w: 40, h: 34, parts: { hull_plate: 2 } }),
+  mill: Object.freeze({ code: 18, label: 'Gardziel młyna', w: 26, h: 30, parts: { hull_plate: 1 } }),
+  ramp: Object.freeze({ code: 19, label: 'Rampa', w: 30, h: 26, parts: { hull_plate: 1 } }),
+  damper: Object.freeze({ code: 20, label: 'Gniazdo dampera', w: 12, h: 12, parts: { hull_plate: 0.5 } }),
   // URZĄDZENIA DREDNOTA (docs/BRIEF-drednot.md § 4.3; w grze — etapy E3–E5): generator tarczy sektora (źródło tarczy:
   // dzieli jej pobór — src/data/shipClasses.js) i projektor studni grawitacyjnej na grzbiecie (kategoria mocy `device`);
   // wygląd TN w kompozytorze, kable z rdzenia (sieć systemów)
-  shield_gen: Object.freeze({ code: 15, label: 'Generator tarczy', r: 26, parts: { gun_energy: 1, avionics: 1 } }),
-  grav_proj: Object.freeze({ code: 16, label: 'Projektor studni grawitacyjnej', r: 40, parts: { reactor_core: 0.5, gun_energy: 2, avionics: 1 } })
+  shield_gen: Object.freeze({ code: 21, label: 'Generator tarczy', r: 26, parts: { gun_energy: 1, avionics: 1 } }),
+  grav_proj: Object.freeze({ code: 22, label: 'Projektor studni grawitacyjnej', r: 40, parts: { reactor_core: 0.5, gun_energy: 2, avionics: 1 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
+
+/**
+ * GNIAZDO MOSTKA (moduł `bridge` v 2): wokół płyty pokładu (obrys modelu) szczelina i rama — razem `rim` [j.] = (gapDu +
+ * frameDu) jd + frameK · krótszy pełny wymiar obrysu. Bryła modułu (poziom 3) sięga ramy, trasy sieci omijają ramę
+ * (pipeModuleSdf); kompozytor dzieli rim na szczelinę (gapShare) i ramę.
+ */
+export const HD_BRIDGE_SOCKET = Object.freeze({ gapDu: 0.6, frameDu: 1.8, frameK: 0.04, gapShare: 0.25 });
+/** Szczelina + rama gniazda mostka v 2 [j.] dla modułu (pół-wymiary w, h) i detalu projektu (moduł niesie ją w `rim`). */
+export function hullDesignBridgeRim(m, detail) {
+  return (HD_BRIDGE_SOCKET.gapDu + HD_BRIDGE_SOCKET.frameDu) * detail + HD_BRIDGE_SOCKET.frameK * 2 * Math.min(m.w, m.h);
+}
+/** Czy moduł to gniazdo mostka (v 2). */
+export const isBridgeSocket = (m) => m?.type === 'bridge' && m.v === 2;
 
 /** Typy gniazd modułu `mount` (gniazda hangarowe to wrota `hangar`). */
 export const HD_MOUNT_SLOTS = Object.freeze(['main', 'aux', 'missile', 'special', 'builtin']);
@@ -156,7 +195,9 @@ export const HD_MOUNT_SLOTS = Object.freeze(['main', 'aux', 'missile', 'special'
 export const HD_MOUNT_MODULES = Object.freeze({
   turret_s: Object.freeze({ slot: 'main', size: 'S' }), turret_m: Object.freeze({ slot: 'main', size: 'M' }),
   turret_l: Object.freeze({ slot: 'main', size: 'L' }), mount: Object.freeze({ slot: 'main', size: 'M' }),
-  hangar: Object.freeze({ slot: 'hangar', size: 'S' })
+  hangar: Object.freeze({ slot: 'hangar', size: 'S' }),
+  // obrotnica wysięgnika / dźwigu (statki robocze): zwykłe gniazdo główne — laser tnący albo dźwig montuje gra
+  rig: Object.freeze({ slot: 'main', size: 'M' })
 });
 /** Promień podstawy gniazda `mount` [jd] na typ (× detal projektu) — tak stawia je plik slotów i edytor. */
 export const HD_MOUNT_RADIUS_DU = Object.freeze({ main: 22, special: 26, builtin: 30, aux: 13, missile: 15 });
@@ -173,7 +214,9 @@ export function hullDesignMountOf(m) {
 /**
  * Barwy frakcji (sRGB): pancerz, nadbudówka, linie paneli, akcent (pasy), maszynownia, ostrzegawcze, okna, rury
  * (miedź), silniki, wrota, brud, stal (jasne rury sieci). Terra Nova — z median sprite'ów (płyty #c8c5be…#dcd9d1, maszynownia #2c2a26, rury
- * miedziane #75604a, wrota #4f5155).
+ * miedziane #75604a, wrota #4f5155). Frakcje gry (src/data/factions.js) — w duchu ich barw (kolor / akcent frakcji),
+ * ale w stylu kadłuba TN: jasne płyty, ciemna maszynownia; NIEBIESKIE albedo świeci w grze (hullGlowMask), więc barwy
+ * poza oknami nie mogą mieć niebieskiego > 0,38 przy czerwonym < 0,25 (liniowo) — pilnuje tests/hullDesignPaint.test.mjs.
  */
 export const HD_PALETTES = Object.freeze({
   terra: Object.freeze({
@@ -191,9 +234,63 @@ export const HD_PALETTES = Object.freeze({
   civil: Object.freeze({
     label: 'Cywilny', hull: '#a99d82', upper: '#cfc8b8', trim: '#45525a', accent: '#d8b83a', metal: '#343a3e',
     hazard: '#d8b83a', window: '#d8f4ff', pipe: '#7a6040', engine: '#4a4d50', door: '#3e464c', grime: '#5a5040', steel: '#8e8d87'
+  }),
+  // Atlas — czerń (superkapitał w kształcie Atlasa, 2026-10-27): grafitowe, prawie czarne płyty, jasnoszare panele
+  // nadbudówek, szare akcenty — barwy obecnego Atlasa gry (assets/capital_ship_rect_v1.png), bez pomarańczu palety Atlas
+  atlasDark: Object.freeze({
+    label: 'Atlas — czerń', hull: '#3d4146', upper: '#878d93', trim: '#1c1f22', accent: '#a7adb3', metal: '#222528',
+    hazard: '#d8a02a', window: '#c8f2ff', pipe: '#5e554b', engine: '#2e3235', door: '#33373b', grime: '#2a2826', steel: '#7d838a'
+  }),
+  // Statki robocze (złomiarze, młyny, dźwigi — src/game/hullDesign/workships/): ciemny grafit, stalowe panele
+  // nadbudówek, żółte pasy ostrzegawcze — w duchu sprite'a złomiarza (assets/salvage_hauler.png), bez emblematu nacji
+  work: Object.freeze({
+    label: 'Roboczy', hull: '#4b4e52', upper: '#8d9297', trim: '#1d1f21', accent: '#e0a31f', metal: '#222426',
+    hazard: '#ecb21e', window: '#ffdca6', pipe: '#6c5842', engine: '#33363a', door: '#3b3f43', grime: '#322f2a', steel: '#9da1a5'
+  }),
+  // Frachtowce (domyślna paleta statków cywilnych): grafitowe płyty, jasne panele nadbudówek, bursztynowe oznaczenia
+  // i ciepłe okna — w duchu sprite'ów frachtowców ruchu (assets/long_haul_freighter.png), bez emblematu nacji
+  freight: Object.freeze({
+    label: 'Frachtowiec', hull: '#6c7074', upper: '#b3b7ba', trim: '#24272a', accent: '#d8902a', metal: '#26292c',
+    hazard: '#e2a32c', window: '#ffe0b0', pipe: '#7a6448', engine: '#3a3d40', door: '#4a4e52', grime: '#3e3a32', steel: '#8f9396'
+  }),
+  // Stocznie Marsjańskie (róż / karmazyn frakcji): rdzawoczerwone płyty, karmazynowy akcent, ciepłe okna
+  mars: Object.freeze({
+    label: 'Stocznie Marsjańskie', hull: '#b58a76', upper: '#c49c88', trim: '#4a2b27', accent: '#a3242c', metal: '#2e2422',
+    hazard: '#d49a2a', window: '#ffd9bf', pipe: '#7a4636', engine: '#4a3a36', door: '#4a2f2b', grime: '#5a3a2c', steel: '#8c7468'
+  }),
+  // Konsorcjum Wewnętrzne (bursztyn): piaskowe płyty, złoty akcent — huty Wenus i Merkurego
+  inner: Object.freeze({
+    label: 'Konsorcjum Wewnętrzne', hull: '#c9b58c', upper: '#d8c8a2', trim: '#4b3e2a', accent: '#c4821a', metal: '#302a20',
+    hazard: '#e0b030', window: '#fff0c8', pipe: '#7a5a34', engine: '#4e463a', door: '#4a4232', grime: '#5e4e36', steel: '#9a8c74'
+  }),
+  // Unia Pasa (żółć górnicza): zużyta szara blacha, żółty akcent jak oznaczenia sprzętu kopalni
+  belt: Object.freeze({
+    label: 'Unia Pasa', hull: '#8f8b7d', upper: '#a39e8a', trim: '#2f2d28', accent: '#d9a21c', metal: '#2b2a27',
+    hazard: '#e8b422', window: '#e8f4ff', pipe: '#6d5a40', engine: '#45433e', door: '#3d3b36', grime: '#4d4436', steel: '#87847a'
+  }),
+  // Konsorcjum Zewnętrzne (fiolet): chłodna szarofioletowa blacha, fioletowy akcent (czerwony ≥ 0,25 liniowo — nie świeci)
+  outer: Object.freeze({
+    label: 'Konsorcjum Zewnętrzne', hull: '#a8a4b3', upper: '#bdb9c7', trim: '#2c2838', accent: '#8a5cc8', metal: '#2a2830',
+    hazard: '#d6a63a', window: '#e6dcff', pipe: '#6a5a4a', engine: '#45434c', door: '#3a3644', grime: '#4a4450', steel: '#8e8a98'
   })
 });
 export const HD_PALETTE_KEYS = Object.freeze(Object.keys(HD_PALETTES));
+/** Paleta kadłuba frakcji gry (src/data/factions.js: FACTION.*) — NPC frakcji dostają te same mapy, inny pass barw. */
+export const HD_FACTION_PALETTE = Object.freeze({
+  terra_nova: 'terra', mars_yards: 'mars', inner_consortium: 'inner', belt_union: 'belt', outer_consortium: 'outer', pirates: 'pirate'
+});
+/**
+ * Emblemat nacji (src/game/hullDesign/hullEmblems.js) — stawiany / podmieniany przy wyborze palety w Stoczni. Piraci —
+ * własny znak bez czaszek (decyzja użytkownika). Paleta bez emblematu (cywilna) zdejmuje emblematy nacji.
+ */
+export const HD_PALETTE_EMBLEM = Object.freeze({
+  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null, freight: null, work: null, atlasDark: 'wing'
+});
+/** Barwa emblematu nacji (kontrast z płytą jej palety: ciemny na jasnej, jasny na ciemnej pirackiej). */
+export const HD_PALETTE_EMBLEM_COLOR = Object.freeze({
+  terra: '#34332f', atlas: '#d06a22', pirate: '#cdbb9a', mars: '#4a2b27', inner: '#4b3e2a', belt: '#2f2d28', outer: '#2c2838', civil: '#45525a',
+  freight: '#d8902a', work: '#e0a31f', atlasDark: '#a7adb3'
+});
 /** Kolejność barw palety w kompozytorze (wiersze tablicy uniformów). */
 export const HD_PALETTE_ROWS = Object.freeze(['hull', 'upper', 'trim', 'accent', 'metal', 'hazard', 'window', 'pipe', 'engine', 'door', 'grime', 'steel']);
 
@@ -265,10 +362,12 @@ function normModule(m) {
   const out = { type: m.type, x: num(m.x), y: num(m.y), rot: num(m.rot) };
   if (def.r) out.r = Math.max(2, num(m.r, def.r));
   if (def.w) { out.w = Math.max(2, num(m.w, def.w)); out.h = Math.max(2, num(m.h, def.h)); }
-  if (m.v !== undefined) out.v = clampInt(m.v, 0, 3);
+  if (m.v !== undefined) out.v = clampInt(m.v, 0, 4);
   if (m.n !== undefined) out.n = clampInt(m.n, 1, 8);
   if (m.doors !== undefined) out.doors = clampInt(m.doors, 1, 6);
   if (m.mirror === false) out.mirror = false;
+  // gniazdo mostka: poziom (I–VI) — w, h z obrysu poziomu (normalizeHullDesign; poziom projektu ma pierwszeństwo)
+  if (m.type === 'bridge' && m.lv !== undefined) out.lv = clampInt(num(m.lv, 1), 1, BRIDGE_LEVEL_MAX);
   // system na stałym miejscu klasy i kadłuba (sloty presetów: hullDesignSystemSlots.js) — edytor go nie przesuwa
   if (m.lock === true) out.lock = true;
   // gniazdo broni: typ (tylko `mount`), rozmiar, broń ('' — puste; nieznana — typowa)
@@ -310,7 +409,10 @@ function normDecal(d, levelShift = 0) {
       ...base, x: num(d.x), y: num(d.y), rot: num(d.rot), w: Math.max(1, num(d.w, 40)), h: Math.max(1, num(d.h, 40)),
       flip: d.flip === true
     };
-    if (d.kind === 'emblem') out.id = String(d.id || 'wing');
+    if (d.kind === 'emblem') {
+      out.id = String(d.id || 'wing');
+      if (d.nation === true) out.nation = true;   // emblemat nacji: podmienia go wybór palety w Stoczni
+    }
     else {
       out.text = String(d.text || 'HF').slice(0, 24);
       if (d.weight !== undefined) out.weight = clampInt(d.weight, 300, 900);
@@ -347,6 +449,19 @@ function normPart(p) {
   return out;
 }
 
+/**
+ * Gniazdo mostka (v 2) poziomu projektu: poziom = `bridgeLevel` projektu, gdy ma model (I–VI); 0 albo klasa ponad
+ * drabiną modeli (drednot VII, tylko NPC) — `lv` modułu (domyślnie I), więc mostki drednota mają różne poziomy.
+ * Pół-wymiary = obrys modelu poziomu / 2 (zmiana poziomu mostka w projekcie zmienia moduł). Inne moduły — bez zmian.
+ */
+export function bridgeSocketModule(m, designLevel = 0, detail = HD_DETAIL.def) {
+  if (!isBridgeSocket(m)) return m;
+  const lv = bridgeLevel(designLevel >= 1 && designLevel <= BRIDGE_LEVEL_MAX ? designLevel : (m.lv || 1));
+  const out = { ...m, lv: lv.level, w: lv.w / 2, h: lv.h / 2 };
+  out.rim = hullDesignBridgeRim(out, detail);
+  return out;
+}
+
 /** Projekt po walidacji: brakujące pola z domyślnych, bloki bez powtórzeń (najwyższy poziom komórki), v1 → v2. */
 export function normalizeHullDesign(design = {}) {
   // v1 (bez pola v albo v < 2): poziomy kadłub / nadbudówka / mostek → pancerz / nadbudówka / mostek.
@@ -360,9 +475,12 @@ export function normalizeHullDesign(design = {}) {
   }
   const detail = Math.max(HD_DETAIL.min, Math.min(HD_DETAIL.max, num(design.detail, HD_DETAIL.def)));
   const style = HD_STYLES.includes(design.style) ? design.style : 'chamfer';
+  const bridgeLv = clampInt(num(design.bridgeLevel, 0), 0, design.npc === true ? SHIP_CLASS_NPC_MAX : SHIP_CLASS_MAX);
   return {
     v: HD_VERSION,
     name: String(design.name || 'Projekt'),
+    // rola: okręt wojenny albo statek cywilny (frachtowiec) — klasa, bilans mocy i receptura (src/data/shipClasses.js)
+    role: design.role === 'civil' ? 'civil' : 'military',
     style,
     mirror: design.mirror !== false,
     palette: HD_PALETTES[design.palette] ? design.palette : 'terra',
@@ -376,14 +494,16 @@ export function normalizeHullDesign(design = {}) {
     round: Math.max(0, Math.min(1, num(design.round, style === 'rounded' ? 1 : 0))),
     // Okna tarasów (rząd świateł za krawędzią nadbudówki): 0 — brak (Terra Nova), 1 — pełne.
     windows: Math.max(0, Math.min(1, num(design.windows, 1))),
+    // załadunek stelaży kontenerów i zasobników (0 — puste, 1 — pełne) — wygląd
+    cargoLoad: Math.max(0, Math.min(1, num(design.cargoLoad, 1))),
     // klasa okrętu (src/data/shipClasses.js): mostek I–VI, rdzeń R1–R6; 0 — z powierzchni i gniazd; projekt NPC — do VII / R7
     npc: design.npc === true,
-    bridgeLevel: clampInt(num(design.bridgeLevel, 0), 0, design.npc === true ? SHIP_CLASS_NPC_MAX : SHIP_CLASS_MAX),
+    bridgeLevel: bridgeLv,
     coreLevel: clampInt(num(design.coreLevel, 0), 0, design.npc === true ? SHIP_CLASS_NPC_MAX : SHIP_CLASS_MAX),
     powerPriority: normPriority(design.powerPriority),
     blocks: [...blocks.values()],
     shapes: (design.shapes || []).map((s) => normShape(s, shift)).filter(Boolean),
-    modules: (design.modules || []).map(normModule).filter(Boolean),
+    modules: (design.modules || []).map(normModule).filter(Boolean).map((m) => bridgeSocketModule(m, bridgeLv, detail)),
     decals: (design.decals || []).map((d) => normDecal(d, shift)).filter(Boolean),
     parts: (design.parts || []).map(normPart).filter(Boolean),
     grooves: (design.grooves || []).map(normGroove).filter(Boolean),
@@ -485,20 +605,17 @@ export function expandHullDesign(input) {
   for (const m of modules) {
     const def = HD_MODULES[m.type];
     if (def.level === undefined) continue;
+    if (isBridgeSocket(m)) {
+      // gniazdo mostka: płyta do ramy, ośmiokąt z fazą poziomu przesuniętą o rim (faza rośnie o rim · (2 − √2))
+      const rim = m.rim ?? hullDesignBridgeRim(m, design.detail);
+      const ch = bridgeLevel(m.lv).ch + rim * (2 - Math.SQRT2);
+      shapes.push({ kind: 'rect', op: 'add', x: m.x, y: m.y, w: m.w + rim, h: m.h + rim, r: 0, ch, rot: m.rot, level: def.level, module: m.type });
+      continue;
+    }
     const r = m.type === 'engine' ? Math.min(m.h * 0.35, 16) : Math.min(m.h * 0.55, 12);
     shapes.push({ kind: 'rect', op: 'add', x: m.x, y: m.y, w: m.w, h: m.h, r, ch: 0, rot: m.rot, level: def.level, module: m.type });
   }
-  const decals = [...partDecals];
-  for (const d of design.decals) {
-    decals.push(d);
-    if (!mirrorOf(d) || d.kind === 'contour') continue;
-    if (d.kind === 'stripe') {
-      if (Math.abs(d.y0) > MIRROR_EPS || Math.abs(d.y1) > MIRROR_EPS) decals.push({ ...d, y0: -d.y0, y1: -d.y1, mirrorOf: true });
-    } else if (Math.abs(d.y) > MIRROR_EPS) {
-      // Emblemat po drugiej burcie odbity (jak lustro), napis czytelny (bez odbicia obrazu).
-      decals.push({ ...d, y: -d.y, rot: -d.rot, flip: d.kind === 'emblem' ? !d.flip : d.flip, mirrorOf: true });
-    }
-  }
+  const decals = expandHullDecals(design, partDecals);
   const grooves = [];
   for (const g of design.grooves) {
     grooves.push(g);
@@ -511,6 +628,43 @@ export function expandHullDesign(input) {
     if (mirrorOf(q) && q.pts.some(([, y]) => Math.abs(y) > MIRROR_EPS)) pipes.push({ ...q, pts: q.pts.map(([x, y]) => [x, -y]), src: i, mirrorOf: true });
   });
   return { design, blocks, shapes, modules, decals, grooves, pipes };
+}
+
+/**
+ * Naklejki rozwinięte (warstwa barw — bez reszty rozwinięcia): naklejki części (`partDecals`, z poprzedniego
+ * rozwinięcia), potem naklejki projektu z kopiami lustra. `design` — po normalizeHullDesign.
+ */
+export function expandHullDecals(design, partDecals = []) {
+  const mirrorOf = (o) => design.mirror && o.mirror !== false;
+  const decals = [...partDecals];
+  for (const d of design.decals) {
+    decals.push(d);
+    if (!mirrorOf(d) || d.kind === 'contour') continue;
+    if (d.kind === 'stripe') {
+      if (Math.abs(d.y0) > MIRROR_EPS || Math.abs(d.y1) > MIRROR_EPS) decals.push({ ...d, y0: -d.y0, y1: -d.y1, mirrorOf: true });
+    } else if (Math.abs(d.y) > MIRROR_EPS) {
+      // Emblemat po drugiej burcie odbity (jak lustro), napis czytelny (bez odbicia obrazu).
+      decals.push({ ...d, y: -d.y, rot: -d.rot, flip: d.kind === 'emblem' ? !d.flip : d.flip, mirrorOf: true });
+    }
+  }
+  return decals;
+}
+
+/**
+ * Klucz projektu BEZ warstwy barw (paleta, nadpisania i pędzel `paint`, naklejki, nazwa): ten sam klucz = ta sama
+ * geometria, sieć i mapy kompozytora — zmiana dotyczy tylko passów barw (HullComposer.setColors / renderColors).
+ */
+export function hullDesignShapeKey(design) {
+  return JSON.stringify(design, (k, v) => (k === 'palette' || k === 'paint' || k === 'decals' || k === 'name' ? undefined : v));
+}
+
+/**
+ * Klucz projektu bez warstwy barw i bez WYGLĄDU kompozytora (`bevel` — faza płyt, `round` — profil fazy, `panels` —
+ * widoczność paneli, `windows` — okna tarasów, `cargoLoad` — załadunek stelaży): ten sam klucz = to samo pole, sieć
+ * i ciało gry (alfa), inne mogą być tylko mapy kompozytora (relief, normalne, emisja) — wszystkie passy, bez workera.
+ */
+export function hullDesignLookKey(design) {
+  return hullDesignShapeKey({ ...design, bevel: undefined, round: undefined, panels: undefined, windows: undefined, cargoLoad: undefined });
 }
 
 /** Bloki z poziomem ≥ L (zbiór kluczy 'bx,by'). */

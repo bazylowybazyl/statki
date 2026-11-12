@@ -1036,8 +1036,16 @@ function chargeFormation(side, st, members, threat, dt) {
   }
 }
 
+// ŚWIATŁO BOJOWE FLOTY (2026-11-11, stan zasilania — decyzja użytkownika: „sojusznicy przechodzą na czerwone
+// światło bojowe, gdy dowódca floty ustawia szyk bojowy; od razu widać, czy flota walczy”): flaga `__battleLights`
+// członków strony (migawka: ENT_FLAG2.BATTLE_LIGHTS; obraz — lampy pokładowe i okna mostka na czerwono).
+function markBattleLights(list, on) {
+  for (let i = 0; i < list.length; i++) if (list[i]) list[i].__battleLights = on;
+}
+
 function coordinateSide(side, members, player, dt) {
   const st = sideState[side];
+  markBattleLights(members, false);
   const stance = sideStance(side);
   st.shape = sideFormation(side, player);
   // Grupy bojowe nie mają kierunku formacji — po przełączeniu kształt zaczyna od zadanego.
@@ -1094,11 +1102,13 @@ function coordinateSide(side, members, player, dt) {
   if (stance === 'charge') {
     chargeFormation(side, st, activeMembers, battle, dt);
     st.battle = battle;
+    markBattleLights(activeMembers, battle);
     return;
   }
   if (battle) {
     battleFormation(side, st, player, activeMembers, threats, dt);
     st.battle = true;
+    markBattleLights(activeMembers, true);
     return;
   }
   st.battle = false;

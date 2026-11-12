@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import v8 from 'node:v8';
+import { untilSteady } from './helpers/alokacje.mjs';
 import * as THREE from 'three/webgpu';
 import { Fn, vec2, vec4, float, uv, screenUV, texture, instancedArray } from 'three/tsl';
 import { FxRandom, fxRandom, FX_RANDOM_SEED } from '../src/3d/fx/fxRandom.js';
@@ -194,7 +195,7 @@ test('fxLights: kadr (setView) odrzuca światła poza ekranem; siatka dostaje ws
   assert.equal(grid.lights[LIGHT_FLOATS * 0 + 7], Math.fround(0.6));
 });
 
-test('fxLights: bez alokacji — tysiące klatek błysków, punktów, starzenia i commit', () => {
+test('fxLights: bez alokacji — tysiące klatek błysków, punktów, starzenia i commit', async () => {
   const clock = { now: () => 0.25 };
   const carrier = { vx: 100, vy: 5, t0: 0, clock: 0 };
   const L = new FxLights({ random: new FxRandom(5), clock, carrier });
@@ -208,9 +209,10 @@ test('fxLights: bez alokacji — tysiące klatek błysków, punktów, starzenia 
   };
   const empty = () => {};
   for (let i = 0; i < 30000; i++) { frame(i); empty(i); }   // rozgrzewka JIT
-  const base = allocatedBytes(empty, 5000);
-  const used = allocatedBytes(frame, 5000);
-  assert.ok(used - base < 4096, `fxLights zaalokował ${used - base} B na 5000 klatek`);
+  // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+  const warm = () => { for (let i = 0; i < 5000; i++) { frame(i); empty(i); } };
+  const used = await untilSteady(() => allocatedBytes(frame, 5000) - allocatedBytes(empty, 5000), (b) => b < 4096, { warm });
+  assert.ok(used < 4096, `fxLights zaalokował ${used} B na 5000 klatek`);
   // kontrola metody: styl dema (obiekt światła i opcji na błysk) alokuje wyraźnie
   const demoList = [];
   const demoFrame = (i) => {

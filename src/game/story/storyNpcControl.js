@@ -9,7 +9,7 @@
 //   StoryGame.init({ launchNpc: npcs.launch, armNpc: npcs.arm, fleeNpc: npcs.flee, … });
 // ============================================================
 import { setFlightArrive, setFlightStop, usesShipFlightModel } from '../flight/shipFlightModel.js';
-import { processAutonomousWeapons } from '../../ai/capitalAI.js';
+import { capitalArriveTo, processAutonomousWeapons } from '../../ai/capitalAI.js';
 import { ENGINE_OFF, engineRunning, engineStateOf, igniteEngine, engineIgnitionDuration } from '../engineIgnition.js';
 
 // Punkt trasy uznany za osiągnięty [j.] i domyślne cofanie [j/s] (poniżej pasma, w którym pilot obraca dziób
@@ -75,7 +75,11 @@ export function createStoryNpcControl({ gameTime, wake }) {
       };
     },
 
-    /** Ucieczka w punkt (np. przed skokiem warp): pełna prędkość bojowa, wieże strzelają dalej. */
+    /**
+     * Ucieczka w punkt (np. przed skokiem warp): pełna prędkość bojowa, wieże strzelają dalej. Pilotem mózgów
+     * (capitalArriveTo): ogranicznik przed przeszkodą i objazd budowli, wraków i okrętów, separacja — prosta intencja
+     * przelotu prowadziła herszta z zatoki za habitatem przez bęben (zgłoszenie użytkownika 2026-10-28).
+     */
     flee(npc, point) {
       if (!npc || npc.dead || !point) return;
       const x = point.x, y = point.y;
@@ -84,7 +88,7 @@ export function createStoryNpcControl({ gameTime, wake }) {
       npc.__fleeing = true;
       npc.ai = (dt) => {
         if (npc.dead) return;
-        if (usesShipFlightModel(npc)) setFlightArrive(npc, x, y, { arrival: 0, speedMode: 'combat', faceNear: 0, faceFar: 0 });
+        if (usesShipFlightModel(npc)) capitalArriveTo(npc, x, y, { arrival: 0, speedMode: 'combat', dt });
         processAutonomousWeapons(npc, dt);
       };
     }

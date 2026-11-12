@@ -12,7 +12,7 @@ export const PIRATE_BASE_BLOCK = Object.freeze({
   // HAS: stan obecny; FLAGS: bity hidden 1, habitatDead 2, alarm 4; BAYS 0/1; SUN_OK / DAY_OK: pole obecne
   // TECH, DRUM_Q (4 liczby) — światła wnętrza głowy wieży i ćwiartek bębna (dekompresja, 2026-10-19)
   HEAD: Object.freeze({ HAS: 0, DT: 1, FLAGS: 2, BAYS: 3, HABITAT: 4, DISC: 5, FUEL: 6, WAREHOUSE: 7, SUN_OK: 8,
-    SUN_X: 9, SUN_Y: 10, DAY_OK: 11, DAYLIGHT: 12, BERTHS: 13, TECH: 14, DRUM_Q: 15, STRIDE: 20 }),
+    SUN_X: 9, SUN_Y: 10, DAY_OK: 11, DAYLIGHT: 12, BERTHS: 13, TECH: 14, DRUM_Q: 15, CLOCK: 19, STRIDE: 20 }),
   BERTH_WORDS: 64,                 // 26 stanowisk na słowo (bity dokładne w mantysie)
   BITS: 26
 });
@@ -33,6 +33,8 @@ export function createPirateBaseBlock() {
       const words = Math.ceil(n / BITS);
       if (H.STRIDE + words > F.length) packer.resizeBlock('pirateBase', { f64: H.STRIDE + words * 2 });
       F[H.DT] = frame.pirateBaseDt;
+      // Zegar czasu gry bazy: worker pomija strony, a ich dt przepadałby (wzór warpFxClock). NaN: starsza strona bez zegara, odczyt wraca do dt.
+      F[H.CLOCK] = Number.isFinite(frame.pirateBaseClock) ? frame.pirateBaseClock : NaN;
       F[H.FLAGS] = (s.hidden ? 1 : 0) + (s.habitatDead ? 2 : 0) + (s.alarm ? 4 : 0);
       F[H.BAYS] = s.bays ? 1 : 0;
       F[H.HABITAT] = s.habitat; F[H.DISC] = s.disc; F[H.FUEL] = s.fuel; F[H.WAREHOUSE] = s.warehouse;
@@ -55,7 +57,7 @@ export function createPirateBaseBlock() {
 
 /** Stan klatki bazy po stronie renderu (obiekt do ponownego użycia). */
 export function createPirateBaseMirror() {
-  return { present: false, dt: 0, state: { hidden: false, habitatDead: false, alarm: false, bays: 0, berths: [], habitat: 1, disc: 1, fuel: 1, warehouse: 1,
+  return { present: false, dt: 0, clock: NaN, state: { hidden: false, habitatDead: false, alarm: false, bays: 0, berths: [], habitat: 1, disc: 1, fuel: 1, warehouse: 1,
     tech: 1, drumQ: [1, 1, 1, 1], sun: null } };
 }
 
@@ -66,6 +68,7 @@ export function applyPirateBaseBlock(blk, mirror) {
   if (!mirror.present) return mirror;
   const s = mirror.state;
   mirror.dt = F[H.DT];
+  mirror.clock = F[H.CLOCK];
   const fl = F[H.FLAGS];
   s.hidden = (fl & 1) !== 0; s.habitatDead = (fl & 2) !== 0; s.alarm = (fl & 4) !== 0;
   s.bays = F[H.BAYS];

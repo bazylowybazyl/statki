@@ -257,11 +257,13 @@ class BoltBatch {
     this.mesh.visible = false;
     parent.add(this.mesh);
     this.count = 0;
+    this.gain = 1;                 // × jasność segmentów (zanik pola — StormSystem.fade)
   }
 
   begin() { this.count = 0; }
 
   push(x0, y0, z0, x1, y1, z1, rs, I, whiteK, afterK) {
+    I *= this.gain;
     if (this.count >= SEG_CAP || I < 0.004) return;
     const o = (this.count++) * 4;
     const A = this.a.array; const B = this.b.array; const C = this.c.array;
@@ -306,6 +308,9 @@ export class StormSystem {
     this.batch = new BoltBatch(parent, layer);
     this.enabled = true;
     this.intensity = 0;
+    // Zanik pola przy skoku gracza (asteroidBelt.js, WARP_FADE; 1 — bez): × jasność piorunów i łuków, świateł, duszków,
+    // rozbłysków skał i błysków w chmurach. Symulacja burzy idzie dalej bez zmian.
+    this.fade = 1;
     this.look = { ...STORM_LOOK };
     this._rocks = [];
     this._pool = [];
@@ -488,6 +493,8 @@ export class StormSystem {
 
   _frame(f, zoom, dt) {
     const B = this.batch;
+    const fd = this.fade >= 0 && this.fade < 1 ? this.fade : 1;
+    B.gain = fd;
     B.begin();
     const L = this.look;
     const ox = f.originX;
@@ -591,8 +598,8 @@ export class StormSystem {
       }
       // Rozbłysk pęknięć skał na końcach (skała → pył: tylko początek).
       if (strokeIdx >= 0 && slot < slots.length) {
-        slots[slot++].set(st.A.x - ox, -(st.A.y - oy), st.A.z, strokeMain);
-        if (slot < slots.length && s.kind === 'arc') slots[slot++].set(st.B.x - ox, -(st.B.y - oy), st.B.z, strokeMain);
+        slots[slot++].set(st.A.x - ox, -(st.A.y - oy), st.A.z, strokeMain * fd);
+        if (slot < slots.length && s.kind === 'arc') slots[slot++].set(st.B.x - ox, -(st.B.y - oy), st.B.z, strokeMain * fd);
       }
       // Nowy udar = iskry, błysk, żar i łuki w miejscu uderzenia.
       if (strokeIdx > st.fx) {
@@ -609,7 +616,7 @@ export class StormSystem {
       this._light(sh.x, sh.y, sh.z, sh.range, L.sheet, L.sheetGain * e, 0.8);
       const fi = this.flashes.length;
       const fl = this._flashPool[fi] || (this._flashPool[fi] = { x: 0, y: 0, e: 0, range: 0 });
-      fl.x = sh.x; fl.y = sh.y; fl.e = e; fl.range = sh.range;
+      fl.x = sh.x; fl.y = sh.y; fl.e = e * fd; fl.range = sh.range;
       this.flashes.push(fl);
     }
     this._arcsFrame(dt, ox, oy);
@@ -632,6 +639,7 @@ export class StormSystem {
   }
 
   _light(x, y, z, range, col, I, scatter) {
+    I *= this.fade >= 0 && this.fade < 1 ? this.fade : 1;
     const i = this._lights.length;
     const l = this._lightPool[i] || (this._lightPool[i] = { x: 0, y: 0, z: 0, range: 0, r: 0, g: 0, b: 0, scatter: 0 });
     l.x = x; l.y = y; l.z = z; l.range = range;
@@ -734,22 +742,24 @@ export class StormSystem {
 
   /** Światła tej klatki do siatki świateł (scena względem początku). */
   addLights(grid, ox, oy) {
+    const fd = this.fade >= 0 && this.fade < 1 ? this.fade : 1;
     for (const l of this._lights) {
       grid.add(l.x - ox, -(l.y - oy), l.z, l.range, l.r, l.g, l.b, l.scatter);
     }
     for (const gl of this._glows) {
       const e = Math.max(0, 1 - gl.t / gl.life);
-      const I = e * e * gl.k * (gl.life < 0.2 ? 0.9 : 0.3);
+      const I = e * e * gl.k * (gl.life < 0.2 ? 0.9 : 0.3) * fd;
       if (I > 0.01) grid.add(gl.x - ox, -(gl.y - oy), gl.z + 40, gl.life < 0.2 ? 1000 : 450, gl.col[0] * I * 0.3, gl.col[1] * I * 0.3, gl.col[2] * I * 0.3, 0.1);
     }
   }
 
   /** Duszki: błyski i żar w miejscach uderzeń. */
   addGlows(glow, ox, oy) {
+    const fd = this.fade >= 0 && this.fade < 1 ? this.fade : 1;
     for (const gl of this._glows) {
       const u = gl.t / gl.life;
       const e = gl.life < 0.2 ? Math.exp(-u * 3) : (1 - u) * (1 - u);
-      const k = e * gl.k;
+      const k = e * gl.k * fd;
       if (k < 0.01) continue;
       glow.add(gl.x - ox, -(gl.y - oy), gl.z, gl.size * (gl.life < 0.2 ? 0.7 + u : 1), gl.col[0] * k, gl.col[1] * k, gl.col[2] * k, GLOW_ROUND);
     }

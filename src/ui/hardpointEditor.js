@@ -10,6 +10,7 @@ import pirateSupercapitalImg from '../assets/ships/piratecapital.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
 import { migratePirateSpriteLayout } from '../data/pirateSpriteMigration.js';
+import { NAV_LIGHT_LAYOUT } from '../data/shipNavLights.js';
 import { WEAPON_SIZES, WEAPON_SIZE_LABEL } from '../data/weapons.js';
 import { getHullRenderSize, getWeaponTierForHull, resolveHullRenderProfileId } from '../data/ships.js';
 import { AUTO_FLOOD, computeAutoFloodMarkers, floodLightAllowed } from '../game/shipLightRuntime.js';
@@ -2129,8 +2130,8 @@ function getEditorWorldPerPx() {
   return Math.max(size.w, size.h) / Math.max(sw, sh);
 }
 
-// Automatyczne reflektory, które gra zapali na tym kadłubie (próg par zależy
-// od długości w świecie). Pusto, gdy statek ma własne albo nie ma obrysu lamp.
+// Reflektory z obrysu lamp do wstawienia przyciskiem (próg par zależy od długości
+// w świecie). Pusto, gdy statek ma własne albo nie ma obrysu lamp.
 function getAutoFloodPreview(data = ensureShipData(state.shipId)) {
   const { hullLenPx, markers } = computeAutoFloodMarkers(normalizeLightsBlock(data.lights));
   const worldPerPx = getEditorWorldPerPx();
@@ -2160,13 +2161,13 @@ function syncFloodAutoButton() {
   const count = preview.markers.length;
   btn.disabled = count === 0;
   if (count) {
-    btn.title = `Wstaw ${count} reflektorów otoczenia, które gra dokłada temu kadłubowi z obrysu lamp (przerywane) — potem można je przesuwać i przemalowywać`;
+    btn.title = `Wstaw ${count} reflektorów otoczenia z obrysu lamp — potem można je przesuwać i przemalowywać`;
   } else if (data.lights.flood.length) {
-    btn.title = 'Statek ma własne reflektory otoczenia — gra nie dokłada automatycznych';
+    btn.title = 'Statek ma już reflektory otoczenia';
   } else if (preview.generated) {
-    btn.title = `Kadłub ${Math.round(preview.hullLenWorld)} j. — gra zapala reflektory otoczenia od ${AUTO_FLOOD.rearMinLen} j. długości obrysu lamp; własne można postawić pędzlem`;
+    btn.title = `Kadłub ${Math.round(preview.hullLenWorld)} j. — reflektory z obrysu od ${AUTO_FLOOD.rearMinLen} j. długości obrysu lamp; własne można postawić pędzlem`;
   } else {
-    btn.title = 'Brak automatycznych: za mało lamp pozycyjnych na obrys albo reflektory drogowe świecą w bok/do tyłu';
+    btn.title = 'Nic do wstawienia: za mało lamp pozycyjnych na obrys albo reflektory drogowe świecą w bok/do tyłu';
   }
 }
 
@@ -2895,6 +2896,7 @@ function compactMarker(marker, kind) {
 function compactLights(lights) {
   const normalized = normalizeLightsBlock(lights);
   return {
+    navLayout: NAV_LIGHT_LAYOUT,
     position: normalized.position.map((m) => compactLightMarker(m, LIGHT_KINDS.POSITION)).filter(Boolean),
     road: normalized.road.map((m) => compactLightMarker(m, LIGHT_KINDS.ROAD)).filter(Boolean),
     flood: normalized.flood.map((m) => compactLightMarker(m, LIGHT_KINDS.FLOOD)).filter(Boolean)
@@ -3113,7 +3115,6 @@ function updateStatsAndPreview() {
       return !!keys[`Key${key}`];
     }).join(' ') || '-';
   const mouseLabel = state.mouseLocal ? `${round2(state.mouseLocal.x)}, ${round2(state.mouseLocal.y)}` : '-';
-  const autoFloods = getAutoFloodPreview(data);
   syncFloodAutoButton();
   const shipLabel = selectedShipId === CURRENT_SHIP_ID
     ? `Current Ship → ${selectedDef.label}`
@@ -3127,7 +3128,7 @@ function updateStatsAndPreview() {
     <div>Silniki SIDE: ${data.engines.side.length}</div>
     <div>Swiatla pozycyjne: ${data.lights.position.length}</div>
     <div>Swiatla drogowe: ${data.lights.road.length}</div>
-    <div>Reflektory otoczenia: ${data.lights.flood.length ? data.lights.flood.length : (autoFloods.generated ? `auto z obrysu ${autoFloods.markers.length} (kadłub ${Math.round(autoFloods.hullLenWorld)} j.)` : '0')}</div>
+    <div>Reflektory otoczenia: ${data.lights.flood.length}</div>
     <div>Min/Max SIDE: W ${state.sideVfxWidthMin}-${state.sideVfxWidthMax}, L ${state.sideVfxLengthMin}-${state.sideVfxLengthMax}</div>
     <div>Canvas: ${Math.round(runtime.cssW)} x ${Math.round(runtime.cssH)}</div>
     <div>Mysz local: ${mouseLabel}</div>

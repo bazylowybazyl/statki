@@ -36,16 +36,17 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Discard,
-  float, vec2, vec3, vec4, uniform, attribute, varying,
+  float, int, vec2, vec3, vec4, ivec3, uvec3, uniform, attribute, varying,
   positionLocal, positionGeometry, normalLocal, uv,
-  modelWorldMatrix, modelWorldMatrixInverse, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
+  modelWorldMatrix, modelWorldMatrixInverse, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition, cameraWorldMatrix,
   transformNormalToView, screenCoordinate, screenSize, viewportSize,
-  atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
-  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty, uint, screenUV
+  abs, atan, clamp, cos, sin, dot, exp, exp2, floor, fract, length, log2, max, min, mix, mod, normalize, pow,
+  select, smoothstep, sqrt, step, distance, dFdx, dFdy, fwidth, texture, varyingProperty, uint, screenUV
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { WARP_STARS } from './warp/stars.js';
+import { STAR_PARALLAX_LAYERS, STAR_MID_SPHERE } from './starParallax.js';
 import { WARP_SKY_BEND, warpSkyBendOffset } from './warp/skyBend.js';
 import { RULON, rulonInverse } from './warp/rulon.js';
 import { acesGry } from './tsl/kolorGry.js';
@@ -60,8 +61,8 @@ const SKY_STAR_TEX = vec2(5120, 3200);
 // maska liczona w płaszczyźnie gry trafiałaby w nie obok), ciała przy ringu (pass ortho) — tak;
 // mgławica i gwiazdy dostają długą smugę tła.
 import { sunShaftBackdrop, sunVisibility } from './sunShadowMask.js';
-// Wielka kopalnia ringu na Ziemi: wycięcie kuli i łata-bryła (uPitMode 1 / 2, earthPit.tsl.js).
-import { earthPitProfile, earthPitShade, EARTH_PIT_TSL } from './earthPit.tsl.js';
+// Wielki gryz Ziemi: wycięcie kuli i łata (ściany, dno, kołnierz) — uPitMode 1 / 2, earthBite.tsl.js.
+import { earthBiteCoords, earthBiteEast, earthBiteShade, EARTH_BITE_TSL } from './earthBite.tsl.js';
 // Żywa atmosfera Jowisza (rodzaj 'jupiter' = graf powierzchni z barwą dnia z przepływu, jupiterAtmosphere.tsl.js).
 import { JUPITER_UNIFORM_KEYS, jupiterFlowDayColor } from './jupiterAtmosphere.tsl.js';
 // Żywa atmosfera Saturna (rodzaj 'saturn' — ten sam silnik gazowych olbrzymów z czapami polarnymi, saturnAtmosphere*.js).
@@ -72,8 +73,8 @@ export const STAR_PLANET_MASK_CAP = 12;
 // Liczniki (testy, spis): `materials` — lekkie materiały per ciało, `builds` — budowy
 // NodeBuildera (ma ich być tyle co rodzajów × kontekstów renderu, nie tyle co ciał).
 export const PLANET_TSL_STATS = {
-  materials: { surface: 0, jupiter: 0, saturn: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0 },
-  builds: { surface: 0, jupiter: 0, saturn: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0 }
+  materials: { surface: 0, jupiter: 0, saturn: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0, sunCorona: 0 },
+  builds: { surface: 0, jupiter: 0, saturn: 0, clouds: 0, atmosphere: 0, ringAtmosphere: 0, sun: 0, sunCorona: 0 }
 };
 
 export const PLANET_MATERIAL_NAMES = Object.freeze({
@@ -84,6 +85,7 @@ export const PLANET_MATERIAL_NAMES = Object.freeze({
   atmosphere: 'PlanetAtmosphere',
   ringAtmosphere: 'RingPlanetAtmosphere',
   sun: 'SunSurface',
+  sunCorona: 'SunCorona',
   nebula: 'GameNebula',
   stars: 'GameStars'
 });
@@ -170,39 +172,81 @@ const hash12 = /*@__PURE__*/ Fn(([p]) => {
   return fract(p3.x.add(p3.y).mul(p3.z));
 }).setLayout({ name: 'planetHash12', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
 
-// Słońce: gradient szumu z haszem sin-fract na węzłach całkowitych (jak SUN_FRAGMENT).
-const sunHash = /*@__PURE__*/ Fn(([p]) => {
-  const q = vec3(
-    dot(p, vec3(127.1, 311.7, 74.7)),
-    dot(p, vec3(269.5, 183.3, 246.1)),
-    dot(p, vec3(113.5, 271.9, 124.6))
-  );
-  return float(-1.0).add(float(2.0).mul(fract(sin(q).mul(43758.5453123))));
-}).setLayout({ name: 'sunHash', type: 'vec3', inputs: [{ name: 'p', type: 'vec3' }] });
+// Słońce: hasz CAŁKOWITY 3D (beltNoiseHashU, asteroids/rockNoise.js) — tańszy od sin-fract przy kilkunastu oktawach na
+// kadrze pełnym słońca; wklejany (bez layoutu — pułapka 35: funkcja z layoutem wołająca inną z layoutem). i32 → u32 to
+// w WGSL przepisanie bitów, więc ujemne węzły kraty działają.
+const sunHashU = (c) => {
+  const q = uvec3(c).mul(uvec3(1597334673, 3812015801, 2798796415)).toVar();
+  const h = q.x.bitXor(q.y).bitXor(q.z).mul(uint(1597334673)).toVar();
+  h.assign(h.bitXor(h.shiftRight(uint(16))));
+  h.assign(h.mul(uint(2246822519)));
+  h.assign(h.bitXor(h.shiftRight(uint(13))));
+  return h;
+};
 
-const sunNoise = /*@__PURE__*/ Fn(([p]) => {
-  const i = floor(p).toVar();
+// Szum gradientowy 3D (gradient z haszu: trzy pola po 10 bitów), wygładzenie kwintyczne; wynik ~[−1, 1].
+const sunGNoise = /*@__PURE__*/ Fn(([p]) => {
+  const i = ivec3(floor(p)).toVar();
   const f = fract(p).toVar();
-  const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0))).toVar();
-  const g = (x, y, z) => dot(sunHash(i.add(vec3(x, y, z))), f.sub(vec3(x, y, z)));
+  const u = f.mul(f).mul(f).mul(f.mul(f.mul(6.0).sub(15.0)).add(10.0)).toVar();
+  const g = (x, y, z) => {
+    const h = sunHashU(i.add(ivec3(x, y, z)));
+    const gr = vec3(
+      float(h.bitAnd(uint(1023))),
+      float(h.shiftRight(uint(10)).bitAnd(uint(1023))),
+      float(h.shiftRight(uint(20)).bitAnd(uint(1023)))
+    ).mul(2.0 / 1023.0).sub(1.0);
+    return dot(gr, f.sub(vec3(x, y, z)));
+  };
   return mix(
-    mix(mix(g(0.0, 0.0, 0.0), g(1.0, 0.0, 0.0), u.x), mix(g(0.0, 1.0, 0.0), g(1.0, 1.0, 0.0), u.x), u.y),
-    mix(mix(g(0.0, 0.0, 1.0), g(1.0, 0.0, 1.0), u.x), mix(g(0.0, 1.0, 1.0), g(1.0, 1.0, 1.0), u.x), u.y),
+    mix(mix(g(0, 0, 0), g(1, 0, 0), u.x), mix(g(0, 1, 0), g(1, 1, 0), u.x), u.y),
+    mix(mix(g(0, 0, 1), g(1, 0, 1), u.x), mix(g(0, 1, 1), g(1, 1, 1), u.x), u.y),
     u.z
-  );
-}).setLayout({ name: 'sunNoise', type: 'float', inputs: [{ name: 'p', type: 'vec3' }] });
+  ).mul(1.5);
+}).setLayout({ name: 'sunGNoise', type: 'float', inputs: [{ name: 'p', type: 'vec3' }] });
 
-const sunFbm = /*@__PURE__*/ Fn(([p0]) => {
+// Wielka plazma słońca: n oktaw (wklejane — pułapka 35).
+const sunPlasmaFbm = (p0, octaves) => {
   const f = float(0.0).toVar();
   const amp = float(0.5).toVar();
   const p = vec3(p0).toVar();
-  Loop(4, () => {
-    f.addAssign(amp.mul(sunNoise(p)));
+  Loop(octaves, () => {
+    f.addAssign(amp.mul(sunGNoise(p)));
     p.mulAssign(2.02);
     amp.mulAssign(0.5);
   });
   return f;
-}).setLayout({ name: 'sunFbm', type: 'float', inputs: [{ name: 'p', type: 'vec3' }] });
+};
+
+// Komórki ziarnistości: Worley 3D (3 × 3 × 3 komórek kraty, punkt w komórce z haszu) → vec3(F1, F2, jasność komórki).
+// Czysta funkcja z layoutem; hasz wklejany (pułapka 35).
+const sunCells = /*@__PURE__*/ Fn(([p]) => {
+  const ip = ivec3(floor(p)).toVar();
+  const fp = fract(p).toVar();
+  const f1 = float(9.0).toVar();
+  const f2 = float(9.0).toVar();
+  const r1 = float(0.5).toVar();
+  Loop(
+    { start: -1, end: 1, condition: '<=', name: 'cz' },
+    { start: -1, end: 1, condition: '<=', name: 'cy' },
+    { start: -1, end: 1, condition: '<=', name: 'cx' },
+    ({ cx, cy, cz }) => {
+      const c = ivec3(cx, cy, cz).toVar();
+      const h = sunHashU(ip.add(c)).toVar();
+      const o = vec3(
+        float(h.bitAnd(uint(1023))),
+        float(h.shiftRight(uint(10)).bitAnd(uint(1023))),
+        float(h.shiftRight(uint(20)).bitAnd(uint(1023)))
+      ).mul(0.8 / 1023.0).add(0.1);
+      const d = vec3(c).add(o).sub(fp).toVar();
+      const dd = dot(d, d).toVar();
+      r1.assign(select(dd.lessThan(f1), float(h.mul(uint(747796405)).shiftRight(uint(24))).div(255.0), r1));
+      f2.assign(min(f2, max(f1, dd)));
+      f1.assign(min(f1, dd));
+    }
+  );
+  return vec3(sqrt(f1), sqrt(f2), r1);
+}).setLayout({ name: 'sunCells', type: 'vec3', inputs: [{ name: 'p', type: 'vec3' }] });
 
 // ── Wspólne kawałki (wklejane — zależą od uniformów) ────────────────────────────
 // Analityczny cień ringu na tarczy (pas od nawietrznej, słonecznej strony): promień do słońca
@@ -276,7 +320,7 @@ const SURFACE_KEYS = {
   uBrightness: 'float', uSpecular: 'float', uSunIntensity: 'float',
   uHazeStrength: 'float', uHazeColor: 'vec3', uHazeBeta: 'vec3',
   uRingShadowStrength: 'float', uRingShadowRadius: 'float', uRingShadowReach: 'float', uRingShadowCenter: 'vec2',
-  uSunShadowRecv: 'float', uPitMode: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4'
 };
 
 // `flow` (rodzaj 'jupiter'): barwa dnia z przepływu atmosfery zamiast próbki mapy — reszta grafu bez zmian.
@@ -312,73 +356,109 @@ function buildSurfaceGraph(flow = null) {
     const T = normalize(q0.negate().mul(st1.x).add(q1.mul(st0.x)));
     const geoN = normalize(vNormal).toVar();
     const mappedNormal = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(geoN.mul(mapN.z)));
-    const normal = select(hasNight, mappedNormal, geoN).toVar();
+    // Hak powierzchni rodzaju (tylko rodzaje dopisane `registerPlanetFlowKind` z `surface` — planety generatora):
+    // własna normalna, cień terenu, barwa dnia, maska wody i świecenie. Bez haka graf (i WGSL) jak dawniej.
+    const hook = flow?.surface ? flow.surface({ U, uv: vUv, local: vLocal, geoN, worldPos: vWorldPosition, dayTex, specTex, nightTex }) : null;
+    const normal = (hook?.normal ? hook.normal : select(hasNight, mappedNormal, geoN)).toVar();
 
-    // Dziura (tylko Ziemia): profil w kierunku fragmentu; na łacie normalna, cień i żar ze wzoru.
-    const pitP = vec4(0.0, 9.0, 0.0, 0.0).toVar();
+    // Gryz (tylko Ziemia): współrzędne gryzu fragmentu (earthBite.tsl.js); kula wycina obszar gryzu, na łacie
+    // (ściany i dno) normalna, cień, barwa skał, żar i pole siłowe ze wzoru.
+    const biteC = vec4(9.0, 0.0, 0.0, 0.0).toVar();
     const pitShadow = float(1.0).toVar();
-    const pitGlow = float(0.0).toVar();
-    const pitDetail = float(1.0).toVar();
-    const inPit = float(0.0).toVar();
+    const pitAlbedo = vec3(0.0).toVar();
+    const pitOwn = float(0.0).toVar();      // 1 — barwa i światła z gryzu (ściany, dno), nie z mapy
+    const pitEmit = vec3(0.0).toVar();
+    const pitField = float(0.0).toVar();
+    // wysokość widoku dla mgiełki we wnętrzu gryzu: z punktu, w którym promień widzenia wchodzi do otworu (kula R)
+    const biteMu = float(0.0).toVar();
+    // masa powietrza we wnętrzu (× masa z punktu wejścia): atmosfera stoi nad otworem; kamera w gryzie — bez powietrza
+    const pitAir = float(1.0).toVar();
+    // rozmiar piksela w układzie obiektu — pochodne poza gałęziami (detal gryzu z daleka gaśnie do średniej)
+    const pixL = length(fwidth(vLocal)).toVar();
     If(U.uPitMode.greaterThan(0.5), () => {
-      const pDir = normalize(vLocal).toVar();
-      pitP.assign(earthPitProfile(pDir));
-      If(U.uPitMode.greaterThan(1.5), () => {
+      const east = earthBiteEast(U.uBite.xyz).toVar();
+      const pL = vec3(vLocal).toVar();
+      If(U.uPitMode.lessThan(1.5), () => {
+        biteC.assign(earthBiteCoords(normalize(pL), U.uBite, east));
+      }).Else(() => {
         const sunW = normalize(U.sunPosition.sub(vWorldPosition));
-        const sunObj = normalize(modelWorldMatrixInverse.mul(vec4(sunW, 0.0)).xyz);
-        const sh = earthPitShade(pDir, sunObj, pitP);
-        inPit.assign(float(1.0).sub(smoothstep(EARTH_PIT_TSL.rimS, EARTH_PIT_TSL.rimS + 0.012, pitP.y)));
-        normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), inPit)));
-        pitShadow.assign(mix(1.0, sh.shadow, inPit));
-        pitGlow.assign(sh.glow);
-        pitDetail.assign(mix(1.0, sh.detail, inPit));
+        const sunObj = normalize(modelWorldMatrixInverse.mul(vec4(sunW, 0.0)).xyz).toVar();
+        biteC.assign(earthBiteCoords(pL, U.uBite, east));
+        const sh = earthBiteShade(pL, sunObj, biteC, U.uBite, east, pixL);
+        normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), sh.cav)));
+        pitShadow.assign(mix(1.0, sh.shadow, sh.cav));
+        pitAlbedo.assign(sh.albedo);
+        pitOwn.assign(sh.cav);
+        pitEmit.assign(sh.emit);
+        pitField.assign(sh.field);
+        // ku kamerze w układzie obiektu (długość = odległość do kamery)
+        const toCam = modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(vViewPosition, 0.0))).xyz.toVar();
+        const vObj = normalize(toCam);
+        const pv = dot(pL, vObj);
+        const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0))).toVar();
+        // ≥ 0,35: przez wcięcie na brzegu tarczy promień wychodzi stycznie — pełna masa powietrza dawała mleczną taflę
+        biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.35, 1.0));
+        // kamera bliżej niż wyjście z kuli (w jamie — kadry szczegółów dema) — promień nie przechodzi przez atmosferę
+        pitAir.assign(smoothstep(0.0, 0.01, length(toCam).sub(tq)).mul(EARTH_BITE_TSL.pitAir));
       });
     });
 
     const NdotL = dot(normal, lightDir).toVar();
-    const sunL = max(0.0, NdotL).mul(pitShadow).toVar();
+    const sunL = (hook?.shadow ? max(0.0, NdotL).mul(pitShadow).mul(hook.shadow) : max(0.0, NdotL).mul(pitShadow)).toVar();
     // Wysokość słońca nad horyzontem w punkcie (normalna geometryczna — gładki pas zachodu).
     const geoMu = dot(geoN, lightDir).toVar();
     // Próbki w jednolitym przepływie (toVar): select() niżej rozwija się w if/else, a próbka
     // z pochodnymi w gałęzi zależnej od piksela dawałaby nieokreślony poziom mipmapy.
-    const dayRgb = flow ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb;
-    const dayColor = vec4(dayRgb.mul(pitDetail), 1.0).toVar();
+    const dayRgb = hook?.day ? hook.day : (flow?.color ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb);
+    const dayColor = vec4(mix(dayRgb, pitAlbedo, pitOwn), 1.0).toVar();
     const nightColor = vec4(nightTex).toVar();
     const specularMask = vec4(specTex).toVar().r;
-    const waterMask = smoothstep(0.08, 0.82, specularMask);
+    const waterMask = hook?.water ? hook.water : smoothstep(0.08, 0.82, specularMask);
     const NdotH = max(0.0, dot(normal, halfVector));
     const shininess = mix(16.0, 42.0, waterMask);
-    const specular = select(sunL.greaterThan(0.0), pow(NdotH, shininess).mul(waterMask).mul(U.uSpecular).mul(sunL), float(0.0)).toVar();
+    // połysk wody tylko z mapy — ściany i dno gryzu go nie mają
+    const specular = select(sunL.greaterThan(0.0), pow(NdotH, shininess).mul(waterMask).mul(U.uSpecular).mul(sunL), float(0.0))
+      .mul(float(1.0).sub(pitOwn)).toVar();
     const sunVisP = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
 
     // Dzień: Lambert w świetle przefiltrowanym przez atmosferę, połysk wody tym samym światłem.
     const sunT = sunTransmittance(geoMu, U).toVar();
     const dayLit = dayColor.rgb.mul(U.uBrightness).mul(clamp(sunL.mul(U.uSunIntensity), 0.0, 1.2))
       .add(vec3(0.55, 0.62, 0.78).mul(specular)).mul(sunT).mul(sunVisP);
-    // Dziura: światło nieba w cieniu ścian (bez niego tarasy w cieniu byłyby czarne jak noc).
-    const pitSky = dayColor.rgb.mul(U.uBrightness).mul(EARTH_PIT_TSL.skyFill).mul(float(1.0).sub(pitShadow))
-      .mul(smoothstep(0.0, 0.25, geoMu)).mul(sunT).mul(sunVisP).mul(inPit);
+    // Gryz: światło nieba w cieniu ścian (bez niego ściany w cieniu byłyby czarne jak noc).
+    const pitSky = dayColor.rgb.mul(U.uBrightness).mul(EARTH_BITE_TSL.skyFill).mul(float(1.0).sub(pitShadow))
+      .mul(smoothstep(0.0, 0.25, geoMu)).mul(sunT).mul(sunVisP).mul(pitOwn);
     // Noc (Ziemia): same miasta — ląd w świetle księżyca z mapy nocy (luminancja ~0,005) i ocean
     // (~0,002) odcięte progiem. Zapalają się z zapadaniem zmroku i w cieniu ringu.
     const nightBase = nightColor.rgb;
     const cityBrightness = dot(nightBase, vec3(0.299, 0.587, 0.114));
     const cityGlow = nightBase.mul(cityBrightness.mul(cityBrightness)).mul(5.0);
     const cityOn = float(1.0).sub(smoothstep(-0.10, 0.06, geoMu).mul(sunVisP));
-    const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn);
+    const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn).mul(float(1.0).sub(pitOwn));
     const finalColor = dayLit.add(pitSky).add(cities).toVar();
-    // Żar szybu kopalni (skała ~900 °C): świeci także w dzień, nocą pełną mocą.
-    finalColor.addAssign(vec3(...EARTH_PIT_TSL.glow).mul(pitGlow).mul(mix(EARTH_PIT_TSL.glowDay, 1.0, cityOn)));
+    // Pole siłowe ścian gryzu (język tarcz) widać pod kątem i w cieniu.
+    const fieldFr = float(1.0).sub(abs(dot(normal, viewDir)));
+    finalColor.addAssign(vec3(...EARTH_BITE_TSL.field).mul(pitField.mul(EARTH_BITE_TSL.fieldGain))
+      .mul(float(0.35).add(fieldFr.mul(fieldFr).mul(0.65))).mul(float(1.0).sub(min(sunL.mul(2.0), 1.0).mul(0.85))));
 
+    // ekstynkcja mgiełki (żar gryzu dodawany niżej, po cieniu ringu, gaśnie tylko w niej)
+    const airExt = vec3(1.0).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {
-      const mu = clamp(dot(geoN, viewDir), 0.0, 1.0);
-      const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05));
+      // we wnętrzu gryzu (ściany, dno) promień wychodzi przez otwór — wysokość widoku z punktu wejścia (biteMu),
+      // masa powietrza tylko nad otworem (pitAir)
+      const mu = mix(clamp(dot(geoN, viewDir), 0.0, 1.0), biteMu, pitOwn);
+      const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05)).mul(mix(1.0, pitAir, pitOwn));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();
+      airExt.assign(extinction);
       // Mgiełka świeci światłem słońca, które do niej doszło: za dnia barwa mgiełki, przy terminatorze
       // złoto i czerwień, za nim łuna powietrza, które jeszcze widzi słońce.
       const muAir = geoMu.add(SUNSET.airDip).toVar();
       const airLit = smoothstep(-0.02, 0.06, muAir).mul(smoothstep(-0.06, 0.30, muAir)).mul(sunVisP);
       const hazeCol = U.uHazeColor.mul(sunTransmittance(muAir, U)).mul(airLit);
-      finalColor.assign(finalColor.mul(extinction).add(hazeCol.mul(float(1.0).sub(extinction))));
+      // we wnętrzu gryzu welon bez zabarwienia (niebieskawy na ciemnej skale dawał liliowy połysk)
+      const scat = hazeCol.mul(float(1.0).sub(extinction)).toVar();
+      scat.assign(mix(scat, vec3(dot(scat, vec3(0.299, 0.587, 0.114))), pitOwn));
+      finalColor.assign(finalColor.mul(extinction).add(scat));
       finalColor.addAssign(sunsetGlow(muAir, airmass, sunVisP, U));
     });
 
@@ -389,12 +469,16 @@ function buildSurfaceGraph(flow = null) {
     finalColor.assign(max(finalColor, vec3(0.0)));
 
     applyRingShadow(finalColor, vWorldPosition, dayAmount, U);
+    // Żar gryzu (płaszcz ~2 500 K na dnie) świeci tak samo w dzień i w nocy — po cieniu ringu, przez samą ekstynkcję.
+    finalColor.addAssign(pitEmit.mul(airExt));
+    // Świecenie z haka (ruiny planet generatora) — w dzień i w nocy, przez samą ekstynkcję mgiełki.
+    if (hook?.emit) finalColor.addAssign(hook.emit.mul(airExt));
 
     const luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
     const bloomPush = smoothstep(0.85, 1.0, luminance).mul(U.uPlanetBloom);
     finalColor.addAssign(finalColor.mul(bloomPush));
-    // Kula Ziemi bez obszaru dziury — tam leży łata (bryła).
-    Discard(U.uPitMode.greaterThan(0.5).and(U.uPitMode.lessThan(1.5)).and(pitP.y.lessThan(EARTH_PIT_TSL.cutS)));
+    // Kula Ziemi bez obszaru gryzu — tam leży łata (bryła).
+    Discard(U.uPitMode.greaterThan(0.5).and(U.uPitMode.lessThan(1.5)).and(biteC.x.lessThan(biteC.w.add(EARTH_BITE_TSL.cutPad))));
     return vec4(finalColor, 1.0);
   })();
 
@@ -406,15 +490,19 @@ function buildSurfaceGraph(flow = null) {
 const CLOUD_KEYS = {
   sunPosition: 'vec3', uOpacity: 'float', uHazeStrength: 'float', uHazeColor: 'vec3', uHazeBeta: 'vec3',
   uRingShadowStrength: 'float', uRingShadowRadius: 'float', uRingShadowReach: 'float', uRingShadowCenter: 'vec2',
-  uSunShadowRecv: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4'
 };
 
-function buildCloudGraph() {
-  const U = perObjectUniforms(CLOUD_KEYS);
+// `flow.cloud` (rodzaje dopisane `registerPlanetCloudKind` — chmury planet generatora): hak wołany raz po masce,
+// przed gałęziami, z { U, local, mask, lightDir, normal }; zwraca { mask (maska po detalu), shade (mnożnik barwy),
+// opcjonalnie tintPatch + tintMix (barwa z wycinka mapy pod kamerą i jej waga) }.
+function buildCloudGraph(flow = null) {
+  const U = perObjectUniforms(flow ? { ...CLOUD_KEYS, ...flow.keys } : CLOUD_KEYS);
   const worldPos = modelWorldMatrix.mul(vec4(positionLocal, 1.0));
   const vNormal = varying(normalize(modelWorldMatrix.mul(vec4(normalLocal, 0.0)).xyz), 'vCloudNormal');
   const vWorldPosition = varying(worldPos.xyz, 'vCloudWorld');
   const cloudTex = perObjectTexture('cloudTexture', PLACEHOLDER.clouds, uv());
+  const vCloudLocal = varying(positionLocal, 'vCloudLocal');
 
   const fragmentNode = Fn(() => {
     const texel = vec4(cloudTex).toVar();
@@ -425,15 +513,26 @@ function buildCloudGraph() {
     // przefiltrowanym przez atmosferę — przy terminatorze złote i różowe (pas zachodu).
     // Chmury to bryły, nie płaszczyzna: przy niskim słońcu jasne zostają ich boki od słońca — oświetlenie
     // gaśnie dopiero tuż przy terminatorze (dawniej rampa do 0,22 — chmury pasa zachodu były bure).
+    const hook = flow?.cloud ? flow.cloud({ U, local: vCloudLocal, mask, lightDir, normal }) : null;
+    const maskA = hook?.mask ? hook.mask : mask;
     const geoMu = dot(normal, lightDir).toVar();
     const muSun = geoMu.add(SUNSET.cloudDip).toVar();
     const sunVisC = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
     const lit = smoothstep(-0.02, 0.12, muSun).mul(sunVisC).toVar();
-    const alpha = mask.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
+    const alpha = maskA.mul(U.uOpacity).mul(pow(lit, 1.35)).toVar();
+    // Nad otworem gryzu chmur nie ma (żar, wznoszenie); uBite = środek gryzu w układzie TEJ kuli (chmury
+    // obracają się szybciej niż grunt — przelicza go CPU co klatkę).
+    If(U.uPitMode.greaterThan(0.5), () => {
+      const bc = earthBiteCoords(normalize(vCloudLocal), U.uBite, earthBiteEast(U.uBite.xyz));
+      alpha.mulAssign(smoothstep(bc.w.add(0.004), bc.w.add(0.05), bc.x));
+    });
     // Barwa chmury z chromy tekstury (biel — chmury, brąz — pył i burze piaskowe Ziemi przyszłości);
     // jasność niesie maska, więc dawna biała mapa daje barwę (1, 1, 1).
-    const tint = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
-    const color = sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint).toVar();
+    const tintMap = min(texel.rgb.div(max(mask, 1e-3)), vec3(1.6));
+    // hak chmur z bliska (planetGenCloudsNear.tsl.js): barwa z wycinka mapy pod kamerą (`tintMix` — jego waga)
+    const tint = hook?.tintPatch ? mix(tintMap, hook.tintPatch, hook.tintMix) : tintMap;
+    const color = (hook?.shade ? sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint).mul(hook.shade)
+      : sunTransmittance(muSun, U).mul(float(0.08).add(lit.mul(0.92))).mul(tint)).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       const viewDirW = normalize(cameraPosition.sub(vWorldPosition));
       const mu = clamp(dot(normal, viewDirW), 0.0, 1.0);
@@ -447,7 +546,7 @@ function buildCloudGraph() {
       color.addAssign(sunsetGlow(muAir, airmass, sunVisC, U));
     });
     applyRingShadow(color, vWorldPosition, lit, U);
-    Discard(mask.lessThan(0.03).or(alpha.lessThan(0.01)));
+    Discard(maskA.lessThan(0.03).or(alpha.lessThan(0.01)));
     return vec4(color, alpha);
   })();
 
@@ -504,7 +603,7 @@ function buildAtmosphereGraph() {
 // e^(−h/Hs) — gaśnie do zera na brzegu powłoki (bez twardej krawędzi).
 const RING_ATMOSPHERE_KEYS = {
   uSunDir: 'vec3', uRa: 'float', uHs: 'float', uDayColor: 'vec3', uSunsetColor: 'vec3', uGain: 'vec3',
-  uSunShadowRecv: 'float'
+  uSunShadowRecv: 'float', uPitMode: 'float', uBite: 'vec4', uBiteEast: 'vec3'
 };
 
 function buildRingAtmosphereGraph() {
@@ -526,6 +625,30 @@ function buildRingAtmosphereGraph() {
     // cień ringu z maski słońca tylko do połowy: słońce gry leży w płaszczyźnie ringu, więc
     // pełna maska gasiłaby cały limb od strony słońca
     glow.mulAssign(mix(1.0, sunVisibility(), U.uSunShadowRecv.mul(0.5)));
+    // Wcięcie gryzu w obrysie (Ziemia; uBite / uBiteEast w układzie dysku, z ku kamerze). Na tarczy (ρ < 1) dysk
+    // zasłania kula, ale w otworze kuli nie ma — przez otwór (punkt kuli od kamery w gryzie) poświata prawie gaśnie,
+    // a gdzie obie końcówki cięciwy promienia leżą w gryzie, promień nie trafia w skałę (przecięty brzeg tarczy).
+    // Za limbem (ρ ≥ 1) poświata wisi nad punktem limbu pod promieniem — nad wyciętym gaśnie (wcięcie w obrysie).
+    If(U.uPitMode.greaterThan(0.5), () => {
+      const inDisc = rho.lessThan(1.0);
+      const hz = sqrt(max(float(1.0).sub(rho.mul(rho)), 0.0));
+      const limb = vOff.div(max(rho, 1e-4));
+      const pf = select(inDisc, vec3(vOff, hz), vec3(limb, 0.0));
+      const pb = select(inDisc, vec3(vOff, hz.negate()), vec3(limb, 0.0));
+      const bf = earthBiteCoords(pf, U.uBite, U.uBiteEast);
+      const bb = earthBiteCoords(pb, U.uBite, U.uBiteEast);
+      const mf = bf.w.sub(bf.x);
+      const through = smoothstep(-0.04, 0.008, min(mf, bb.w.sub(bb.x)));
+      const intoHole = select(inDisc, smoothstep(-0.01, 0.02, mf).mul(0.97), float(0.0));
+      // Promień widzenia przechodzi przez kulę gryzu (punkt promienia najbliższy jej środkowi — z = z środka, dokładne β):
+      // dysk leży w płaszczyźnie środka planety i dodaje poświatę na tym, co za nim — przy gryzie przy limbie (Ziemia
+      // obraca się wokół osi ringu, earthSpin.js) za nią leży ściana gryzu widziana przez wcięcie (granatowy nalot).
+      // Gryz na tarczy (dawny kadr): ten punkt leży w otworze, a limb poza zasięgiem kuli gryzu — bez zmian.
+      const bm = earthBiteCoords(vec3(vOff, U.uBite.z), U.uBite, U.uBiteEast);
+      // wygaszanie miękkie już ~0,04 R przed kulą gryzu — na końcach wcięcia poświata wraca bez twardej krawędzi
+      const pass = smoothstep(-0.04, 0.008, bm.w.sub(bm.x));
+      glow.mulAssign(float(1.0).sub(max(max(through, intoHole), pass)));
+    });
     const alpha = max(glow.r, max(glow.g, glow.b)).toVar();
     Discard(rho.greaterThanEqual(U.uRa).or(alpha.lessThanEqual(0.001)));
     return vec4(glow, alpha);
@@ -545,39 +668,119 @@ function buildRingAtmosphereGraph() {
   };
 }
 
-// ── Graf: słońce (dawny SUN_FRAGMENT) ──────────────────────────────────────────
-const SUN_KEYS = { uTime: 'float', uIsOcclusion: 'float' };
+// ── Graf: słońce (DirectSun — kula w płaszczyźnie gry, promień tarczy SUN.r) ───
+// GIGANTYCZNE SŁOŃCE (2026-10-27, prośba użytkownika: „proporcjonalnie jest za małe”; 200 tys. j. —
+// SYSTEM_MAP_CONSTANTS.sunRadius): kadr gry widzi z niego od całej tarczy (soczewka skoku) po wycinek brzegu przy
+// najbliższym zoomie (1 px ≈ 1 / 600 000 promienia). Powierzchnia = WIELKA PLAZMA (dawny wzór słońca: fbm z odkształceniem
+// dziedziny, 4 komórki na promień; odkształcenie liczone w WIERZCHOŁKACH — najdrobniejsza jego oktawa ma ≥ 6 wierzchołków
+// siatki na okres) + MEZOGRANULACJA (oktawy szumu od 1/16 promienia do okresu ~40 px na ekranie — liczba z rozmiaru piksela
+// na kuli) + GRANULACJA: komórki Worleya (jasny środek, ciemne szczeliny F2 − F1, jasność komórki) dwóch oktaw przenikanych
+// tak, że komórka ma na ekranie ~grainPx w każdym zoomie (bez migotania i bez przeskoków przy zoomie) × POCIEMNIENIE
+// BRZEGOWE I(μ) (brzeg czerwieńszy). Korona i płomienie nad brzegiem — osobny pierścień ('sunCorona').
+const SUN_KEYS = { uTime: 'float', uIsOcclusion: 'float', uSunLook: 'vec4' };
 /** Wzmocnienie nadmiaru ponad próg bloomu na kuli słońca (zadanie 25b: bloom bez ×3 — korona wraca). */
 export const SUN_BLOOM_NADMIAR = 3.0;
+/**
+ * Powierzchnia słońca (stałe grafu). Nastawy w biegu — `uSunLook` materiału: x jasność, y mezogranulacja, z granulacja,
+ * w pociemnienie brzegu (1 — jak tu; DirectSun: SUN_LOOK).
+ */
+export const SUN_SURFACE = Object.freeze({
+  plasmaFreq: 4,          // komórki wielkiej plazmy na promień
+  plasmaRate: 0.004,      // [komórki/s] — przy 200 tys. j. promienia ~200 j./s
+  detailF0: 16,           // pierwsza oktawa mezogranulacji [okresy na promień]
+  detailLac: 2.4,         // kolejna oktawa × tyle
+  detailOctaves: 9,       // najwyżej (16 · 2,4⁸ ≈ 18 tys. okresów na promień — ~11 j. przy 200 tys.)
+  detailGain: 0.6,        // amplituda kolejnej oktawy
+  detailAmp: 0.3,         // wkład mezogranulacji w „ciepło” plazmy
+  detailRate: 0.03,       // [komórki/s] — dryf oktawy (kierunek obracany z numerem oktawy)
+  detailMinPx: 40,        // [px] oktawa mezogranulacji o krótszym okresie znika (gaśnie od 2 × tyle)
+  grainF0: 24,            // pierwsza oktawa granulacji [komórki na promień] — kolejne × 2
+  grainOctaves: 16,       // najwyżej (komórka ~0,4 j. przy 200 tys.)
+  grainPx: 22,            // [px] rozmiar komórki granulacji na ekranie (dwie oktawy: 22–44 px i 11–22 px)
+  grainRate: 0.05,        // [komórki/s] — dryf komórek
+  grainWarp: 0.22,        // [komórki] odkształcenie dziedziny komórek (faliste brzegi)
+  laneWidth: 0.34,        // szerokość szczeliny F2 − F1 [komórki] (≥ ~1,5 px — z rozmiaru piksela)
+  laneDepth: 0.28,        // przyciemnienie w szczelinie
+  cellVar: 0.3,           // rozrzut jasności komórek
+  grainLimb: Object.freeze([0.06, 0.4])   // μ: granulacja gaśnie ku brzegowi (skrót perspektywy — komórki w nitki)
+});
 
 function buildSunGraph() {
   const U = perObjectUniforms(SUN_KEYS);
+  const S = SUN_SURFACE;
   const vLocalPos = varying(positionLocal, 'vSunLocal');
   const vNormal = varying(transformNormalToView(normalLocal), 'vSunNormal');
+  // Odkształcenie dziedziny wielkiej plazmy (2 oktawy, okres ≥ 1/8 promienia) — w wierzchołkach, interpolowane.
+  const pV = normalize(positionLocal).mul(S.plasmaFreq);
+  const tV = U.uTime.mul(S.plasmaRate);
+  const vWarp = varying(vec3(
+    sunPlasmaFbm(pV.add(vec3(tV)), 2),
+    sunPlasmaFbm(pV.add(vec3(tV.negate(), tV, 0.0)), 2),
+    sunPlasmaFbm(pV.add(vec3(0.0, tV.negate(), tV)), 2)
+  ), 'vSunWarp');
 
   const fragmentNode = Fn(() => {
-    const p = normalize(vLocalPos).mul(4.0).toVar();
-    const t = U.uTime.mul(0.15).toVar();
-    const q = vec3(
-      sunFbm(p.add(vec3(t))),
-      sunFbm(p.add(vec3(t.negate(), t, 0.0))),
-      sunFbm(p.add(vec3(0.0, t.negate(), t)))
-    ).toVar();
-    const n = clamp(sunFbm(p.add(q.mul(2.0)).add(t)).add(0.5).mul(1.2), 0.0, 1.0).toVar();
-    const colorDark = vec3(0.4, 0.05, 0.0);
-    const colorMid = vec3(1.5, 0.5, 0.1);
-    const colorHot = vec3(4.0, 2.5, 0.5);
-    const finalColor = mix(colorDark, colorMid, smoothstep(0.0, 0.6, n)).toVar();
-    finalColor.assign(mix(finalColor, colorHot, smoothstep(0.5, 1.0, n)));
-    const viewDot = dot(normalize(vNormal), vec3(0.0, 0.0, 1.0));
-    // pow(1 − max(viewDot, 0), 3) mnożeniem (baza WebGL: FXC rozwija potęgę całkowitą)
-    const fb = float(1.0).sub(max(viewDot, 0.0)).toVar();
-    const fresnel = fb.mul(fb).mul(fb);
-    finalColor.addAssign(vec3(1.5, 0.75, 0.25).mul(fresnel));
-    // Korona = sama poświata bloomu kuli HDR. Zadanie 25b: bloom gry jak w demach (bez ×3 dawnego passu WebGL)
-    // zostawiał ~1/3 korony (znikała) — nadmiar luminancji ponad próg bloomu × SUN_BLOOM_NADMIAR (L' = p + 3·(L − p)),
-    // pod progiem bez zmian: poświata teksela 3L − 2p zamiast dawnych 3L (L = 2,7 → 78%); scena `slonce`: energia
-    // kadru wokół słońca 0,50 → 0,70 dawnej, tarcza jak dotąd.
+    // Rozmiar piksela na kuli [promienie] — pochodne PRZED pętlami o długości zależnej od piksela (pułapka 15).
+    const fp = max(length(fwidth(vLocalPos)), 1e-9).toVar();
+    const dir = normalize(vLocalPos).toVar();
+    const look = U.uSunLook;
+    // Wielka plazma: fbm z odkształceniem dziedziny (dawne słońce), plasmaRate komórki/s.
+    const t = U.uTime.mul(S.plasmaRate).toVar();
+    const plasma = clamp(sunPlasmaFbm(dir.mul(S.plasmaFreq).add(vWarp.mul(2.0)).add(t), 3).add(0.5).mul(1.2), 0.0, 1.0).toVar();
+    // Mezogranulacja: oktawy od detailF0 okresów na promień, tyle, ile ma okres ≥ detailMinPx px.
+    const nOct = int(clamp(floor(log2(float(1.0 / S.detailMinPx).div(fp.mul(S.detailF0))).div(Math.log2(S.detailLac))).add(1.0),
+      0.0, float(S.detailOctaves))).toVar();
+    const detail = float(0.0).toVar();
+    const freq = float(S.detailF0).toVar();
+    const amp = float(1.0).toVar();
+    const td = U.uTime.mul(S.detailRate).toVar();
+    Loop({ start: int(0), end: nOct, type: 'int', condition: '<', name: 'sunOct' }, ({ sunOct }) => {
+      const fo = float(sunOct).toVar();
+      const px = freq.mul(fp);   // okresy oktawy na px
+      const w = float(1.0).sub(smoothstep(0.5 / S.detailMinPx, 1.0 / S.detailMinPx, px));
+      const drift = vec3(sin(fo.mul(2.39)), cos(fo.mul(2.39)), sin(fo.mul(1.31).add(0.7))).mul(td);
+      const n = sunGNoise(dir.mul(freq).add(drift).add(vec3(fo.mul(17.13), fo.mul(-31.71), fo.mul(5.31))));
+      detail.addAssign(n.mul(amp).mul(w));
+      freq.mulAssign(S.detailLac);
+      amp.mulAssign(S.detailGain);
+    });
+    // Granulacja: oktawa k ma komórkę grainPx px przy k = log2(1 / (grainPx · fp · grainF0)); k i k + 1 przenikane.
+    // Z daleka (k < 3 — komórka większa niż ~1/200 promienia: cała tarcza w kadrze, soczewka) granulacja gaśnie.
+    const gkRaw = log2(float(1.0 / S.grainPx).div(fp.mul(S.grainF0))).toVar();
+    const grainOn = smoothstep(1.5, 3.0, gkRaw).toVar();
+    const gk = clamp(gkRaw, 0.0, float(S.grainOctaves - 2)).toVar();
+    const gi = floor(gk).toVar();
+    const gt = smoothstep(0.0, 1.0, gk.sub(gi)).toVar();
+    const grain = float(0.0).toVar();
+    const tg = U.uTime.mul(S.grainRate).toVar();
+    Loop({ start: int(0), end: int(2), type: 'int', condition: '<', name: 'sunGrain' }, ({ sunGrain }) => {
+      const go = gi.add(float(sunGrain)).toVar();
+      const gf = exp2(go).mul(S.grainF0).toVar();   // komórki na promień
+      const cpx = gf.mul(fp);                         // komórki na px
+      // tanie odkształcenie (sinusy o niewspółmiernych częstościach) — brzegi komórek faliste, nie proste wielokąty
+      const gp = dir.mul(gf).add(vec3(tg, tg.mul(-0.6), tg.mul(0.8))).add(go.mul(13.7)).toVar();
+      gp.addAssign(vec3(sin(gp.y.mul(1.7).add(gp.z)), sin(gp.z.mul(1.9).add(gp.x)), sin(gp.x.mul(1.5).add(gp.y))).mul(S.grainWarp));
+      const c = sunCells(gp).toVar();
+      // szczelina miękka (F2 − F1), jasny środek komórki (F1), jasność komórki z haszu
+      const lane = smoothstep(0.0, max(float(S.laneWidth), cpx.mul(3.0)), c.y.sub(c.x));
+      const core = float(1.0).sub(smoothstep(0.05, 0.9, c.x));
+      const g = mix(float(1.0 - S.laneDepth), float(1.0), lane).mul(core.mul(0.3).add(0.82))
+        .mul(c.z.sub(0.5).mul(S.cellVar).add(1.0));
+      grain.addAssign(g.mul(select(sunGrain.equal(int(0)), float(1.0).sub(gt), gt)));
+    });
+    const heat = clamp(plasma.add(detail.mul(look.y).mul(S.detailAmp)), 0.0, 1.0).toVar();
+    const colorDark = vec3(0.45, 0.09, 0.02);
+    const colorMid = vec3(1.05, 0.38, 0.07);
+    const colorHot = vec3(1.55, 0.88, 0.25);
+    const finalColor = mix(colorDark, colorMid, smoothstep(0.0, 0.6, heat)).toVar();
+    finalColor.assign(mix(finalColor, colorHot, smoothstep(0.5, 1.0, heat)));
+    const mu = clamp(normalize(vNormal).z, 0.0, 1.0).toVar();
+    finalColor.mulAssign(mix(float(1.0), grain, look.z.mul(grainOn).mul(smoothstep(S.grainLimb[0], S.grainLimb[1], mu))));
+    // Pociemnienie brzegowe I(μ) = 0,38 + 0,62 √μ (μ = cos kąta do kamery; ważone look.w), brzeg czerwieńszy.
+    const sm = sqrt(mu).toVar();
+    const limb = mix(float(1.0), sm.mul(0.62).add(0.38), look.w);
+    finalColor.mulAssign(mix(vec3(1.0, 0.6, 0.4), vec3(1.0), sm).mul(limb).mul(look.x));
+    // Bloom: nadmiar luminancji ponad próg × SUN_BLOOM_NADMIAR (L' = p + 3·(L − p)), pod progiem bez zmian.
     const lum = dot(finalColor, vec3(0.2126, 0.7152, 0.0722)).toVar();
     const nadmiar = max(lum.sub(BLOOM_DEFAULTS.threshold), 0.0);
     finalColor.mulAssign(lum.add(nadmiar.mul(SUN_BLOOM_NADMIAR - 1)).div(max(lum, 1e-4)));
@@ -588,6 +791,69 @@ function buildSunGraph() {
   return { fragmentNode, uniforms: U, state: {} };
 }
 
+// ── Graf: korona słońca (płaski pierścień nad kulą, addytywnie) ────────────────
+// Pierścień w płaszczyźnie gry (pass ring-planet, ortho) od SUN_CORONA.inner do .outer promienia (xy siatki w promieniach
+// słońca): CHROMOSFERA — cienka jasna linia tuż nad brzegiem; PŁOMIENIE i spikule ZAKORZENIONE na brzegu — wysokość języka
+// z szumu KIERUNKU (stała wzdłuż promienia), jasność gaśnie wykładniczo z wysokością przez wysokość języka, w środku smugi
+// płynące w górę (oktawy gasną poniżej ~3 px okresu); KORONA ze smugami (streamery) — słaba poświata gasnąca do brzegu
+// pierścienia. Na tarczę zachodzi tylko ~2 px (wygładzenie sylwetki). HDR ponad próg bloomu tylko tuż nad brzegiem.
+// Mieszanie ONE/ONE jak poświata limbu (alfa = max(rgb)).
+const SUN_CORONA_KEYS = { uTime: 'float', uCoronaLook: 'vec4' };
+/** Pierścień korony [promienie słońca]; `uCoronaLook` materiału: x jasność, y zewnętrzny brzeg, z płomienie, w smugi. */
+export const SUN_CORONA = Object.freeze({ inner: 0.99, outer: 1.6, flameH: 0.004 });
+
+function buildSunCoronaGraph() {
+  const U = perObjectUniforms(SUN_CORONA_KEYS);
+  const vLocal = varying(positionLocal.xy, 'vCoronaLocal');
+
+  const fragmentNode = Fn(() => {
+    const look = U.uCoronaLook;
+    const fp = max(length(fwidth(vLocal)), 1e-9).toVar();   // [promienie na px] — przed szumem
+    const d = max(length(vLocal), 1e-4).toVar();
+    const dir = vLocal.div(d).toVar();
+    const h = max(d.sub(1.0), 0.0).toVar();   // wysokość nad brzegiem [promienie]
+    const t = U.uTime;
+    // Płomienie ZAKORZENIONE: wysokość języka H(kierunek) = flameH · (0,2 + 1,6 · obwiednia), obwiednia = oktawy dodatnich
+    // części szumu kierunku od okresu 1/60 promienia wzdłuż brzegu co × 2,5 (LOD: oktawa o okresie < ~3 px znika — w każdym
+    // zoomie poszarpana linia języków, bez grzebienia); jasność gaśnie wykładniczo z h / H.
+    const nFl = int(clamp(floor(log2(float(1.0 / 3.0).div(fp.mul(60.0))).div(Math.log2(2.5))).add(1.0), 0.0, 9.0)).toVar();
+    const env = float(0.0).toVar();
+    const fq = float(60.0).toVar();
+    const fa = float(1.0).toVar();
+    Loop({ start: int(0), end: nFl, type: 'int', condition: '<', name: 'sunFlame' }, ({ sunFlame }) => {
+      const fo = float(sunFlame);
+      const wq = float(1.0).sub(smoothstep(1.0 / 6.0, 1.0 / 3.0, fq.mul(fp)));
+      const n = sunGNoise(vec3(dir.mul(fq).add(fo.mul(7.7)), t.mul(0.02).add(fo.mul(3.1))));
+      env.addAssign(max(n, 0.0).mul(fa).mul(wq));
+      fq.mulAssign(2.5);
+      fa.mulAssign(0.6);
+    });
+    // wyższy język — jaśniejszy; ogon ucięty (e^(−25 h)) — bez smug przez pół kadru
+    const H = float(SUN_CORONA.flameH).mul(env.mul(2.2).add(0.2));
+    const flame = exp(h.div(H).negate().sub(h.mul(25.0))).mul(env.mul(0.8).add(0.5)).mul(look.z).toVar();
+    const chromo = exp(h.mul(-220.0)).mul(0.5);
+    // korona: słaba poświata, smugi z szumu kierunku (stałe wzdłuż promienia)
+    const st = sunGNoise(vec3(dir.mul(5.0), h.mul(0.6).sub(t.mul(0.002))));
+    const corona = exp(h.mul(-18.0)).mul(0.1).add(exp(h.mul(-4.0)).mul(0.02))
+      .mul(clamp(st.mul(0.6).mul(look.w).add(1.0), 0.3, 1.8));
+    const inner = smoothstep(float(1.0).sub(fp.mul(2.0)), 1.0, d);
+    const outer = float(1.0).sub(smoothstep(look.y.mul(0.55), look.y, d));
+    const col = vec3(1.0, 0.38, 0.12).mul(chromo.add(flame.mul(1.1))).add(vec3(1.0, 0.72, 0.42).mul(corona))
+      .mul(inner.mul(outer).mul(look.x)).toVar();
+    return vec4(col, max(col.x, max(col.y, col.z)));
+  })();
+
+  return {
+    fragmentNode,
+    uniforms: U,
+    state: {
+      transparent: true, depthWrite: false, depthTest: true, premultipliedAlpha: false,
+      blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+      blendEquationAlpha: THREE.AddEquation, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor
+    }
+  };
+}
+
 const BUILDERS = {
   surface: buildSurfaceGraph,
   jupiter: () => buildSurfaceGraph({ keys: JUPITER_UNIFORM_KEYS, color: jupiterFlowDayColor }),
@@ -595,11 +861,44 @@ const BUILDERS = {
   clouds: buildCloudGraph,
   atmosphere: buildAtmosphereGraph,
   ringAtmosphere: buildRingAtmosphereGraph,
-  sun: buildSunGraph
+  sun: buildSunGraph,
+  sunCorona: buildSunCoronaGraph
 };
 const GRAPHS = {};
+// Rodzaje dopisane z zewnątrz (registerPlanetFlowKind) — nazwy materiałów poza zamrożonym PLANET_MATERIAL_NAMES.
+const EXTRA_MATERIAL_NAMES = {};
 
-/** Graf rodzaju ('surface' | 'jupiter' | 'saturn' | 'clouds' | 'atmosphere' | 'ringAtmosphere' | 'sun') — budowany raz. */
+/**
+ * Dopisuje rodzaj grafu POWIERZCHNI z barwą dnia z przepływu (jak 'jupiter' / 'saturn': graf 'surface' 1:1, tylko
+ * próbka mapy dnia z `color`) — dla gazowych olbrzymów generatora planet (src/3d/planetGen/planetGenGas.js: jeden
+ * graf 'genGas' dla wszystkich planet generatora, dane planety per obiekt). `surface` — hak powierzchni (planety
+ * generatora z powierzchnią, src/3d/planetGen/planetGenSurface.tsl.js): wołany raz w Fn fragmentu, przed gałęziami,
+ * z { U, uv, local, geoN, worldPos, dayTex, specTex, nightTex }; zwraca opcjonalne { normal (widok), shadow (mnożnik
+ * słońca), day (barwa dnia), water (maska połysku), emit (świecenie po mgiełce) }. Rodzaje gry i ich WGSL bez zmian
+ * (bez haka gałęzie JS nie budują nic nowego); graf budowany przy pierwszym materiale rodzaju. Drugie wywołanie z tym
+ * samym rodzajem nic nie robi.
+ */
+export function registerPlanetFlowKind(kind, { keys, color = null, surface = null, name }) {
+  if (BUILDERS[kind]) return;
+  BUILDERS[kind] = () => buildSurfaceGraph({ keys, color, surface });
+  EXTRA_MATERIAL_NAMES[kind] = name || `PlanetSurface_${kind}`;
+  PLANET_TSL_STATS.materials[kind] = 0;
+  PLANET_TSL_STATS.builds[kind] = 0;
+}
+
+/**
+ * Dopisuje rodzaj grafu CHMUR z hakiem `cloud` (chmury planet generatora: detal ponad rozdzielczość mapy — erozja
+ * brzegów i cieniowanie kłębów). Graf 'clouds' gry i jego WGSL bez zmian. Drugie wywołanie nic nie robi.
+ */
+export function registerPlanetCloudKind(kind, { keys, cloud, name }) {
+  if (BUILDERS[kind]) return;
+  BUILDERS[kind] = () => buildCloudGraph({ keys, cloud });
+  EXTRA_MATERIAL_NAMES[kind] = name || `PlanetClouds_${kind}`;
+  PLANET_TSL_STATS.materials[kind] = 0;
+  PLANET_TSL_STATS.builds[kind] = 0;
+}
+
+/** Graf rodzaju ('surface' | 'jupiter' | 'saturn' | 'clouds' | 'atmosphere' | 'ringAtmosphere' | 'sun' | 'sunCorona') — budowany raz. */
 export function getPlanetGraph(kind) {
   if (!BUILDERS[kind]) throw new Error(`planet3d.assets.tsl: nieznany rodzaj „${kind}”`);
   if (!GRAPHS[kind]) GRAPHS[kind] = BUILDERS[kind]();
@@ -614,7 +913,8 @@ export const PLANET_GRAPH_KEYS = Object.freeze({
   clouds: Object.freeze([...Object.keys(CLOUD_KEYS), 'cloudTexture']),
   atmosphere: Object.freeze(Object.keys(ATMOSPHERE_KEYS)),
   ringAtmosphere: Object.freeze(Object.keys(RING_ATMOSPHERE_KEYS)),
-  sun: Object.freeze(Object.keys(SUN_KEYS))
+  sun: Object.freeze(Object.keys(SUN_KEYS)),
+  sunCorona: Object.freeze(Object.keys(SUN_CORONA_KEYS))
 });
 
 /**
@@ -631,7 +931,7 @@ export class PlanetBodyNodeMaterial extends THREE.NodeMaterial {
     const graph = getPlanetGraph(kind);
     this.isPlanetBodyNodeMaterial = true;
     this.planetKind = kind;
-    this.name = PLANET_MATERIAL_NAMES[kind];
+    this.name = PLANET_MATERIAL_NAMES[kind] ?? EXTRA_MATERIAL_NAMES[kind];
     this.uniforms = uniforms;
     this.lights = false;
     this.fog = false;
@@ -659,6 +959,8 @@ export const createPlanetCloudMaterial = (uniforms) => new PlanetBodyNodeMateria
 export const createPlanetAtmosphereMaterial = (uniforms) => new PlanetBodyNodeMaterial('atmosphere', uniforms);
 export const createRingAtmosphereMaterial = (uniforms) => new PlanetBodyNodeMaterial('ringAtmosphere', uniforms);
 export const createSunMaterial = (uniforms) => new PlanetBodyNodeMaterial('sun', uniforms);
+/** Korona słońca (pierścień nad kulą, ONE/ONE) — uniformy SUN_CORONA_KEYS. */
+export const createSunCoronaMaterial = (uniforms) => new PlanetBodyNodeMaterial('sunCorona', uniforms);
 
 // ── Mgławica (NebulaSystem, warstwa 1) ────────────────────────────────────────
 /**
@@ -817,8 +1119,20 @@ export function createStarMaterial(u) {
   // (starZoomCompensation w starParallax.js).
   const halfSize = u.containerSize.div(2.0);
   const layeredOffset = u.cameraOffset.mul(aParallax);
-  const posX = mod(aPos.x.sub(layeredOffset.x).add(halfSize), u.containerSize).sub(halfSize);
-  const posY = mod(aPos.y.sub(layeredOffset.y).add(halfSize), u.containerSize).sub(halfSize);
+  // Niebo-sfera z nowym prawem tempa (skyScroll.js, 2026-10-27): gwiazdy mid (paralaksa 0,04–0,5) jadą DROGĄ NIEBA
+  // (`cameraOffsetMid` — StarSystem: ruch kamery względem statku + droga nieba) z paralaksą przesuniętą na STAR_MID_SPHERE
+  // (0,055–0,18 → 0,13–0,26; lustro CPU starMidSphereParallax) — W0: niebo < mid. Wybór maską 0 / 1 z uniformu
+  // `midSphere` (iloczyny przez 0 / 1 i suma z zerem — dokładnie, bez gałęzi; pułapka 39), bez nowego pipeline'u.
+  let starOffset = layeredOffset;
+  if (u.midSphere && u.cameraOffsetMid) {
+    const MID = STAR_PARALLAX_LAYERS[1];
+    const k = (STAR_MID_SPHERE.parallaxMax - STAR_MID_SPHERE.parallaxMin) / (MID.parallaxMax - MID.parallaxMin);
+    const pMid = aParallax.sub(MID.parallaxMin).mul(k).add(STAR_MID_SPHERE.parallaxMin);
+    const mMid = step(0.5, u.midSphere).mul(step(0.04, aParallax)).mul(float(1.0).sub(step(0.5, aParallax)));
+    starOffset = layeredOffset.mul(float(1.0).sub(mMid)).add(u.cameraOffsetMid.mul(pMid).mul(mMid));
+  }
+  const posX = mod(aPos.x.sub(starOffset.x).add(halfSize), u.containerSize).sub(halfSize);
+  const posY = mod(aPos.y.sub(starOffset.y).add(halfSize), u.containerSize).sub(halfSize);
   const pos = vec3(vec2(posX, posY).mul(u.zoomComp), aPos.z);
 
   // Maska planet: gwiazda za tarczą planety znika (odległość w świecie, xy).
@@ -882,6 +1196,13 @@ export function createStarMaterial(u) {
       const offset = positionGeometry.xy.mul(quadSize).mul(2.0).div(viewportSize).mul(clipPosition.w);
       out.assign(vec4(clipPosition.xy.add(offset), clipPosition.zw));
     });
+    // Niebo-sfera (sky3D.js, DECYZJE-2 N3) zastępuje warstwę deep (paralaksa 0,010–0,028; mid od 0,055): jej gwiazdy
+    // zwinięte poza bryłę obcinania (pułapka 16) — jednolity warunek z uniformu, bez nowego pipeline'u przy zmianie.
+    if (u.hideDeep) {
+      If(u.hideDeep.greaterThan(0.5).and(aParallax.lessThan(0.04)), () => {
+        out.assign(vec4(2.0, 2.0, 2.0, 1.0));
+      });
+    }
     return out;
   })();
 
@@ -926,7 +1247,9 @@ export function createStarMaterial(u) {
   material.uniforms = u;
   material.lights = false;
   material.fog = false;
-  material.transparent = true;
+  // Nieprzezroczysty z mieszaniem addytywnym: gwiazdy na początku passa tła (renderOrder −1), POD bryłami tła (ring,
+  // hale K-7, planetoida) — przezroczysty szedł po nich wszystkich i przebijał (pułapka 41, reguła `webgpu-tsl`).
+  material.transparent = false;
   material.depthWrite = false;
   material.blending = THREE.AdditiveBlending;
   material.forceSinglePass = true;

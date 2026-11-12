@@ -19,6 +19,7 @@
 import { TRAFFIC_HULLS } from '../../../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../../../data/hardpointEditorDefaults.js';
 import { ENGINE_FX_DEFAULTS } from '../../../data/engineFx.js';
+import { WORK_HULLS, WORK_HULL_IDS, workHullSpritePath } from '../../../data/workHulls.js';
 
 const TRAFFIC_LABELS = {
   inter_station_shuttle: ['Wahadłowiec międzystacyjny', 'Wahadłowiec'],
@@ -37,7 +38,15 @@ const TRAFFIC_LABELS = {
   smuggler: ['Przemytnik', 'Przemytnik'],
   repair_drone: ['Dron naprawczy', 'Dron naprawczy'],
   distress_beacon_ship: ['Statek z boją alarmową', 'Boja alarmowa'],
-  service_tug: ['Holownik serwisowy', 'Holownik serwisowy']
+  service_tug: ['Holownik serwisowy', 'Holownik serwisowy'],
+  bounty_hunter: ['Łowca nagród', 'Łowca'],
+  police_cutter: ['Kuter policji', 'Kuter policji'],
+  rescue_ship: ['Statek ratunkowy', 'Ratownik'],
+  crew_shuttle: ['Prom rotacyjny', 'Prom'],
+  crew_liner: ['Liniowiec kontraktowy', 'Liniowiec'],
+  colony_liner: ['Liniowiec dalekiego zasięgu', 'Liniowiec DZ'],
+  // statki robocze złomowania z kreatora kadłubów (src/data/workHulls.js)
+  ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, [`${WORK_HULLS[id].label} (roboczy)`, WORK_HULLS[id].label]]))
 };
 
 // Ścieżki PNG w repo (TRAFFIC_HULLS ma URL-e modułu — tu ścieżki do testów, dema i generatora).
@@ -45,7 +54,7 @@ const TRAFFIC_SPRITES = {
   inter_station_shuttle: 'assets/inter_station_shuttle.png',
   container_ship: 'assets/container_ship.png',
   long_haul_freighter: 'assets/long_haul_freighter.png',
-  heavy_freighter: 'assets/long_haul_freighter.png',
+  heavy_freighter: 'assets/ships/heavy_freighter.png',
   megafreighter: 'assets/megafreighter.png',
   heavy_harvester: 'assets/heavy_harvester.png',
   belter: 'assets/belter.png',
@@ -58,7 +67,23 @@ const TRAFFIC_SPRITES = {
   smuggler: 'assets/smuggler.png',
   repair_drone: 'assets/repair_drone.png',
   distress_beacon_ship: 'assets/distress_beacon_ship.png',
-  service_tug: 'assets/ships/service_tug.png'
+  service_tug: 'assets/ships/service_tug.png',
+  bounty_hunter: 'assets/ships/bounty_hunter.png',
+  police_cutter: 'assets/ships/police_cutter.png',
+  rescue_ship: 'assets/ships/rescue_ship.png',
+  // Promy z ludźmi (workforce W7): do PNG z generatora sprite'y frachtowców bazowych (D14) — AGENT: po PNG podmienić
+  // ścieżkę i przeliczyć obrysy (`node scripts/webgpu/obrysy-floty.mjs`), wtedy bez `outlineOf` niżej.
+  crew_shuttle: 'assets/inter_station_shuttle.png',
+  crew_liner: 'assets/container_ship.png',
+  colony_liner: 'assets/long_haul_freighter.png',
+  ...Object.fromEntries(WORK_HULL_IDS.map((id) => [id, workHullSpritePath(id)]))
+};
+
+// Promy z ludźmi (workforce W7): ten sam sprite co frachtowiec bazowy — obrys 3D bazowego.
+const TRAFFIC_OUTLINE_OF = {
+  crew_shuttle: 'inter_station_shuttle',
+  crew_liner: 'container_ship',
+  colony_liner: 'long_haul_freighter'
 };
 
 const PIRATE_TRAFFIC = new Set(['pirate_raider', 'smuggler']);
@@ -115,7 +140,7 @@ export const AUTO3D_TABLE = {
     label: TRAFFIC_LABELS[id][0], short: TRAFFIC_LABELS[id][1],
     faction: PIRATE_TRAFFIC.has(id) ? 'pirate' : 'civil', profile: id,
     sprite: TRAFFIC_SPRITES[id], nozzles: 'traffic',
-    ...(id === 'heavy_freighter' ? { outlineOf: 'long_haul_freighter' } : {})
+    ...(TRAFFIC_OUTLINE_OF[id] ? { outlineOf: TRAFFIC_OUTLINE_OF[id] } : {})
   }]))
 };
 

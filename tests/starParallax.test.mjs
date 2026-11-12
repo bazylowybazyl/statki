@@ -203,3 +203,69 @@ test('kamera gwiazd: ruch kamery podzielony przez kompensację, zmiana zoomu nie
   assert.equal(sc.x, 5_012_300);
   assert.equal(sc.y, 2_990_000);
 });
+
+test('tryb nieba-sfery: warstwa mid na drodze nieba — paralaksa 0,055–0,18 → 0,13–0,26, kamera mid = ruch kamery względem okrętu + droga nieba', async () => {
+  const { STAR_MID_SPHERE, starMidSphereParallax, advanceStarCameraMid, STAR_PARALLAX_LAYERS } = await loadStarParallax();
+  const mid = STAR_PARALLAX_LAYERS.find((l) => l.name === 'mid');
+  assert.ok(Math.abs(starMidSphereParallax(mid.parallaxMin) - STAR_MID_SPHERE.parallaxMin) < 1e-12);
+  assert.ok(Math.abs(starMidSphereParallax(mid.parallaxMax) - STAR_MID_SPHERE.parallaxMax) < 1e-12);
+  assert.ok(starMidSphereParallax(0.1) > starMidSphereParallax(0.07), 'rosnąca (kolejność gwiazd w warstwie)');
+  // mid nadal wolniejsza niż świat i dużo wolniejsza niż speed
+  assert.ok(STAR_MID_SPHERE.parallaxMax < 0.3 && STAR_MID_SPHERE.parallaxMax * 3.5 < 1.02);
+  const sc = { x: 0, y: 0, lx: NaN, ly: NaN };
+  advanceStarCameraMid(sc, 5e6, 3e6, 1, 0, 0, 0, 0, 0);
+  assert.deepEqual([sc.x, sc.y], [5e6, 3e6], 'start od kamery gry');
+  // lot w skoku: kamera = statek (225 tys. j/s, klatka 1/60 s), droga nieba 22,8 tys. j/s — mid jedzie drogą nieba
+  const d = 225000 / 60, drive = 22777 / 60;
+  advanceStarCameraMid(sc, 5e6 + d, 3e6, 1, 14000 / 60, d, 0, drive, 0);
+  assert.ok(Math.abs(sc.x - (5e6 + drive)) < 1e-6 && sc.y === 3e6, String(sc.x));
+  // kop kamery (kamera cofa się o 1200 j. względem statku) przechodzi jak dawniej, z limitem kroku skoku
+  const x0 = sc.x;
+  advanceStarCameraMid(sc, 5e6 + 2 * d - 200, 3e6, 1, 14000 / 60, d, 0, drive, 0);
+  assert.ok(Math.abs(sc.x - (x0 - 200 + drive)) < 1e-6);
+  // kompensacja zoomu k i mnożnik drogi (?nieboTempo > 1)
+  const x1 = sc.x;
+  advanceStarCameraMid(sc, sc.lx, sc.ly, 4, 0, 0, 0, 400, 0, 2);
+  assert.ok(Math.abs(sc.x - (x1 + 200)) < 1e-6);
+  // walka bez nieba (pauza, postój): ruch kamery 1:1 (patrzenie kursorem — jak dawniej)
+  const x2 = sc.x;
+  advanceStarCameraMid(sc, sc.lx + 50, sc.ly, 1, 0, 0, 0, 0, 0);
+  assert.ok(Math.abs(sc.x - (x2 + 50)) < 1e-6);
+});
+
+test('sufit kroku kamery gwiazd z zegara stron (starClockDt): worker pomija strony — sufit 14 tys. j/s z czasu wszystkich, nie jednej', async () => {
+  const { starClockDt, advanceStarCamera, advanceStarCameraMid } = await loadStarParallax();
+  // tryb off (zegar null): dt klatki
+  const off = { clockLast: 0, clockHas: false };
+  assert.equal(starClockDt(off, null, 1 / 60), 1 / 60);
+  assert.equal(off.clockHas, false);
+  // worker: pierwsza strona — dt, potem przyrost zegara (co 3. strona — 3 dt), bez przyrostu / cofnięty zegar — dt
+  const w = { clockLast: 0, clockHas: false };
+  assert.equal(starClockDt(w, 10, 1 / 60), 1 / 60);
+  assert.ok(Math.abs(starClockDt(w, 10 + 3 / 60, 1 / 60) - 3 / 60) < 1e-12);
+  assert.equal(starClockDt(w, 10 + 3 / 60, 1 / 60), 1 / 60);
+  assert.equal(starClockDt(w, 5, 1 / 60), 1 / 60);
+  // warp Mk III (250 tys. j/s), worker co 3. stronę: warstwa speed jedzie sufitem 14 tys. j/s z czasu 3 stron, jak w off;
+  // mid (droga nieba 24,6 tys. · 0,26 ≈ 6,4 tys. j/s ekranu) zostaje pod speed (≥ 14,3 tys.)
+  const dtP = 1 / 60;
+  const run = (step) => {
+    const sc = { x: 0, y: 0, lx: NaN, ly: NaN };
+    const mc = { x: 0, y: 0, lx: NaN, ly: NaN };
+    const clk = { clockLast: 0, clockHas: false };
+    let cam = 0;
+    let clock = 0;
+    for (let i = 0; i <= 60; i++) {
+      cam += 250000 * dtP;
+      clock += dtP;
+      if (i % step) continue;
+      const t = starClockDt(clk, clock, dtP);
+      advanceStarCamera(sc, cam, 0, 1, 14000 * t);
+      advanceStarCameraMid(mc, cam, 0, 1, 14000 * t, 250000 * t, 0, 24560 * t, 0);
+    }
+    return { speed: sc.x, mid: mc.x };
+  };
+  const a = run(1), b = run(3);
+  assert.ok(Math.abs(b.speed - a.speed) / a.speed < 0.04, `speed: worker ${b.speed} vs off ${a.speed}`);
+  assert.ok(Math.abs(b.mid - a.mid) / a.mid < 0.04, `mid: worker ${b.mid} vs off ${a.mid}`);
+  assert.ok(b.mid * 0.26 < b.speed * 1.02, 'W0: mid < speed także przy pomijaniu stron');
+});

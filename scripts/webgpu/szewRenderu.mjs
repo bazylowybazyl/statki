@@ -98,10 +98,17 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/reactorCore.js': 'A',
   'src/game/repairRig.js': 'A',
   'src/game/shipBridge.js': 'A',
+  'src/game/shipPower.js': 'A',
+  'src/game/hullPower.js': 'A',
   'src/game/shipBridgeBeams.js': 'A',
   'src/game/shipBridgeRuntime.js': 'A',
   'src/game/shipLightRuntime.js': 'A',
   'src/game/skyRegion.js': 'A',
+  'src/game/swarm/berthTransfer.js': 'A',
+  'src/game/swarm/swarmPort.js': 'A',
+  'src/game/swarm/swarmPlanner.js': 'A',
+  'src/game/swarm/swarmExecCpu.js': 'A',
+  'src/game/swarm/swarmOrca.js': 'A',
   'src/game/traffic/dockLayout.js': 'A',
   'src/game/traffic/shipyards.js': 'A',
   'src/game/warpDrive.js': 'A',
@@ -303,7 +310,7 @@ function skryptyIndex(root) {
 }
 
 // Symbole z modułów renderu bez stanu (bez three i bez zapisów `window`) liczą się jako „dane” wspólne — jak
-// `computeHaloRingLayout`, `dryDockChunkAt` (§ 2.1). Dodatkowo jawnie (moduły ze stanem, ale symbol czysty):
+// `computeHaloRingLayout` (§ 2.1). Dodatkowo jawnie (moduły ze stanem, ale symbol czysty):
 const DANE_JAWNE = new Set(['fxRandom', 'SHIP3D_MODELS', 'WEAPON3D_FAMILY', 'stampFamilyFor']);
 // Składowe zwracające wynik do gry / UI (§ 2.1 „zapytania zwrotne”).
 const ZAPYTANIA = [

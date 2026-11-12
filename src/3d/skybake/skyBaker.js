@@ -27,12 +27,22 @@
 // bazowego (`shared`) zamiast liczyć je drugi raz. `extraOctaves` — dodatkowe oktawy detalu (styl czyta
 // je w `apply`; gęstsze próbkowanie samo nie dorobi struktury pod najwyższą oktawą szumu).
 import * as THREE from 'three/webgpu';
-import { clamp, float, ivec2, screenCoordinate, texture, textureLoad, uint, uniform, vec3, vec4 } from 'three/tsl';
+import { clamp, cos, float, ivec2, screenCoordinate, sin, texture, textureLoad, uint, uniform, vec2, vec3, vec4 } from 'three/tsl';
 import { skyHash } from './skyBakeNoise.js';
 import { acesGryInv, srgbEncode } from './skyGameColor.js';
 
 /** Rozmiar tekstury tła gry (public/assets/nebula.png — mapowanie płaszczyzny NebulaSystem). */
 export const SKY_GAME_SIZE = Object.freeze({ width: 5120, height: 3200 });
+
+/**
+ * TRYB SFERY (DECYZJE-2 N2, niebo-sfera gry — src/3d/sky3D.js): cel = tekstura EQUIRECT całego nieba (szerokość = 2π,
+ * wysokość = π; λ = (x / W − 0,5) · 2π, φ = (0,5 − y / H) · π — wiersz 0 = biegun N), `ctx.dir()` = kierunek nieba
+ * piksela, `ctx.lonLat()` = (λ, φ). Gęstość tekseli jak płaszczyzna gry: 6144 / 2π = 977,8 tekseli / rad, czyli jednostka
+ * nieba płaszczyzny (wysokość 3200 tekseli) = 3200 tekseli equirect = SKY_SPHERE_RAD_PER_UNIT radianów — style liczą
+ * rozmiary w tych samych jednostkach. `resScale` = szerokość / 6144.
+ */
+export const SKY_SPHERE_SIZE = Object.freeze({ width: 6144, height: 3072 });
+export const SKY_SPHERE_RAD_PER_UNIT = 3200 * 2 * Math.PI / SKY_SPHERE_SIZE.width;
 
 const _stripCamera = /*@__PURE__*/ new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
@@ -76,6 +86,8 @@ export class SkyBaker {
     this.size = uniform(new THREE.Vector2(this.fullWidth, this.fullHeight));
     this.origin = uniform(new THREE.Vector2(0, 0));
     this.shared = o.shared || null;
+    /** Tryb sfery (equirect całego nieba) — SKY_SPHERE_SIZE, ctx.dir() / ctx.lonLat(). */
+    this.sphere = !!o.sphere;
     this.extraOctaves = o.extraOctaves | 0;
     this.ditherSeed = uniform(1, 'int');
     this.style = null;
@@ -94,7 +106,7 @@ export class SkyBaker {
   }
 
   /** Teksele pełnego nieba na teksel tła gry 5120 × 3200 (gęstość; style skalują nią rozmiary w tekselach). */
-  get resScale() { return this.fullWidth / SKY_GAME_SIZE.width; }
+  get resScale() { return this.fullWidth / (this.sphere ? SKY_SPHERE_SIZE.width : SKY_GAME_SIZE.width); }
 
   _makeTarget(type, width = this.width, height = this.height) {
     const rt = new THREE.RenderTarget(width, height, { type, depthBuffer: false, stencilBuffer: false });
@@ -127,8 +139,19 @@ export class SkyBaker {
     const local = screenCoordinate.xy;
     const s = pass?.size || 1;
     const px = pass?.shared ? local : (s === 1 ? local : local.div(s)).add(origin);
+    const sphere = this.sphere;
+    const lonLat = () => vec2(px.x.div(size.x).sub(0.5).mul(2 * Math.PI), float(0.5).sub(px.y.div(size.y)).mul(Math.PI));
     return {
       size,
+      /** Tryb sfery (equirect całego nieba). */
+      sphere,
+      /** (λ, φ) piksela equirect [rad] — tryb sfery. */
+      lonLat,
+      /** Kierunek nieba piksela equirect (cos φ cos λ, cos φ sin λ, sin φ) — tryb sfery. */
+      dir: () => {
+        const ll = lonLat();
+        return vec3(cos(ll.y).mul(cos(ll.x)), cos(ll.y).mul(sin(ll.x)), sin(ll.y));
+      },
       /** Piksel pełnego nieba (środek piksela = całość + 0,5; y od góry). */
       px,
       /** Współrzędne nieba: (piksel − środek) / wysokość. */

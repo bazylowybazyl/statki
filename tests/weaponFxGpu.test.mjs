@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import v8 from 'node:v8';
+import { untilSteady } from './helpers/alokacje.mjs';
 import * as THREE from 'three/webgpu';
 import { GpuFx, K, BSTRIDE, BURST_CARRIER, CAPS, STRIDE, CARRIER_AT } from '../src/3d/weapons/gpuFx.js';
 import { ProjectileSystem, PSTYLE, PROJECTILE_MAX } from '../src/3d/weapons/projectiles.js';
@@ -110,14 +111,15 @@ test('budowniczy paczki: pozycja względem początku, nośnik z ActiveCarrier, z
   origin.x = 0; origin.y = 0; origin.simEpoch = 0;
 });
 
-test('budowniczy bez alokacji na paczkę; ponad pojemność pula nie nadpisuje własnych paczek w klatce', () => {
+test('budowniczy bez alokacji na paczkę; ponad pojemność pula nie nadpisuje własnych paczek w klatce', async () => {
   const pool = fx.spark;
   const COL = [2.8, 2.2, 1.3];
   const emit = () => {
     if (pool.burstCount > 1500) { pool.burstCount = 0; pool.total = 0; }
     pool.begin(K.SPARK, 4).at(10, 20).dir(0.6, 0.8).cone(0.3, 0.18).speed(100, 300).life(0.2, 0.6).colors(COL).x01(16, 0.32).x23(0.06, 1.2).emit();
   };
-  const bytes = allocatedBytes(emit, 20000);
+  // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+  const bytes = await untilSteady(() => allocatedBytes(emit, 20000), (b) => b < 20000 * 0.5);
   assert.ok(bytes < 20000 * 0.5, `alokacja ${bytes} B na 20 000 paczek (szum pomiaru < 0,5 B na paczkę)`);
   pool.burstCount = 0; pool.total = 0;
   const cap = pool.cap;
@@ -161,7 +163,7 @@ test('żywotność puli: zajęta część pierścienia, głowa wraca na 0 po wyg
   assert.equal(pool.used, 2, 'co najmniej 2 instancje (1 ↔ > 1 zmienia klucz programu)');
 });
 
-test('pociski, smugi i wiązki: WGSL w jednym draw callu, bufory bez alokacji na klatkę', () => {
+test('pociski, smugi i wiązki: WGSL w jednym draw callu, bufory bez alokacji na klatkę', async () => {
   const proj = new ProjectileSystem({ noise, origin }).build(scene);
   const trails = new TrailSystem({ noise, origin }).build(scene);
   const beams = new BeamSystem({ noise, origin }).build(scene);
@@ -179,7 +181,7 @@ test('pociski, smugi i wiązki: WGSL w jednym draw callu, bufory bez alokacji na
     for (let i = 0; i < 50; i++) beams.addRgb(0, 0, 100, i, BEAM.PD, 3, 0.2, 0.9, 2.2, 1, 0, 0);
     beams.commit(0.5, 0, 0);
   };
-  const bytes = allocatedBytes(frame, 2000);
+  const bytes = await untilSteady(() => allocatedBytes(frame, 2000), (b) => b < 2000 * 64);
   assert.ok(bytes < 2000 * 64, `alokacja ${bytes} B na 2000 klatek (stałe < 64 B na klatkę — pakowanie liczb przez V8)`);
   assert.equal(proj.mesh.count, 100);
   // smuga: uchwyty z puli, segmenty bez alokacji
@@ -188,7 +190,7 @@ test('pociski, smugi i wiązki: WGSL w jednym draw callu, bufory bez alokacji na
   assert.ok(h);
   let x = 1000;
   const step = () => { x += 50; trails.advance(h, x, 2000, 50); };
-  const segBytes = allocatedBytes(step, 5000);
+  const segBytes = await untilSteady(() => allocatedBytes(step, 5000), (b) => b < 5000 * 0.5);
   assert.ok(segBytes < 5000 * 0.5, `alokacja ${segBytes} B na 5000 kroków smugi`);
   assert.ok(trails.stats.segments > 5000);
   trails.end(h, x + 10, 2000, 50);

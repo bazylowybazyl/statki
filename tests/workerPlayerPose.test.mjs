@@ -43,3 +43,31 @@ test('RenderWorld: źródło luster z własnym playerPose oddaje je modułom ren
     RenderWorld.setSource(null);
   }
 });
+
+test('worker: HEAD.LEAD_* strony → RenderWorld.cameraLead (fregata zwiadu prowadzona kamerą — niebo-sfera)', async () => {
+  const src = read('src/render/render.worker.js');
+  assert.match(src, /Object\.defineProperty\(st\.players, 'cameraLead', \{ value: null, writable: true/);
+  assert.match(src, /const lw = h\[H\.LEAD_W\];/);
+  assert.match(src, /st\.players\.cameraLead = cl;/);
+  // zegar klatek strony (pominięte strony nie gubią czasu nieba): HEAD.T_FRAME → RenderWorld.frameClock
+  assert.match(src, /Object\.defineProperty\(st\.players, 'frameClock', \{ value: null, writable: true/);
+  assert.match(src, /const tf = h\[H\.T_FRAME\];\s*st\.players\.frameClock = tf === tf \? tf : null;/);
+  assert.match(read('src/3d/planet3d.assets.js'), /RenderWorld\.frameClock\)/);
+  assert.match(read('src/render/snapshotPack.js'), /const cl = f\.cameraLead;/);
+  // strona: obiekt z getterami nad stanem kamery fregaty i pole klatki migawki
+  const html = read('index.html');
+  assert.match(html, /window\.__cameraLead = \{/);
+  assert.match(html, /f\.cameraLead = window\.__cameraLead;/);
+  const { RenderWorld, createMirrorPlayersSource } = await import('../src/render/renderWorld.js');
+  const s = createMirrorPlayersSource();
+  Object.defineProperty(s, 'cameraLead', { value: null, writable: true, enumerable: true });
+  RenderWorld.setSource(s);
+  try {
+    assert.equal(RenderWorld.cameraLead, null);
+    const lead = { x: 1, y: 2, v: 900, w: 1 };
+    s.cameraLead = lead;
+    assert.equal(RenderWorld.cameraLead, lead);
+  } finally {
+    RenderWorld.setSource(null);
+  }
+});

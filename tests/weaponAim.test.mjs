@@ -13,6 +13,7 @@ import { nextProjectileSerial, hasHullMechanics } from '../src/game/projectileMe
 import { chargeTimeOf, mountChargeState, requestMountCharge } from '../src/game/weaponCharge.js';
 import { CARRIER_SCOPE } from './helpers/carrierScope.mjs';
 import { beamPassesAlly } from '../src/game/friendlyFire.js';
+import { weaponRangeFor } from '../src/game/shipModifiers.js';
 
 globalThis.window = {};
 const { getLeadAim } = await import('../src/ai/aiUtils.js');
@@ -150,6 +151,8 @@ test('P1 index firing paths use the same simulated mount state as the shared con
     settle(f.controller);
     const shots = [];
     const ctx = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
       ...CARRIER_SCOPE, _fireCarrier: CARRIER_SCOPE.createCarrier(),
       ship: f.ship, p1WeaponCtrl: f.controller, getMountedWeaponAim,
       Game: { player: { weapons: f.ship.weapons } }, HP: { MAIN: 'main' },
@@ -251,8 +254,9 @@ test('actual fireWeaponCore fires player bullets and beams along the muzzle, nev
       const beamDef = Object.values(MASTER_WEAPONS).find(w => w.category === 'beam' && w.render3dOnly);
       core.window.fireWeaponCore(f.ship, target, beamDef.id, muzzle);
       const beam = core.events.at(-1).detail.beam;
-      close(beam.endX - beam.startX, muzzle.dir.x * beamDef.baseRange);
-      close(beam.endY - beam.startY, muzzle.dir.y * beamDef.baseRange);
+      const range = weaponRangeFor(f.ship, beamDef, beamDef.baseRange);
+      close(beam.endX - beam.startX, muzzle.dir.x * range);
+      close(beam.endY - beam.startY, muzzle.dir.y * range);
     }
   }
 });
@@ -270,6 +274,20 @@ test('fireWeaponCore: pocisk dziedziczy 100% prędkości lufy i pamięta jej cz�
   close(bullet.vy, muzzle.dir.y * speed - 300);
   assert.deepEqual([bullet.ivx, bullet.ivy], [10000, -300]);
   assert.ok(Number.isFinite(bullet.bornSim), 'czas pozy lufy');
+});
+
+test('fireWeaponCore: rzeczywista żywotność pocisku uwzględnia klasę kadłuba gracza', () => {
+  const d = MASTER_WEAPONS.railgun_mk2;
+  for (const hull of ['terran_frigate', 'terran_destroyer', 'terran_battleship', 'terran_carrier', 'atlas']) {
+    const f = fixture('main', d.id, 'player');
+    f.ship.activeHullId = hull;
+    f.controller.updateAim(1 / 60);
+    const muzzle = structuredClone(f.controller.computeMountedMuzzle(f.loadouts[0]));
+    const core = firingCore(f.ship);
+    core.window.fireWeaponCore(f.ship, null, d.id, muzzle);
+    const bullet = core.window.bullets[0];
+    close(bullet.life * d.baseSpeed, weaponRangeFor(f.ship, d, d.baseRange));
+  }
 });
 
 test('NPC fireWeaponCore: wyprzedzenie z ruchu celu WZGLĘDEM strzelca (lecą razem = strzał prosto)', () => {

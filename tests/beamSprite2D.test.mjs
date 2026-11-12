@@ -1,15 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as THREE from 'three';
 import { sampleSpriteLattice, buildSpriteBeamStructure } from '../src/game/beamSprite2D.js';
 import { DestructorBeams3D as D, createBeamConfig, BEAM_TYPE } from '../src/game/destructorBeams3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 import { buildSpriteSkinTopology, writeSpriteSkinGeometry, SPRITE_CORNERS } from '../src/3d/beamSpriteSkin2D.js';
-import { BeamShips3D as R } from '../src/3d/beamShips3D.js';
 import {
   applyPlanarFlightControls, planarHeading, setPlanarHeading, PLANAR_FLIGHT_DEFAULTS
 } from '../src/game/beamFlightControls2D.js';
-import { BeamWeapons3D } from '../src/game/beamWeapons3D.js';
 
 // Obraz RGBA z prostokątów [x0, y0, x1, y1) w pikselach (y w dół jak w PNG).
 function image(width, height, rects, rgb = [150, 160, 170]) {
@@ -197,53 +194,6 @@ test('skóra sprite\'a: ciągła w całej płycie, szew otwiera zerwana belka, m
   for (let k = 1; k < 4; k++) assert.deepEqual(corner(left, k), [x0, y0]);
 });
 
-test('renderer: kadłub ze sprite\'a ma skórę bez podglądu belek, wrak dostaje własną, sprzątanie', () => {
-  const s = plate(20, 8, 200);
-  s.spriteSkin.tint = [1, 0.5, 0.5];
-  planarConfig(s.cellSize);
-  const body = D.createBody(cloneBeamStructure(s), {});
-  const bodies = [body];
-  const scene = new THREE.Scene();
-  R.init(scene);
-  const camera = new THREE.OrthographicCamera();
-  try {
-    R.sync(bodies, camera, 0);
-    const data = R.bodyData.get(body);
-    assert.ok(data.sprite, 'skóra sprite\'a');
-    assert.equal(data.beamLines, null, 'belki tylko w podglądzie');
-    assert.equal(data.nodeMesh, null);
-    assert.equal(data.sprite.mesh.geometry.attributes.position.count, body.nodes.length * 4);
-    assert.equal(data.sprite.mesh.material.color.g, 0.5, 'odcień kukły');
-    assert.equal(data.sprite.mesh.material.depthTest, false);
-    assert.equal(R.stats.skinTriangles, body.nodes.length * 2);
-
-    // Przecięcie w połowie: rodzic i wrak rysują własne czworokąty.
-    for (const beam of body.beams) {
-      if ((body.nodes[beam.a].ox > 0) !== (body.nodes[beam.b].ox > 0)) beam.broken = true;
-    }
-    body.structureDirty = true;
-    D.splitQueue.push(body);
-    D.processSplits(bodies);
-    assert.equal(bodies.length, 2);
-    R.sync(bodies, camera, 0);
-    const wreckData = R.bodyData.get(bodies[1]);
-    assert.ok(wreckData.sprite);
-    assert.equal(R.bodyData.get(body).sprite.mesh.geometry.attributes.position.count, body.nodes.length * 4);
-    assert.equal(wreckData.sprite.mesh.geometry.attributes.position.count, bodies[1].nodes.length * 4);
-
-    R.beamsEnabled = true;
-    R.sync(bodies, camera, 0);
-    assert.equal(R.bodyData.get(body).beamLines.material.depthTest, false, 'podgląd belek nad sprite\'em');
-  } finally {
-    R.beamsEnabled = false;
-    R.sync([], camera, 0);
-    assert.equal(scene.children.filter(o => o.isMesh && o.material?.map).length, 0);
-    R.disposeSpriteSkin(s.spriteSkin);
-    R.debris.dispose(R.scene);
-    R.debris = null;
-  }
-});
-
 test('sterowanie 2D: ciąg wzdłuż dziobu, A obraca w lewo, hamulec, kurs z kwaternionu', () => {
   const s = plate(10, 4, 100);
   planarConfig(s.cellSize);
@@ -262,23 +212,4 @@ test('sterowanie 2D: ciąg wzdłuż dziobu, A obraca w lewo, hamulec, kurs z kwa
   body.angVel.z = 0.3;
   applyPlanarFlightControls(body, { throttle: 0, turn: 0, strafe: 0 }, 1 / 120, PLANAR_FLIGHT_DEFAULTS, false);
   assert.equal(body.angVel.z, 0.3);
-});
-
-test('broń na kadłubie 2D: lufy rozstawione wzdłuż lokalnego Y, pociski w płaszczyźnie', () => {
-  const s = plate(20, 8, 200);
-  planarConfig(s.cellSize);
-  const ship = D.createBody(cloneBeamStructure(s), {});
-  setPlanarHeading(ship, 0.4);
-  D._refreshRot(ship);
-  const weapons = new BeamWeapons3D(D, 8, { laserSpeed: 3000, convergence: 1500, sideAxis: 1 });
-  assert.ok(weapons.fire(0, ship, 450, 3));
-  assert.ok(weapons.fire(0, ship, 450, 3));
-  const [p1, p2] = weapons.projectiles;
-  for (const p of [p1, p2]) {
-    assert.equal(p.z, 0);
-    assert.equal(p.vz, 0);
-    assert.ok(Math.abs(Math.hypot(p.vx, p.vy) - 3000) < 1e-6);
-  }
-  const lateral = (p) => -Math.sin(0.4) * (p.x - ship.pos.x) + Math.cos(0.4) * (p.y - ship.pos.y);
-  assert.ok(lateral(p1) * lateral(p2) < 0, 'lufy po obu burtach');
 });

@@ -95,6 +95,44 @@ test('a frigate flies around a long wreck lying on its way instead of ramming it
   assert.ok(minGap > 0, `przeleciała przez wrak: ${minGap.toFixed(0)}`);
 });
 
+// Bryły 3D (wraki `solid3D`) liczą się tylko przy płaszczyźnie gry: gruz upadku habitatu bazy piratów leży na
+// planetoidzie 24–27 km pod płaszczyzną, a w indeksie bez wysokości jego rzut zatrzymywał okręty lecące nad bazą.
+test('3D solid wrecks away from the game plane are not obstacles, the ones crossing it are', async () => {
+  const { HULL_BODY_CONFIG } = await import('../src/game/hullBodies.js');
+  const B = Idx.WRECK_OBSTACLE_BAND;
+  assert.ok(B >= HULL_BODY_CONFIG.shipColumn, `pas indeksu (${B}) węższy niż słup okrętu (${HULL_BODY_CONFIG.shipColumn})`);
+  const solid = (x, z, r) => wreck(x, 0, r, 0, { solid3D: true, z });
+  const idx = Idx.rebuildWreckIndex([
+    solid(0, -24500, 900),             // gruz upadku na planetoidzie
+    solid(2000, -850, 400),            // odłam dysku mieszkalnego pod płaszczyzną
+    solid(4000, 2600, 500),            // odłam głowy wieży nad płaszczyzną
+    solid(6000, 300, 1100),            // przewrócona wieża na koronie bębna — przecina płaszczyznę
+    solid(8000, -(300 + B), 300),      // sfera sięga pasa
+    solid(10000, -(300 + B + 1), 300), // tuż za pasem
+    wreck(12000, 0, 300)               // wrak płaski (bez z)
+  ]);
+  assert.deepEqual(idx.refs.slice(0, idx.count).map((w) => w.x), [6000, 8000, 12000]);
+  Idx.resetWreckIndex();
+});
+
+test('a frigate flies over fall debris lying far below the plane without braking', () => {
+  const spec = resolveShipFlightSpec(frigate(0, 0));
+  const pile = [];
+  for (let i = 0; i < 12; i++) pile.push(wreck(900 + i * 350, (i % 3 - 1) * 300, 600, i, { solid3D: true, z: -24000 - i * 150 }));
+  try {
+    Idx.rebuildWreckIndex(pile);
+    window.__frameId++;
+    assert.equal(capitalObstacleSpeedCap(frigate(0, 0, 600, 0), 1, 0, 1, 0, spec, true), Infinity);
+    // Ta sama kupa w płaszczyźnie gry — fregata hamuje przed nią.
+    Idx.rebuildWreckIndex(pile.map((w) => ({ ...w, z: 0 })));
+    window.__frameId++;
+    const cap = capitalObstacleSpeedCap(frigate(0, 0, 600, 0), 1, 0, 1, 0, spec, true);
+    assert.ok(Number.isFinite(cap), `kupa wraków w płaszczyźnie nie hamuje: ${cap}`);
+  } finally {
+    Idx.resetWreckIndex();
+  }
+});
+
 test('wreck avoidance off: the same ship ignores the wreck (A/B switch)', () => {
   const spec = resolveShipFlightSpec(frigate(0, 0));
   Idx.rebuildWreckIndex([wreck(1200, 0, 391, Math.PI / 2)]);

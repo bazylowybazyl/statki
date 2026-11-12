@@ -9,7 +9,9 @@
 //   ?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty
 //   ?clean=1 (bez paneli)   ?test=1 (klatki z __kreator.runFrames — skrypt scripts/webgpu/kreator-kadluba-demo.mjs)
 import { Core3D } from '../src/3d/core3d.js';
-import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D } from '../src/3d/hexShips3D.js';
+import {
+  initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D, acquireHullVisualTexture, releaseHullVisualTexture
+} from '../src/3d/hexShips3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { HullSurface } from '../src/3d/hullSurface.js';
 import { HullLighting } from '../src/3d/hullLighting.js';
@@ -19,15 +21,14 @@ import { HullBodies } from '../src/game/hullBodies.js';
 import { SimClock } from '../src/game/simClock.js';
 import {
   HD_BLOCK, HD_DETAIL, HD_LEVELS, HD_LEVEL_NAMES, HD_MODULES, HD_MODULE_TYPES, HD_PALETTES, HD_PALETTE_KEYS, HD_STYLE_NAMES,
-  normalizeHullDesign
+  normalizeHullDesign, expandHullDecals, hullDesignShapeKey, hullDesignLookKey
 } from '../src/game/hullDesign/hullDesignSchema.js';
+import { hullPaintLayer } from '../src/game/hullDesign/hullDesignPaint.js';
 import { HD_PRESETS, HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { HD_EMBLEMS, HD_EMBLEM_KEYS } from '../src/game/hullDesign/hullEmblems.js';
 import { HD_PARTS, HD_PART_IDS } from '../src/game/hullDesign/hullDesignParts.js';
-import { buildHullField, hullCells, hullFieldScale, polyShapeLoop, rasterHullAlpha, loopDistance, hullFrameIntegrity } from '../src/game/hullDesign/hullDesignGeometry.js';
-import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
-import { pipeNetworkCheck } from '../src/game/hullDesign/hullDesignPipes.js';
-import { hullDesignSystems } from '../src/game/hullDesign/hullDesignSystems.js';
+import { hullCells, polyShapeLoop, loopDistance, hullFrameIntegrity } from '../src/game/hullDesign/hullDesignGeometry.js';
+import { createHullDesignBuildClient } from '../src/game/hullDesign/hullDesignBuildClient.js';
 import { RESOURCES } from '../src/data/resources.js';
 import { getHullRenderSize } from '../src/data/ships.js';
 import {
@@ -36,18 +37,26 @@ import {
 } from '../src/game/hullDesign/hullDesignBlocks.js';
 import { isPlayerBuildable } from '../src/game/hullDesign/hullDesignBuildable.js';
 import {
-  hullDesignClass, applyHullDesignPower, hullDesignCheck, hullDesignLimitBreach, hullDesignMountAddIssue, hullDesignMountList
+  hullDesignCheck, hullDesignLimitBreach, hullDesignMountAddIssue, hullDesignMountList
 } from '../src/game/hullDesign/hullDesignClass.js';
 import { HD_MOUNT_SLOTS, HD_MOUNT_MODULES, HD_MOUNT_RADIUS_DU, hullDesignMountOf } from '../src/game/hullDesign/hullDesignSchema.js';
+import { hullCargoFit } from '../src/game/hullDesign/hullDesignCargo.js';
 import {
   SHIP_CLASSES, CORE_LEVELS, NPC_SHIP_CLASSES, NPC_CORE_LEVELS, SHIP_CLASS_MAX, MOUNT_SIZES, MOUNT_SLOT_LABELS, POWER_CATEGORY_LABELS,
-  POWER_PRIORITY_DEFAULT, coreLevelMax, isNpcClassLevel, mountPowerMW, shipClass, sizeRank, weaponsForMount, weaponPowerMW, isHeavySlot
+  POWER_PRIORITY_DEFAULT, coreLevelMax, isNpcClassLevel, mountPowerMW, shipClass, shipClassLabel, isCivilRole, sizeRank, weaponsForMount,
+  weaponPowerMW, isHeavySlot
 } from '../src/data/shipClasses.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { BRIDGE_DEMO_HULLS } from './mostki-webgpu/kadluby.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
+import { Bridge3D } from '../src/3d/bridge3D.js';
+import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
+import { isBridgeSocket } from '../src/game/hullDesign/hullDesignSchema.js';
+import { bridgeLevel } from '../src/data/bridgeLevels.js';
+import { installShipyard, presetOptionsHtml } from './kreator-kadluba-stocznia.js';
+import { createDesignPreview } from './kreator-kadluba-podglad.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -85,8 +94,17 @@ const S = {
   // sieć systemów: graf (kto z kim), kontrola tras (wolne końce, poza obrysem, bez prądu / paliwa), nakładka grafu (I)
   systems: null, netCheck: null, netGraph: false, flash: null,
   // klasa okrętu (etap 2): wynik hullDesignClass, ostatni projekt w limitach mostka (straż akcji), nowe gniazdo
-  cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null
+  cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null,
+  // interfejs: 'stocznia' — przyjazny edytor przeciągnij-i-upuść (domyślny), 'warsztat' — pełny panel narzędzi
+  ui: uiFromPage()
 };
+function uiFromPage() {
+  let stored = null;
+  try { stored = localStorage.getItem('kreator.ui'); } catch { /* bez pamięci strony */ }
+  const want = params.get('ui') || stored;
+  return want === 'warsztat' ? 'warsztat' : 'stocznia';
+}
+document.body.classList.add(`ui-${S.ui}`);
 window.camera = {
   get x() { return S.cam.x; }, get y() { return S.cam.y; }, get zoom() { return S.cam.zoom; },
   shakeMag: 0, shakeDur: 0, addShake() {}
@@ -107,7 +125,10 @@ window.SUN = { x: -52000, y: -30000, r: 823 };
 if (!Array.isArray(window.wrecks)) window.wrecks = [];
 
 let composer = null;
+let previewQuad = null;   // podgląd w trakcie przeciągania (cele kompozytora wprost, bez ciała gry)
+const builder = createHullDesignBuildClient();   // budowa projektu w workerze (etapy z pamięcią wyników)
 let backdrop = null;
+let shipyard = null;   // przyjazny edytor (installShipyard) — interfejs 'stocznia'
 const cullInfo = { x: 0, y: 0, halfW: 1e5, halfH: 1e5, drawHalfW: 1e5, drawHalfH: 1e5 };
 const renderList = [];
 const ship = { entity: null, visual: null, physics: null, surfaceImg: null };
@@ -116,10 +137,13 @@ let refShip = null;
 // ---------------------------------------------------------------------------
 // Budowa: projekt → pole → kompozytor → kadłub gry
 let _uid = 0;
+// Kanwy pakietu na CPU (willReadFrequently): czytają je kadłub gry (belki z alfy), lakier, cienie i mapa powierzchni —
+// odczyt kanwy na GPU czekał na kolejkę (wypiek, klatki) i stawał w długim zadaniu przy tworzeniu kadłuba.
 function makeCanvas(w, h, data) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  if (data) c.getContext('2d').putImageData(new ImageData(data, w, h), 0, 0);
+  const g = c.getContext('2d', { willReadFrequently: true });
+  if (data) g.putImageData(new ImageData(data, w, h), 0, 0);
   return c;
 }
 
@@ -140,27 +164,45 @@ function releaseShip() {
   ship.entity = null;
 }
 
-function buildShipEntity(field, bake, mounts) {
+const nextTask = () => new Promise((ok) => setTimeout(ok, 0));
+
+/**
+ * Ciało gry z pełnego wypieku: alfa fizyki i komórki z workera budowy (`res.physics`, `res.cells`), albedo i mapa
+ * powierzchni z odczytu kompozytora. Kanwy i kadłub w osobnych zadaniach (bez długiego zadania strony).
+ */
+async function buildShipEntity(field, bake, res) {
   const im = field.image;
-  const physics = rasterHullAlpha(field, 1);
+  const T = S.hullT = {};
+  let t = performance.now();
+  const lap = (k) => { const n = performance.now(); T[k] = Math.round((n - t) * 10) / 10; t = n; };
+  const physics = res.physics;
   const physicsCanvas = makeCanvas(physics.width, physics.height, physics.data);
+  lap('kanwaFizyki');
+  await nextTask();
+  t = performance.now();
   const visual = makeCanvas(bake.width, bake.height, bake.albedo);
+  lap('kanwaObrazu');
+  await nextTask();
+  t = performance.now();
   provideSurface(visual, bake.surface, bake.width, bake.height);
-  const cells = hullCells(field, 0).count;
   const e = {
     id: `kreator_${++_uid}`,
     x: im.cx, y: im.cy, vx: 0, vy: 0, angle: 0, angVel: 0,
-    mass: Math.max(5000, cells * 400), hp: 12000, maxHp: 12000,
+    mass: Math.max(5000, res.cells * 400), hp: 12000, maxHp: 12000,
     type: 'cruiser', isPirate: field.expanded.design.palette === 'pirate', shipFrame: 'kreator',
     isCapitalShip: true, faction: field.expanded.design.palette,
     __hardpointScaleX: 1, __hardpointScaleY: 1, __hardpointScale: 1,
     __label: field.expanded.design.name, displayName: field.expanded.design.name,
     visual: { spriteScale: 1 },
     // bez automatycznych reflektorów otoczenia: sprite w A/B nie ma lamp (setRef), a reflektory zalewały blachę plamami
-    editorLights: { ...mounts.lights, autoFlood: false }
+    editorLights: { ...res.mounts.lights, autoFlood: false }
   };
+  lap('powierzchnia');
+  await nextTask();
+  t = performance.now();
   releaseShip();
   HullBodies.createHull(e, physicsCanvas, { visualImage: visual, hullProfileId: 'terran_battleship' });
+  lap('kadlub');
   if (!e.beamHull) throw new Error('createHull bez kadłuba (projekt)');
   ship.entity = e;
   ship.visual = visual;
@@ -169,62 +211,232 @@ function buildShipEntity(field, bake, mounts) {
   S.maps = null;
 }
 
-/** Przebudowa (zlewana): `fast` — 1 teksel/j. (przeciąganie), inaczej 2 teksele/j. */
+// Atlas naklejek (kanwa 2D, ~4 MB tekstury) — od nowa tylko przy zmianie naklejek; ten sam obiekt atlasu, więc
+// kompozytor nie wysyła tekstury drugi raz (prostokąty przepięte na naklejki nowego rozwinięcia, ta sama kolejność).
+const atlasMemo = { key: null, atlas: null, decals: null };
+function decalAtlasFor(decals) {
+  const key = JSON.stringify(decals, (k, v) => (k === 'part' || k === 'castle' ? undefined : v));
+  if (key !== atlasMemo.key || !atlasMemo.atlas) {
+    atlasMemo.key = key;
+    atlasMemo.atlas = buildHullDecalAtlas(decals);
+    atlasMemo.decals = decals;
+    return atlasMemo.atlas;
+  }
+  if (atlasMemo.decals !== decals) {
+    const rects = new Map();
+    atlasMemo.decals.forEach((d, i) => { const r = atlasMemo.atlas.rects.get(d); if (r) rects.set(decals[i], r); });
+    atlasMemo.atlas.rects = rects;
+    atlasMemo.decals = decals;
+  }
+  return atlasMemo.atlas;
+}
+
+/**
+ * Przebudowa (zlewana): `fast` — przeciąganie (pole i obraz w połowie rozdzielczości, podgląd bez ciała gry),
+ * inaczej pełny wypiek z ciałem gry. Budowa idzie w workerze (hullDesignBuildClient); nowsza praca przerywa starszą,
+ * gdy jest pełna albo gdy w toku jest pełna (podgląd w trakcie przeciągania kończy się i pokazuje).
+ */
 function requestBuild(fast = false) {
   if (!fast && !S.drag) histCommit();
+  scheduleBuild(fast);
+}
+
+function scheduleBuild(fast) {
   S.rev++;
+  // tylko warstwa barw (paleta, pędzel, naklejki) albo wygląd kompozytora (faza, profil fazy, panele, okna, okna →
+  // albedo) przy wolnej budowie (miniatura palety w toku nie przeszkadza: jej passy i odczyt już poszły do kolejki):
+  // passy kompozytora bez workera i ciała gry
+  if ((!S.busy || S.thumbBusy) && !S.pending && S.field && S.bakeOpts) {
+    const nd = normalizeHullDesign(S.design);
+    if (colorsOnly(nd)) { runColors(S.rev, false); return; }
+    if (S.shownLookKey && S.shownLookKey === hullDesignLookKey(nd)) { runColors(S.rev, true); return; }
+  }
   S.pending = { fast };
+  if (S.busy && S.building && (!fast || !S.building.fast)) builder.cancel();
   if (!S.busy) runBuild();
 }
 
-async function runBuild() {
-  if (!composer || !S.pending) return;
-  const job = S.pending;
-  S.pending = null;
-  S.busy = true;
-  const rev = S.rev;
+/** Czy od pokazanego obrazu zmieniła się tylko warstwa barw (ten sam klucz kształtu, te same ustawienia wypieku). */
+function colorsOnly(nd = normalizeHullDesign(S.design)) {
+  return !!(S.field && S.bakeOpts && S.shownShapeKey && S.bakeOpts.glowToAlbedo === S.glowToAlbedo
+    && S.shownShapeKey === hullDesignShapeKey(nd));
+}
+
+/**
+ * WARSTWA BARW: paleta nacji, nadpisania, pędzel (klocki i kasztele) i naklejki na mapach z ostatniej budowy —
+ * HullComposer.setColors / setDecals + renderColors (3 passy na GPU), albedo z celu ALB kopiowane na GPU do tekstury
+ * skóry kadłuba (bez odczytu i bez ciała gry); kanwa CPU kadłuba (lakier, cienie, mapy podglądu) — odczytem w tle.
+ * Cele z cudzymi mapami (miniatury palety) — pełny render z pakietów tej budowy (bez pól na CPU).
+ * `look` — zmiana WYGLĄDU kompozytora (hullDesignLookKey: faza, profil fazy, panele, okna, okna → albedo): wszystkie
+ * passy na polu i pakietach tej budowy, do skóry kadłuba albedo i mapa powierzchni (HullSurface) — ciało gry (alfa,
+ * belki) bez zmian.
+ */
+function runColors(rev, look = false) {
+  const t0 = performance.now();
   try {
-    const t0 = performance.now();
-    // przeciąganie: pole i obraz w połowie rozdzielczości (szybko), po puszczeniu — pełny wypiek
-    const sc = hullFieldScale(normalizeHullDesign(S.design));
-    const field = buildHullField(S.design, job.fast ? { fieldRes: sc.res * 0.5 } : {});
-    // klasa okrętu: akcja ponad twardy limit mostka się nie wykonuje (projekt wraca do ostatniego w limitach)
-    const cls = hullDesignClass(field);
-    if (classGuard(cls)) {
-      S.busy = false;
-      runBuild();
-      return;
+    const d = normalizeHullDesign(S.design);
+    const exp = S.field.expanded;
+    const decals = expandHullDecals(d, exp.decals.filter((q) => q.part));
+    const atlas = decalAtlasFor(decals);
+    const paint = hullPaintLayer(d, S.field.grid);
+    exp.design = d; exp.decals = decals;
+    if (look || composer.mapsRev !== S.mapsRev) {
+      S.bakeOpts = { ...S.bakeOpts, glowToAlbedo: S.glowToAlbedo };
+      S.mapsRev = composer.setDesign(S.field, atlas, { ...S.bakeOpts, paint });
+      composer.render();
+      S.shownShapeKey = hullDesignShapeKey(d);
+    } else {
+      composer.setColors(d, paint);
+      composer.setDecals(decals, atlas);
+      composer.renderColors();
     }
-    applyHullDesignPower(field, cls);
-    S.cls = cls;
     const t1 = performance.now();
-    const recipe = hullDesignRecipe(field);
-    const mounts = hullDesignMounts(field);
-    // kontrola sieci tylko przy pełnym wypieku (przeciąganie — połowa rozdzielczości, bez kontroli)
-    if (!job.fast) { S.systems = hullDesignSystems(field.expanded.modules); S.netCheck = pipeNetworkCheck(field.pipeNet, field); }
-    const atlas = buildHullDecalAtlas(field.expanded.decals);
-    const tpu = hullComposerTexPerUnit(field.image.w, field.image.h);
-    composer.setDesign(field, atlas, { texPerUnit: job.fast ? tpu * 0.5 : tpu, glowToAlbedo: S.glowToAlbedo });
-    const bake = await composer.bake();
-    const t2 = performance.now();
-    buildShipEntity(field, bake, mounts);
-    const t3 = performance.now();
-    S.field = field; S.recipe = recipe; S.mounts = mounts; S.bake = bake;
-    reactorDemoCoresFrom(field);
-    S.timing = { field: t1 - t0, bake: t2 - t1, gpu: bake.ms, hull: t3 - t2, total: t3 - t0, fast: job.fast };
-    S.builtRev = rev;
-    placeRef();
-    updateRecipe();
-    updateBlockStats();
+    const visual = ship.visual;
+    const sameSize = visual && composer.targets.w === visual.width && composer.targets.h === visual.height;
+    if (!previewQuad.visible && ship.entity && sameSize) {
+      const tex = acquireHullVisualTexture(visual);
+      Core3D.renderer.copyTextureToTexture(composer.targets.alb.texture, tex);
+      releaseHullVisualTexture(visual);
+      const bake = S.bake;
+      // wygląd: mapa powierzchni (relief, normalne, AO) — wprost do tekstury HullSurface, gdy już wysłana; inaczej z odczytu
+      const surf = look ? HullSurface._entries.get(visual) : null;
+      if (surf?.state === 'ready' && surf.texture) Core3D.renderer.copyTextureToTexture(composer.targets.surf.texture, surf.texture);
+      if (look && bake) { bake.emission = null; bake.emissionReq = null; }
+      // przeciąganie suwaka wyglądu: mapa powierzchni na CPU (mapy podglądu, HullSurface przed wysłaniem) — po puszczeniu
+      if (look && S.drag) S.surfaceDirty = true;
+      // kanwa CPU — raz na koniec pociągnięcia pędzla / przeciągania naklejki (w trakcie wystarczy tekstura na GPU)
+      if (!S.drag) {
+        composer.readAlbedo().then((alb) => {
+          if (ship.visual !== visual) return;
+          visual.getContext('2d', { willReadFrequently: true }).putImageData(new ImageData(alb, visual.width, visual.height), 0, 0);
+          if (bake) { bake.albedo = alb; S.maps = null; }
+        });
+        if (look || S.surfaceDirty) {
+          S.surfaceDirty = false;
+          composer._read(composer.targets.surf, composer.targets.w, composer.targets.h).then((sd) => {
+            if (ship.visual !== visual) return;
+            if (bake) bake.surface = sd;
+            if (!(surf?.state === 'ready')) { const e = HullSurface._entries.get(visual); if (e) HullSurface._finish(e, new Uint8Array(sd.buffer, sd.byteOffset, sd.byteLength), visual.width, visual.height, 0); }
+          });
+        }
+      }
+    }
+    const timing = S.timing = { barwy: t1 - t0, total: performance.now() - t0, kolory: !look, wyglad: look };
+    // koniec pracy GPU tej zmiany (passy barw i kopia albedo; późniejsza praca — np. miniatury palety — się nie liczy)
+    Core3D.renderer.backend.device.queue.onSubmittedWorkDone().then(() => { timing.gpu = performance.now() - t0; });
+    S.colorChanges = (S.colorChanges || 0) + 1;
+    if (!S.drag) S.builtRev = rev;
+    reactorDemoCoresFrom(S.field);
     updateClassPanel();
   } catch (err) {
     reportError(err.stack || String(err));
     S.builtRev = rev;
   }
+  wakeBuilt();
+}
+
+async function runBuild() {
+  if (!composer || !S.pending || S.busy) return;
+  const job = S.pending;
+  S.pending = null;
+  S.busy = true;
+  const rev = S.rev;
+  const json = JSON.stringify(S.design);
+  const shapeKey = hullDesignShapeKey(normalizeHullDesign(S.design));
+  let preview = false;
+  try {
+    const t0 = performance.now();
+    S.building = { fast: job.fast };
+    const res = await builder.build(S.design, { fast: job.fast, full: !job.fast });
+    S.building = null;
+    const t1 = performance.now();
+    if (res) {
+      // klasa okrętu: akcja ponad twardy limit mostka się nie wykonuje (projekt wraca do ostatniego w limitach)
+      if (classGuard(res.cls, json)) {
+        S.busy = false;
+        runBuild();
+        return;
+      }
+      const field = res.field;
+      S.cls = res.cls;
+      const tpu = hullComposerTexPerUnit(field.image.w, field.image.h);
+      const bakeOpts = { texPerUnit: job.fast ? tpu * 0.5 : tpu, glowToAlbedo: S.glowToAlbedo };
+      S.mapsRev = composer.setDesign(field, decalAtlasFor(field.expanded.decals), bakeOpts);
+      S.bakeOpts = bakeOpts;
+      // ścieżka barw i wyglądu (runColors) tylko na pełnym obrazie — podgląd przeciągania jej nie dostaje
+      S.shownShapeKey = null;
+      S.shownLookKey = null;
+      const t2 = performance.now();
+      // nowsza zmiana już czeka — ten wynik tylko jako podgląd (bez odczytu i ciała gry)
+      preview = job.fast || !!S.pending;
+      if (preview) {
+        composer.render();
+        previewQuad.show(composer, field.image, window.SUN);
+        S.previews = (S.previews || 0) + 1;
+        if (ship.entity) ship.entity.hideHexVisual = true;
+        S.field = field; S.recipe = res.recipe; S.mounts = res.mounts;
+        S.timing = { worker: res.timing, czekanie: t1 - t0, kompozytor: t2 - t1, total: performance.now() - t0, fast: true };
+      } else {
+        const bake = await composer.bake({ emission: false });
+        const t3 = performance.now();
+        if (S.pending) {
+          // zmiana w trakcie odczytu: obraz jako podgląd, ciało gry dopiero z nowszej budowy
+          previewQuad.show(composer, field.image, window.SUN);
+          if (ship.entity) ship.entity.hideHexVisual = true;
+          S.field = field; preview = true;
+        } else {
+          await buildShipEntity(field, bake, res);
+          const t4 = performance.now();
+          previewQuad.hide();
+          S.field = field; S.recipe = res.recipe; S.mounts = res.mounts; S.bake = bake;
+          reactorDemoCoresFrom(field);
+          bridgeDemoAttach(field);
+          S.timing = { worker: res.timing, czekanie: t1 - t0, kompozytor: t2 - t1, odczyt: t3 - t2, cialo: t4 - t3, ...S.hullT, total: t4 - t0, fast: false };
+          S.builtRev = rev;
+          S.shownShapeKey = shapeKey;
+          S.shownLookKey = hullDesignLookKey(normalizeHullDesign(JSON.parse(json)));
+          placeRef();
+          updateRecipe();
+          updateBlockStats();
+          updateClassPanel();
+          // kontrola sieci, systemy i spójność ramy przychodzą z workera po obrazie — panele odświeżają się wtedy
+          res.checks.then((c) => {
+            if (!c || S.field !== field) return;
+            S.systems = c.systems; S.netCheck = c.netCheck; field.integrity = c.integrity;
+            S.checksRev = (S.checksRev || 0) + 1;
+            updateRecipe();
+            updateBlockStats();
+          });
+        }
+      }
+    }
+  } catch (err) {
+    S.building = null;
+    reportError(err.stack || String(err));
+    S.builtRev = rev;
+  }
   S.busy = false;
   if (S.pending) queueMicrotask(runBuild);
-  else if (S.timing?.fast && !S.drag) requestBuild(false);
+  else if (preview && !S.drag) requestBuild(false);
   else wakeBuilt();
+}
+
+/**
+ * Kompozytor na wyłączność między wypiekami projektu (miniatury palety stoczni): czeka, aż budowa skończy, i woła
+ * `fn(composer)`; zmiana projektu w tym czasie czeka w `S.pending` i rusza zaraz po.
+ */
+async function composerExclusive(fn) {
+  while (!composer || S.busy || S.pending) await new Promise((ok) => setTimeout(ok, 40));
+  S.busy = true;
+  S.thumbBusy = true;
+  try {
+    return await fn(composer);
+  } finally {
+    S.busy = false;
+    S.thumbBusy = false;
+    if (S.pending) runBuild();
+    else wakeBuilt();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +646,7 @@ function worldOf(sx, sy) {
 }
 
 function onDown(e) {
+  if (S.ui === 'stocznia') return;   // stocznia ma własną obsługę myszy i klawiszy (dema/kreator-kadluba-stocznia.js)
   const m = S.mouse;
   m.lastX = e.clientX; m.lastY = e.clientY;
   const w = worldOf(e.clientX, e.clientY);
@@ -455,10 +668,7 @@ function onDown(e) {
   const tool = S.tool;
   if (tool === 'poly' || tool === 'groove' || tool === 'pipe') { addPolyPoint(w.x, w.y, e.shiftKey); return; }
   if (tool === 'castle' && !pick(w.x, w.y)) {
-    // kasztel: domyślne wymiary z detalu okrętu (≈ 60 × 45 jd), na osi przy kliknięciu blisko osi
-    const D = d.detail || 0.6;
-    const onAxis = Math.abs(w.y) < 20 / S.cam.zoom;
-    const o = { x: snap(w.x), y: onAxis ? 0 : snap(w.y), w: Math.round(32 * D * 10) / 10, h: Math.round(24 * D * 10) / 10, rot: 0, tiers: 2, taper: 0.45, port: true, hatches: 2, vent: 'slats', clip: S.castleClip ? 1 : undefined };
+    const o = newCastle(w.x, w.y);
     d.castles = d.castles || [];
     d.castles.push(o);
     S.drag = { kind: 'move', p: { kind: 'castle', obj: o, mirrored: false }, wx: w.x, wy: w.y };
@@ -466,7 +676,7 @@ function onDown(e) {
     return;
   }
   if (tool === 'part' && !pick(w.x, w.y)) {
-    const o = { id: S.partId, x: snap(w.x), y: Math.abs(w.y) < 12 / S.cam.zoom ? 0 : snap(w.y), s: Math.round(((d.detail || 0.6) / 0.6) * 1000) / 1000, rot: 0 };
+    const o = newPart(S.partId, w.x, w.y);
     d.parts = d.parts || [];
     d.parts.push(o);
     S.drag = { kind: 'move', p: { kind: 'part', obj: o, mirrored: false }, wx: w.x, wy: w.y };
@@ -493,28 +703,56 @@ function onDown(e) {
     d.decals.push(s);
     S.drag = { kind: 'stripeEnd', obj: s };
   } else if (tool === 'emblem' || tool === 'text') {
-    const o = tool === 'emblem'
-      ? { kind: 'emblem', id: S.emblem, x: snap(w.x), y: snap(w.y), rot: 0, w: 50, h: 50, color: S.color, opacity: 0.92, flip: false }
-      : { kind: 'text', text: S.text || 'HF', x: snap(w.x), y: snap(w.y), rot: 0, w: Math.max(30, (S.text || 'HF').length * 13), h: 16, color: S.color, opacity: 0.92, flip: false };
+    const o = newDecal(tool, w.x, w.y);
     d.decals.push(o);
     S.drag = { kind: 'move', p: { kind: 'decal', obj: o, mirrored: false }, wx: w.x, wy: w.y };
     requestBuild(true);
   } else if (tool === 'module') {
-    const def = HD_MODULES[S.moduleType];
-    // domyślne wymiary modułów są dla detail 0,6 — mniejszy okręt dostaje mniejsze moduły
-    const k = (d.detail || 0.6) / 0.6;
-    const o = { type: S.moduleType, x: snap(w.x), y: Math.abs(w.y) < 10 * k ? 0 : snap(w.y), rot: 0 };
-    if (def.r) o.r = Math.round(def.r * k * 10) / 10;
-    if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
-    if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy)
-    // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
-    if (S.moduleType === 'thruster_side') o.rot = w.y > 0 ? Math.PI / 2 : -Math.PI / 2;
-    // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
-    if (!classMountPlace(o)) return;
+    const o = newModule(S.moduleType, w.x, w.y);
+    if (!o) return;
+    applyModVariant(o);
     d.modules.push(o);
     S.drag = { kind: 'move', p: { kind: 'module', obj: o, mirrored: false }, wx: w.x, wy: w.y };
     requestBuild(true);
   }
+}
+
+// Nowe elementy w punkcie (wx, wy) — wspólne dla narzędzi warsztatu i palety stoczni (dema/kreator-kadluba-stocznia.js).
+/** Kasztel: domyślne wymiary z detalu okrętu (≈ 60 × 45 jd), na osi przy kliknięciu blisko osi. */
+function newCastle(wx, wy) {
+  const D = design().detail || 0.6;
+  const onAxis = Math.abs(wy) < 20 / S.cam.zoom;
+  return { x: snap(wx), y: onAxis ? 0 : snap(wy), w: Math.round(32 * D * 10) / 10, h: Math.round(24 * D * 10) / 10, rot: 0, tiers: 2, taper: 0.45, port: true, hatches: 2, vent: 'slats', clip: S.castleClip ? 1 : undefined };
+}
+/** Gotowa część `id` w skali detalu okrętu. */
+function newPart(id, wx, wy) {
+  return { id, x: snap(wx), y: Math.abs(wy) < 12 / S.cam.zoom ? 0 : snap(wy), s: Math.round(((design().detail || 0.6) / 0.6) * 1000) / 1000, rot: 0 };
+}
+/** Naklejka: emblemat z panelu albo napis. */
+function newDecal(kind, wx, wy) {
+  return kind === 'emblem'
+    ? { kind: 'emblem', id: S.emblem, x: snap(wx), y: snap(wy), rot: 0, w: 50, h: 50, color: S.color, opacity: 0.92, flip: false }
+    : { kind: 'text', text: S.text || 'HF', x: snap(wx), y: snap(wy), rot: 0, w: Math.max(30, (S.text || 'HF').length * 13), h: 16, color: S.color, opacity: 0.92, flip: false };
+}
+/**
+ * Moduł `type`: wymiary z detalu okrętu, wariant domyślny, gniazdo mostka w obrysie poziomu klasy, dysza SIDE wydechem ku
+ * burcie, gniazdo broni z typem i rozmiarem z panelu. `place` — z limitami mostka (odmowa: null i komunikat); false —
+ * bez sprawdzania (podgląd).
+ */
+function newModule(type, wx, wy, place = true) {
+  const def = HD_MODULES[type];
+  // domyślne wymiary modułów są dla detail 0,6 — mniejszy okręt dostaje mniejsze moduły
+  const k = (design().detail || 0.6) / 0.6;
+  const o = { type, x: snap(wx), y: Math.abs(wy) < 10 * k ? 0 : snap(wy), rot: 0 };
+  if (def.r) o.r = Math.round(def.r * k * 10) / 10;
+  if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
+  if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy, mostek: gniazdo poziomu)
+  // gniazdo mostka: poziom klasy projektu (obrys modelu poziomu — normalizeHullDesign; tu dla zaznaczania)
+  if (type === 'bridge' && o.v === 2) { const lv = bridgeLevel(S.cls?.levels.bridge || 1); o.lv = lv.level; o.w = lv.w / 2; o.h = lv.h / 2; }
+  // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
+  if (type === 'thruster_side') o.rot = wy > 0 ? Math.PI / 2 : -Math.PI / 2;
+  // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
+  return classMountPlace(o, place) ? o : null;
 }
 
 /** Krok przyciągania punktów [j.]: 1 jd zaokrąglony (fregata ~0,1 j., lotniskowiec ~0,6 j.). */
@@ -563,6 +801,7 @@ function finishPoly() {
 }
 
 function onMove(e) {
+  if (S.ui === 'stocznia') return;
   const m = S.mouse;
   const w = worldOf(e.clientX, e.clientY);
   if (m.pan) {
@@ -595,6 +834,7 @@ function onMove(e) {
 }
 
 function onUp() {
+  if (S.ui === 'stocznia') return;
   S.mouse.pan = false;
   if (S.drag) {
     const dr = S.drag;
@@ -606,6 +846,7 @@ function onUp() {
 }
 
 function onWheel(e) {
+  if (S.ui === 'stocznia') return;
   e.preventDefault();
   const w = worldOf(e.clientX, e.clientY);
   if (S.tool === 'move') {
@@ -655,10 +896,14 @@ function render(realDt, list) {
   backdrop.sync(cam, W, H);
   updateHexShips3D(cam, list, cullInfo);
   reactorDemoSync(cam);
+  bridgeDemoSync(cam);
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
-  if (!document.body.classList.contains('clean')) { drawEditor(cam); drawBlocks(cam); }
+  if (!document.body.classList.contains('clean')) {
+    if (S.ui === 'stocznia') shipyard?.draw(cam);
+    else { drawEditor(cam); drawBlocks(cam); }
+  }
   updateHud();
 }
 
@@ -730,12 +975,20 @@ function mapCanvas(view) {
     const k = view === 'ao' ? 2 : 3;
     for (let i = 0; i < n; i++) { const v = b.surface[i * 4 + k]; px[i * 4] = v; px[i * 4 + 1] = v; px[i * 4 + 2] = v; px[i * 4 + 3] = 255; }
   } else if (view === 'emis') {
+    if (!b.emission) { ensureEmission(); return null; }
     px.set(b.emission);
   } else if (view === 'cells') {
     for (let i = 0; i < n; i++) { const a = b.albedo[i * 4 + 3]; px[i * 4] = a * 0.25; px[i * 4 + 1] = a * 0.3; px[i * 4 + 2] = a * 0.35; px[i * 4 + 3] = 255; }
   }
   S.maps[view] = makeCanvas(b.width, b.height, px);
   return S.maps[view];
+}
+
+/** Emisja nie idzie z pełnym wypiekiem (ciało gry jej nie potrzebuje) — odczyt na żądanie widoku mapy emisji. */
+function ensureEmission() {
+  const b = S.bake;
+  if (!b || b.emission || b.emissionReq || composer.targets?.w !== b.width || composer.targets?.h !== b.height) return;
+  b.emissionReq = composer.readEmission().then((e) => { b.emission = e; if (S.maps) delete S.maps.emis; });
 }
 
 function drawMap(cam) {
@@ -1077,6 +1330,7 @@ function syncPanel() {
   $('zoom-05').classList.toggle('on', Math.abs(S.cam.zoom - 0.5) < 1e-3);
   $('zoom-1').classList.toggle('on', Math.abs(S.cam.zoom - 1) < 1e-3);
   $('sel-ref').value = S.refKey || '';
+  syncModVariant();
   syncBlockPanel();
   syncClassPanel();
 }
@@ -1084,6 +1338,15 @@ function syncPanel() {
 function fit() {
   const im = S.field?.image;
   if (!im) return;
+  if (S.ui === 'stocznia' && shipyard) {
+    // stocznia: kadr między paletą (z lewej), kartą okrętu (z prawej) i paskami u góry / u dołu
+    const ins = shipyard.insets();
+    const fw = Math.max(200, W - ins.left - ins.right), fh = Math.max(200, H - ins.top - ins.bottom);
+    S.cam.zoom = Math.min(6, Math.max(0.06, Math.min(fw * 0.84 / im.w, fh * 0.8 / im.h)));
+    S.cam.x = im.cx + (ins.right - ins.left) * 0.5 / S.cam.zoom;
+    S.cam.y = im.cy + (ins.bottom - ins.top) * 0.5 / S.cam.zoom;
+    return;
+  }
   const free = W > 900 ? W - 330 : W;
   S.cam.zoom = Math.min(2, Math.max(0.06, Math.min(free * 0.8 / im.w, H * 0.7 / im.h)));
   S.cam.x = im.cx + (W > 900 ? 160 / S.cam.zoom : 0);
@@ -1097,9 +1360,10 @@ function setZoom(z) {
   syncPanel();
 }
 
-async function loadPreset(key) {
+/** Gotowy projekt `key` (albo `own` — własny projekt, np. nowy kadłub stoczni; A/B jak dla `key`). */
+async function loadPreset(key, own = null) {
   S.presetKey = key;
-  S.design = hullDesignPreset(key);
+  S.design = own ? normalizeHullDesign(own) : hullDesignPreset(key);
   S.classValid = null; S.selected = null;
   S.blkSel.clear();
   histReset();
@@ -1109,6 +1373,7 @@ async function loadPreset(key) {
   fit();
   if (REF_FOR[key]) await setRef(REF_FOR[key]);
   syncPanel();
+  shipyard?.refresh();
 }
 
 const builtWaiters = [];
@@ -1155,9 +1420,26 @@ function toggleAb() {
   syncPanel();
 }
 
+/** Interfejs: 'stocznia' (przyjazny edytor, domyślny) albo 'warsztat' (pełny panel narzędzi); wybór pamięta strona. */
+function setUi(mode) {
+  const ui = mode === 'warsztat' ? 'warsztat' : 'stocznia';
+  if (ui === S.ui) return true;
+  S.ui = ui;
+  document.body.classList.toggle('ui-stocznia', ui === 'stocznia');
+  document.body.classList.toggle('ui-warsztat', ui === 'warsztat');
+  try { localStorage.setItem('kreator.ui', ui); } catch { /* bez pamięci strony */ }
+  S.drag = null; S.poly = null; S.mouse.pan = false;
+  S.blkSel.clear();
+  // stocznia pokazuje sam okręt: bez map pakietu, A/B, podkładu i grafu sieci (to narzędzia warsztatu)
+  if (ui === 'stocznia') { S.view = 'game'; S.ab = false; S.underlay = false; S.netGraph = false; updateAbTag(); }
+  shipyard?.onUi(ui);
+  syncPanel();
+  return true;
+}
+
 function bindPanel() {
   const selP = $('sel-preset');
-  for (const k of HD_PRESET_KEYS) selP.add(new Option(HD_PRESETS[k].label, k));
+  selP.innerHTML = presetOptionsHtml(HD_PRESET_KEYS);   // <optgroup> wg HD_PRESET_GROUPS (Terra Nova, Statki cywilne, Inne)
   selP.addEventListener('change', () => loadPreset(selP.value));
   const selPal = $('sel-palette');
   for (const k of HD_PALETTE_KEYS) selPal.add(new Option(`barwy: ${HD_PALETTES[k].label}`, k));
@@ -1199,12 +1481,14 @@ function bindPanel() {
   for (const k of HD_MODULE_TYPES) selM.add(new Option(`moduł: ${HD_MODULES[k].label}`, k));
   selM.value = S.moduleType;
   selM.addEventListener('change', () => { S.moduleType = selM.value; S.tool = 'module'; syncPanel(); });
+  $('sel-modv').addEventListener('change', (e) => setModVariant('v', Number(e.target.value)));
+  $('sel-modn').addEventListener('change', (e) => setModVariant('n', Number(e.target.value)));
   const selE = $('sel-emblem');
   for (const k of HD_EMBLEM_KEYS) selE.add(new Option(`emblemat: ${HD_EMBLEMS[k].label}`, k));
   selE.addEventListener('change', () => { S.emblem = selE.value; S.tool = 'emblem'; syncPanel(); });
   $('inp-color').addEventListener('input', (e) => { S.color = e.target.value; });
   $('inp-text').addEventListener('input', (e) => { S.text = e.target.value; });
-  for (const v of ['game', 'albedo', 'normal', 'ao', 'relief', 'emis', 'cells']) $(`view-${v}`).addEventListener('click', () => { S.view = v; syncPanel(); });
+  for (const v of ['game', 'albedo', 'normal', 'ao', 'relief', 'emis', 'cells']) $(`view-${v}`).addEventListener('click', () => { S.view = v; if (v === 'emis') ensureEmission(); syncPanel(); });
   $('btn-grid').addEventListener('click', () => { ACTIONS.g(); syncPanel(); });
   $('btn-glow').addEventListener('click', () => { S.glowToAlbedo = !S.glowToAlbedo; requestBuild(); syncPanel(); });
   $('zoom-022').addEventListener('click', () => setZoom(0.22));
@@ -1216,6 +1500,7 @@ function bindPanel() {
   $('btn-ab').addEventListener('click', () => toggleAb());
   $('btn-netgraph').addEventListener('click', () => { ACTIONS.i(); syncPanel(); });
   $('btn-clean').addEventListener('click', () => ACTIONS.h());
+  $('btn-ui-stocznia').addEventListener('click', () => setUi('stocznia'));
   $('btn-json').addEventListener('click', () => {
     const ta = $('json');
     if (ta.style.display !== 'block') { ta.style.display = 'block'; ta.value = JSON.stringify(design(), null, 1); return; }
@@ -1230,6 +1515,7 @@ function bindInput() {
   window.addEventListener('mouseup', onUp);
   canvas2d.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', (e) => {
+    if (S.ui === 'stocznia') return;
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
     if ((S.tool === 'poly' || S.tool === 'groove' || S.tool === 'pipe') && S.poly) {
       if (e.key === 'Enter') { finishPoly(); e.preventDefault(); return; }
@@ -1310,9 +1596,7 @@ function histGo(step) {
   S.design = normalizeHullDesign(JSON.parse(HIST.stack[i]));
   S.classValid = null; S.selected = null;
   S.blkSel.clear();
-  S.rev++;
-  S.pending = { fast: false };
-  if (!S.busy) runBuild();
+  scheduleBuild(false);
   syncPanel();
   return true;
 }
@@ -1564,6 +1848,7 @@ function blkToggleCut() {
 }
 
 function onBlockKey(e) {
+  if (S.ui === 'stocznia') return;
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
   const k = e.key.toLowerCase();
   const ctrl = e.ctrlKey || e.metaKey;
@@ -1719,7 +2004,7 @@ function syncBlockPanel() {
 const BLK_INTEGRITY = new WeakMap();   // pole → hullFrameIntegrity (liczona raz na zbudowane pole)
 function updateBlockStats() {
   const el = $('blk-stats');
-  if (!el || !S.field || !S.design) return;
+  if (!el || !S.field || !S.design || S.ui !== 'warsztat') return;
   const blocks = designBlocks();
   const copies = blocks.reduce((n, b) => n + (mirrorOn(b) && Math.abs(b.y) > 1e-6 ? 2 : 1), 0);
   const gn = hullDesignMountList(S.field.expanded.modules);
@@ -1728,8 +2013,10 @@ function updateBlockStats() {
   const bp = isPlayerBuildable(S.design);
   const sel = blkSelected();
   // spójność ramy (osobno od strażnika edytora): kawałki i szpary na wylot, raz na zbudowane pole
-  let it = BLK_INTEGRITY.get(S.field);
+  // spójność ramy: z workera budowy (po obrazie — wtedy panel odświeża się drugi raz); do tego czasu ostatnia znana
+  let it = S.field.integrity || BLK_INTEGRITY.get(S.field) || S.lastIntegrity;
   if (!it) BLK_INTEGRITY.set(S.field, it = hullFrameIntegrity(S.field));
+  S.lastIntegrity = it;
   const at = (p) => `${Math.round((p.box[0] + p.box[2]) / 2)}, ${Math.round((p.box[1] + p.box[3]) / 2)}`;
   const j2 = (p) => p.area.toLocaleString('pl-PL', { maximumFractionDigits: 1 });
   const frame = [];
@@ -1793,19 +2080,21 @@ function bindBlockPanel() {
  */
 function blockSheet() {
   const g = 0.5, D = 0.09, u = hullBlockPaletteUnit(g, D);
-  const shapes = [{ kind: 'block', shape: 'rect', x: -6, y: 7, w: 156, h: 62, level: 0 }];
+  // 11 kształtów w pasie (trzy ustawienia jeden pod drugim), dalsze wpisy palety — w kolejnych pasach
+  const per = 11, bands = Math.ceil(HD_BLOCK_PALETTE.length / per), yGap = 28 + 56 * (bands - 1);
+  const shapes = [{ kind: 'block', shape: 'rect', x: -6, y: (yGap - 14) / 2, w: 156, h: yGap + 34, level: 0 }];
   HD_BLOCK_PALETTE.forEach((p, i) => {
-    const x = -72 + i * 13;
-    shapes.push({ ...hullBlockFromPalette(p.id, u, x, -14) });
-    shapes.push({ ...hullBlockFromPalette(p.id, u, x, 0), rot: HD_BLOCK_ROT_STEP });
-    shapes.push({ ...hullBlockFromPalette(p.id, u, x, 14), rot: 2 * HD_BLOCK_ROT_STEP, flip: true });
+    const x = -72 + (i % per) * 13, y = Math.floor(i / per) * 56;
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, y - 14) });
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, y), rot: HD_BLOCK_ROT_STEP });
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, y + 14), rot: 2 * HD_BLOCK_ROT_STEP, flip: true });
   });
-  const r = (x0, x1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: 28, w: x1 - x0, h: 8, level: 1, ...o });
+  const r = (x0, x1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: yGap, w: x1 - x0, h: 8, level: 1, ...o });
   shapes.push(r(-76, -66), r(-66, -56), r(-56, -46));
   shapes.push(r(-40, -30, { gap: 0 }), r(-30, -20, { gap: 0 }), r(-20, -10, { gap: 0 }));
   shapes.push(r(-4, 10), r(6, 20));
-  shapes.push(r(26, 46), { kind: 'block', shape: 'rect', x: 36, y: 28, w: 8, h: 3, level: 1, op: 'cut' });
-  shapes.push(r(52, 70), { kind: 'block', shape: 'trap', x: 61, y: 28, w: 12, h: 4, a: 2, b: 2, level: 2 });
+  shapes.push(r(26, 46), { kind: 'block', shape: 'rect', x: 36, y: yGap, w: 8, h: 3, level: 1, op: 'cut' });
+  shapes.push(r(52, 70), { kind: 'block', shape: 'trap', x: 61, y: yGap, w: 12, h: 4, a: 2, b: 2, level: 2 });
   return {
     v: 2, name: 'Arkusz palety klocków', style: 'chamfer', mirror: false, palette: 'terra', seed: 3, detail: D, grid: g,
     windows: 0, bevel: 1.9, round: 1, panels: 0.55, blocks: [], shapes, modules: [], decals: []
@@ -1840,8 +2129,7 @@ function classModuleLabel(m, off) {
  * Straż twardych limitów mostka po budowie pola: akcja, po której limit jest bardziej przekroczony niż w ostatnim projekcie
  * w limitach, się nie wykonuje — projekt wraca, wpis historii znika, komunikat. Zwraca true, gdy cofnięto.
  */
-function classGuard(cls) {
-  const json = JSON.stringify(S.design);
+function classGuard(cls, json = JSON.stringify(S.design)) {
   if (S.classValid && S.classCheckValid && json !== S.classValid) {
     const why = hullDesignLimitBreach(S.classCheckValid, cls.check);
     if (why) {
@@ -1860,8 +2148,8 @@ function classGuard(cls) {
   return false;
 }
 
-/** Nowe gniazdo (narzędzie Moduł): typ i rozmiar z panelu, limity mostka przed postawieniem. */
-function classMountPlace(o) {
+/** Nowe gniazdo (narzędzie Moduł): typ i rozmiar z panelu, limity mostka przed postawieniem (`check` false — bez limitów). */
+function classMountPlace(o, check = true) {
   if (!HD_MOUNT_MODULES[o.type]) return true;
   const d = design();
   const lv = S.cls?.levels.bridge || 1;
@@ -1870,8 +2158,11 @@ function classMountPlace(o) {
     o.size = S.mountSize || shipClass(lv).weaponSize;
     o.r = Math.round(HD_MOUNT_RADIUS_DU[o.slot] * (d.detail || 0.6) * 100) / 100;
   }
+  // obrotnica (statki robocze): gniazdo główne M, na kadłubie klasy I — S (limit rozmiaru broni mostka)
+  if (o.type === 'rig' && !o.size) o.size = shipClass(lv).weaponSize === 'S' ? 'S' : 'M';
+  if (!check) return true;
   const copies = d.mirror && Math.abs(o.y) > 0.5 ? 2 : 1;
-  const why = hullDesignMountAddIssue(lv, S.cls?.mounts || [], hullDesignMountOf(o), copies);
+  const why = hullDesignMountAddIssue(lv, S.cls?.mounts || [], hullDesignMountOf(o), copies, d.role);
   if (why) { classFlash(why); return false; }
   return true;
 }
@@ -1883,7 +2174,7 @@ function setBridgeLevel(lv) {
   if (lv > 0 && S.cls && S.field) {
     const c = hullDesignCheck({ ...d, bridgeLevel: lv, coreLevel: Math.min(d.coreLevel || lv, coreLevelMax(lv)) }, S.cls.area, S.field.expanded.modules);
     const hard = c.issues.filter((i) => i.code !== 'core');
-    if (hard.length) { classFlash(`Mostek ${shipClass(lv).roman} (${shipClass(lv).label}): ${hard[0].text}`); syncClassPanel(); return false; }
+    if (hard.length) { classFlash(`Mostek ${shipClass(lv).roman} (${shipClassLabel(lv, d.role)}): ${hard[0].text}`); syncClassPanel(); return false; }
   }
   d.bridgeLevel = lv;
   if (lv > 0 && d.coreLevel > coreLevelMax(lv)) d.coreLevel = coreLevelMax(lv);
@@ -1919,7 +2210,61 @@ function selectedMount() {
   return p.obj;
 }
 
+/**
+ * WARIANTY MODUŁÓW ładunku (src/game/hullDesign/hullDesignCargo.js): ładownia v 0–3 (wrota, klapa, stelaż, zasobniki n × n),
+ * zbiornik ładunku v 0–1 (walce, kule; n — rzędów). Wiersz pod wyborem modułu: zaznaczony moduł tego typu — zmiana w nim
+ * (przebudowa), inaczej — wariant nowych modułów narzędzia M (S.moduleVar[typ]).
+ */
+const MOD_VARIANTS = {
+  cargo: { v: ['wrota', 'klapa', 'stelaż kontenerów', 'zasobniki', 'kosz otwarty od góry'], n: (v) => (v === 3 ? (k) => `zasobnik ${k} × ${k}` : null) },
+  rig: { v: ['wysięgnik (laser tnący)', 'dźwig'], n: () => null },
+  mill: { v: ['walce tnące'], n: () => (k) => `walców: ${k}` },
+  cargo_tank: { v: ['walce', 'kule'], n: () => (k) => `rzędów: ${k}` }
+};
+S.moduleVar = {};
+function modVariantTarget() {
+  const p = S.selected;
+  if (p?.kind === 'module' && MOD_VARIANTS[p.obj.type] && design()?.modules.includes(p.obj)) return { o: p.obj, type: p.obj.type };
+  return MOD_VARIANTS[S.moduleType] ? { o: null, type: S.moduleType } : null;
+}
+function applyModVariant(o) {
+  const mv = S.moduleVar[o.type];
+  if (!mv) return;
+  o.v = mv.v;
+  if (mv.n) o.n = mv.n; else delete o.n;
+  hullCargoFit(o, design().detail);   // co najmniej jedna komórka siatki kontenerów (jak karty Stoczni)
+}
+function setModVariant(field, value) {
+  const t = modVariantTarget();
+  if (!t) return;
+  const src = t.o || (S.moduleVar[t.type] = S.moduleVar[t.type] || { v: 0, n: 0 });
+  src[field] = value;
+  if (field === 'v') { const nf = MOD_VARIANTS[t.type].n(value); src.n = nf ? (src.n || (t.type === 'cargo' || t.type === 'mill' ? 2 : 1)) : 0; if (!src.n) delete src.n; }
+  if (t.o) { hullCargoFit(t.o, design().detail); requestBuild(); }
+  syncModVariant();
+}
+function syncModVariant() {
+  const row = $('modvar-row');
+  if (!row) return;
+  const t = modVariantTarget();
+  row.style.display = t ? '' : 'none';
+  if (!t) return;
+  const def = MOD_VARIANTS[t.type], cur = t.o || S.moduleVar[t.type] || {};
+  const v = cur.v || 0, nf = def.n(v);
+  const key = `${t.type}|${v}|${cur.n || 0}|${t.o ? 'sel' : 'tool'}`;
+  if (row.dataset.key === key) return;
+  row.dataset.key = key;
+  const sv = $('sel-modv'), sn = $('sel-modn');
+  sv.innerHTML = '';
+  def.v.forEach((label, i) => sv.add(new Option(`${t.o ? 'zaznaczony' : 'nowy'}: ${label}`, String(i))));
+  sv.value = String(v);
+  sn.style.display = nf ? '' : 'none';
+  sn.innerHTML = '';
+  if (nf) { for (let k = 1; k <= 4; k++) sn.add(new Option(nf(k), String(k))); sn.value = String(cur.n || (t.type === 'cargo' || t.type === 'mill' ? 2 : 1)); }
+}
+
 function syncMountEdit() {
+  syncModVariant();
   const o = selectedMount();
   const row = $('mountedit-row'), row2 = $('mountedit-row2'), info = $('mountedit');
   if (!row) return;
@@ -2006,17 +2351,24 @@ function bindClassPanel() {
   });
 }
 
-/** Kategorie kolejki mocy obecne na okręcie (tarcza zawsze) w kolejności priorytetu projektu. */
+/** Kategorie kolejki mocy obecne na okręcie (tarcza zawsze — poza statkiem cywilnym) w kolejności priorytetu projektu. */
 function classPriorityVisible() {
   const order = design()?.powerPriority || POWER_PRIORITY_DEFAULT;
   const devs = S.cls?.power.devices || [];
-  return order.filter((k) => k === 'shield' || devs.some((x) => x.cat === k));
+  const civil = isCivilRole(design()?.role);
+  return order.filter((k) => (k === 'shield' && !civil) || devs.some((x) => x.cat === k));
 }
 
 function syncClassPanel() {
   const d = design();
   const sb = $('sel-bridge'), sc = $('sel-core');
   if (!d || !sb || !sb.options.length) return;
+  // nazwy klas wg roli projektu (statek cywilny — nazwy cywilne, bez wzorów TN); klasy ponad drabiną (tylko NPC) —
+  // widoczne i do wyboru tylko w projekcie NPC
+  for (const o of sb.options) {
+    const lv = Number(o.value);
+    if (lv > 0) { const c = shipClass(lv); o.textContent = `mostek ${c.roman} · ${shipClassLabel(lv, d.role)}${c.npcOnly ? ' — tylko NPC' : (!isCivilRole(d.role) && c.example ? ` (${c.example})` : '')}`; }
+  }
   for (const sel of [sb, sc]) for (const o of sel.options) { const npcOnly = Number(o.value) > SHIP_CLASS_MAX; o.hidden = npcOnly && !d.npc; o.disabled = o.hidden; }
   sb.value = String(d.bridgeLevel || 0);
   const br = S.cls?.levels.bridge || d.bridgeLevel || 1;
@@ -2040,10 +2392,12 @@ function updateClassPanel() {
     return `<span class="bar"><i class="${k > 1 ? 'bad' : (k > 0.9 ? 'warn' : '')}" style="width:${Math.min(100, k * 100).toFixed(0)}%"></i></span>`;
   };
   const by = c.check.counts.bySlot;
+  // limit powierzchni wg roli (cywilna klasa VI — bez limitu)
+  const amax = c.check.areaMax ?? cls.areaMax;
   const lines = [
-    `<b>Mostek ${cls.roman} · ${cls.label}</b>${c.levels.auto ? ' (z powierzchni)' : ''}${cls.example ? ` — wzór: ${cls.example}` : ''}${cls.npcOnly ? ' · <span class="warn">tylko NPC</span>' : ''}`,
+    `<b>Mostek ${cls.roman} · ${c.label || cls.label}</b>${c.levels.auto ? ' (z powierzchni)' : ''}${c.role !== 'civil' && cls.example ? ` — wzór: ${cls.example}` : ''}${cls.npcOnly ? ' · <span class="warn">tylko NPC</span>' : ''}`,
     ...(cls.superweapon ? [`superbroń wbudowana: ${cls.superweapon.label} · ${fmtInt(cls.superweapon.mw)} MW (nowa broń — etap E2)`] : []),
-    `pow.    ${bar(c.area, cls.areaMax)} ${fmtInt(c.area)} / ${fmtInt(cls.areaMax)} j²`,
+    Number.isFinite(amax) ? `pow.    ${bar(c.area, amax)} ${fmtInt(c.area)} / ${fmtInt(amax)} j²` : `pow.    ${bar(0, 1)} ${fmtInt(c.area)} j² (bez limitu)`,
     `gniazda ${bar(c.check.counts.mounts, cls.mountsMax)} ${c.check.counts.mounts} / ${cls.mountsMax}`,
     `ciężkie ${bar(c.check.counts.heavy, cls.heavyMax)} ${c.check.counts.heavy} / ${cls.heavyMax}`,
     `broń do ${cls.weaponSize} · ${Object.entries(by).map(([k, n]) => `${MOUNT_SLOT_LABELS[k]} ${n}`).join(' · ') || 'bez gniazd'}`,
@@ -2108,12 +2462,17 @@ window.__kreator = {
   get ref() { return refShip; },
   act(k) { ACTIONS[k]?.(); syncPanel(); return true; },
   async preset(k) { await loadPreset(k); return true; },
-  setView(v) { S.view = v; syncPanel(); return true; },
+  /** Własny projekt (JSON) jak preset — zrzuty projektów spoza listy (scripts/webgpu/kreator-frachtowce.mjs). */
+  async load(design, key = 'empty') { await loadPreset(key, design); return true; },
+  /** Widok mapy pakietu; emisja — po odczycie na żądanie (obietnica). */
+  setView(v) { S.view = v; if (v === 'emis') ensureEmission(); syncPanel(); return S.bake?.emissionReq && v === 'emis' ? S.bake.emissionReq.then(() => true) : true; },
   setZoom(z) { setZoom(z); return true; },
   setAb(on, focus = 'design') { S.ab = !!on; S.abFocus = focus; const f = focusPoint(); S.cam.x = f.x; S.cam.y = f.y; updateAbTag(); syncPanel(); return true; },
   setCamera(x, y, zoom) { S.cam.x = x; S.cam.y = y; S.cam.zoom = zoom; return true; },
   setStyle(s) { S.design.style = s; requestBuild(); return true; },
   edit(fn) { fn(S.design); requestBuild(); return true; },
+  /** Przebudowa po zmianie projektu w miejscu (`fast` — w trakcie przeciągania); pomiar płynności. */
+  requestBuild(fast = false) { requestBuild(fast); return true; },
   fit() { fit(); return true; },
   /** Kamera na projekt i sprite (A/B) jednocześnie — jeden nad drugim. */
   fitAb() {
@@ -2130,6 +2489,10 @@ window.__kreator = {
     return true;
   },
   setUnderlay(on) { S.underlay = !!on; syncPanel(); return true; },
+  /** Interfejs 'stocznia' | 'warsztat'; haki stoczni (paleta, miniatury, zaznaczenie) — `__kreator.stocznia`. */
+  setUi(mode) { return setUi(mode); },
+  get stocznia() { return shipyard?.harness || null; },
+  setBridge3D(on) { S.bridge3D = !!on; return true; },
   setNetGraph(on) { S.netGraph = !!on; syncPanel(); return true; },
   toScreen(x, y) { return { x: (x - S.cam.x) * S.cam.zoom + W * 0.5, y: (y - S.cam.y) * S.cam.zoom + H * 0.5 }; },
   async built() { await waitBuilt(); return true; },
@@ -2194,6 +2557,60 @@ function reactorDemoSync(cam) {
   reactorDemo.sync(reactorDemoCores, 0, PHYS_DT, reactorDemoOpts);
 }
 
+// ---------------------------------------------------------------------------
+// MOSTEK 3D w gnieździe (moduł `bridge` v 2): ten sam model poziomu co w grze (src/3d/bridge3D.js, rodzaje tn_1 … tn_6)
+// na kadłubie projektu. Strefy mostków = gniazda v 2 (obrys poziomu, `level`) zamontowane na belkach kadłuba projektu
+// (attachBeamBridges; skala 1 — obraz fizyki to układ projektu przesunięty o środek obrazu (cx, cy)). Haki:
+// bridgeDemoInit() przy starcie (rozgrzewka), bridgeDemoAttach(field) po budowie kadłuba, bridgeDemoSync(cam)
+// w render(); `window.__kreator.setBridge3D(false)` — samo gniazdo (bez modelu).
+const bridgeDemoList = [];
+const bridgeDemoOpts = { nowSec: 0, dt: 1 / 60, zoom: 1, cull: null, camera: null };
+function bridgeDemoInit() {
+  Bridge3D.attach(Core3D.scene);
+  Core3D.warmup.add({ name: 'mostki 3D (bridge3D)', objects: () => Bridge3D.warmupMeshes(), layer: 0, phase: 'loading' });
+  window.__kreator.bridge3D = Bridge3D;
+}
+function bridgeDemoAttach(field) {
+  const e = ship.entity;
+  if (!e?.beamHull) return;
+  const im = field.image;
+  const zones = [];
+  for (const m of field.expanded.modules) {
+    if (!isBridgeSocket(m)) continue;
+    zones.push({
+      id: `mostek_${zones.length}`, label: `Mostek ${bridgeLevel(m.lv).roman}`, x: m.x - im.cx, y: m.y - im.cy,
+      w: m.w * 2, h: m.h * 2, rot: (m.rot || 0) * 180 / Math.PI, level: m.lv
+    });
+  }
+  const hull = e.beamHull;
+  attachBeamBridges(e, zones, { scaleX: 1, scaleY: 1, pngWidth: hull.srcWidth, pngHeight: hull.srcHeight, hullKey: 'kreator' });
+}
+function bridgeDemoSync(cam) {
+  bridgeDemoList.length = 0;
+  if (S.bridge3D !== false && ship.entity?.bridgeState) bridgeDemoList.push(ship.entity);
+  bridgeDemoOpts.nowSec = S.frame * PHYS_DT;
+  bridgeDemoOpts.zoom = cam.zoom;
+  bridgeDemoOpts.cull = cullInfo;
+  bridgeDemoOpts.camera = cam;
+  Bridge3D.update(bridgeDemoList, bridgeDemoOpts);
+}
+
+// ---------------------------------------------------------------------------
+// STOCZNIA (przyjazny edytor, dema/kreator-kadluba-stocznia.js): stan, budowa i historia, wybór i przekształcenia
+// elementów, klocki palety, fabryki elementów i kompozytor na wyłączność (miniatury kart). Haki w demie: installShipyard
+// przy starcie, shipyard.draw(cam) w render(), shipyard.insets() w fit(), bramki `S.ui === 'stocznia'` w obsługach myszy
+// i klawiszy warsztatu.
+function shipyardApi() {
+  return {
+    S, ctx: ctx2d, canvas: canvas2d, view: () => ({ W, H }), worldOf, design: () => S.design,
+    requestBuild, histGo, hist: () => ({ idx: HIST.idx, n: HIST.stack.length }),
+    pick, isLocked, mirrorOn, polyLoopOf, partWorldBox, removePicked, rotateObj, scaleObj,
+    paletteBlock, paletteBox, snapBlock, blkGrid, blockLabel, classModuleLabel,
+    newModule, newCastle, newPart, newDecal,
+    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive
+  };
+}
+
 (async () => {
   try {
     if (!(await Core3D.ready)) {
@@ -2211,14 +2628,18 @@ function reactorDemoSync(cam) {
     mark('kadluby');
     backdrop = createBackdrop(Core3D);
     composer = new HullComposer(Core3D.renderer);
+    previewQuad = createDesignPreview(Core3D);
     reactorDemoInit();
+    bridgeDemoInit();
     window.__composer = composer;
     await composer.prewarm();
+    await previewQuad.warm(composer);
     mark('kompozytor');
     bindPanel();
     bindInput();
     bindBlockPanel();
     bindClassPanel();
+    shipyard = installShipyard(shipyardApi());
     await loadPreset(HD_PRESETS[S.presetKey] ? S.presetKey : 'citadella');
     mark('projekt');
     await Core3D.warmup.flush?.({ timeoutMs: 6000 });

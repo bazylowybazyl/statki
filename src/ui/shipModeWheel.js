@@ -24,7 +24,8 @@
 // rusza. Gradienty z pamięci, napisy „dekodowania” to jedyne alokacje w spokojnej klatce. Lista pozycji
 // jest ogólna (ikona po id, barwa, opis) — pod przyszłe „szybkie koło” pada (docs/PLAN-pad.md).
 
-import { SHIP_MODE_IDS, SHIP_MODE_DEFS, SHIP_STANCE_TUNE, CRUISE_GEARS } from '../game/shipModes.js';
+import { SHIP_MODE_IDS, SHIP_MODE_DEFS, SHIP_STANCE_TUNE } from '../game/shipModes.js';
+import { HYPERCRUISE_ENGINES, HYPERCRUISE_TUNE } from '../data/driveModes.js';
 
 const TAU = Math.PI * 2;
 const HALF_PI = Math.PI / 2;
@@ -70,7 +71,7 @@ export const MODE_WHEEL_TIME = Object.freeze({
 export const SHIP_MODE_COLORS = Object.freeze({
   combat: '#ff5a4f',
   shield: '#4fa3ff',
-  cruise: '#ffc94d',
+  hypercruise: '#ffc94d',
   cloak: '#b88dff',
   torpedo: '#3ad9ff',
   mining: '#a9e65e',
@@ -125,8 +126,7 @@ function num(v) {
 
 export function shipModeHint(id) {
   const sh = SHIP_STANCE_TUNE.shield;
-  const cr = SHIP_STANCE_TUNE.cruise;
-  const gears = CRUISE_GEARS.muls;
+  const hc = HYPERCRUISE_ENGINES.hypercruise_mk1;
   switch (id) {
     case 'combat':
       return { gain: 'Broń gotowa, napęd i tarcza bez ograniczeń', cost: '', costKind: 'cost' };
@@ -136,10 +136,10 @@ export function shipModeHint(id) {
         cost: `Prędkość ×${num(sh.speed)}, obrót ×${num(sh.turnRate)}`,
         costKind: 'cost'
       };
-    case 'cruise':
+    case 'hypercruise':
       return {
-        gain: `Biegi do ×${num(gears[gears.length - 1])} prędkości bojowej, Ctrl — bieg w dół`,
-        cost: `Broń zimna, ładowanie tarczy ×${num(cr.shieldRegen)}`,
+        gain: `Przelot do ${Math.round(hc.vmax / 1000)} tys. j/s (Mk I) · S albo O — wyjście`,
+        cost: `Broń zimna · przerywa go trafienie i wróg bliżej niż ${Math.round(HYPERCRUISE_TUNE.massLockRange / 1000)} km`,
         costKind: 'cost'
       };
     case 'cloak':
@@ -426,7 +426,7 @@ function iconShield(ctx, x, y, u, a, t) {
   ctx.stroke();
 }
 
-function iconCruise(ctx, x, y, u, a, t) {
+function iconHypercruise(ctx, x, y, u, a, t) {
   // Trzy szewrony ku górze; przy wskazaniu płyną w górę (prędkość).
   const phase = a > 0.01 ? (t * 1.7) % 1 : 0;
   const ga = ctx.globalAlpha;
@@ -609,7 +609,7 @@ function iconLock(ctx, x, y, u) {
 export const MODE_WHEEL_ICONS = Object.freeze({
   combat: iconCombat,
   shield: iconShield,
-  cruise: iconCruise,
+  hypercruise: iconHypercruise,
   cloak: iconCloak,
   torpedo: iconTorpedo,
   mining: iconMining,

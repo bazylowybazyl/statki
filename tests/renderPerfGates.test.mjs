@@ -273,8 +273,11 @@ test('hexShips3D: lampy i strefy dysz w buforze storage — wysyłka tylko przy 
   const lights = hexShips.slice(hexShips.indexOf('function syncEntityLightUniforms('), hexShips.indexOf('function disposeMeshData('));
   assert.ok(lights.length > 0);
   // Podpis bez zmian = wyjście przed zapisem.
-  assert.ok(lights.indexOf('if (payload.signature === data.lightSignature) return;') < lights.indexOf('HullLightStore.markDirty('));
-  assert.match(lights, /HullLightStore\.markDirty\(data\.lightSlot, 0, count \* 3\);/);
+  assert.ok(lights.indexOf('if (payload.signature === data.lightSignature) return;') < lights.indexOf('writeShipLightSlot('));
+  assert.match(lights, /if \(count > 0\) writeShipLightSlot\(data\.lightSlot, payload\.lights, count\);/);
+  // Zapis slotu (wspólny z wyglądem rodzaju proxy statków ruchu — E17): zakres tylko zapisanych lamp.
+  const slotWrite = hexShips.slice(hexShips.indexOf('function writeShipLightSlot('));
+  assert.match(slotWrite, /HullLightStore\.markDirty\(slot, 0, count \* 3\);/);
   // Zero lamp (i stref) = slot wraca do puli; shader i tak czyta tylko do licznika.
   assert.match(lights, /if \(count === 0\) releaseHullLightSlotIfUnused\(data\);/);
   const lacquer = hexShips.slice(hexShips.indexOf('function syncEntityLacquer('), hexShips.indexOf('// Lampy w shaderze kadłuba'));

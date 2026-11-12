@@ -527,7 +527,7 @@ export class BeamRenderer {
         pass.draw(inst.nodeCount * 6);
       }
     }
-    // Bez skóry konstrukcja jest jedynym wyglądem ciała (jak BeamShips3D).
+    // Bez skóry konstrukcja jest jedynym wyglądem ciała.
     if (this.show.beams || this.show.strain || !skin) {
       pass.setPipeline(this.beamPipe);
       for (const inst of this.instances) {

@@ -4,7 +4,7 @@
 // pasma HDR rany (lustra CPU), WGSL kernela i materiału kadłuba (Node, bez GPU), zero alokacji.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import v8 from 'node:v8';
+import { allocatedBytes, untilSteady } from './helpers/alokacje.mjs';
 import { readFileSync } from 'node:fs';
 
 globalThis.window = globalThis.window || {};
@@ -64,7 +64,7 @@ function fresh() {
 
 // Pierwszy w pliku: późniejsze testy (różne kształty encji i wyników) robią dostęp do pól megamorficznym,
 // a taki odczyt pola double w V8 kopiuje liczbę (alokacja) — w grze hak dostaje zawsze ten sam obiekt wyniku.
-test('bez alokacji: trafienie + klatka zadań (kolejka, sortowanie stempli, wysyłka) nie tworzy obiektów', () => {
+test('bez alokacji: trafienie + klatka zadań (kolejka, sortowanie stempli, wysyłka) nie tworzy obiektów', async () => {
   fresh();
   HullDamageMap._ensureGpu();
   HullDamageMap.keepCpuCopy = true;      // bez oddawania kopii CPU prawdziwej puli (atrapa renderera)
@@ -73,7 +73,6 @@ test('bez alokacji: trafienie + klatka zadań (kolejka, sortowanie stempli, wysy
   const u = { uDmgSlot: { value: new THREE.Vector4() }, uDmgWorld: { value: new THREE.Vector2() } };
   const fakeRenderer = { compute() {} };
   const ctx = { time: 0.5, renderer: fakeRenderer };
-  const newSpace = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
   const run = (n) => {
     for (let i = 0; i < n; i++) {
       HullDamageMap.setSource('vulcan_minigun');
@@ -85,15 +84,10 @@ test('bez alokacji: trafienie + klatka zadań (kolejka, sortowanie stempli, wysy
     }
   };
   run(2000);   // rozgrzewka JIT
-  let best = Infinity;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const before = newSpace();
-    run(2000);
-    const d = newSpace() - before;
-    if (d >= 0) best = Math.min(best, d);
-  }
   // Parametry stempla idą przez tablicę (nie argumenty double), krok bez performance.now — zostaje
-  // pojedyncze pakowanie liczby przy zapisie pola (≤ ~16 B na klatkę z pracą; pomiar: 17 B).
+  // pojedyncze pakowanie liczby przy zapisie pola (≤ ~16 B na klatkę z pracą; pomiar: 17 B). Pomiar w rundach
+  // do stanu ustalonego JIT (tests/helpers/alokacje.mjs).
+  const best = await untilSteady(() => allocatedBytes(() => run(2000), 1), (b) => b < 2000 * 48, { warm: () => run(2000) });
   assert.ok(best < 2000 * 48, `przyrost young generation ${best} B na 2000 klatek (trafienie + klatka)`);
   HullDamageMap.keepCpuCopy = false;
 });

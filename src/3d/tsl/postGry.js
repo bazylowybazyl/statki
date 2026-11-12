@@ -203,6 +203,8 @@ export function createPostUniforms() {
     uAspect: uniform(1.0),
     uHeatOn: uniform(1.0),
     uDistLayerOn: uniform(0.0),
+    // Warstwa NAKŁADKI (Core3D.overlayTarget — czujniki) ma w tym renderze zawartość.
+    uOverlayLayerOn: uniform(0.0),
     // Przygaszenie obrazu od efektów (Supernowa, zadanie 19 — Core3D.fx.post.exposure): tylko
     // w gałęzi efektów (są źródła zniekształceń), przy 1 wynik bit w bit jak bez mnożenia.
     uFxExposure: uniform(1.0),
@@ -227,9 +229,11 @@ export function createPostUniforms() {
  * `distortion` — blok źródeł zniekształceń efektów (`DistortionField.node`, fxFrame.js) albo null,
  * `distortionLayer` — tekstura warstwy DIST (Core3D.distortionTarget: RG, px w osiach sceny) albo
  * null; warstwa wymaga bloku (rozmiar celu z jego nagłówka) i uniformu uDistLayerOn.
- * @param {{ sceneTexture: any, bloomTexture?: any, uniforms: Record<string, any>, distortion?: any, distortionLayer?: any }} o
+ * `overlayLayer` — tekstura warstwy NAKŁADKI (Core3D.overlayTarget: premultiplied rgb + alfa pokrycia) albo null;
+ * kładziona PO mgle wojny i rulonie (czujniki pokazują to, czego mgła nie odsłania), bez bloomu, przy uOverlayLayerOn.
+ * @param {{ sceneTexture: any, bloomTexture?: any, uniforms: Record<string, any>, distortion?: any, distortionLayer?: any, overlayLayer?: any }} o
  */
-export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, distortion: fxBlock = null, distortionLayer = null }) {
+export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, distortion: fxBlock = null, distortionLayer = null, overlayLayer = null }) {
   const uTime = uniformNode(uniforms.uTime);
   const uSourceCount = uniformNode(uniforms.uSourceCount);
   const uGlobalStrength = uniformNode(uniforms.uGlobalStrength);
@@ -240,6 +244,7 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
   const uHeatTileGrid = uniforms.uHeatTileGrid ? uniformNode(uniforms.uHeatTileGrid) : null;
   const uHeatTiles = uniforms.uHeatTiles && uHeatTileGrid ? uniformNode(uniforms.uHeatTiles) : null;
   const uDistLayerOn = uniforms.uDistLayerOn ? uniformNode(uniforms.uDistLayerOn) : null;
+  const uOverlayLayerOn = uniforms.uOverlayLayerOn ? uniformNode(uniforms.uOverlayLayerOn) : null;
   const uFxExposure = uniforms.uFxExposure ? uniformNode(uniforms.uFxExposure) : null;
   const uCloakView = uniforms.uCloakView ? uniformNode(uniforms.uCloakView) : null;
   // Mgła wojny — tylko z uniformami mgły (createPostUniforms); węzły po uniformNode.
@@ -273,6 +278,10 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
   // Warstwa DIST (baza z jawnym UV — bez macierzy tekstury), tylko z blokiem źródeł (rozmiar celu).
   const distLayerBase = (distortionLayer && fxBlock && uDistLayerOn)
     ? (distortionLayer.isTextureNode === true ? distortionLayer : texture(distortionLayer, uv()))
+    : null;
+  // Warstwa NAKŁADKI (baza z jawnym UV), tylko z uniformem włączenia.
+  const overlayBase = (overlayLayer && uOverlayLayerOn)
+    ? (overlayLayer.isTextureNode === true ? overlayLayer : texture(overlayLayer, uv()))
     : null;
 
   return Fn(() => {
@@ -441,6 +450,14 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, di
     If(rulonOn, () => {
       sceneColor.rgb.mulAssign(rulonInv.z);
     });
+
+    // Nakładka czujników (src/3d/czujniki/): premultiplied „over” po mgle wojny — rgb + scena × (1 − alfa).
+    if (overlayBase) {
+      If(uOverlayLayerOn.greaterThan(0.5), () => {
+        const ov = hdrBezpieczny(level0(overlayBase, uvTex)).toVar();
+        sceneColor.rgb.assign(sceneColor.rgb.mul(float(1.0).sub(clamp(ov.a, 0.0, 1.0))).add(max(ov.rgb, vec3(0.0))));
+      });
+    }
 
     // Wizjer maskowania gracza (na „szybie” — po rulonie, przed ACES); wyłączony = gałąź pominięta.
     if (uCloakView) applyCloakView(uCloakView, sceneColor, uvTex, uAspect);

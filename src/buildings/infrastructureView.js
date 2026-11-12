@@ -1,21 +1,4 @@
-import { initShipyardState, updateShipyardVisuals, drawComplexShipyard } from './shipyardVisuals.js';
-
-function drawSolarIcon(ctx) {
-  ctx.save();
-  const grad = ctx.createRadialGradient(0, 0, 6, 0, 0, 32);
-  grad.addColorStop(0, '#fff7cc');
-  grad.addColorStop(0.5, '#fde68a');
-  grad.addColorStop(1, '#f59e0b');
-  ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(79,129,255,0.9)'; ctx.fillStyle = 'rgba(59,89,178,0.85)'; ctx.lineWidth = 3;
-  for (let i = 0; i < 4; i++) {
-    ctx.save(); ctx.rotate((Math.PI / 2) * i);
-    ctx.beginPath(); ctx.rect(18, -9, 30, 18); ctx.fill(); ctx.stroke();
-    ctx.restore();
-  }
-  ctx.restore();
-}
+// Ikony budynków edytora infrastruktury stacji (lista budynków i siatka edytora) — w świecie gry się nie rysują.
 
 function drawStorageIcon(ctx, color, label) {
   ctx.save();
@@ -66,35 +49,8 @@ function drawGenericIcon(ctx) {
   ctx.restore();
 }
 
-export function updateInfrastructureAnimations(dt) {
-  if (!window.Game || !window.Game.infrastructure) return;
-
-  // Ensure fighter sprite is loaded (lazy load check)
-  if (!window.fighterSprite && !window.fighterSpriteLoading) {
-    window.fighterSpriteLoading = true;
-    const img = new Image();
-    img.src = './assets/fighter.png';
-    img.onload = () => { window.fighterSprite = img; window.fighterSpriteLoading = false; };
-    img.onerror = () => { window.fighterSpriteLoading = false; };
-  }
-
-  window.Game.infrastructure.forEach((list) => {
-    for (const inst of list) {
-      if (inst.buildingId === 'shipyard_s') {
-        updateShipyardVisuals(inst, dt);
-      }
-    }
-  });
-}
-
-export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, instanceData = null) {
+export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1) {
   if (!ctx || !building || !center) return;
-
-  if (instanceData && building.id === 'shipyard_s') {
-    const rotation = instanceData.rotation || 0;
-    drawComplexShipyard(ctx, instanceData, center, size, rotation);
-    return;
-  }
 
   ctx.save();
   ctx.translate(center.x, center.y);
@@ -103,9 +59,6 @@ export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, i
   ctx.globalAlpha *= alpha;
 
   switch (building.icon) {
-    case 'solar':
-      drawSolarIcon(ctx);
-      break;
     case 'storage':
       drawStorageIcon(ctx, building.color, building.label);
       break;
@@ -124,4 +77,3 @@ export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, i
 }
 
 window.drawInfrastructureIcon = drawInfrastructureIcon;
-window.updateInfrastructureAnimations = updateInfrastructureAnimations;

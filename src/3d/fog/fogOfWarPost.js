@@ -128,6 +128,8 @@ export function createFogPostUniforms() {
     uFogCount: uniform(0, 'int'),
     uFogMassCount: uniform(0, 'int'),
     uFogZoom: uniform(1.0),
+    // obrót kadru kamery z góry: (cos, −sin roll) — jak uViewRot maski słońca (src/3d/viewRoll.js); (1, 0) = bez obrotu
+    uFogRot: uniform(new Vector2(1, 0)),
     uFogBuf: uniform(new Vector2(1920, 1080)),
     uFogPersp: uniform(0.0),
     uFogInv: uniform(new Matrix4()),
@@ -170,7 +172,12 @@ export function fogCacheSizeFor(bufW, bufH, step = FOG_CACHE_STEP) {
  * Zwraca { rel, seen } (var). Wspólne dla „uber” i kernela pamięci szumu (ten sam ciąg działań).
  */
 function fogRelPoint(U, flatPx, uvTex, persp) {
-  const rel = flatPx.div(max(U.uFogZoom, 1.0e-6)).toVar('fogRel');
+  // px od środka (y w górę) → osie sceny: kamera three obrócona o −roll (obrót kadru — hipercruise)
+  const p = flatPx.div(max(U.uFogZoom, 1.0e-6)).toVar('fogRelP');
+  const rel = vec2(
+    p.x.mul(U.uFogRot.x).sub(p.y.mul(U.uFogRot.y)),
+    p.x.mul(U.uFogRot.y).add(p.y.mul(U.uFogRot.x))
+  ).toVar('fogRel');
   const seen = float(1.0).toVar('fogSeen');
   if (persp) {
     If(U.uFogPersp.greaterThan(0.5), () => {

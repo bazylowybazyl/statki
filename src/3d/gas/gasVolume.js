@@ -88,8 +88,7 @@ export function gasGridLightCpu(lights, slot, L, trans = 1) {
 }
 
 /**
- * LUSTRO CPU cienia kuli-przeszkody domeny głębokiej (GasVolume._groundLit; ta sama reguła w cząstkach uderzeń —
- * src/3d/pirateRockImpactFx.js): rel — punkt względem środka kuli [3], sun — kierunek do słońca (jednostkowy) [3], r —
+ * LUSTRO CPU cienia kuli-przeszkody domeny głębokiej (GasVolume._groundLit): rel — punkt względem środka kuli [3], sun — kierunek do słońca (jednostkowy) [3], r —
  * promień kuli, w — półszerokość półcienia [j.]. 1 — oświetlony, 0 — w cieniu kuli.
  */
 export function gasGroundLitCpu(rel, sun, r, w) {
@@ -595,8 +594,10 @@ export class GasVolume {
         const ro = select(ortho, P.sub(rd.mul(length(size).mul(2.0))), P.sub(rd.mul(length(positionView)))).toVar();
         const span = this._boxSpan(ro, rd, vA.xyz, h);
         // Płaszczyzna gry: tc — gdzie promień ją przecina (poza zasięgiem — cały promień po stronie kamery).
+        // Domena „under” (GasSlot.under, slotK.y = 1): tc = 0, więc przy każdej kamerze cały marsz idzie do warstwy tylnej, a front ma pusty przedział (span.tmin ≥ 0) i nie liczy kroków.
+        const skD = vec4(U.slotK.element(int(vB.x.add(0.5)))).toVar();
         const tcRaw = U.planeZ.sub(ro.z).div(select(abs(rd.z).lessThan(1e-6), float(1e-6), rd.z));
-        const tc = select(tcRaw.greaterThan(0.0), tcRaw, float(1e12));
+        const tc = select(skD.y.greaterThan(0.5), float(0.0), select(tcRaw.greaterThan(0.0), tcRaw, float(1e12)));
         const tmin = back ? max(span.tmin, tc) : span.tmin;
         const tmax = back ? span.tmax : min(span.tmax, tc);
         const col = vec3(0.0).toVar();
@@ -605,7 +606,7 @@ export class GasVolume {
           ro, rd, tmin, tmax, bmin: vA.xyz, h, slot: vB.x, fade: vB.y, seed: vB.z, tint: vC.xyz, fire: vC.w, domAmb: vB.w,
           jitter: this._jitter(), phase: this._phase(rd), col, trans,
           sunVis: sunVisibility ? sunVisibility() : float(1.0),
-          densK: back ? null : U.frontDensity,
+          densK: (back ? float(1.0) : U.frontDensity).mul(float(1.0).sub(skD.z)),
           ambVis: ambientVisibility ? ambientVisibility() : null,
           useGrid: !!this.lightGrid,
           occ: !!grid.occTex
@@ -644,7 +645,10 @@ export class GasVolume {
       const o = n * 4;
       A[o] = s.cx - half * s.h - originX; A[o + 1] = s.cy - half * s.h - originY; A[o + 2] = s.cz - halfZ * s.h; A[o + 3] = s.h;
       B[o] = s.index; B[o + 1] = s.fade; B[o + 2] = s.seed; B[o + 3] = s.ambient || 0;
-      this.U.slotK.array[s.index].x = s.k || 1;
+      const skS = this.U.slotK.array[s.index];
+      skS.x = s.k || 1;
+      skS.y = s.under ? 1 : 0;
+      skS.z = s.thin || 0;
       C[o] = s.tint[0]; C[o + 1] = s.tint[1]; C[o + 2] = s.tint[2]; C[o + 3] = s.fire || 0;
       n++;
     }

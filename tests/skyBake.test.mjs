@@ -6,9 +6,9 @@ import {
   SKY_DISPLAY_MAX, acesGryCpu, acesGryInvCpu, srgbEncodeCpu, srgbDecodeCpu, gameDisplayFromByteCpu
 } from '../src/3d/skybake/skyGameColor.js';
 import { skyHashCpu } from '../src/3d/skybake/skyBakeNoise.js';
-import { SkyBaker, SKY_GAME_SIZE } from '../src/3d/skybake/skyBaker.js';
+import { SkyBaker, SKY_GAME_SIZE, SKY_SPHERE_SIZE, SKY_SPHERE_RAD_PER_UNIT } from '../src/3d/skybake/skyBaker.js';
 import {
-  createGalaktykaStyle, GALAKTYKA_PARAMS, GALAKTYKA_COLORS, GALAKTYKA_DEFAULTS, GALAKTYKA_PRESETS
+  createGalaktykaStyle, sphereFrameCpu, GALAKTYKA_PARAMS, GALAKTYKA_COLORS, GALAKTYKA_DEFAULTS, GALAKTYKA_PRESETS
 } from '../src/3d/skybake/styleGalaktyka.js';
 import {
   createMglawicaStyle, MGLAWICA_PARAMS, MGLAWICA_COLORS, MGLAWICA_DEFAULTS, MGLAWICA_PRESETS
@@ -271,4 +271,45 @@ test('SkyBaker: passy galaktyki budują się do WGSL (bez GPU)', () => {
     assert.ok(ubo <= 12, `${name}: ${ubo} buforów uniformów (limit 12 na etap)`);
   }
   assert.equal(SKY_GAME_SIZE.width / SKY_GAME_SIZE.height, 1.6, 'proporcje płaszczyzny NebulaSystem');
+});
+
+test('SkyBaker tryb sfery (DECYZJE-2 N2): equirect 2:1, pas na wielkim kole szumem walcowym, łaty mgławic, WGSL bez GPU', () => {
+  const renderer = fakeRenderer();
+  // gęstość jak płaszczyzna gry: jednostka nieba (3200 tekseli) = 3200 tekseli equirect
+  assert.equal(SKY_SPHERE_SIZE.width, 2 * SKY_SPHERE_SIZE.height);
+  assert.ok(Math.abs(SKY_SPHERE_RAD_PER_UNIT - 3200 / (SKY_SPHERE_SIZE.width / (2 * Math.PI))) < 1e-12);
+  const baker = new SkyBaker(renderer, { width: 256, height: 128, sphere: true });
+  assert.equal(baker.resScale, 256 / SKY_SPHERE_SIZE.width);
+  const patchTex = new THREE.DataTexture(new Uint8Array(4).fill(30), 1, 1);
+  patchTex.minFilter = patchTex.magFilter = THREE.LinearFilter;
+  patchTex.needsUpdate = true;
+  const style = createGalaktykaStyle({ sphere: true, patches: [{ texture: patchTex, lonDeg: 20, latDeg: 40, spanDeg: 50, gain: 1 }] });
+  baker.setStyle(style);
+  style.apply({ ...style.defaults, ...style.presets.gra }, 1, baker);
+  assert.deepEqual(baker.passes.map((p) => p.name), ['pola', 'gwiazdy', 'obraz', 'laty']);
+  const expect = {
+    pola: [/skyFbm3/, /skyRidged3/, /cos\(/],
+    obraz: [/skyFbm3/, /skyBillow/],
+    laty: [/atan2/, /textureSample/]
+  };
+  for (const p of baker.passes) {
+    const fs = buildFragment(renderer, p.material);
+    for (const re of expect[p.name] || []) assert.match(fs, re, `${p.name}: ${re}`);
+    // mgiełka tła: szum 3D kierunku (płaski fbm z punktu nieba dałby szew na 2π i ściśnięcie przy biegunach); w passie
+    // pól płaski fbm zostaje tylko w odnogach (lokalne, różnica s zawinięta — szew daleko poza zasięgiem odnóg)
+    if (p.name === 'obraz') assert.doesNotMatch(fs, /skyFbm\(/, `${p.name}: bez płaskiego fbm`);
+    const ubo = (fs.match(/var<uniform>/g) || []).length;
+    assert.ok(ubo <= 12, `${p.name}: ${ubo} buforów uniformów`);
+  }
+  // baza łaty ortonormalna, środek w (λ, φ)
+  const f = sphereFrameCpu(20, 40, 15);
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  for (const [a, b] of [[f.c, f.e], [f.c, f.n], [f.e, f.n]]) assert.ok(Math.abs(dot(a, b)) < 1e-12);
+  for (const v of [f.c, f.e, f.n]) assert.ok(Math.abs(dot(v, v) - 1) < 1e-12);
+  assert.ok(Math.abs(Math.asin(f.c[2]) - 40 * Math.PI / 180) < 1e-12);
+  // płaszczyzna bez zmian: 3 passy, fbm 2D
+  const flat = new SkyBaker(renderer, { width: 256, height: 160 });
+  flat.setStyle(createGalaktykaStyle());
+  assert.equal(flat.passes.length, 3);
+  assert.match(buildFragment(renderer, flat.passes[0].material), /skyFbm\(/);
 });

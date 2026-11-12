@@ -159,6 +159,8 @@ function makeCiwsScope({ weaponId, npcs, rockets = [], chips = false }) {
     ciws: [{ offset: { x: 0, y: 0 }, angle: 0, angVel: 0, cd: 0 }]
   };
   const scope = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
     bullets: [...rockets],
     Game: { player: { weapons: { aux: [{ weapon: MASTER_WEAPONS[weaponId] }] } } },
     HP: { AUX: 'aux' },
@@ -250,6 +252,8 @@ function makeMultiCiwsScope({ weaponIds, offsets = [], npcs, rockets = [], chips
     ciws: weaponIds.map((_, i) => ({ offset: offsets[i] || { x: 0, y: 0 }, angle: 0, angVel: 0, cd: 0 }))
   };
   const scope = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
     bullets: [...rockets],
     Game: { player: { weapons: { aux: weaponIds.map((id) => ({ weapon: MASTER_WEAPONS[id] })) } } },
     HP: { AUX: 'aux' },

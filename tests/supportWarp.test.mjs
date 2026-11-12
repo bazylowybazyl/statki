@@ -11,6 +11,7 @@ import {
   createSupportWarpCallIns, createSupportReturn, supportWarpCourse, wrapSupportWarpAngle, SUPPORT_RETURN
 } from '../src/game/supportWarp.js';
 import { planWarpArrivalFx, HERALD_REACH } from '../src/3d/warp/arrivals.js';
+import { setWarpSparks } from '../src/3d/warp/sparkRecipes.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
@@ -266,6 +267,8 @@ async function makeTraffic(WarpNurt) {
 }
 
 test('ruch warpa: wezwanie z Ziemi — nić od Ziemi, okręt podpięty w klatce wyrzutu, przeliczenie z kadłuba zachowuje przegródki', async () => {
+  // przegródki ośrodka ma dawny wygląd (`?warpDrobiny=0`); domyślne drobiny — tests/warpSparks.test.mjs
+  setWarpSparks(false);
   const WarpNurt = await initNurt();
   WarpNurt.clear();
   const traffic = await makeTraffic(WarpNurt);
@@ -324,6 +327,7 @@ test('ruch warpa: wezwanie z Ziemi — nić od Ziemi, okręt podpięty w klatce 
   assert.equal(WarpNurt._visual(rec.id), null);
   assert.equal(entity.__warpNurtMode, null);
   WarpNurt.clear();
+  setWarpSparks(null);
 });
 
 test('ruch warpa: odlot z prowadzeniem — okręt wchodzi w punkt skoku wzdłuż kursu, onGone raz, kadłub schowany', async () => {

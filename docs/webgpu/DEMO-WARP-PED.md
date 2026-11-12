@@ -1,5 +1,11 @@
 # Demo warpa „Pęd” (2026-10-19)
 
+> **STAN (2026-10-26): dokument historyczny.** Style skoku (rulon / pęd / akcenty / soczewka bańki) i ich wybór
+> (`?warp=`, `?styl=`, klawisze 1–4) są usunięte z gry i z dema — jest JEDEN warp gracza „podniesiony świat”
+> (świat w soczewce, mapa C, oś β z zegara gry, kadr przylotu K1, ośrodek drobin tylko A/B `?warpOsrodek=1`, klawisz O
+> w demie). Opis bieżący, decyzje i lista sprawdzeń w grze: `docs/webgpu/WARP-SOCZEWKA.md`; reguła: `.claude/rules/warp.md`.
+> Sekcje niżej („W grze dziś”, „Po decyzji usera”, narzędzia z `--style`) opisują stan z 2026-10-19 – 10-23.
+
 `dema/warp-ped.html` (+ `dema/warp-ped.js`). Porównanie stylów skoku Atlasa i wyjścia z warpa — na PRAWDZIWYCH
 modułach gry, bez kopii (inaczej niż `dema/warp-webgpu`, którego port do gry kosztował zadanie 22 i kilka rund
 „w demie było inaczej”).
@@ -12,13 +18,15 @@ materiale. Propozycja: „Pęd” — prędkość jako rdzeń, soczewka najwyże
 
 Start: `npm run dev` → `/dema/warp-ped.html`. Adres: `?styl=rulon|ped|akcent|soczewka`, `?trasa=jowisz|mars`,
 `?ped=0` (wyjście do zatrzymania) albo `?ped=1..6` (k), `?kamera=up|right|off`, `?zoomSkoku=gracz` (dawny zoom skoku),
+`?naped=mk1|mk2|mk3` (napęd warp jak w grze — domyślnie Mk I, 100 tys. j/s),
 `?clean=1` (bez paneli), `?test=1` (klatki tylko z `__warpPed.runFrames` / `until` — harness).
 
 ## Co pokazuje
 
 Podróż w pętli: Atlas stoi nad terminatorem Ziemi → ładowanie (0,8 s jak w grze) → skok z prędkością przelotową
-z `planWarpCruise` (Ziemia → Jowisz ~10,9 s, Mars mijany ~75 tys. j. od kursu — statek zwalnia do 15%, planeta
-przelatuje w soczewce świata) → wyjście (rampa: zwolnienie, wlot, hamowanie) → ślizg → od nowa.
+z `planWarpCruise` (napęd i strefy jak w grze — niżej, „Prędkość jak w grze”; Ziemia → Jowisz ~34 s przy Mk I,
+Mars mijany 75 tys. j. od kursu — statek zwalnia do ~16%, planeta przelatuje w soczewce świata) → wyjście (rampa:
+zwolnienie, wlot, hamowanie) → ślizg → od nowa.
 
 | Klawisz | Styl skoku (`warpDrive.js`: `setWarpStyle`) | Co widać |
 |---|---|---|
@@ -31,7 +39,9 @@ Inne: **K** — kamera w skoku (obrót kursem w górę / w prawo / bez obrotu �
 gracza (niżej, „Skaczące planety”), **P** — wyjście z pędem / do zatrzymania (suwak k: rampa hamuje do k × 500 j/s, potem zwykły lot zbiera
 nadmiar hamowaniem 200 j/s² — przy k = 3 ślizg ~5 km / 5 s), **J / M** — trasa, **F** — lot swobodny (W/S ciąg,
 A/D obrót, Shift dopalacz, CapsLock / 9 warp, drugi raz — wyjście), **spacja** — skok od nowa, **Esc** — pauza,
-**T** — ×0,25, **H** — bez paneli, kółko — zoom gracza (kop i oddalenie warpa działają względem niego).
+**T** — ×0,25, **H** — bez paneli, kółko — zoom gracza (kop i oddalenie warpa działają względem niego). Dawne
+**B** (wygląd skał pasa w skoku) i **G** (deflektor) usunięte 2026-10-27 razem ze skałami skoku — w skoku pas nie jest
+rysowany (`docs/webgpu/WARP-SKALY.md`).
 
 ## Kamera w skoku — obrót kadru kursem w górę (2026-10-19)
 
@@ -121,7 +131,8 @@ przecina NEA, Hungarie i pas główny.
   (pozycja, skala, obrót przelotu przed kątem portu). LOD i odcinanie części ring liczy z macierzy grupy — bez zmian
   w ringu. Cień ringu w masce słońca gaśnie w soczewce jak tarcza planety (siła okluderu = udział prawdziwego widoku).
   Kolizje i port zostają na prawdziwym miejscu.
-- **Pas jako smugi skał**: prawdziwe pole przy prędkości warpa nie nadążało — 7,8–9 ms CPU pasa na klatkę (komórki
+- **Pas jako smugi skał** (*usunięte 2026-10-27 — w skoku pas nie jest rysowany, `docs/webgpu/WARP-SKALY.md` § „Usunięcie”;
+  niżej historia*): prawdziwe pole przy prędkości warpa nie nadążało — 7,8–9 ms CPU pasa na klatkę (komórki
   doczytywane wokół kamery), w kadrze kilka migających skał, a maska zacienienia pola ze starego okna czerniła kadłub.
   W skoku (gwiazdy w smugach i kamera naprawdę leci) pas wyłącza pole i rysuje pulę 360 skał banku w przestrzeni
   widocznej warpa (`src/3d/asteroids/warpDebris.js`): pod płaszczyzną gry z paralaksą, płyną z prędkością kamery
@@ -136,6 +147,111 @@ przecina NEA, Hungarie i pas główny.
 - Arkusz całej trasy: `.tmp/warp-ped/arkusz-calosc.jpg` (0 błędów konsoli). W grze ring w soczewce i smugi działają
   tak samo (wspólne moduły); podróż TRAVEL TO w obu trybach renderu bez błędów, 0 pipeline'ów kompilowanych
   w klatkach gry (materiał smug rozgrzewa się z passem tła pasa).
+
+## Runda poprawek 2026-10-23
+
+Zgłoszenie usera: „1. przebija się planeta przez statek; 2. asteroidy, przez które się przelatuje, słabo się
+rozciągają — potrzebny lepszy wygląd; 3. przelot nad planetami ma wyglądać podobnie do dotarcia do celu: planeta
+z daleka, powiększa się powoli, pod statkiem duża, potem ucieka za statek — obecnie się po prostu pojawia;
+4. przylot staje »podwójnie«: jeden wybuch haze i drugi wybuch heat; 5. dopracować efekt lotu”. Arkusze:
+`.tmp/warp-ped/r1023/` w worktree `warp-ped-poprawki` (narzędzia sesji — trwała sonda CDP, A/B passów odczytem
+pikseli kanwy, wycinki wokół statku).
+
+1. **Ring na statku** — A/B passów odczytem pikseli (maska kadłuba z samego passa ortho, różnica obrazu bez
+   danego passa): kadłub przykrywał pass FG (warstwa 2, rysowany PO ortho) — górna ściana i moduły ringu Marsa,
+   który jedzie w soczewce z planetą. Planeta (warstwa 6, przed ortho) kadłuba nie zasłania. Teraz ring w soczewce
+   przekłada części FG na warstwę tła (`HALO_GAME.lensLayers`, `haloRingGame.js`) — jest tłem jak jego planeta;
+   po soczewce zwykłe warstwy (FG nad statkiem w hali). Ta sama kamera perspektywy — 0 nowych pipeline'ów. Po
+   poprawce pass FG zmienia w kadrze przelotu tylko lampy samego kadłuba (było ~9 tys. px ringu, w tym moduł na
+   burcie).
+2. **Smugi skał** (*usunięte 2026-10-27 razem ze skałami skoku — historia*) — dawniej kapsuła: tylna półkula przesunięta o krótki wektor (długość × 1), tekstura tyłu
+   rozciągnięta, ogon kryjący 1 → 0,3 — „rozmazany kamyk”. Teraz wariant `smear` materiału skał: tylna półkula
+   ściągnięta do `taper` promienia (klin), głowa pełna, ogon od krycia `tail` gaśnie do zera, w ogonie tekstury
+   kształtu z wyższego mipa (rozmycie wzdłuż ruchu), normalna ogona ku słońcu, jaśniejsza skała; skały do 800 j.
+   Wyglądy (`WARP_DEBRIS_LOOKS`, uniformy — bez nowych pipeline'ów): **ślad światła** (domyślny — długość × 3,4,
+   cienki ogon od oświetlonej strony) i **klin** (× 1,6, wyraźna oświetlona skała u czoła); klawisz **B**. Przy
+   okazji: grupa smug była schowana w rozgrzewce passów pasa — pierwszy przelot przez pas kompilował
+   `AsteroidBelt:rocksSmear` synchronicznie (zmierzone hakiem `createRenderPipeline`); teraz 0.
+3. **Przelot z daleka** — pomiar klatka po klatce (obraz Marsa w soczewce): mijane ciało leżało liniowo (S ·
+   odległość) — Mars wchodził górną krawędzią 4,3 s po skoku z promieniem ~38 px i w 1,5 s rósł do 150 px. Teraz
+   mijane ciało przed dziobem ma perspektywę z punktem zbiegu na kursie (`approachEdge` 0,8 drogi od statku do
+   krawędzi kadru, `worldLens.js`: k = A0 / (a + A0), A0 = E / S — w trawersie obraz jak dawniej, za rufą bez
+   zmian), przy wejściu w soczewkę wyrasta w miejscu (wielkość × β). Po: Mars w kadrze od 0,2 s skoku (4 px), rośnie
+   przez ~5,6 s do 150 px w trawersie, ucieka za rufę jak dotąd. Ciała daleko od kursu i cel — bez perspektywy.
+   W rulonie tarcza z daleka siedzi u góry walca, w lejku rozlewa się jak dotąd. Arkusze `arkusz-przelot.jpg`,
+   `arkusz-przelot-rulon.jpg`.
+4. **Przylot = jedno zdarzenie** — wycinki wokół statku co 0,05 s: przy hamowaniu błysk + fala refrakcji
+   („haze”), a żar brzegu kadłuba (zanik τ 2,2 s) wyłaniał się 0,6–1,5 s później, gdy kadr przylotu dosuwał kamerę
+   („heat”); styl `akcent` dokładał SPRĘŻENIE na starcie wyjścia (1,15 s przed hamowaniem). Teraz
+   (`WARP_ARRIVAL_ACCENT`, `player.js`) wszystko w chwili zatrzymania: w `akcent` SPRĘŻENIE zastępuje falę hamowania
+   (jedna fala), błysk, blask, iskry, wstrząs, żar kadłuba jako impuls τ 0,45 s. Hipercruise — dawny żar.
+   Arkusze `kl/prz-ham-arkusz.jpg` (przed), `kl/prz-ham-po-arkusz.jpg` (po).
+5. **Lot** — obrót kadru kursem w górę (sprężyna 3,2/s) przy kursie ~150° miał w chwili skoku jeszcze ~40° do
+   zrobienia i kręcił się przez pierwszą sekundę lotu (kop, pęknięcie, wybuch smug gwiazd w obracającym się
+   kadrze); w demie `warpRollOmega` 5/s — przy skoku zostaje 12°, kadr stoi ~0,4 s po kopie (domyślne strojenie
+   riga bez zmian — obrót w grze niewpięty). Sprawdzone i odrzucone: mocniejsze wzbudzenie ośrodka w równym locie
+   (`excite` bańki 1 → 1,5) — na obrazie bez różnicy. Smugi skał (2) i przelot z daleka (3) to główne nowe
+   wskazówki prędkości w locie.
+
+Koszt (headless 1600 × 900, RTX 5080, dwa przebiegi trasy Jowisz, średnio na fazę; równolegle szły harnessy dwóch
+innych sesji — CPU zaszumione): przed rundą (`main` 99a30b09) lot GPU 0,89 ms / CPU 1,3 ms / 40 rysunków, przelot
+1,34 / 4,5 / 95, pas 1,0 / 1,9 / 61, wyjście 1,1 / 2,7 / 73. Po: lot 0,9–1,0 / 2,1–2,7 / 49–56 (mijany Mars jest
+w kadrze od początku skoku — tarcza z atmosferą; jego ring „Halo” w soczewce rysuje się dopiero od 30 px promienia,
+`HALO_GAME.lensMinPx`: bez progu ring kosztował ~3 ms CPU aktualizacji i ~50 rysunków przez cały lot — 82 rysunki,
+CPU ~5,6 ms), przelot 1,2–1,4 / 5–6 / 94, pas 1,0 / 1,9–2,7 / 48–58, wyjście 1,1–1,3 / 4,1–4,5 / 73. Pipeline'y
+kompilowane synchronicznie w skoku: przed — `AsteroidBelt:rocksSmear` i plazma dysz `WarpPlume` /
+`WarpPlumeParticles`, po — 0 (dwie pełne podróże, akcent i rulon). Plazmę demo rozgrzewało (`prewarmHexShips3D`)
+PRZED `initPlanets3D`, które dokłada stałe światła sceny — zestaw świateł jest w kluczu pipeline'u, więc rozgrzewka
+nie trafiała w klucz rysunku; teraz kolejność jak w grze (planety, potem kadłuby i efekty). Gra (TRAVEL TO,
+`travel-gra.mjs`): podróż do celu (błąd 10 j.), wezwanie i POWRÓT bez błędów konsoli.
+
+### Przegląd rundy (orkiestrator, 2026-10-23)
+
+Cztery uwagi przeglądu gałęzi, wszystkie potwierdzone i poprawione:
+1. **Skok obrazu przy β → 0** — perspektywa przelotu miała wagę niezależną od β, a wielkość × β: ciało przed dziobem
+   przy wyjściu (swobodny skok, cel = null; planeta spoza celu) kurczyło się do kropki w punkcie zbiegu, a przy β = 0
+   wskakiwał prawdziwy obraz; przy starcie z planetą w kadrze przed dziobem znikała w pierwszej klatce β > 0. Teraz
+   przejście β w tej samej rodzinie rzutów (`S_β = flat^(1−β) · S^β`, `k_β = 1 / (1 + a·β / A0)`) — β → 0 zbiega do
+   prawdziwego obrazu. W demie: przy starcie Mars wjeżdża do punktu zbiegu górną krawędzią w ostatnich ~0,1 s
+   narastania β (−579 → −370 px, 18 → 12 px), przy swobodnym wyjściu z Marsem przed dziobem odjeżdża płynnie ku
+   prawdziwemu miejscu za kadrem (−247 → −429 → −2583 px, rośnie 25 → 36 → 198 px). `warp-ped-skoki.mjs` (Jowisz,
+   Mars; zoomy 0,2 i 0,6): 0 skoków, 0 mignięć ciał, cel w kadrze 322 / 322 klatki przylotu.
+2. **Ring K-7 w tle przy prawdziwym miejscu** — warstwy tła FG ringu włączało samo `lens.on`, także gdy planeta
+   czeka na prawdziwym miejscu (bramka przy odlocie spod K-7, wejście −1, puszczony przylot). Teraz tło tylko przy
+   `lens.real` < 0,999 (`HALO_GAME.lensBgReal`). W grze (sonda sesji: TRAVEL TO spod hali K-7 Ziemi na 600 tys. j.
+   i z 700 tys. j. pod halę, co klatkę `WARP_RING_LENS.earth` i warstwy ringu): przy odlocie dawny warunek (`lens.on`)
+   trzymał prawdziwy, widoczny ring w warstwie tła przez 77 klatek (bramka ringu — planeta czeka na prawdziwym
+   miejscu), przy przylocie przez 1; po poprawce 0 i 0, a ring przesunięty w soczewce (1031 widocznych klatek
+   przylotu) dalej w tle. Przy puszczaniu celu po przylocie (0,8 s) obraz ringu Ziemi na ~0,15 s wychodzi z kadru
+   i wraca — kompozycja przybycia w grze, poza tą rundą.
+3. **Za szerokie okno perspektywy** — 1,5 / 3 × droga do krawędzi kadru w bok i bez końca skoku: ciało za celem
+   (Jowisz na trasie do Marsa) stało w punkcie zbiegu bliżej niż cel. Teraz tylko ciała mijane w tym skoku: obraz
+   w trawersie w kadrze (0,8 / 1,2) i przed bliskim brzegiem celu wzdłuż kursu (`approachMax`). Trasa Mars: Jowisz nie
+   pojawia się w skoku.
+   Gra (`travel-gra.mjs`, po scaleniu `main` 25bb5f41): podróż TRAVEL TO do celu (błąd 14 j.), wezwanie i POWRÓT bez
+   błędów konsoli; przebieg z objazdem studni kończy skrypt w drugim odcinku warpu (skrypt czeka ~20 s po pierwszym).
+4. **Budowa ringu przy kilku px** — `lensMinPx` chował ring, ale `lens.vis` wyzwalał budowę ringu-archetypu; teraz ten
+   sam próg bramkuje budowę.
+
+## Prędkość jak w grze — napęd Mk I, 100 tys. j/s (2026-10-23)
+
+User: „warp leci 260k? jak w grze?” → „jeszcze wolniej. 100k”. Demo miało stałe 260 tys. j/s (dawna jedna prędkość
+warpa) i czas skoku strojony na nie, bez stref; gra od 2026-10-22 ma napędy Mk I / II / III (100 / 175 / 250 tys. j/s,
+Atlas — Mk II) i strefy. Teraz demo bierze napęd z tabeli gry (`WARP_DRIVES`, `src/data/driveModes.js`; domyślnie
+Mk I, `?naped=mk2|mk3`), czas skoku z celem jak `planPlayerWarp` gry (`warpTripTuneFor(prędkość)`), strefy jak
+`detectZones` (studnia grawitacyjna planety × 0,3 — z ringiem „Halo”: obwiednia ringu + 12 tys. j.; pas główny × 0,8)
+w planie i w fizyce (przelotowa × strefa × zwolnienie przy ciałach). Jedna różnica wobec gry: sufit prędkości
+przelotowej = prędkość napędu (w grze plan może ją przekroczyć — Mk I do 230 tys. j/s — żeby nadgonić zwolnienia;
+w demie skok wtedy trwa dłużej).
+
+Przy okazji: Mars mijał kurs w ~31 tys. j., nie 75 tys. (`marsAngle` przesuwał punkt kursu w bok i rzutował go
+z powrotem na orbitę kątem — rzut zjadał odstęp) — przy strefach z gry kurs wchodził w studnię Marsa (47 tys. j.)
+i przelot trwał ~10 s przy 7–9 tys. j/s. Teraz Mars stoi na orbicie dokładnie 75 tys. j. od kursu.
+
+Tempo (Mk I): Ziemia → Jowisz — przelotowa 100 tys. j/s, przy Marsie do ~16 tys. (zwolnienie przelotu ~16%),
+w pasie 80 tys., od skoku do zatrzymania 33,7 s (dawniej 10,9 s przy ~240 tys.); Ziemia → Mars — przelotowa 72 tys.
+(plan czasu z gry przy krótszym odcinku daje mniej niż napęd), 13,9 s. `warp-ped-skoki.mjs` na obu trasach: 0 skoków,
+0 mignięć, cel w kadrze przez cały przylot. Arkusz: `.tmp/warp-ped/r1023/arkusz-100k-jowisz.jpg`.
 
 ## Z czego jest zbudowane (wszystko z gry)
 

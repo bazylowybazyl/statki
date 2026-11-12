@@ -115,6 +115,9 @@ export function normalizeLightMarker(marker, kind, makeId = null) {
 
   if (normalizedKind === LIGHT_KINDS.POSITION) {
     out.sequenceGroup = String(marker.sequenceGroup || defaults.sequenceGroup || 'edge');
+    // Miganie (src/data/shipNavLights.js): numer wzoru i przesunięcie w cyklu; brak — wzór 0, bez przesunięcia.
+    if (Number(marker.blink) > 0) out.blink = Math.floor(Number(marker.blink));
+    if (Number(marker.lag) > 0) out.lag = Number(marker.lag);
     return out;
   }
 
@@ -158,6 +161,8 @@ export function compactLightMarker(marker, kind) {
 
   if (normalizeLightKind(kind) === LIGHT_KINDS.POSITION) {
     out.sequenceGroup = normalized.sequenceGroup || LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].sequenceGroup;
+    if (normalized.blink) out.blink = normalized.blink;
+    if (normalized.lag) out.lag = normalized.lag;
     return out;
   }
 

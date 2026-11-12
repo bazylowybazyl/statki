@@ -664,7 +664,7 @@ if (IS_WORKER) {
     '../src/3d/rockets/effects.js', '../src/game/rockets/rocketSim.js', '../src/3d/shield3D.js',
     '../src/3d/explosions/explosionFx.js', '../src/3d/warp/warpNurt.js', '../src/3d/dust/spaceDust3D.js',
     '../src/3d/ships3d/shipModels3DGame.js', '../src/3d/bridge3D.js', '../src/3d/menuBackdrop3D.js',
-    '../src/vfx/destruction3D.js', '../src/3d/pirateDryDockGame.js', '../src/3d/worldBodies3D.js',
+    '../src/vfx/destruction3D.js', '../src/3d/pirateBaseGame.js', '../src/3d/worldBodies3D.js',
     '../src/3d/reactor3D.js', '../src/3d/gasField/hallDust.js'
   ];
   const errText = (e) => String(e?.stack || e?.message || e).split('\n').slice(0, 4).join(' | ');

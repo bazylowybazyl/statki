@@ -356,6 +356,7 @@ export function createScanOverlay() {
           const st = n.entity;
           const pos = st.pos && !Number.isFinite(st.x) ? st.pos : st;
           n.ang = Math.atan2(pos.y - ship.y, pos.x - ship.x);
+          if (view.screenAngle) n.ang = view.screenAngle(n.ang);   // obrót kadru (hipercruise)
           view.project(pos.x, pos.y, p);
           n.inView = p.depth > 0 && p.x > EDGE_MARGIN && p.x < W - EDGE_MARGIN && p.y > EDGE_MARGIN && p.y < H - EDGE_MARGIN;
         }

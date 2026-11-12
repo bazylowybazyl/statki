@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { zbierzZakres, zbierzCaly } from '../src/3d/zakresyWysylki.js';
+import { zbierzZakres, zbierzCaly, zbierzZakresy, scalZakresy } from '../src/3d/zakresyWysylki.js';
 
 const code = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
@@ -118,4 +118,29 @@ test('three r183 (Attributes + WebGPUAttributeUtils): wysyłka tylko zakresu, ta
   zbierzZakres(buf, 0, 16 * 10);
   draw(ia);
   assert.equal(bytes, 3 * 16 * 10 * 4, 'każdy z 3 atrybutów wysyła ten sam wycinek (nie cały bufor)');
+});
+
+// Scalanie zakresów przed wysyłką (klatka workera 2026-11-02): three wysyła każdy zakres osobnym writeBuffer — w bitwie
+// ~130 zakresów slotów lamp kadłubów i ~60 skór na klatkę; zakresy oddalone o mniej niż próg idą jednym wywołaniem.
+test('scalZakresy: zakresy oddalone o mniej niż próg jednym wywołaniem, dalsze osobno, kolejność po starcie, pula bez alokacji', () => {
+  const attr = new THREE.BufferAttribute(new Float32Array(100000), 1);
+  for (const [s, c] of [[50000, 10], [0, 10], [20, 5], [9000, 10], [30000, 8], [30020, 4]]) zbierzZakresy(attr, s, c);
+  assert.equal(attr.updateRanges.length, 6, 'przed scaleniem: osobne zakresy (nie stykają się)');
+  assert.equal(scalZakresy(attr, 8192), 4);
+  assert.deepEqual(attr.updateRanges.map((r) => [r.start, r.count]), [[0, 25], [9000, 10], [30000, 24], [50000, 10]]);
+  assert.deepEqual(wyslij(attr), [[0, 25], [9000, 10], [30000, 24], [50000, 10]]);
+  // po wysyłce zbieranie od nowa z tej samej puli; jeden zakres — bez zmian
+  const pool = attr.__zakresy.pool.length;
+  zbierzZakresy(attr, 7, 2);
+  zbierzZakresy(attr, 40, 2);
+  assert.equal(attr.__zakresy.pool.length, pool, 'obiekty zakresów z puli');
+  assert.equal(scalZakresy(attr, 8192), 1);
+  assert.deepEqual(wyslij(attr), [[7, 35]]);
+  zbierzZakresy(attr, 1, 1);
+  assert.equal(scalZakresy(attr, 8192), 1);
+  // atrybut z zbierzZakres (jeden zakres) albo bez zakresów — nic do scalenia
+  const single = new THREE.BufferAttribute(new Float32Array(10), 1);
+  zbierzZakres(single, 1, 2);
+  assert.equal(scalZakresy(single, 100), 0);
+  assert.deepEqual(wyslij(single), [[1, 2]]);
 });

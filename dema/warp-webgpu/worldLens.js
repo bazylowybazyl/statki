@@ -1,5 +1,9 @@
 // dema/warp-webgpu/worldLens.js
 //
+// WYCOFANE (2026-10-26): src/3d/warp/worldLens.js ma dziś mapę C „perspektywa drogi” (warpLensQ, WarpWorldLens) —
+// `mapWorldLens` jest jej bezstanowym odpowiednikiem (pola `hold`, `lensScale`, `sizeDepth`, `targetWindow` niżej nic już
+// nie robią). Opis „jednej skali S” niżej to stan z 2026-10-07 (demo archiwalne — dema/warp-webgpu.js).
+//
 // Soczewka świata — widok ciał (planety, księżyce) w skoku w PRAWDZIWYCH
 // odległościach (propozycja 1, user: „podoba mi się”). Czyste funkcje z gry
 // (src/3d/warp/worldLens.js — od 2026-10-07 soczewka jest też w grze, jedno źródło

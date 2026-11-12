@@ -20,6 +20,7 @@
 // lampy × skala hardpointów); siatka belek = ciało − latticeMin (j. świata, Y w górę), jak beamImageToLattice.
 
 import { HullBodies } from './hullBodies.js';
+import { hullPowerMask, hullCellPowered } from './hullPower.js';
 
 const D = HullBodies.engine;
 
@@ -89,6 +90,26 @@ export function bindHullMount(hull, sx, sy, rest) {
   return best;
 }
 
+// Punkt sprite'a (gniazdo broni) → komórka, w pamięci per obiekt punktu i ród kadłuba (wiązanie raz).
+const _pointCells = new WeakMap();
+/**
+ * Czy punkt sprite'a bytu (`key` — stały obiekt punktu, np. gniazdo broni; sx, sy — px renderu od środka, x ku
+ * dziobowi, y w dół obrazu, ze skalą gniazd) ma zasilanie z komory reaktora (hullPower.js). Bez kadłuba belkowego,
+ * bez rdzenia albo punkt poza kadłubem — true (jak dawniej).
+ */
+export function hullPointPowered(entity, key, sx, sy) {
+  const hull = mountHullOf(entity);
+  if (!hull || !key || typeof key !== 'object') return true;
+  const pw = hullPowerMask(entity);
+  if (!pw) return true;
+  let rec = _pointCells.get(key);
+  if (!rec || rec.lineage !== hull.dmgKey) {
+    rec = { lineage: hull.dmgKey, cell: bindHullMount(hull, sx, sy, restOccupancy(hull)) };
+    _pointCells.set(key, rec);
+  }
+  return rec.cell < 0 ? true : hullCellPowered(entity, rec.cell);
+}
+
 /** Zestaw mocowań encji (lampy jednego bloku, dysze jednego układu). */
 export function createHullMountSet() {
   return {
@@ -99,7 +120,8 @@ export function createHullMountSet() {
     cells: new Int32Array(0),   // komórka mocowania (−1 = niezwiązane)
     alive: new Uint8Array(0),
     dead: 0,             // ile mocowań zgasło
-    version: 0           // rośnie przy każdej zmianie `alive` (i przy nowym wiązaniu)
+    version: 0,          // rośnie przy każdej zmianie `alive` (i przy nowym wiązaniu)
+    powerVer: -1         // wersja maski zasilania przy ostatniej ocenie (hullPower.js; −1 — bez maski)
   };
 }
 
@@ -127,12 +149,18 @@ export function beginHullMountBind(set, hull, count) {
  * Żywotność mocowań od nowa, gdy ciało kadłuba się zmieniło (inne ciało albo inna liczba żywych węzłów).
  * Martwe ciało gasi wszystko. Zwraca true, gdy zmieniła się któraś pozycja `alive`.
  */
-export function refreshHullMountSet(set, hull) {
+export function refreshHullMountSet(set, hull, entity = null) {
   const body = hull.body;
   const active = body.dead ? 0 : body.activeNodes;
-  if (set.body === body && set.active === active) return false;
+  // Zasilanie z siatki belek (hullPower.js): mocowanie w części kadłuba odciętej od komory reaktora gaśnie
+  // (lampy, dysze). Byt bez rdzenia albo bez podanego bytu — bez maski (jak dawniej).
+  const owner = entity || hull.entity || null;
+  const pw = owner && !body.dead && body.nodeStore ? hullPowerMask(owner) : null;
+  const pwVer = pw ? pw.version : -1;
+  if (set.body === body && set.active === active && set.powerVer === pwVer) return false;
   set.body = body;
   set.active = active;
+  set.powerVer = pwVer;
   const n = set.count, cells = set.cells, alive = set.alive;
   // lustro ciała przed topologią magazynu (render w workerze) nie ma węzłów — mocowania zgaszone do jej przyjścia
   const lattice = active > 0 && body.nodeStore ? D._latticeIndex(body).cells : null;
@@ -144,7 +172,7 @@ export function refreshHullMountSet(set, hull) {
     if (!lattice) a = 0;
     else if (c >= 0) {
       const i = lattice[c];
-      a = i >= 0 && live[i] ? 1 : 0;
+      a = i >= 0 && live[i] && (pw === null || pw.mask[i] === 1) ? 1 : 0;
     }
     if (a !== alive[k]) { alive[k] = a; changed = true; }
     if (!a) dead++;

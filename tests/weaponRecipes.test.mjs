@@ -4,7 +4,7 @@
 // node --test tests/weaponRecipes.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import v8 from 'node:v8';
+import { allocatedBytes, untilSteady } from './helpers/alokacje.mjs';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
 import { GpuFx } from '../src/3d/weapons/gpuFx.js';
@@ -130,12 +130,11 @@ test('bez Math.random w modułach broni (skan źródeł i szpieg w biegu)', () =
   resetPools();
 });
 
-const newSpaceUsed = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
 // Łańcuch budowniczego paczki nie alokuje (metody < 27 B bajtkodu — V8 wkleja je zawsze). Zostaje
 // pakowanie liczb double przez V8 w wywołaniach NIEwklejonych z dużej receptury (błyski FxLights,
 // zdarzenia opóźnione, pomocniki punktów): ~0,1–0,3 KB na bogaty wylot / trafienie. Strażnik łapie
 // powrót do opcji-obiektów dema (~1,5 KB na tę serię; dziś ~0,6 KB).
-test('wylot i trafienie bez alokacji obiektów na strzał (po rozgrzewce JIT)', () => {
+test('wylot i trafienie bez alokacji obiektów na strzał (po rozgrzewce JIT)', async () => {
   const w = wOf('armata_mk1');
   const shot = () => {
     if (fx.add.burstCount > 1800 || fx.spark.burstCount > 1800 || fx.smoke.burstCount > 1800) resetPools();
@@ -146,13 +145,10 @@ test('wylot i trafienie bez alokacji obiektów na strzał (po rozgrzewce JIT)', 
     after.length = 0;
   };
   for (let i = 0; i < 20000; i++) shot();
-  let best = Infinity;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const before = newSpaceUsed();
-    for (let i = 0; i < 2000; i++) shot();
-    const d = newSpaceUsed() - before;
-    if (d >= 0 && d < best) best = d;
-  }
+  // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+  const best = await untilSteady(() => allocatedBytes(shot, 2000), (b) => b < 2000 * 800, {
+    warm: () => { for (let i = 0; i < 5000; i++) shot(); }
+  });
   // 2000 × (armata + vulcan + tempest) ≈ 100 paczek na iterację
   assert.ok(best < 2000 * 800, `alokacja ${best} B na 2000 serii strzałów (${(best / 2000).toFixed(0)} B na serię)`);
   resetPools();

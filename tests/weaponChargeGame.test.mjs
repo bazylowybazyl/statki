@@ -46,6 +46,8 @@ function p1Game(f) {
   const messages = [];
   const fx = { charges: 0, available: true };
   const scope = {
+    // Stan zasilania okrętu (index.html, src/game/shipPower.js): okręt w PRACY.
+    playerPowered: () => true, playerPowerRefuse: () => false,
     Game: { player: { weapons: f.ship.weapons } }, HP: { SPECIAL: 'special', SPECIAL_MISSILE: 'special_missile' },
     ship: f.ship, p1WeaponCtrl: f.controller, getMountedWeaponAim,
     getCombinedSpecialLoadouts: () => f.ship.weapons.special,
@@ -61,6 +63,7 @@ function p1Game(f) {
     writeCarrier, _chargeCarrier: createCarrier(),
     warp: { busy: false, isBusy() { return this.busy; } },
     pushZoneMessage: (text) => messages.push(text),
+    SND: null, // warstwa dźwięku (haki ładowania i odmowy) — w piaskownicy wyłączona
     isTargetAlive: (t) => !!t && !t.dead,
     clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     window: { fireWeaponCore: (ship, target, id) => { shots.push({ id, t: scope.t }); return MASTER_WEAPONS[id].cooldown; } },
@@ -212,7 +215,7 @@ test('AI: działo z chargeTime ładuje przed strzałem (Valkyrie 0,28 s), Mjolni
       spawnWeaponChargeFx: (owner, weapon, u) => { charges.push(u); }
     });
     const npc = {
-      id: 'ai', x: 0, y: 0, vx: npcVx, vy: 0, angle: 0, angVel: 0, friendly: true,
+      id: 'ai', shipFrame: 'terran_supercapital', x: 0, y: 0, vx: npcVx, vy: 0, angle: 0, angVel: 0, friendly: true,
       weapons: { main: [{ hp: { id: 'm0', type: 'main', x: 0, y: 0, mount: weaponId }, weapon: MASTER_WEAPONS[weaponId] }], aux: [], missile: [] }
     };
     let clock = 0;

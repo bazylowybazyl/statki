@@ -153,7 +153,10 @@ test('index.html: urządzenia czytane w jednym miejscu, logika gry bez keys[...]
   // pętla gry: pumpInput przed gałęzią pauzy (strażnik znacznika rAF w Input.update)
   const loop = html.slice(html.indexOf('function loop(now) {'), html.indexOf('if (PAUSED || StoryGame.worldFrozen) {', html.indexOf('function loop(now) {')));
   assert.match(loop, /pumpInput\(now\);/);
-  assert.match(html, /function inputFrameLoop\(now\) \{\n\s+pumpInput\(now\);\n\s+requestAnimationFrame\(inputFrameLoop\);/);
+  // limit klatek (2026-10-29): wejście raz na RYSOWANĄ klatkę — po limicie; pętla wejścia kończy się z pierwszą klatką gry
+  assert.ok(loop.indexOf('if (!frameLimitTick(now)) return;') < loop.indexOf('pumpInput(now);'), 'pumpInput po limicie klatek');
+  assert.match(loop, /gameLoopLive = true;/);
+  assert.match(html, /function inputFrameLoop\(now\) \{\n\s+if \(gameLoopLive\) return;\n\s+pumpInput\(now\);\n\s+requestAnimationFrame\(inputFrameLoop\);/);
   // utrata fokusu (B12)
   assert.match(html, /window\.addEventListener\('blur', releaseAllInput\);/);
   assert.match(html, /visibilitychange', \(\) => \{ if \(document\.hidden\) releaseAllInput\(\); \}\);/);

@@ -64,6 +64,8 @@ paths:
   w kernelu = zmiana w lustrze. W grze: `node scripts/webgpu/hala-obrys-gra.mjs` (przelot ukosem przez kurz, odczyt
   komórek stałych z GPU → `obrys-mapa.png`, GPU ↔ lustro CPU, pipeline'y w klatce — 0).
 
+- DYSZE SIDE W HALI (2026-11-03, zgłoszenie użytkownika: „gazy i pyły nie reagują na silniki boczne”): dysze manewrowe z ciągiem z listy `EngineFrame.side` (wylot dzwonu, moc strugi z automatu dyszy — impulsy PWM) to strumienie tego samego modelu co MAIN (`writeHallSideJets`, `hallDust.js`): stożek z wylotu wzdłuż wydechu, zasięg R · (16 + 34 · moc), półszerokość max(1,5 komórki, 1,4 R), prędkość 1700 j/s · moc, wydatek gazu jak MAIN (∝ r² wylotu), profil płaski (rozrzedzanie pyłu spalinami), zasłanianie ścianą. Miejsca w tablicy strumieni: MAIN do 16, SIDE do `sideMax` 24, źródła hali 40 (`maxJets` 80). Strojenie `HallDustTune.side*`, A/B `HallDustTune.sideJets = false`; licznik `HallDust.stats.side`.
+- PAMIĘĆ STRUMIENIA W KOMÓRCE (2026-11-03, zgłoszenie użytkownika: „jak wyjdę z hali, gaz nagle się zakleszcza — szybko i nierealistycznie wraca, wypełniając pustkę po statku”): przy wylocie dysze MAIN mijają pole siłowe bramy i stożek (zasłanianie) znika z hali w jednym kroku — razem ze źródłem objętości i rozrzedzaniem spalinami; szybki przepływ dalej podrywał kurz z pokładu, którego nikt już nie czyścił (pył w powietrzu przy bramie ×4 w 1,4 s). Adwekcja bierze max(bieżące, pamięć · exp(−dt / τ)) dla źródła objętości (`srcRelease` 0,5 s) i rozrzedzania (`cleanRelease` 0,9 s); pamięć to `velA.zw` (rzut przepisuje `velB.zw`; prędkość czyta się wszędzie jako `.xy`). Stały strumień bit w bit jak dawniej; po zgaśnięciu tunel zarasta w czasie τ (pomiary: `docs/AUDYT-pyl-hali-2026-10-12.md` § 7). Lustro `jetMemoryCpu`. A/B: `HallDust.sim.tune.srcRelease = cleanRelease = 0` + `syncTune()`. W grze: `node scripts/webgpu/hala-wylot-gra.mjs [--ab 1] [--pola 1] [--zrzuty 1] [--side 1]` (Atlas z C-01 przez G-01 pełnym ciągiem, odczyt pól z GPU w pauzie co 0,1 s w prostokącie przy bramie i w korytarzu lotu, A/B bez pamięci i z pamięcią w jednej stronie, zrzuty z kamerą nad bramą; tryb off).
 - ZAPŁON SILNIKÓW w hali (2026-10-09, § „Odpalanie i gaszenie silników MAIN”): strumień dyszy w polu ma moc max(`EngineFrame.power`,
   `engineSmokeFlow`) — 0,45 w dymie zapłonu (narasta 0,2 s), do 0,32 przy gaszeniu: zimny gaz z dysz podrywa kurz, zanim
   zapali się struga (sama prędkość, bez pary — bez podwójnej mgły z dymem 3D). Ściana tylna hali jest przeszkodą gazu 3D
@@ -123,6 +125,26 @@ paths:
     v2, skrypt) ustawia własny `owner` — inaczej automat zeruje pozę wolnego stanowiska. Strojenie `window.K7ServiceTune`
     (`dwell`, `settleSpeed`, `releaseSpeed` …), testy `tests/k7BerthService.test.mjs`, w grze
     `hala-swiatla-gra.mjs --automat`.
+  - REFLEKTORY PODEJŚCIA (decyzja użytkownika 2026-11-11): reflektor stanowiska capital (ściana tylna, snop wzdłuż
+    stanowiska ku bramie; `berthId` w `k7LightRig().spots`) świeci PRZYGASZONY (`K7_APPROACH_SPOT.idle` 0,3 mocy), póki
+    stanowisko jest wolne, i rozjaśnia się sam, gdy gracz PODCHODZI: automat obsługi (`k7BerthService.js`) widzi statek,
+    który mieści się na stanowisku, w pasie podejścia (`layout.lanes` — od tyłu pola do fartucha za bramą G-01), kursem
+    wzdłuż osi stanowiska (dziobem albo rufą), ≤ 500 j/s i bez oddalania ku bramie (> 60 j/s) — `approachOn`; trzyma
+    luźniej (`approachOff`: +250 j. w poprzek, 40°, 700 j/s, oddalanie 180 j/s) — histereza bez migotania na brzegu pasa.
+    Pełny także przy postoju, obsłudze, cudzej pozie (fabuła) i stanowisku zajętym / zarezerwowanym przez kogokolwiek
+    (ruch v2 — 'traffic'). Poziom 0…1 (pierwszy krok automatu bierze cel od razu — start gry bez rampy; przed nim
+    pole nie istnieje, więc tło menu ma pełną moc) narasta w `lightRise` 0,7 s i gaśnie w `lightFall` 2,5 s CZASU KLATKI
+    (`HaloRingWorld.frame({ frameDt })` — jak miganie soczewek: w pauzie i scenach fabuły dochodzi do celu, sam warunek
+    stoi z grą) → pole `approachLight` stanowiska w rejestrze hali → blok `ring` migawki (4. słowo stanowiska, worker)
+    i blok obsługi wejścia pyłu (`HALL_DUST_SERVICE.light`; NaN = brak poziomu). Mnożnik mocy z JEDNEGO źródła
+    `k7ApproachSpotGain` (`haloPortK7Lights.js`; brak poziomu — 1, czyli dema i tło menu jak dawniej): pokład hali
+    (`HaloPortK7.setApproachLights` w `update({ berths })` — zmiana wartości `uK7Spots`, bez zmiany grafu i `MAX_SPOTS`),
+    siatka świateł pyłu hal (`HallDust._lights` — pył, para, kadłuby) i gaz hali 3D (demo). Oba tryby renderu ten sam
+    obraz (poziom liczy gra). A/B: `K7ServiceTune.approachLights = false` (wszystkie pełne). Testy
+    `tests/k7ApproachLights.test.mjs`, w grze `node scripts/webgpu/zatoki-reflektory-gra.mjs --etapy reflektory
+    [--query renderWorker=1]` (przed podejściem, narastanie, pełny, Atlas na polu, po odlocie; poziomy z rejestru,
+    jasność kadru wokół plamy reflektora). Oprawa reflektora (soczewka w modelu z Blendera) świeci stale — zmienia się
+    tylko światło.
   - OPRZYRZĄDOWANIE (`src/3d/haloRing/haloPortK7Lights.js`, czyste, JEDNO źródło): lampy, reflektory (oprawy na
     ścianach), SOCZEWKI migające (`K7_BEACON`: czerwone przeszkodowe na ościeżnicach, obrotnicach ramion paliwowych i ścianach — wspólny
     takt; zielone / czerwone narożniki stanowisk — przełącza `setBerthLamps`; niebieskie stroboskopy podejścia biegnące

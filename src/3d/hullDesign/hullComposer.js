@@ -24,6 +24,12 @@
 //                   opcjonalnie emisja jako niebieska poświata (gra dziś świeci tylko z albedo: hullGlowMask)
 //   EOUT  (RGBA8)   emisja do podglądu (sRGB, /3)
 //
+// MAPY i BARWY (malowanie barwami nacji jako osobna warstwa): GEO, EMIS (bez barwy okien — w kanale A siła okien,
+// barwę dokłada pass barw) i SURF zależą tylko od projektu bez barw; BASE (paleta, pędzel — mapa malowania klocków
+// src/game/hullDesign/hullDesignPaint.js — i naklejki), ALB i EOUT to PASSY BARW. Zmiana palety, pędzla albo naklejek:
+// setColors / setDecals + renderColors() (3 passy, bez pól, sieci i wysyłki tekstur pól), odczyt samego albedo —
+// bakeColors(). Ta sama ścieżka da grze jeden projekt w barwach kilku frakcji (bakeLiveries).
+//
 // Obraz ma `tpu` tekseli na j.: dłuższy bok ~HD_TEX.targetSide (fregata 150 j. → ~16 tek./j., lotniskowiec → ~2,4).
 
 import * as THREE from 'three/webgpu';
@@ -33,7 +39,10 @@ import {
 } from 'three/tsl';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { srgbEncode } from '../skybake/skyGameColor.js';
-import { HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_BRIDGE_SOCKET, HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_CARGO } from '../../game/hullDesign/hullDesignCargo.js';
+import { HD_PAINT_MAX } from '../../game/hullDesign/hullDesignPaint.js';
+import { bridgeLevel } from '../../data/bridgeLevels.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
 // maxSide: gwarantowane minimum WebGPU (maxTextureDimension2D = 8 192) — drednot 5,4 km dostaje 1,2 teksela/j. (HD_TEX.min)
@@ -83,6 +92,8 @@ export const HD_LOOK = {
   domeTiltDeg: 36                     // nachylenie kopuły przy sylwetce (jak HULL_SURFACE_DEFAULTS.domeTiltDeg)
 };
 
+/** Wysokość grubej płyty pancerza [jd] (HD_LOOK.panel.slab): pod modułem płyty nie ma — moduł stojący NA płycie ją dokłada. */
+const PN_SLAB = 1.6;
 const TYPE_CODE = Object.fromEntries(Object.entries(HD_MODULES).map(([k, v]) => [k, v.code]));
 const EDGE_GAIN = 0.3989423;
 
@@ -103,12 +114,19 @@ function srgbToLinear(hex) {
 }
 
 /**
- * Barwa bezpieczna dla skóry gry: hullGlowMask (hullLighting.tsl.js) zapala albedo z niebieskim > 0,42 i
- * czerwonym < 0,15 (liniowo) — niebieski pas wyglądałby jak świecąca tarcza. Taki kolor ściszony do b = 0,38.
+ * Barwa bezpieczna dla skóry gry: hullGlowMask (hullLighting.tsl.js) zapala albedo z niebieskim > 0,42 przy
+ * czerwonym < 0,25 (liniowo; od 0,15 maska maleje) — niebieski pas wyglądałby jak świecąca tarcza. Taki kolor ściszony
+ * do b = 0,38 (maska 0).
  */
 export function glowSafeLinear(c) {
-  if (c[2] > 0.38 && c[0] < 0.2) { const k = 0.38 / c[2]; return [c[0] * k, c[1] * k, 0.38]; }
+  if (c[2] > 0.38 && c[0] < 0.25) { const k = 0.38 / c[2]; return [c[0] * k, c[1] * k, 0.38]; }
   return c;
+}
+
+/** Barwa '#rrggbb' → liniowo, bezpieczna dla skóry gry (okna bez ściszenia — świecą z założenia). */
+export function hullColorLinear(hex, isWindow = false) {
+  const c = srgbToLinear(hex);
+  return isWindow ? c : glowSafeLinear(c);
 }
 
 /** Tekseli na j. dla pudła obrazu (w × h j.). */
@@ -189,6 +207,11 @@ const segDist = (p, a, b) => {
   return length(pa.sub(ba.mul(t)));
 };
 const lum = (c) => dot(c, vec3(0.2126, 0.7152, 0.0722));
+/**
+ * glowSafeLinear w grafie: niebieski ściszony do 0,38 przy czerwonym < 0,25 (maska hullGlowMask gry jest wtedy 0) — dla
+ * barw modułu złożonych z wierszy palety pomnożonych ponad 1 (nadpisanie gracza `paint` może być na granicy maski).
+ */
+const glowSafeNode = (c) => vec3(c.x, c.y, min(c.z, mix(float(0.38), float(64.0), step(0.25, c.x))));
 
 /**
  * Podział 1D na odcinki o losowych granicach: granica k w (k + (hash − ½)·J)·S. Zwraca { k, lo, hi } odcinka
@@ -219,8 +242,10 @@ export class HullComposer {
       style: uniform(new THREE.Vector4(0, 1, 1, 1)),     // profil fazy (0 prosty … 1 zaokrąglony), emisja → albedo, brud, otarcia
       bev: uniform(1.0),                                 // skala fazy krawędzi płyt (design.bevel)
       grv: uniform(new THREE.Vector4(1, 0, 0, 0)),       // widoczność losowych paneli (design.panels)
+      cargo: uniform(new THREE.Vector4(1, 0, 0, 0)),     // x — załadunek stelaży i zasobników (design.cargoLoad, 0–1)
       dome: uniform(new THREE.Vector4(0, 0, 0, 0)),      // skala kopuły [j. na 1 rozmytej sylwetki]
-      pal: uniformArray(Array.from({ length: 12 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPalette'),
+      // paleta: wiersze HD_PALETTE_ROWS (0–11), potem tabela pędzla (12 + indeks − 1; hullPaintLayer)
+      pal: uniformArray(Array.from({ length: 12 + HD_PAINT_MAX + 1 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPalette'),
       mods: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.modules * 2 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignModules'),
       modCount: uniform(0, 'int'),
       decals: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.decals * 4 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignDecals'),
@@ -228,6 +253,7 @@ export class HullComposer {
       // sieć rur: x — włączona (0 / 1), y — okres obejm [jd]; biegi (3 × vec4: promienie rur 0–3, 4–7 [jd],
       // pół-szerokość, odstęp, najgrubsza, materiał (3 — kable) + 8 · na płytach), osprzęt (2 × vec4: x, y, rodzaj + 16 · na płytach, obrót;
       // pół-wymiary [jd], p1, p2)
+      // z — mapa malowania włączona (0 / 1)
       pnet: uniform(new THREE.Vector4(0, 26, 0, 0)),
       pruns: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeRuns * 3 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeRuns'),
       pfits: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeFits * 2 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeFits')
@@ -240,6 +266,7 @@ export class HullComposer {
       pipeA: texture(placeholder(THREE.HalfFloatType), vec2(0)),   // sieć rur: przesunięcie w poprzek [j.], cos φ, sin φ, odcinek
       pipeB: texture(placeholder(THREE.UnsignedByteType), vec2(0)), // sieć rur: numer biegu (R), numer osprzętu (G + 256 · A; textureLoad)
       atlas: texture(placeholder(THREE.UnsignedByteType), vec2(0)),
+      paint: texture(placeholder(THREE.UnsignedByteType), vec2(0)),   // pędzel: R — indeks barwy, A — pokrycie (siatka pola)
       geo: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       base: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       emis: texture(placeholder(THREE.HalfFloatType), vec2(0)),
@@ -252,6 +279,8 @@ export class HullComposer {
     this._pipeATex = null;
     this._pipeBTex = null;
     this._atlasTex = null;
+    this._paintTex = null;
+    this.mapsRev = 0;
     this._build();
   }
 
@@ -590,9 +619,20 @@ export class HullComposer {
     const engK = float(0.0).toVar();      // gondola MAIN (poziom ramy): pod nią wysokość samej ramy, bez okruchów płyt
     const cutK = float(0.0).toVar();      // KANAŁ SERWISOWY (SIDE, zbiornik): płyty zdjęte — maszynownia z siecią
     const emis = vec3(0.0).toVar();
+    const winE = float(0.0).toVar();      // okna (barwa z palety w passie barw — EMIS.a)
     const hullC = this._pal(0), upperC = this._pal(1), trimC = this._pal(2), accent = this._pal(3), metal = this._pal(4);
-    const hazard = this._pal(5), winC = this._pal(6), pipeC = this._pal(7), engC = this._pal(8), doorC = this._pal(9);
+    const hazard = this._pal(5), pipeC = this._pal(7), engC = this._pal(8), doorC = this._pal(9);
     const plateC = mix(hullC, upperC, upperK).toVar();
+    // PĘDZEL (warstwa barw): płyty pomalowanego klocka / kasztelu w barwie slotu albo własnej (mapa na siatce pola)
+    {
+      const fuvP = this._fuv(p);
+      const on = U.pnet.z;
+      const pc = this.T.paint.sample(fuvP).level(0).w.mul(on);
+      const ipP = ivec2(floor(fuvP.mul(U.fieldSize))).mul(int(on));
+      const ipC = ivec2(clamp(ipP.x, int(0), int(U.fieldSize.x).sub(1)), clamp(ipP.y, int(0), int(U.fieldSize.y).sub(1)));
+      const idx = int(floor(textureLoad(this.T.paint, ipC).x.mul(255.0).add(0.5)));
+      plateC.assign(mix(plateC, U.pal.element(idx.add(11)).xyz, clamp(pc, 0.0, 1.0)));
+    }
     Loop({ start: 0, end: HD_COMPOSER_LIMITS.modules, type: 'int', condition: '<', name: 'mi' }, ({ mi }) => {
       If(mi.greaterThanEqual(U.modCount), () => { Break(); });
       const A = U.mods.element(mi.mul(2)).toVar();
@@ -845,6 +885,81 @@ export class HullComposer {
           modCol.assign(select(ringBand.greaterThan(0.5), mix(vec3(0.02), hazard, ringStripe), mix(plateC.mul(0.9), vec3(0.04), vent)));
           emis.addAssign(accent.mul(vent).mul(1.4));
         });
+      }).ElseIf(type.lessThan(7.5).and(B.w.greaterThan(1.5)), () => {
+        // v = 2 — GNIAZDO MOSTKA Terra Novy (src/data/bridgeLevels.js): płyta pokładu w obrysie modelu 3D poziomu (pół-
+        // wymiary w, h, ośmiokąt z fazą poziomu), szczelina i pancerna rama z podwójną linią, nitami i żółtymi skosami
+        // w narożnikach; na płycie mocowania modelu (poziom + 1 na burtę, od IV — także dziób i rufa) z bursztynową
+        // lampką, belki poziomu przy przednim brzegu (tyle, ile poziom) i przepust kabli w środku. Gra stawia na nim
+        // model 3D poziomu (src/3d/bridge3D.js); B.z = poziom + faza / 100 [j.]
+        const w = B.x.mul(iD), hh = B.y.mul(iD);
+        const lv = floor(B.z).toVar();
+        const chJ = fract(B.z).mul(100.0).mul(iD).toVar();
+        const rimJ = float(HD_BRIDGE_SOCKET.gapDu + HD_BRIDGE_SOCKET.frameDu).add(min(w, hh).mul(2 * HD_BRIDGE_SOCKET.frameK)).toVar();
+        const gapJ = rimJ.mul(HD_BRIDGE_SOCKET.gapShare).toVar();
+        const al = abs(lu).toVar();
+        // ośmiokąt (płaszczyzny boków i skosów — przesunięcie o d daje ramę z fazą większą o d · (2 − √2), jak bryła)
+        const deck = max(max(al.x.sub(w), al.y.sub(hh)), al.x.add(al.y).sub(w.add(hh).sub(chJ)).mul(0.70710678)).toVar();
+        If(deck.lessThan(rimJ.add(1.0)), () => {
+          const pad = clamp(deck.negate().div(0.4), 0.0, 1.0).toVar();
+          const gapO = deck.sub(gapJ).toVar();
+          const gap = clamp(gapO.negate().div(0.35), 0.0, 1.0).mul(float(1.0).sub(pad)).toVar();
+          const frameO = deck.sub(rimJ).toVar();
+          const frame = clamp(frameO.negate().div(0.5), 0.0, 1.0).mul(float(1.0).sub(gap)).mul(float(1.0).sub(pad)).toVar();
+          const fw = rimJ.sub(gapJ);
+          // nity w środku ramy (wzdłuż boku, krok 2,2 jd), podwójna linia, żółte skosy narożników
+          const along = select(al.y.sub(hh).greaterThan(al.x.sub(w)), lu.x, lu.y);
+          const midF = frameO.add(fw.mul(0.5));
+          const rivF = float(1.0).sub(smoothstep(0.18, 0.34, length(vec2(fract(along.div(2.2)).sub(0.5).mul(2.2), midF)))).mul(frame).mul(step(1.2, fw));
+          const dbl = lineN(frameO.add(fw.mul(0.28)), float(0.3)).mul(frame);
+          const diagD = al.x.add(al.y).sub(w.add(hh).sub(chJ)).mul(0.70710678);
+          const onDiag = step(max(al.x.sub(w), al.y.sub(hh)).sub(0.05), diagD).mul(frame).mul(step(frameO, fw.mul(-0.2)));
+          const stripe = step(0.5, fract(al.x.sub(al.y).div(1.4)));
+          // płyta: szwy paneli, śruby przy brzegu
+          const P = clamp(min(w, hh).mul(0.55), 3.0, 9.0);
+          const seam = max(lineN(fract(lu.x.div(P).add(0.5)).sub(0.5).mul(P), float(0.25)), lineN(lu.y, float(0.25))).mul(pad).mul(step(deck, -1.4)).toVar();
+          const boltP = float(1.0).sub(smoothstep(0.16, 0.3, length(vec2(fract(along.div(3.0)).sub(0.5).mul(3.0), deck.add(0.9))))).mul(pad);
+          // mocowania modelu: lv + 1 na burtę (rozstaw ±0,72 w), od IV — dziób i rufa
+          const n = lv.add(1.0);
+          const span = w.mul(0.72);
+          const stepX = span.mul(2.0).div(n.sub(1.0));
+          const kc = clamp(floor(lu.x.add(span).div(stepX).add(0.5)), 0.0, n.sub(1.0));
+          const dxC = lu.x.add(span).sub(kc.mul(stepX));
+          const cw = clamp(w.mul(0.05), 0.9, 3.2), chh = clamp(hh.mul(0.07), 0.7, 2.4);
+          const dyC = al.y.sub(hh.sub(chh.mul(1.7)));
+          const clampS = step(abs(dxC), cw).mul(step(abs(dyC), chh));
+          const dxF = al.x.sub(w.sub(chh.mul(1.7)));
+          const clampF = step(4.0, lv).mul(step(abs(dxF), chh)).mul(step(al.y, cw));
+          const clampK = max(clampS, clampF).mul(pad).toVar();
+          const lamp = float(1.0).sub(smoothstep(0.14, 0.3, length(select(clampS.greaterThan(0.5), vec2(dxC, dyC), vec2(dxF, lu.y))))).mul(clampK);
+          // belki poziomu (I–VI) przy przednim brzegu płyty, za mocowaniem dziobowym (rozstaw i długość z obrysu)
+          const sp = clamp(hh.mul(0.1), 1.7, 3.6), bl = clamp(hh.mul(0.1), 1.0, 3.2);
+          const ky = lu.y.div(sp).add(lv.sub(1.0).mul(0.5));
+          const kb = floor(ky.add(0.5));
+          const bx = w.sub(chh.mul(2.8)).sub(bl).sub(1.0);
+          const bar = step(abs(ky.sub(kb)), 0.27).mul(step(0.0, kb)).mul(step(kb, lv.sub(1.0)))
+            .mul(step(abs(lu.x.sub(bx)), bl)).mul(pad);
+          // przepust kabli w środku płyty (pień sieci z rdzenia)
+          const pr = clamp(hh.mul(0.22), 1.2, 3.2);
+          const rr2 = length(lu);
+          const port = step(rr2, pr).mul(pad);
+          const portRing = lineN(rr2.sub(pr), float(0.35)).mul(pad);
+          modH.addAssign(frame.mul(1.1).add(rivF.mul(0.25)).sub(gap.mul(2.2)).add(pad.mul(0.35)).add(clampK.mul(0.7)).add(boltP.mul(0.18))
+            .sub(port.mul(0.6)).add(portRing.mul(0.2)).sub(dbl.mul(0.25)).sub(seam.mul(0.15)).add(bar.mul(0.1)));
+          modK.assign(max(modK, max(frame, max(gap, pad))));
+          modSeam.assign(max(modSeam, max(lineN(frameO, float(0.35)), lineN(gapO, float(0.3))).mul(0.6)));
+          const col = mix(plateC.mul(1.02), plateC.mul(0.93), dbl).toVar();
+          col.assign(mix(col, hazard, onDiag.mul(stripe)));
+          col.assign(mix(col, trimC.mul(0.5), rivF.mul(0.6)));
+          col.assign(mix(col, vec3(0.025, 0.025, 0.024), gap));
+          col.assign(mix(col, mix(mix(plateC.mul(0.86), plateC.mul(0.74), seam), trimC.mul(0.55), boltP), pad));
+          col.assign(mix(col, metal.mul(1.6), clampK));
+          col.assign(mix(col, hazard, bar));
+          col.assign(mix(col, vec3(0.02), port));
+          col.assign(mix(col, metal.mul(1.9), portRing));
+          col.assign(mix(col, vec3(1.0, 0.6, 0.18), lamp));
+          modCol.assign(col);
+          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.2));
+        });
       }).ElseIf(type.lessThan(7.5), () => {
         // mostek: pas szyb z przodu, okna burtowe, talerz radaru (szyby ciemne, świecą wg „okien” projektu)
         const w = B.x.mul(iD), hh = B.y.mul(iD);
@@ -861,7 +976,7 @@ export class HullComposer {
           modH.addAssign(dish.mul(clamp(dd.div(dr), 0.0, 1.0).mul(1.2).add(0.3)).sub(glass.mul(0.5)));
           modK.assign(max(modK, max(glass, dish)));
           modCol.assign(mix(mix(plateC.mul(1.02), engC.mul(1.3), dish), vec3(0.03, 0.04, 0.05), glass));
-          emis.addAssign(winC.mul(glass).mul(L.windowGlow * 1.2).mul(U.det.z.mul(0.85).add(0.15)));
+          winE.addAssign(glass.mul(L.windowGlow * 1.2).mul(U.det.z.mul(0.85).add(0.15)));
         });
       }).ElseIf(type.lessThan(8.5), () => {
         // kratka (v = 0): biała ramka, ciemna wnęka, żebra w poprzek dłuższej osi; RADIATOR TN (v = 1): gruba rama,
@@ -1119,41 +1234,413 @@ export class HullComposer {
           modCol.assign(col);
           emis.addAssign(vec3(1.0, 0.45, 0.14).mul(throat).mul(float(1.0).sub(smoothstep(0.0, R0.mul(0.4), rc))).mul(0.35));
         });
-      }).ElseIf(type.lessThan(14.5), () => {
+      }).ElseIf(type.lessThan(13.5), () => {
         // ŁADOWNIA (v 0 — wrota: dwa skrzydła ze szwem na osi x modułu i zazębieniem, żebra w poprzek, szyny wzdłuż
-        // dłuższych boków; v 1 — klapa z krzyżem wzmocnień): rama z pasem ostrzegawczym, bursztynowe lampy w rogach
+        // dłuższych boków; v 1 — klapa z krzyżem wzmocnień): rama z pasem ostrzegawczym, bursztynowe lampy w rogach;
+        // v 2 — stelaż kontenerów, v 3 — zasobniki (gałąź niżej)
         const hb = B.xy.mul(iD).toVar();
         const sd = sdBox(lu, hb).toVar();
         If(sd.lessThan(1.0), () => {
-          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
-          const fw = clamp(min(hb.x, hb.y).mul(0.12), 1.2, 3.0).toVar();
-          const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
-          const frame = inside.mul(step(0.0, inner)).toVar();
-          const leaf = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
-          const hz = step(inner.negate(), 0.8).mul(leaf);
-          const hzS = step(0.5, fract(lu.x.add(lu.y).div(2.2)));
-          const klapa = step(0.5, B.w);
-          const tooth = step(0.5, fract(lu.x.div(3.0))).sub(0.5).mul(0.8);
-          const seam = lineN(lu.y.add(tooth), float(0.35)).mul(leaf).mul(float(1.0).sub(klapa));
-          const ribP = clamp(hb.x.mul(0.25), 4.0, 8.0);
-          const rib = step(abs(fract(lu.x.div(ribP)).sub(0.5)), 0.08).mul(leaf).mul(float(1.0).sub(hz));
-          const xr = lineN(abs(lu.x.div(max(hb.x, 1.0))).sub(abs(lu.y.div(max(hb.y, 1.0)))).mul(min(hb.x, hb.y)), float(0.5)).mul(leaf).mul(klapa);
-          const rail = step(abs(abs(lu.y).sub(hb.y.sub(fw.mul(0.5)))), 0.35).mul(frame);
-          const lampD = length(abs(lu).sub(hb.sub(vec2(fw.mul(0.5)))));
-          const lamp = float(1.0).sub(smoothstep(0.35, 0.6, lampD)).mul(inside).toVar();
-          modH.addAssign(frame.mul(0.9).sub(leaf.mul(0.7)).add(rib.mul(0.28)).add(xr.mul(0.3)).sub(seam.mul(0.5)).add(rail.mul(0.15)).add(lamp.mul(0.25)));
-          modK.assign(max(modK, inside));
-          modSeam.assign(max(modSeam, max(max(lineN(inner, float(0.35)), lineN(sd, float(0.35))).mul(0.7), seam)));
-          const leafC = doorC.mul(float(1.08).add(rib.mul(0.15)).add(xr.mul(0.12)));
-          const col = mix(plateC.mul(0.94), leafC, leaf).toVar();
-          col.assign(mix(col, mix(hazard.mul(0.9), vec3(0.03), hzS), hz));
-          col.assign(mix(col, engC.mul(0.7), rail));
-          col.assign(mix(col, vec3(0.025), seam));
-          col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
-          modCol.assign(col);
-          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          If(B.w.lessThan(1.5), () => {
+            const fw = clamp(min(hb.x, hb.y).mul(0.12), 1.2, 3.0).toVar();
+            const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+            const frame = inside.mul(step(0.0, inner)).toVar();
+            const leaf = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
+            const hz = step(inner.negate(), 0.8).mul(leaf);
+            const hzS = step(0.5, fract(lu.x.add(lu.y).div(2.2)));
+            const klapa = step(0.5, B.w);
+            const tooth = step(0.5, fract(lu.x.div(3.0))).sub(0.5).mul(0.8);
+            const seam = lineN(lu.y.add(tooth), float(0.35)).mul(leaf).mul(float(1.0).sub(klapa));
+            const ribP = clamp(hb.x.mul(0.25), 4.0, 8.0);
+            const rib = step(abs(fract(lu.x.div(ribP)).sub(0.5)), 0.08).mul(leaf).mul(float(1.0).sub(hz));
+            const xr = lineN(abs(lu.x.div(max(hb.x, 1.0))).sub(abs(lu.y.div(max(hb.y, 1.0)))).mul(min(hb.x, hb.y)), float(0.5)).mul(leaf).mul(klapa);
+            const rail = step(abs(abs(lu.y).sub(hb.y.sub(fw.mul(0.5)))), 0.35).mul(frame);
+            const lampD = length(abs(lu).sub(hb.sub(vec2(fw.mul(0.5)))));
+            const lamp = float(1.0).sub(smoothstep(0.35, 0.6, lampD)).mul(inside).toVar();
+            modH.addAssign(frame.mul(0.9).sub(leaf.mul(0.7)).add(rib.mul(0.28)).add(xr.mul(0.3)).sub(seam.mul(0.5)).add(rail.mul(0.15)).add(lamp.mul(0.25)));
+            modK.assign(max(modK, inside));
+            modSeam.assign(max(modSeam, max(max(lineN(inner, float(0.35)), lineN(sd, float(0.35))).mul(0.7), seam)));
+            const leafC = doorC.mul(float(1.08).add(rib.mul(0.15)).add(xr.mul(0.12)));
+            const col = mix(plateC.mul(0.94), leafC, leaf).toVar();
+            col.assign(mix(col, mix(hazard.mul(0.9), vec3(0.03), hzS), hz));
+            col.assign(mix(col, engC.mul(0.7), rail));
+            col.assign(mix(col, vec3(0.025), seam));
+            col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
+            modCol.assign(col);
+            emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+          }).ElseIf(B.w.greaterThan(3.5), () => {
+            // v 4 — KOSZ (ładownia OTWARTA OD GÓRY, statki robocze: dźwig wkłada do niej z góry): rama z pasami ostrzegawczymi
+            // w narożach i odbojnicą, głęboka wnęka z żebrami dna, w niej ZŁOM — dwie warstwy kanciastych kawałków (stal,
+            // grafit, rdza, rzadko żółć) na gruzie; zasypana część rośnie z załadunkiem (U.cargo.x), pusty kosz = samo dno.
+            const fw = clamp(min(hb.x, hb.y).mul(0.08), 1.6, 8.0).toVar();
+            const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+            const frame = inside.mul(step(0.0, inner)).toVar();
+            const pit = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
+            const cl = min(hb.x, hb.y).mul(0.45);
+            const hz = frame.mul(step(hb.x.sub(cl), abs(lu.x))).mul(step(hb.y.sub(cl), abs(lu.y))).toVar();
+            const hzS = step(0.5, fract(lu.x.add(lu.y).div(max(fw.mul(0.8), 2.2))));
+            const fender = lineN(inner.sub(fw.mul(0.45)), float(0.4)).mul(frame).toVar();
+            const seedV2 = vec2(float(mi).mul(7.31).add(1.7), U.tex.w.mul(0.173));
+            const cS = clamp(min(hb.x, hb.y).mul(0.11), 4.6, 16.0).toVar();       // kawałek złomu [jd]
+            const fillN = vnoise(lu.div(cS.mul(3.2)).add(seedV2)).mul(0.75).add(vnoise(lu.div(cS).add(seedV2.mul(1.7))).mul(0.25));
+            const full = step(fillN, U.cargo.x.mul(1.16).sub(0.08)).mul(pit).toVar();
+            const chunk = (S, off) => {
+              const pp = lu.div(S).add(off).toVar();
+              const cell = floor(pp).toVar();
+              const hA = hash12(cell.add(seedV2)).toVar();
+              const hB = hash12(cell.add(seedV2).add(vec2(3.1, 7.7))).toVar();
+              const q = rot2(pp.sub(cell).sub(0.5).sub(vec2(hA, hB).sub(0.5).mul(0.3)), hA.mul(6.28318));
+              const bx = sdBox(q, vec2(hB.mul(0.22).add(0.16), hA.mul(0.12).add(0.07)));
+              return { m: step(bx, 0.0), edge: step(bx, -0.035), k: hB, h: hA };
+            };
+            const c1 = chunk(cS, vec2(0.0, 0.0)), c2 = chunk(cS.mul(0.64), vec2(17.3, 5.9)), c3 = chunk(cS.mul(0.37), vec2(4.1, 29.7));
+            const pick = (k) => select(k.lessThan(0.34), this._pal(11).mul(0.72), select(k.lessThan(0.62), vec3(0.085, 0.088, 0.092),
+              select(k.lessThan(0.955), vec3(0.16, 0.085, 0.045), hazard.mul(0.62))));
+            const rub = vnoise(lu.div(cS.mul(0.3)).add(seedV2)).toVar();
+            const scrapC = vec3(0.04, 0.038, 0.035).mul(float(0.6).add(rub.mul(0.9))).toVar();
+            scrapC.assign(mix(scrapC, pick(c3.k.mul(0.9)).mul(mix(float(0.45), float(0.7), c3.edge)), c3.m));
+            scrapC.assign(mix(scrapC, pick(c1.k).mul(mix(float(0.62), float(1.0), c1.edge)), c1.m));
+            scrapC.assign(mix(scrapC, pick(c2.k.mul(0.97)).mul(mix(float(0.7), float(1.12), c2.edge)), c2.m));
+            const chH = clamp(cS.mul(0.14), 0.7, 2.2);
+            const scrapH = rub.mul(0.5).add(c3.m.mul(0.3)).add(c1.m.mul(c1.h.mul(0.8).add(0.5)).mul(chH)).add(c2.m.mul(c2.h.mul(0.7).add(0.9)).mul(chH)).toVar();
+            const ribF = step(abs(fract(lu.x.div(max(cS, 5.0))).sub(0.5)), 0.07).mul(pit).mul(float(1.0).sub(full)).toVar();
+            const lampR = max(fw.mul(0.3), 0.55);
+            const lamp = float(1.0).sub(smoothstep(lampR.mul(0.6), lampR, length(abs(lu).sub(hb.sub(vec2(fw.mul(0.5))))))).mul(inside).toVar();
+            modH.addAssign(frame.mul(1.2).add(fender.mul(0.25)).sub(pit.mul(3.4)).add(full.mul(scrapH.add(1.6))).add(ribF.mul(0.3)).add(lamp.mul(0.25)));
+            modK.assign(max(modK, inside));
+            modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)), lineN(inner, float(0.35))).mul(0.7)));
+            const col = mix(mix(vec3(0.02, 0.019, 0.018), metal.mul(1.1), ribF), plateC.mul(0.95), frame).toVar();
+            col.assign(mix(col, engC.mul(1.3), fender));
+            col.assign(mix(col, mix(hazard.mul(0.95), vec3(0.03), hzS), hz));
+            col.assign(mix(col, scrapC, full));
+            col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
+            modCol.assign(glowSafeNode(col));
+            emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+          }).Else(() => {
+            // v 2 — STELAŻ KONTENERÓW (otwarty pokład: kontenery 16 × 8 j. — CARGO_CONTAINER gry — w siatce), v 3 —
+            // ZASOBNIKI (zaokrąglone pudła n × n kontenerów: jasne panele, szew, bursztynowe światła w rogach). Siatka
+            // w j. świata jak hullCargoGrid (src/game/hullDesign/hullDesignCargo.js); komórka pusta (gniazdo z zaczepami
+            // w rogach), gdy jej hash ≥ załadunek (U.cargo.x). Rama stelaża z poprzeczkami, w rogach modułu lampy.
+            const pods = step(2.5, B.w).toVar();
+            const nC = max(B.z, 1.0).toVar();
+            const cell = vec2(nC.mul(HD_CARGO.L).add(nC.sub(1.0).mul(HD_CARGO.podGap)), nC.mul(HD_CARGO.W).add(nC.sub(1.0).mul(HD_CARGO.podGap))).toVar();
+            const pitch = cell.add(vec2(HD_CARGO.gap)).toVar();
+            const fr = D.mul(HD_CARGO.frameDu).toVar();                         // rama [j.]
+            const cnt = max(floor(B.xy.sub(vec2(fr)).mul(2.0).add(vec2(HD_CARGO.gap)).div(pitch)), vec2(0.0)).toVar();
+            const tot = max(cnt.mul(pitch).sub(vec2(HD_CARGO.gap)), vec2(0.0)).toVar();
+            const gq = lq.add(tot.mul(0.5)).add(vec2(HD_CARGO.gap * 0.5)).toVar();
+            const ci = floor(gq.div(pitch)).toVar();
+            const inGrid = step(0.0, ci.x).mul(step(0.0, ci.y)).mul(step(ci.x, cnt.x.sub(1.0))).mul(step(ci.y, cnt.y.sub(1.0))).toVar();
+            const cq = gq.sub(ci.add(0.5).mul(pitch)).toVar();                  // od środka komórki [j.]
+            const rC = min(cell.y.mul(0.16), 2.5).mul(pods).toVar();
+            const bd = sdRoundBox(cq, cell.mul(0.5), rC).mul(iD).toVar();        // [jd] < 0 — kontener / zasobnik
+            const inC = clamp(bd.negate().mul(2.0), 0.0, 1.0).mul(inGrid).toVar();
+            const hc = hash12(ci.add(vec2(float(mi).mul(7.31).add(1.7), U.tex.w.mul(0.173)))).toVar();
+            const full = step(hc, U.cargo.x.sub(0.0001)).toVar();
+            const box = inC.mul(full).toVar();
+            const slot = inC.mul(float(1.0).sub(full)).toVar();
+            const innerR = sdBox(lq, B.xy.sub(vec2(fr))).toVar();                // [j.] < 0 — wnętrze stelaża
+            const frameK = inside.mul(step(0.0, innerR)).toVar();
+            const lc = cq.mul(iD).toVar();                                        // [jd]
+            const half = cell.mul(iD).mul(0.5).toVar();
+            const corr = step(0.5, fract(lc.x.div(1.1))).mul(float(1.0).sub(pods)).toVar();   // karbowanie kontenera
+            const endB = step(half.x.sub(1.0), abs(lc.x)).mul(float(1.0).sub(pods)).mul(box).toVar(); // ramy czołowe
+            const top = smoothstep(0.0, 0.7, bd.negate()).mul(float(1.0).sub(pods)).add(smoothstep(0.0, 2.4, bd.negate()).mul(pods)).toVar();
+            const seamP = lineN(lc.y, float(0.3)).mul(pods).mul(box).toVar();
+            const panelP = lineN(bd.add(1.5), float(0.3)).mul(pods).mul(box).toVar();
+            const lampP = float(1.0).sub(smoothstep(0.3, 0.55, length(abs(lc).sub(half.sub(vec2(1.4)))))).mul(pods).mul(box).toVar();
+            // puste gniazdo: szyna przy krawędzi i narożniki „L” zaczepów (jak pusty pokład kontenerowca)
+            const edgeB = step(bd.negate(), 0.75).mul(slot).toVar();
+            const pad = edgeB.mul(step(half.x.sub(2.6), abs(lc.x))).mul(step(half.y.sub(2.6), abs(lc.y))).toVar();
+            const railE = edgeB.mul(float(1.0).sub(pad)).toVar();
+            const ribF = step(abs(fract(lq.x.div(max(fr.mul(3.0), 2.0))).sub(0.5)), 0.12).mul(frameK).toVar();
+            const lampM = float(1.0).sub(smoothstep(0.35, 0.6, length(abs(lu).sub(hb.sub(vec2(HD_CARGO.frameDu * 0.5)))))).mul(inside).toVar();
+            modH.addAssign(box.mul(top.mul(mix(float(2.4), float(2.8), pods))).add(corr.mul(box).mul(0.12)).sub(endB.mul(0.15))
+              .sub(seamP.mul(0.35)).sub(panelP.mul(0.2)).add(lampP.mul(0.15))
+              .add(frameK.mul(1.3)).add(ribF.mul(0.35)).add(pad.mul(0.35)).add(railE.mul(0.25)).sub(slot.mul(0.3)).add(lampM.mul(0.25)));
+            modK.assign(max(modK, inside));
+            modSeam.assign(max(modSeam, max(lineN(bd, float(0.3)).mul(inGrid).mul(0.75), lineN(innerR.mul(iD), float(0.35)).mul(inside).mul(0.7))));
+            // barwy kontenerów (liniowo, bez niebieskiego ponad maskę hullGlowMask): stal, czerwień, szarość, biel, ochra, zieleń
+            const k6 = floor(hash12(ci.add(vec2(float(mi).mul(3.17).add(11.0), U.tex.w.mul(0.41)))).mul(6.0)).toVar();
+            const boxC = select(k6.lessThan(0.5), vec3(0.045, 0.1, 0.23), select(k6.lessThan(1.5), vec3(0.3, 0.045, 0.03),
+              select(k6.lessThan(2.5), vec3(0.26, 0.27, 0.28), select(k6.lessThan(3.5), vec3(0.52, 0.54, 0.52),
+                select(k6.lessThan(4.5), vec3(0.48, 0.23, 0.035), vec3(0.07, 0.12, 0.055)))))).toVar();
+            // odcień z osobnego hasza (hash załadunku wybierałby przy częściowym załadunku same ciemne kontenery)
+            const tint = float(0.88).add(hash12(ci.add(vec2(float(mi).mul(5.13).add(23.0), U.tex.w.mul(0.29)))).mul(0.2)).toVar();
+            const contC = mix(boxC.mul(tint).mul(float(0.92).add(corr.mul(0.12))), upperC.mul(tint.mul(0.5).add(0.5)), pods).toVar();
+            const col = mix(metal.mul(0.85), engC.mul(1.2), frameK).toVar();       // pokład stelaża / rama
+            col.assign(mix(col, trimC.mul(0.7), ribF));
+            col.assign(mix(col, contC, box));
+            col.assign(mix(col, contC.mul(0.72), endB));
+            col.assign(mix(col, trimC.mul(0.55), clamp(seamP.add(panelP), 0.0, 1.0)));
+            col.assign(mix(col, engC.mul(1.6), railE));
+            col.assign(mix(col, hazard.mul(0.9), pad));
+            col.assign(mix(col, vec3(0.9, 0.5, 0.09), max(lampP, lampM)));
+            modCol.assign(glowSafeNode(col));
+            emis.addAssign(vec3(1.0, 0.55, 0.12).mul(max(lampP.mul(0.8), lampM)).mul(1.1));
+          });
         });
       }).ElseIf(type.lessThan(15.5), () => {
+        // ZBIORNIK ŁADUNKU (tankowce; nie paliwo okrętu): v 0 — walce (kapsuły) wzdłuż osi modułu w n rzędach, v 1 —
+        // kule w siatce n rzędów; obręcze, pas ostrzegawczy przy dennicach, kołyski i rama pod spodem, kolektor
+        // w poprzek na rufowym końcu (−x). Wysokość — profil kuli / walca, ścięty do kilku jd (relief, nie bryła).
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          const ih = max(hb.sub(vec2(HD_CARGO.frameDu)), vec2(0.5)).toVar();       // wnętrze [jd] (pół)
+          const nR = max(B.z, 1.0).toVar();
+          const dia = ih.y.mul(2.0).div(nR).toVar();                                 // średnica [jd]
+          const rad = dia.mul(0.46).toVar();
+          const row = clamp(floor(lu.y.add(ih.y).div(dia)), 0.0, nR.sub(1.0)).toVar();
+          const cy = row.add(0.5).mul(dia).sub(ih.y).toVar();
+          const sph = step(0.5, B.w).toVar();
+          // walec: oś od −(ih.x − rad) do +(ih.x − rad); kule: środki co średnicę wzdłuż x, wyśrodkowane
+          // krótki moduł (ih.x < rad): oś zwija się do środka (granice clamp nie mogą się odwrócić — w WGSL to nieokreślone)
+          const axHi = max(ih.x.sub(rad), 0.0).toVar();
+          const axX = clamp(lu.x, axHi.negate(), axHi).toVar();
+          const kk = max(floor(ih.x.mul(2.0).div(dia)), 1.0).toVar();
+          const totX = kk.mul(dia).toVar();
+          const sc = clamp(floor(lu.x.add(totX.mul(0.5)).div(dia)), 0.0, kk.sub(1.0)).toVar();
+          const cxx = mix(axX, sc.add(0.5).mul(dia).sub(totX.mul(0.5)), sph).toVar();
+          const dd = length(vec2(lu.x.sub(cxx), lu.y.sub(cy))).toVar();
+          const inT = clamp(rad.sub(dd).mul(2.0), 0.0, 1.0).mul(step(sd, 0.0)).toVar();
+          const q = clamp(dd.div(max(rad, 0.5)), 0.0, 1.0).toVar();
+          const prof = sqrt(max(float(1.0).sub(q.mul(q)), 0.0)).toVar();
+          const hoopP = max(dia.mul(1.6), 6.0).toVar();
+          const hoop = lineN(fract(lu.x.div(hoopP).add(0.5)).sub(0.5).mul(hoopP), float(0.45)).mul(float(1.0).sub(sph))
+            .add(lineN(dd.sub(rad.mul(0.72)), float(0.4)).mul(sph)).mul(inT).toVar();
+          const capBand = step(abs(ih.x.sub(rad).sub(abs(lu.x)).add(rad.mul(0.15))), rad.mul(0.12)).mul(float(1.0).sub(sph)).mul(inT).toVar();
+          const frameK = inside.mul(float(1.0).sub(inT)).toVar();
+          const cradle = step(abs(fract(lu.x.div(hoopP)).sub(0.5)), 0.08).mul(frameK).toVar();
+          const man = lineN(lu.x.add(hb.x.sub(HD_CARGO.frameDu * 0.5)), float(1.1)).mul(inside).toVar();
+          modH.addAssign(inT.mul(min(rad.mul(0.55), 7.0).mul(prof).add(0.6)).add(hoop.mul(0.35)).sub(capBand.mul(0.1))
+            .add(cradle.mul(0.5)).add(man.mul(1.2)).add(frameK.mul(0.2)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(rad.sub(dd), float(0.35)).mul(step(sd, 0.0)).mul(0.6), lineN(sd, float(0.35)).mul(0.6))));
+          const tankC = mix(this._pal(11), upperC, 0.45).mul(float(0.82).add(prof.mul(0.22))).toVar();
+          const col = mix(metal.mul(1.3), tankC, inT).toVar();
+          col.assign(mix(col, trimC.mul(0.8), hoop));
+          col.assign(mix(col, hazard.mul(0.95), capBand));
+          col.assign(mix(col, engC.mul(1.2), cradle));
+          col.assign(mix(col, pipeC.mul(1.3), man));
+          modCol.assign(glowSafeNode(col));
+        });
+      }).ElseIf(type.lessThan(16.5), () => {
+        // OBROTNICA (statki robocze; gniazdo broni pod wysięgnik z laserem tnącym — v 0 — albo dźwig — v 1; ramię rysuje
+        // gra): kołnierz ze śrubami, wieniec zębaty, tarcza obrotowa z jarzmem (dwie łapy wzdłuż osi x modułu) i czopem;
+        // dźwig — pas ostrzegawczy na tarczy i szersze jarzmo. Całość w promieniu r (trasy sieci: pipeModuleSdf).
+        const R = B.z.mul(iD).toVar();
+        If(rr.lessThan(R.add(1.0)), () => {
+          const crane = step(0.5, B.w).toVar();
+          const inside = clamp(R.sub(rr).mul(2.0), 0.0, 1.0).toVar();
+          const a = atan(lu.y, lu.x).toVar();
+          const flR = R.mul(0.87), grR = R.mul(0.73);
+          const flange = step(flR, rr).mul(inside).toVar();
+          const nb = clamp(floor(R.mul(0.9)), 8.0, 40.0);
+          const midR = R.mul(0.935);
+          const boltD = length(vec2(fract(a.div(6.28318).mul(nb)).sub(0.5).mul(6.28318).mul(midR).div(nb), rr.sub(midR)));
+          const bolt = float(1.0).sub(smoothstep(0.22, 0.42, boltD)).mul(flange).toVar();
+          const gear = step(grR, rr).mul(step(rr, flR)).toVar();
+          const nt = clamp(floor(R.mul(2.4)), 18.0, 84.0);
+          const tooth = step(0.5, fract(a.div(6.28318).mul(nt))).mul(gear).toVar();
+          const hzR = mix(grR, R.mul(0.57), crane).toVar();
+          const hz = step(hzR, rr).mul(step(rr, grR)).toVar();
+          const hzS = step(0.5, fract(a.div(6.28318).mul(clamp(floor(R.mul(0.7)), 8.0, 36.0)).add(rr.div(max(R.mul(0.32), 1.0)))));
+          const deck = step(rr, hzR).toVar();
+          const lugY = mix(R.mul(0.2), R.mul(0.27), crane), lugT = mix(R.mul(0.075), R.mul(0.095), crane);
+          const lug = step(abs(abs(lu.y).sub(lugY)), lugT).mul(step(abs(lu.x), mix(R.mul(0.4), R.mul(0.47), crane))).mul(deck).toVar();
+          const pin = step(rr, R.mul(0.13)).toVar();
+          const pinRing = lineN(rr.sub(R.mul(0.19)), float(0.4)).mul(deck);
+          const groove = max(lineN(rr.sub(flR), float(0.4)), lineN(rr.sub(hzR), float(0.35))).toVar();
+          const lugH = max(R.mul(0.05), 1.3);
+          modH.addAssign(inside.mul(PN_SLAB).add(flange.mul(1.2)).add(bolt.mul(0.2)).add(gear.mul(float(0.55).add(tooth.mul(0.35))))
+            .add(deck.mul(1.7)).add(hz.mul(1.5)).add(lug.mul(lugH)).sub(pin.mul(1.4)).add(pinRing.mul(0.25)).sub(groove.mul(0.4)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(rr.sub(R), float(0.4)), groove).mul(0.7)));
+          const col = mix(plateC.mul(1.02), trimC.mul(0.5), bolt).toVar();
+          col.assign(mix(col, mix(metal.mul(0.9), this._pal(11).mul(0.7), tooth), gear));
+          col.assign(mix(col, mix(hazard.mul(0.95), vec3(0.03), hzS), hz));
+          col.assign(mix(col, mix(metal, upperC, 0.5), deck));
+          col.assign(mix(col, trimC.mul(0.7), pinRing));
+          col.assign(mix(col, this._pal(11).mul(1.05), lug));
+          col.assign(mix(col, vec3(0.022, 0.02, 0.018), pin));
+          modCol.assign(glowSafeNode(col));
+        });
+      }).ElseIf(type.lessThan(17.5), () => {
+        // PASZCZA (statki robocze; szczęki rusza gra): we wnęce z ramą dwie ZAMKNIĘTE szczęki (burta y < 0 i y > 0 modułu)
+        // zazębione na osi x — zęby to trójkątna fala linii podziału; żebra szczęk w poprzek, zawiasy-beczki przy
+        // końcu −x, pas ostrzegawczy na wardze +x (tam paszcza się otwiera), bursztynowe lampy w rogach wargi.
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          const fw = clamp(min(hb.x, hb.y).mul(0.07), 1.2, 9.0).toVar();
+          const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+          const frame = inside.mul(step(0.0, inner)).toVar();
+          const jaw = clamp(inner.negate().sub(0.6).div(0.35), 0.0, 1.0).toVar();
+          const gapK = inside.mul(float(1.0).sub(frame)).mul(float(1.0).sub(jaw)).toVar();
+          const tP = max(hb.x.sub(fw).mul(0.4), 5.0).toVar();                 // 5 zębów na długość szczęk
+          const tA = min(hb.y.mul(0.2), tP.mul(0.5)).toVar();
+          const tri = abs(fract(lu.x.div(tP)).sub(0.5)).mul(4.0).sub(1.0).mul(tA).toVar();
+          const sdm = lu.y.sub(tri).toVar();
+          const seam = lineN(sdm, max(tA.mul(0.07), 0.45)).mul(jaw).toVar();
+          const teeth = step(abs(lu.y), tA.mul(1.25).add(1.0)).mul(jaw).toVar();
+          const ribP = max(hb.x.sub(fw).mul(0.25), 4.0);                         // 8 żeber na szczękę
+          const rib = step(abs(fract(lu.x.div(ribP)).sub(0.5)), 0.08).mul(jaw).mul(float(1.0).sub(teeth)).toVar();
+          const lipW = max(hb.x.mul(0.07), 2.6).toVar();
+          const lip = step(hb.x.sub(fw).sub(lipW), lu.x).mul(jaw).mul(float(1.0).sub(teeth)).toVar();
+          const lipS = step(0.5, fract(lu.x.add(abs(lu.y)).div(lipW.mul(0.9))));
+          const hgR = max(hb.x.mul(0.045), 1.3).toVar();
+          const hgX = lu.x.add(hb.x.sub(fw).sub(hgR.mul(1.2))).toVar();
+          const hinge = step(abs(hgX), hgR).mul(step(abs(abs(lu.y).sub(hb.y.mul(0.56))), hb.y.mul(0.24))).mul(jaw).toVar();
+          const hgN = clamp(hgX.div(hgR), -1.0, 1.0);
+          const hgCyl = sqrt(max(float(0.0), float(1.0).sub(hgN.mul(hgN))));
+          const hgSeg = step(0.5, fract(lu.y.div(hgR.mul(2.0))));
+          const lampR = max(fw.mul(0.3), 0.55);
+          const lamp = float(1.0).sub(smoothstep(lampR.mul(0.6), lampR, length(vec2(lu.x.sub(hb.x.sub(fw.mul(0.5))), abs(lu.y).sub(hb.y.sub(fw.mul(0.5))))))).mul(inside).toVar();
+          const ridge = clamp(float(1.0).sub(abs(sdm).div(tA.add(1.5))), 0.0, 1.0).mul(jaw);
+          const jawUp = max(tA.mul(0.12), 0.9);                                   // szczęki wznoszą się ku zębom
+          modH.addAssign(frame.mul(1.0).sub(gapK.mul(1.3)).add(jaw.mul(float(0.35).add(ridge.mul(jawUp)))).add(rib.mul(max(ribP.mul(0.03), 0.3)))
+            .sub(seam.mul(jawUp.add(1.2))).add(hinge.mul(hgCyl.mul(hgR.mul(0.7)).add(0.2))).add(lamp.mul(0.25)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(max(lineN(sd, float(0.35)), lineN(inner, float(0.35))).mul(0.7), seam)));
+          const jawC = mix(doorC.mul(1.05), engC.mul(1.2), 0.35).mul(float(1.0).add(rib.mul(0.16))).toVar();
+          const col = mix(vec3(0.02, 0.019, 0.017), plateC.mul(0.95), frame).toVar();
+          col.assign(mix(col, jawC, jaw));
+          col.assign(mix(col, this._pal(11).mul(float(0.82).add(ridge.mul(0.3))), teeth));
+          col.assign(mix(col, mix(hazard.mul(0.95), vec3(0.03), lipS), lip));
+          col.assign(mix(col, engC.mul(float(0.9).add(hgCyl.mul(0.6))).mul(float(0.85).add(hgSeg.mul(0.3))), hinge));
+          col.assign(mix(col, vec3(0.02, 0.018, 0.016), seam));
+          col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
+          modCol.assign(glowSafeNode(col));
+          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+        });
+      }).ElseIf(type.lessThan(18.5), () => {
+        // GARDZIEL MŁYNA (statki robocze; walce obraca gra): rama z pasem ostrzegawczym, głęboka ciemna gardziel, w niej
+        // n walców tnących (B.z) — osie w poprzek osi x modułu, tarcze tnące z zębami na przemian z sąsiednim walcem,
+        // łożyska przy obu końcach osi.
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          const fw = clamp(min(hb.x, hb.y).mul(0.1), 1.4, 9.0).toVar();
+          const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+          const frame = inside.mul(step(0.0, inner)).toVar();
+          const pit = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
+          const hz = step(inner, fw.mul(0.55)).mul(frame).toVar();
+          const hzS = step(0.5, fract(lu.x.add(lu.y).div(max(fw.mul(0.8), 2.2))));
+          const ih = max(hb.sub(vec2(fw)), vec2(0.5)).toVar();
+          const nR = max(B.z, 1.0).toVar();
+          const dia = ih.x.mul(2.0).div(nR).toVar();
+          const ri = clamp(floor(lu.x.add(ih.x).div(dia)), 0.0, nR.sub(1.0)).toVar();
+          const cx = ri.add(0.5).mul(dia).sub(ih.x).toVar();
+          const qx = lu.x.sub(cx).div(max(dia.mul(0.47), 0.3)).toVar();
+          const onR = step(abs(qx), 1.0).mul(pit).toVar();
+          const cyl = sqrt(max(float(0.0), float(1.0).sub(qx.mul(qx)))).toVar();
+          const bw = max(ih.y.mul(0.07), 1.2).toVar();
+          const bear = step(ih.y.sub(bw), abs(lu.y)).mul(pit).toVar();
+          const dP = max(dia.mul(0.3), 2.2).toVar();
+          const dPh = lu.y.div(dP).add(ri.mul(0.5)).toVar();
+          const disc = step(abs(fract(dPh).sub(0.5)), 0.27).mul(onR).mul(float(1.0).sub(bear)).toVar();
+          const tooth = step(0.5, fract(lu.x.sub(cx).div(max(dia.mul(0.25), 0.8)).add(floor(dPh).mul(0.37)))).mul(disc).toVar();
+          const shaft = onR.mul(float(1.0).sub(disc)).mul(float(1.0).sub(bear)).toVar();
+          const rollH = clamp(dia.mul(0.12), 1.3, 5.0);
+          modH.addAssign(frame.mul(1.1).sub(pit.mul(rollH.add(1.6))).add(onR.mul(cyl).mul(rollH.mul(float(0.6).add(disc.mul(0.4))).add(tooth.mul(0.3))))
+            .add(bear.mul(rollH.add(1.2))));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)), lineN(inner, float(0.35))).mul(0.7)));
+          const col = mix(vec3(0.014, 0.013, 0.012), plateC.mul(0.96), frame).toVar();
+          col.assign(mix(col, mix(hazard.mul(0.95), vec3(0.03), hzS), hz));
+          col.assign(mix(col, metal.mul(float(0.5).add(cyl.mul(0.9))), shaft));
+          col.assign(mix(col, this._pal(11).mul(float(0.5).add(cyl.mul(0.62))).mul(float(0.84).add(tooth.mul(0.3))), disc));
+          col.assign(mix(col, engC.mul(1.25), bear));
+          modCol.assign(glowSafeNode(col));
+        });
+      }).ElseIf(type.lessThan(19.5), () => {
+        // RAMPA (statki robocze; klapę opuszcza gra): ZAMKNIĘTA klapa we wnęce — zawias-beczka przy brzegu −x, poprzeczne
+        // listwy przeciwpoślizgowe, dwie linie pasa, siłowniki wzdłuż obu boków, pas ostrzegawczy i lampy na wardze +x
+        // (tam klapa opada).
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          const fw = clamp(min(hb.x, hb.y).mul(0.07), 1.2, 8.0).toVar();
+          const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+          const frame = inside.mul(step(0.0, inner)).toVar();
+          const flap = clamp(inner.negate().sub(0.5).div(0.35), 0.0, 1.0).toVar();
+          const gapK = inside.mul(float(1.0).sub(frame)).mul(float(1.0).sub(flap)).toVar();
+          const ix = hb.x.sub(fw), iy = hb.y.sub(fw);
+          const hgR = max(ix.mul(0.05), 1.2).toVar();
+          const hgX = lu.x.add(ix.sub(hgR.mul(1.3))).toVar();
+          const hinge = step(abs(hgX), hgR).mul(flap).toVar();
+          const hgN = clamp(hgX.div(hgR), -1.0, 1.0);
+          const hgCyl = sqrt(max(float(0.0), float(1.0).sub(hgN.mul(hgN))));
+          const hgSeg = step(0.5, fract(lu.y.div(hgR.mul(2.6))));
+          const railW = max(iy.mul(0.035), 0.8).toVar();
+          const railD = abs(abs(lu.y).sub(iy.sub(railW.mul(1.6)))).toVar();
+          const lipW = max(ix.mul(0.08), 2.8).toVar();
+          const rail = step(railD, railW).mul(step(lu.x, ix.sub(lipW).sub(0.4))).mul(flap).mul(float(1.0).sub(hinge)).toVar();
+          const railN = clamp(railD.div(railW), 0.0, 1.0);
+          const railCyl = sqrt(max(float(0.0), float(1.0).sub(railN.mul(railN))));
+          const rod = step(ix.mul(0.1), lu.x).mul(rail);
+          const lip = step(ix.sub(lipW), lu.x).mul(flap).toVar();
+          const lipS = step(0.5, fract(lu.x.add(abs(lu.y)).div(lipW.mul(0.9))));
+          const body = flap.mul(float(1.0).sub(hinge)).mul(float(1.0).sub(rail)).mul(float(1.0).sub(lip)).toVar();
+          const clP = max(ix.mul(0.1), 2.6).toVar();                                // ~20 listew na klapę
+          const cleat = step(abs(fract(lu.x.div(clP)).sub(0.5)), 0.13).mul(step(0.22, fract(lu.y.div(clP.mul(2.2)).add(floor(lu.x.div(clP)).mul(0.5))))).mul(body).toVar();
+          const lane = lineN(abs(lu.y).sub(iy.mul(0.42)), max(clP.mul(0.12), 0.4)).mul(body).toVar();
+          const lampR = max(fw.mul(0.3), 0.55);
+          const lamp = float(1.0).sub(smoothstep(lampR.mul(0.6), lampR, length(vec2(lu.x.sub(hb.x.sub(fw.mul(0.5))), abs(lu.y).sub(hb.y.sub(fw.mul(0.5))))))).mul(inside).toVar();
+          modH.addAssign(frame.mul(0.9).sub(gapK.mul(1.2)).sub(flap.mul(0.25)).add(cleat.mul(max(clP.mul(0.06), 0.3))).add(hinge.mul(hgCyl.mul(hgR.mul(0.8)).add(0.2)))
+            .add(rail.mul(railCyl.mul(railW.mul(0.7)).add(0.15))).add(lamp.mul(0.25)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)), lineN(inner, float(0.35))).mul(0.7)));
+          const col = mix(vec3(0.02, 0.019, 0.017), plateC.mul(0.95), frame).toVar();
+          col.assign(mix(col, doorC.mul(float(1.1).add(cleat.mul(0.22))), flap));
+          col.assign(mix(col, upperC.mul(0.8), lane.mul(0.8)));
+          col.assign(mix(col, mix(engC.mul(1.15), this._pal(11).mul(1.1), rod).mul(float(0.7).add(railCyl.mul(0.5))), rail));
+          col.assign(mix(col, engC.mul(float(0.9).add(hgCyl.mul(0.6))).mul(float(0.85).add(hgSeg.mul(0.3))), hinge));
+          col.assign(mix(col, mix(hazard.mul(0.95), vec3(0.03), lipS), lip));
+          col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
+          modCol.assign(glowSafeNode(col));
+          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+        });
+      }).ElseIf(type.lessThan(20.5), () => {
+        // GNIAZDO DAMPERA (statki robocze; podporę wysuwa gra): rama z pasami ostrzegawczymi w narożach, ciemna szczelina,
+        // schowana stopa — ośmiokątna płyta ze śrubami, pierścieniem i kopułą tłoka w środku; strzałka wysuwu ku +x.
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          const mn = min(hb.x, hb.y).toVar();
+          const fw = clamp(mn.mul(0.14), 1.0, 2.6).toVar();
+          const padA = mn.sub(fw).sub(0.8).toVar();
+          const od = sdOct(lu, padA).toVar();
+          const pad = clamp(od.negate().div(0.35), 0.0, 1.0).toVar();
+          const well = clamp(od.negate().add(0.9).mul(2.0), 0.0, 1.0).mul(float(1.0).sub(pad)).toVar();
+          const frame = inside.mul(float(1.0).sub(pad)).mul(float(1.0).sub(well)).toVar();
+          const hzS = step(0.5, fract(lu.x.add(lu.y).div(2.2)));
+          const hz = frame.mul(step(mn.mul(0.9), abs(lu.x).add(abs(lu.y)))).toVar();
+          const pR = padA.mul(0.42).toVar();
+          const pn = clamp(rr.div(max(pR, 0.4)), 0.0, 1.0);
+          const dome = sqrt(max(float(0.0), float(1.0).sub(pn.mul(pn)))).mul(step(rr, pR)).toVar();
+          const ring = lineN(rr.sub(padA.mul(0.62)), float(0.4)).mul(pad).toVar();
+          const bolt = float(1.0).sub(smoothstep(0.22, 0.42, length(abs(lu).sub(vec2(padA.mul(0.62)))))).mul(pad).toVar();
+          const arrow = step(abs(lu.y), max(padA.mul(0.84).sub(lu.x), 0.0).mul(0.6)).mul(step(padA.mul(0.66), lu.x)).mul(pad).toVar();
+          modH.addAssign(frame.mul(1.0).sub(well.mul(1.3)).add(pad.mul(0.45)).add(dome.mul(0.9)).sub(ring.mul(0.3)).add(bolt.mul(0.2)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)), lineN(od, float(0.35))).mul(0.7)));
+          const col = mix(plateC.mul(0.96), mix(hazard.mul(0.95), vec3(0.03), hzS), hz).toVar();
+          col.assign(mix(col, vec3(0.02, 0.019, 0.017), well));
+          col.assign(mix(col, mix(metal, plateC, 0.4), pad));
+          col.assign(mix(col, this._pal(11).mul(float(0.7).add(dome.mul(0.45))), step(rr, pR).mul(pad)));
+          col.assign(mix(col, trimC.mul(0.55), max(ring, bolt)));
+          col.assign(mix(col, hazard.mul(0.9), arrow));
+          modCol.assign(glowSafeNode(col));
+        });
+      }).ElseIf(type.lessThan(21.5), () => {
         // GENERATOR TARCZY sektora (drednot): ośmiokątny pancerny kołnierz z nitami i żółtymi narożnikami (jak gniazdo
         // obudowy reaktora), pokład z czterema skrzynkami zasilaczy na przekątnych, szczelina emitera wokół kopuły
         // (chłodna emisja — w grze świeci przez hullGlowMask jak tarcza), kopuła z 12 żebrami i dwoma pierścieniami
@@ -1199,10 +1686,10 @@ export class HullComposer {
           col.assign(mix(col, vec3(0.02, 0.025, 0.03), slotK));
           const domeC = mix(steel, hullC, 0.3).mul(float(0.62).add(sph.mul(0.45)));
           col.assign(mix(col, mix(domeC, engC.mul(1.25), max(rib, ring)), domeK));
-          modCol.assign(col);
+          modCol.assign(glowSafeNode(col));
           emis.addAssign(vec3(0.25, 0.75, 1.0).mul(slotK).mul(0.35));
         });
-      }).Else(() => {
+      }).ElseIf(type.lessThan(22.5), () => {
         // PROJEKTOR STUDNI GRAWITACYJNEJ (drednot, grzbiet): ośmiokątna podstawa z nitami, gruby pierścień cewki
         // z miedzianymi zwojami w 24 segmentach (stalowe obejmy), cztery pylony na przekątnych nad ciemną misą
         // schodzącą stopniami do stożka emitera w środku (ciepła poświata gardzieli)
@@ -1243,7 +1730,7 @@ export class HullComposer {
           col.assign(mix(col, vec3(0.028, 0.026, 0.03).mul(float(1.0).add(stepN.mul(0.35))), bowlK));
           col.assign(mix(col, engC.mul(1.15), pyl));
           col.assign(mix(col, steel.mul(float(0.6).add(cone.mul(0.6))), emitK));
-          modCol.assign(col);
+          modCol.assign(glowSafeNode(col));
           emis.addAssign(vec3(1.0, 0.42, 0.4).mul(clamp(emitR.mul(1.6).sub(rr).div(emitR), 0.0, 1.0)).mul(bowlK).mul(0.5));
         });
       });
@@ -1466,8 +1953,9 @@ export class HullComposer {
 
     const out = { h: hTot.mul(D), alpha, seam, dome: ax.x.mul(U.dome.x), d0, d1, d2, d3, s1, s2, s3 };
     if (want.emis) {
-      emis.addAssign(winC.mul(wMask).mul(L.windowGlow).mul(U.det.z));
+      winE.addAssign(wMask.mul(L.windowGlow).mul(U.det.z));
       out.emis = emis.mul(alpha);
+      out.winE = winE.mul(alpha);
     }
     if (want.base) {
       const col = plateC.mul(tone).toVar();
@@ -1550,7 +2038,7 @@ export class HullComposer {
     const emisNode = Fn(() => {
       const p = this._worldOf(this._pix());
       const pt = this._point(p, { emis: true });
-      return vec4(pt.emis, 1.0);
+      return vec4(pt.emis, pt.winE);
     })();
     // SURF: normalne (Sobel na reliefie + kopule), AO (próbki reliefu wokół), relief
     const surfNode = Fn(() => {
@@ -1651,23 +2139,25 @@ export class HullComposer {
       const chip = smoothstep(0.62, 0.8, vnoise(P.mul(0.9).add(13.0))).mul(smoothstep(0.08, 0.35, slope)).mul(U.style.w).mul(bright);
       col.assign(mix(col, this._pal(4).mul(1.6), chip.mul(L.wear)));
       // emisja jako niebieska poświata w albedo (gra: hullGlowMask) — tylko chłodna (okna, wentyle)
-      const e = this._load(T.emis, ip).xyz;
+      const eT = this._load(T.emis, ip);
+      const e = eT.xyz.add(this._pal(6).mul(eT.w));
       const cool = clamp(e.z.sub(e.x.mul(0.5)).mul(0.8), 0.0, 1.0);
       col.assign(mix(col, vec3(...L.glowCyan), cool.mul(U.style.y)));
       return vec4(srgbEncode(clamp(col, vec3(0.0), vec3(1.0))), g.y);
     })();
     const eoutNode = Fn(() => {
       const ip = ivec2(floor(this._pix()));
-      const e = this._load(T.emis, ip).xyz;
+      const eT = this._load(T.emis, ip);
+      const e = eT.xyz.add(this._pal(6).mul(eT.w));
       return vec4(srgbEncode(clamp(e.div(3.0), vec3(0.0), vec3(1.0))), 1.0);
     })();
     this.passes = [
       { name: 'geo', type: THREE.HalfFloatType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:geo', geoNode)) },
-      { name: 'base', type: THREE.HalfFloatType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:base', baseNode)) },
+      { name: 'base', type: THREE.HalfFloatType, colors: true, quad: new THREE.QuadMesh(makeMaterial('HullDesign:base', baseNode)) },
       { name: 'emis', type: THREE.HalfFloatType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:emis', emisNode)) },
       { name: 'surf', type: THREE.UnsignedByteType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:surf', surfNode)) },
-      { name: 'alb', type: THREE.UnsignedByteType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:alb', albNode)) },
-      { name: 'eout', type: THREE.UnsignedByteType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:eout', eoutNode)) }
+      { name: 'alb', type: THREE.UnsignedByteType, colors: true, quad: new THREE.QuadMesh(makeMaterial('HullDesign:alb', albNode)) },
+      { name: 'eout', type: THREE.UnsignedByteType, colors: true, quad: new THREE.QuadMesh(makeMaterial('HullDesign:eout', eoutNode)) }
     ];
   }
 
@@ -1702,7 +2192,9 @@ export class HullComposer {
 
   /**
    * Projekt do uniformów: pole (buildHullField), atlas naklejek ({ data, width, height, rects: Map decal → uv }),
-   * opcje { texPerUnit (0 — z rozmiaru), glowToAlbedo, grime, wear }.
+   * opcje { texPerUnit (0 — z rozmiaru), glowToAlbedo, grime, wear, paint (warstwa pędzla hullPaintLayer; brak —
+   * `field.packed.paint` albo bez pędzla) }. Zwraca numer stanu map (`mapsRev`) — pass barw sam (renderColors) ma
+   * sens tylko, gdy cele mają mapy tego projektu.
    */
   setDesign(field, atlas, opts = {}) {
     const U = this.U, L = this.look;
@@ -1716,30 +2208,35 @@ export class HullComposer {
     // pole: RGBA16F (d0, d1, d2, d3), kopuła: RGBA16F (rozmyta sylwetka 0..1)
     const g = field.grid;
     const n = g.w * g.h;
-    const half = new Uint16Array(n * 4);
-    const aux = new Uint16Array(n * 4);
-    const toHalf = THREE.DataUtils.toHalfFloat;
-    const oct = field.oct || [null, field.levels[1], field.levels[2], field.levels[3]];
-    for (let i = 0; i < n; i++) {
-      for (let c = 0; c < 4; c++) half[i * 4 + c] = toHalf(field.levels[c][i]);
-      aux[i * 4] = toHalf(field.dome[i]);
-      for (let c = 1; c < 4; c++) aux[i * 4 + c] = toHalf(oct[c][i]);
+    if (field.packed) this._setPacked(field.packed, g);
+    else {
+      this._packKeys = null;
+      const half = new Uint16Array(n * 4);
+      const aux = new Uint16Array(n * 4);
+      const toHalf = THREE.DataUtils.toHalfFloat;
+      const oct = field.oct || [null, field.levels[1], field.levels[2], field.levels[3]];
+      for (let i = 0; i < n; i++) {
+        for (let c = 0; c < 4; c++) half[i * 4 + c] = toHalf(field.levels[c][i]);
+        aux[i * 4] = toHalf(field.dome[i]);
+        for (let c = 1; c < 4; c++) aux[i * 4 + c] = toHalf(oct[c][i]);
+      }
+      const gr = new Uint16Array(n * 4);
+      const gf = field.groove;
+      const gcap = toHalf(field.grooveBand || 1e3);
+      const g14 = toHalf(1.4);
+      for (let i = 0; i < n; i++) { gr[i * 4] = gf ? toHalf(gf[i]) : gcap; gr[i * 4 + 1] = gf?.width ? toHalf(gf.width[i]) : g14; }
+      this._fieldTex?.dispose();
+      this._auxTex?.dispose();
+      this._grooveTex?.dispose();
+      this._fieldTex = halfTexture(half, g.w, g.h);
+      this._auxTex = halfTexture(aux, g.w, g.h);
+      this._grooveTex = halfTexture(gr, g.w, g.h);
+      this.T.field.value = this._fieldTex;
+      this.T.aux.value = this._auxTex;
+      this.T.grooves.value = this._grooveTex;
+      this._setPipes(field, n, toHalf);
     }
-    const gr = new Uint16Array(n * 4);
-    const gf = field.groove;
-    const gcap = toHalf(field.grooveBand || 1e3);
-    const g14 = toHalf(1.4);
-    for (let i = 0; i < n; i++) { gr[i * 4] = gf ? toHalf(gf[i]) : gcap; gr[i * 4 + 1] = gf?.width ? toHalf(gf.width[i]) : g14; }
-    this._fieldTex?.dispose();
-    this._auxTex?.dispose();
-    this._grooveTex?.dispose();
-    this._fieldTex = halfTexture(half, g.w, g.h);
-    this._auxTex = halfTexture(aux, g.w, g.h);
-    this._grooveTex = halfTexture(gr, g.w, g.h);
-    this.T.field.value = this._fieldTex;
-    this.T.aux.value = this._auxTex;
-    this.T.grooves.value = this._grooveTex;
-    this._setPipes(field, n, toHalf);
+    this._setPipeUniforms(field.pipeNet, field.packed ? field.packed.pipes.on : !!(field.pipeNet && field.pipeNet.runs.length + field.pipeNet.fits.length > 0));
     U.field.value.set(g.x0, g.y0, g.res, field.band);
     U.fieldSize.value.set(g.w, g.h);
     U.det.value.set(design.detail, 1 / design.detail, design.windows ?? 1, opts.rivets ?? 1);
@@ -1747,12 +2244,8 @@ export class HullComposer {
     U.style.value.set(design.round ?? (design.style === 'rounded' ? 1 : 0), opts.glowToAlbedo === false ? 0 : 1, opts.grime ?? 1, opts.wear ?? 1);
     U.bev.value = design.bevel ?? 1;
     U.grv.value.set(design.panels ?? 1, 0, 0, 0);
-    // paleta (liniowo)
-    const pal = hullDesignPalette(design);
-    HD_PALETTE_ROWS.forEach((k, i) => {
-      const c = k === 'window' ? srgbToLinear(pal[k]) : glowSafeLinear(srgbToLinear(pal[k]));
-      U.pal.array[i].set(c[0], c[1], c[2], 1);
-    });
+    U.cargo.value.set(design.cargoLoad ?? 1, 0, 0, 0);
+    this.setColors(design, opts.paint !== undefined ? opts.paint : (field.packed?.paint || null));
     // moduły
     let mi = 0;
     // gondole MAIN z kanałem serwisowym (sieć systemów: przy szyjce brak rowu) — znacznik w kodzie typu (+0,25)
@@ -1763,11 +2256,77 @@ export class HullComposer {
       const look = m.type === 'mount' ? _mountLook(m) : null;
       A.set(m.x, m.y, look ? look[0] : TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
       const extra = look ? look[1] : (m.type === 'hangar' ? (m.doors || 1) : (m.v || 0));
-      B.set(m.w || 0, m.h || 0, m.r || 0, extra);
+      // gniazdo mostka (v 2): z = poziom + faza pokładu / 100 [j.] (kompozytor: floor / fract); ładownia — kontenerów na bok
+      // komórki (zasobniki v 3: n, domyślnie HD_CARGO.podN; stelaż: 1), zbiornik ładunku — rzędów w poprzek
+      let z = m.r || 0;
+      if (m.type === 'bridge' && m.v === 2) z = (m.lv || 1) + bridgeLevel(m.lv).ch / 100;
+      else if (m.type === 'cargo') z = (m.v || 0) === 3 ? (m.n || HD_CARGO.podN) : 1;
+      else if (m.type === 'cargo_tank') z = m.n || 1;
+      else if (m.type === 'mill') z = m.n || 2;             // walców gardzieli młyna
+      B.set(m.w || 0, m.h || 0, z, extra);
       mi++;
     }
     U.modCount.value = mi;
-    // naklejki
+    this.setDecals(decals, atlas);
+    this._ensureTargets(W, H);
+    return ++this.mapsRev;
+  }
+
+  /**
+   * WARSTWA BARW: paleta projektu (paleta nacji + nadpisania gracza `design.paint`, liniowo, bez niebieskiego, które
+   * świeci w grze) i pędzel `paint` (hullPaintLayer: tabela barw slotów / własnych + mapa na siatce pola; null — bez
+   * pędzla). Mapa idzie na GPU tylko przy nowym kluczu.
+   */
+  setColors(design, paint = null) {
+    const U = this.U;
+    const pal = hullDesignPalette(design);
+    HD_PALETTE_ROWS.forEach((k, i) => {
+      const c = hullColorLinear(pal[k], k === 'window');
+      U.pal.array[i].set(c[0], c[1], c[2], 1);
+    });
+    const table = paint?.table || [];
+    for (let i = 0; i < HD_PAINT_MAX; i++) {
+      const v = table[i];
+      const hex = v ? (pal[v] || v) : '#000000';
+      const c = hullColorLinear(hex);
+      U.pal.array[12 + i].set(c[0], c[1], c[2], 1);
+    }
+    const on = !!(paint?.data && table.length);
+    if (!on) {
+      if (this._paintKey !== null) {
+        this._paintTex?.dispose();
+        this._paintTex = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+        this._paintTex.magFilter = THREE.LinearFilter;
+        this._paintTex.minFilter = THREE.LinearFilter;
+        this._paintTex.generateMipmaps = false;
+        this._paintTex.colorSpace = THREE.NoColorSpace;
+        this._paintTex.needsUpdate = true;
+        this.T.paint.value = this._paintTex;
+        this._paintKey = null;
+      }
+    } else if (paint.key !== this._paintKey) {
+      const t = this._paintTex;
+      if (t && t.image.width === paint.w && t.image.height === paint.h) {
+        t.image.data = paint.data;
+        t.needsUpdate = true;
+      } else {
+        t?.dispose();
+        this._paintTex = new THREE.DataTexture(paint.data, paint.w, paint.h, THREE.RGBAFormat, THREE.UnsignedByteType);
+        this._paintTex.magFilter = THREE.LinearFilter;
+        this._paintTex.minFilter = THREE.LinearFilter;
+        this._paintTex.generateMipmaps = false;
+        this._paintTex.colorSpace = THREE.NoColorSpace;
+        this._paintTex.needsUpdate = true;
+        this.T.paint.value = this._paintTex;
+      }
+      this._paintKey = paint.key;
+    }
+    U.pnet.value.z = on ? 1 : 0;
+  }
+
+  /** Naklejki (warstwa barw): pasy, kontury, emblematy i napisy z atlasu ({ data, width, height, rects }). */
+  setDecals(decals, atlas) {
+    const U = this.U;
     let di = 0;
     for (const d of decals) {
       if (di >= HD_COMPOSER_LIMITS.decals) break;
@@ -1788,7 +2347,8 @@ export class HullComposer {
       di++;
     }
     U.decalCount.value = di;
-    if (atlas?.data) {
+    if (atlas?.data && atlas !== this._atlasSrc) {
+      this._atlasSrc = atlas;
       const at = new THREE.DataTexture(atlas.data, atlas.width, atlas.height, THREE.RGBAFormat, THREE.UnsignedByteType);
       at.magFilter = THREE.LinearFilter;
       at.minFilter = THREE.LinearFilter;
@@ -1799,7 +2359,6 @@ export class HullComposer {
       this._atlasTex = at;
       this.T.atlas.value = at;
     }
-    this._ensureTargets(W, H);
   }
 
   /**
@@ -1809,7 +2368,7 @@ export class HullComposer {
    * wymiary). Bez sieci — tekstury 1 × 1 i wyłącznik w uniformie.
    */
   _setPipes(field, n, toHalf) {
-    const U = this.U, g = field.grid;
+    const g = field.grid;
     const net = field.pipeNet, pt = field.pipeTex;
     this._pipeATex?.dispose();
     this._pipeBTex?.dispose();
@@ -1839,7 +2398,49 @@ export class HullComposer {
     this._pipeBTex = bTex;
     this.T.pipeA.value = aTex;
     this.T.pipeB.value = bTex;
-    const on = !!(net && net.runs.length + net.fits.length > 0);
+  }
+
+  /**
+   * Pakiety tekstur z budowy w workerze (src/game/hullDesign/hullDesignBuild.js — te same bity co ścieżka wyżej):
+   * { field, aux, groove: { key, data: Uint16Array }, pipes: { key, a: Uint16Array, b: Uint8Array, w, h } }.
+   * Tekstura idzie na GPU tylko przy nowym kluczu (ten sam rozmiar — podmiana danych w miejscu).
+   */
+  _setPacked(pk, g) {
+    const K = this._packKeys || (this._packKeys = {});
+    const put = (old, data, w, h, type) => {
+      if (old && old.image.width === w && old.image.height === h && old.type === type) {
+        old.image.data = data;
+        old.needsUpdate = true;
+        return old;
+      }
+      old?.dispose();
+      if (type === THREE.HalfFloatType) return halfTexture(data, w, h);
+      const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, type);
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      t.generateMipmaps = false;
+      t.colorSpace = THREE.NoColorSpace;
+      t.needsUpdate = true;
+      return t;
+    };
+    if (K.field !== pk.field.key) { this._fieldTex = put(this._fieldTex, pk.field.data, g.w, g.h, THREE.HalfFloatType); K.field = pk.field.key; }
+    if (K.aux !== pk.aux.key) { this._auxTex = put(this._auxTex, pk.aux.data, g.w, g.h, THREE.HalfFloatType); K.aux = pk.aux.key; }
+    if (K.groove !== pk.groove.key) { this._grooveTex = put(this._grooveTex, pk.groove.data, g.w, g.h, THREE.HalfFloatType); K.groove = pk.groove.key; }
+    if (K.pipes !== pk.pipes.key) {
+      this._pipeATex = put(this._pipeATex, pk.pipes.a, pk.pipes.w, pk.pipes.h, THREE.HalfFloatType);
+      this._pipeBTex = put(this._pipeBTex, pk.pipes.b, pk.pipes.w, pk.pipes.h, THREE.UnsignedByteType);
+      K.pipes = pk.pipes.key;
+    }
+    this.T.field.value = this._fieldTex;
+    this.T.aux.value = this._auxTex;
+    this.T.grooves.value = this._grooveTex;
+    this.T.pipeA.value = this._pipeATex;
+    this.T.pipeB.value = this._pipeBTex;
+  }
+
+  /** Uniformy sieci rur: wyłącznik, okres obejm, biegi i osprzęt. */
+  _setPipeUniforms(net, on) {
+    const U = this.U;
     U.pnet.value.set(on ? 1 : 0, net ? net.clampJ / net.detail : 26, 0, 0);
     if (!on) return;
     const R = U.pruns.array;
@@ -1858,25 +2459,77 @@ export class HullComposer {
     });
   }
 
-  /** Wypiek (passy w kolejności) i odczyt: { width, height, tpu, albedo, surface, emission (RGBA8, wiersz 0 = góra), ms }. */
-  async bake() {
+  /**
+   * Passy w kolejności (bez odczytu): wynik w celach `targets` (podgląd w trakcie przeciągania czyta je wprost).
+   * `colorsOnly` — same passy barw (BASE, ALB, EOUT) na mapach już w celach (renderColors).
+   */
+  render(colorsOnly = false) {
     const r = this.renderer;
-    const t0 = performance.now();
     const prev = r.getRenderTarget();
     try {
       for (const p of this.passes) {
+        if (colorsOnly && !p.colors) continue;
         r.setRenderTarget(this.targets[p.name]);
         p.quad.render(r);
       }
     } finally {
       r.setRenderTarget(prev);
     }
+  }
+
+  /** Same passy barw (po setColors / setDecals): mapy GEO, EMIS, SURF z ostatniego render() zostają. */
+  renderColors() {
+    this.render(true);
+  }
+
+  /** Passy barw i odczyt albedo (RGBA8 sRGB + alfa, wiersz 0 = góra): { width, height, albedo, ms }. */
+  async bakeColors() {
+    const t0 = performance.now();
+    this.renderColors();
     const { w, h } = this.targets;
+    const albedo = await this._read(this.targets.alb, w, h);
+    return { width: w, height: h, albedo, ms: performance.now() - t0 };
+  }
+
+  /**
+   * JEDEN PROJEKT, KILKA BARW (gra, etap 3 — NPC różnych frakcji): mapy liczone raz, potem dla każdej barwy tylko
+   * passy barw. `liveries` — [{ palette, paint (nadpisania wierszy), brush (hullPaintLayer albo null) }]; wynik: pełny
+   * wypiek pierwszej barwy (albedo, mapa powierzchni, emisja — wspólne) + albedo każdej barwy po kolei.
+   */
+  async bakeLiveries(field, atlas, liveries, opts = {}) {
+    const base = field.expanded.design;
+    this.setDesign(field, atlas, opts);
+    const first = await this.bake();
+    const albedos = [];
+    for (const lv of liveries) {
+      this.setColors({ ...base, palette: lv.palette ?? base.palette, paint: lv.paint ?? base.paint }, lv.brush ?? opts.paint ?? field.packed?.paint ?? null);
+      albedos.push((await this.bakeColors()).albedo);
+    }
+    return { ...first, albedos };
+  }
+
+  /** Wypiek (passy w kolejności) i odczyt: { width, height, tpu, albedo, surface, emission (RGBA8, wiersz 0 = góra), ms }. */
+  async bake(opts = {}) {
+    const t0 = performance.now();
+    this.render();
+    const { w, h } = this.targets;
+    // `emission: false` — bez odczytu emisji (mapa emisji podglądu czyta ją sama: readEmission)
     const [albedo, surface, emission] = await Promise.all([
-      this._read(this.targets.alb, w, h), this._read(this.targets.surf, w, h), this._read(this.targets.eout, w, h)
+      this._read(this.targets.alb, w, h), this._read(this.targets.surf, w, h),
+      opts.emission === false ? null : this._read(this.targets.eout, w, h)
     ]);
     this.lastMs = performance.now() - t0;
     return { width: w, height: h, tpu: this.size.tpu, albedo, surface, emission, ms: this.lastMs };
+  }
+
+  /** Odczyt albedo z celu ALB (RGBA8 sRGB + alfa, wiersz 0 = góra) — np. po renderColors. */
+  readAlbedo() {
+    return this._read(this.targets.alb, this.targets.w, this.targets.h);
+  }
+
+  /** Odczyt emisji ostatniego wypieku (RGBA8 sRGB / 3, wiersz 0 = góra). */
+  readEmission() {
+    return this._read(this.targets.eout, this.targets.w, this.targets.h);
   }
 
   async _read(rt, w, h) {

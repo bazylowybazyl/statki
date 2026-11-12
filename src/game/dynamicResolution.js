@@ -16,6 +16,9 @@
 // Drabina skal (te same wartości co opcja „Rozdzielczość renderu 3D”).
 export const DYN_RES_LADDER = Object.freeze([1.5, 1.25, 1, 0.85, 0.75, 0.67, 0.5]);
 
+// Wynik compute młodszy niż tyle s wchodzi do próbki (compute liczony nie w każdej klatce).
+const DYN_RES_COMPUTE_FRESH = 0.5;
+
 // Strojenie (konsola: window.DynamicResTune). Czasy w sekundach zegara klatek gry.
 export const DYN_RES_TUNE = {
   maxSteps: 3,        // stopni drabiny poniżej skali z opcji
@@ -32,6 +35,26 @@ export const DYN_RES_TUNE = {
   maxDt: 0.25,        // najdłuższy krok zegara (karta w tle, przestój)
   targetFps: 0        // > 0 — nadpisuje docelowe FPS z opcji (narzędzia, próby)
 };
+
+/** Stan próbnika: ostatnio widziane liczniki wyników znaczników czasu (`dynResSample`). */
+export function createDynResClock() {
+  return { renderSeen: -1, computeSeen: -1, computeAt: -1e9 };
+}
+
+/**
+ * NOWA próbka czasu GPU klatki dla `stepDynRes`, z liczników wyników znaczników: render + compute, gdy wynik compute
+ * jest świeży (`DYN_RES_COMPUTE_FRESH` s — compute nie w każdej klatce), inaczej null. Źródło jest obojętne: tryb `off` —
+ * Core3D strony, tryb worker — kanał zwrotny RET (`retWriteGpuClock`; Core3D strony nie ma tam urządzenia).
+ */
+export function dynResSample(clock, t, frameSamples, computeSamples, frameMs, computeMs) {
+  if (computeSamples !== clock.computeSeen) {
+    clock.computeSeen = computeSamples;
+    clock.computeAt = t;
+  }
+  if (frameSamples === clock.renderSeen) return null;
+  clock.renderSeen = frameSamples;
+  return frameMs + (t - clock.computeAt < DYN_RES_COMPUTE_FRESH ? computeMs : 0);
+}
 
 /** Skale sterownika dla skali z opcji `base`: [base, …do maxSteps stopni drabiny niżej, nie mniej niż minScale]. */
 export function dynResLevels(base, tune = DYN_RES_TUNE) {

@@ -45,8 +45,9 @@ import { Vec3, Quat, clamp, lerp, degToRad } from "./rocketMath.js";
 import { isEntityShieldBlocking } from "../../../shieldSystem.js";
 import { shieldImpactClass, submunitionDef } from "../../data/weapons.js";
 import { SimClock } from "../simClock.js";
-import { writePointVelocity } from "../carrierVelocity.js";
+import { writePointVelocity, writeEntityVelocity, isInterpolatedEntity } from "../carrierVelocity.js";
 import { fighterSideOf, fighterSideSparesAlly } from "../friendlyFire.js";
+import { weaponRangeFor, weaponSpeedMul } from "../shipModifiers.js";
 
 /*
  * UKŁAD RAKIETY (src/game/carrierVelocity.js). Rakieta startuje z prędkością
@@ -109,6 +110,7 @@ const _leadVel = { x: 0, y: 0 };
 const _leadFrame = { x: 0, y: 0 };
 const _targetVel = { x: 0, y: 0 };
 const _pointVel = { x: 0, y: 0 };
+const _fuseTargetVel = { x: 0, y: 0 };
 // Opis wyrzutu dla fire() z salwy / podziału (jeden obiekt — fire czyta go od razu).
 const _launch = {
     mode: LAUNCH_ELEVATED, index: 0, count: 1, seed: 0, azimuth: NaN, shooter: null,
@@ -185,9 +187,9 @@ function wrapPi(a) {
     return a - Math.PI;
 }
 
-function resolveRocketProfile(weaponDef) {
-    const desiredSpeed = Math.max(400, Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200);
-    const maxRange = Math.max(3000, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 12000);
+function resolveRocketProfile(weaponDef, shooter = null) {
+    const desiredSpeed = Math.max(400, (Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200) * weaponSpeedMul(shooter, weaponDef));
+    const maxRange = Math.max(1, weaponRangeFor(shooter, weaponDef, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 6000));
     const blastRadius = Math.max(24, Number(weaponDef?.explodeRadius) || Number(weaponDef?.explosionRadius) || 48);
     const turnRateDeg = Math.max(25, Number(weaponDef?.turnRate) || 180);
     const speedFactor = clamp(desiredSpeed / 1200, 0.6, 4.0);
@@ -620,7 +622,7 @@ class RocketSystem3D {
         }
         if (!r) return null;
 
-        const profile = resolveRocketProfile(weaponDef);
+        const profile = resolveRocketProfile(weaponDef, launch?.shooter);
         const mode = launch ? launch.mode : (profile.elevation > 0.02 ? LAUNCH_ELEVATED : LAUNCH_RAIL);
         const index = launch ? launch.index : 0;
         const count = launch ? Math.max(1, launch.count) : 1;
@@ -1289,7 +1291,17 @@ class RocketSystem3D {
                 const ty = Number(target.y ?? target.pos?.y) || 0;
                 // Endpoint-only distance tunnels through the fuse sphere at high speed
                 // (supernova at 30 fps steps 120u/frame against a 98u fuse).
-                const x1 = r.prevTravelPos.x, z1 = r.prevTravelPos.z;
+                let x1 = r.prevTravelPos.x, z1 = r.prevTravelPos.z;
+                // Ruch względny: gracz (i P2) rusza się w kroku fizyki PRZED rakietami, więc stoi już w pozie końca
+                // kroku — w jego układzie odcinek rakiety zaczyna się v_celu·dt dalej (jak segX0 pocisków). Bez tego
+                // hipercruise (20–40 tys. j/s) przelatywał przez zapalnik: małe kadłuby gubiły 20–75% trafień, Atlas
+                // do 3% (E9 2026-10-22, scripts/hipercruise-kolizje-sym.mjs --tryb rakiety). NPC ruszają się po
+                // rakietach — ich poza jest z początku kroku, bez poprawki.
+                if (physics && isInterpolatedEntity(target)) {
+                    writeEntityVelocity(target, _fuseTargetVel);
+                    x1 += _fuseTargetVel.x * dt;
+                    z1 += _fuseTargetVel.y * dt;
+                }
                 const segX = r.position.x - x1;
                 const segZ = r.position.z - z1;
                 const segLenSq = segX * segX + segZ * segZ;
@@ -1508,7 +1520,11 @@ class RocketSystem3D {
         if (!owners || !owners.length || typeof applyStation !== "function") return;
         for (let i = 0; i < owners.length; i++) {
             const st = owners[i];
-            if (st && !st._destroyed3D && st.hp > 0) applyStation(st, dmg);
+            if (!st || st._destroyed3D || !(st.hp > 0)) continue;
+            // miejsce wybuchu = miejsce trafienia (progi i pule kawałków budowli bazy liczą kawałek pod nim)
+            st.lastHitX = ex;
+            st.lastHitY = ez;
+            applyStation(st, dmg);
         }
     }
 

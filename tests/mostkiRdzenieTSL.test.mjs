@@ -181,6 +181,18 @@ test('reaktor: graf raz na rodzaj (2 materiały na rodzaj), limity, plazma ONE/O
       assert.equal(pm.forceSinglePass, true);
     }
     assert.equal(mats.size, r3.kinds.length * 2);
+    // scalone rysunki rodzajów (cień wszystkich, plazma terran + pirate): limity, te same tryby mieszania
+    const M = r3.merged;
+    const pb = limits('reactor3D:rodzaje:plazma', M.plasmaMesh);
+    limits('reactor3D:rodzaje:cień', M.shadowMesh);
+    assert.match(pb.vertexShader, /normalB/);
+    assert.match(pb.vertexShader + pb.fragmentShader, /r3PlasmaKinds/);
+    for (const k of ['premultipliedAlpha', 'blending', 'blendSrc', 'blendDst', 'forceSinglePass', 'depthWrite', 'side']) {
+      assert.equal(M.plasmaMesh.material[k], r3.meshes.terran.plasma.material[k], `plazma scalona: ${k}`);
+    }
+    assert.equal(M.shadowMesh.material, r3.meshes.terran.shadow.material, 'cień: ten sam materiał (jeden graf)');
+    assert.equal(M.plasmaMesh.renderOrder, r3.meshes.terran.plasma.renderOrder);
+    assert.equal(M.shadowMesh.renderOrder, r3.meshes.terran.shadow.renderOrder);
   } finally {
     r3.dispose();
   }

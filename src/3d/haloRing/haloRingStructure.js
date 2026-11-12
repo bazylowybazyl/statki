@@ -26,7 +26,8 @@ import {
 import { HALO_ROOF } from './haloRingConfig.js';
 import { HALO_STRUCTURE_PALETTE_KEYS } from './haloRingProfiles.js';
 import {
-  HALO_PI, HALO_TAU, haloFusedMulAddInt, haloHash12, haloHashI, haloPureFn, haloRingSurfaceTSL, haloRingTSL, haloSmooth, haloWrapI
+  HALO_PI, HALO_TAU, haloFusedMulAddInt, haloHash12, haloHashI, haloPureFn, haloRingSurfaceTSL, haloRingTSL, haloSmooth, haloSquareWave,
+  haloWrapI
 } from './haloRingTSL.js';
 import { nodeOf } from './haloUniformsAdapter.js';
 
@@ -209,16 +210,20 @@ export const haloRoofSegBox = haloPureFn('haloRoofSegBox', 'float', [['a', 'vec2
   const hi = min(min(tmax.x, tmax.y), 1.0);
   return step(lo, hi);
 });
-export const haloRoofSegCircle = haloPureFn('haloRoofSegCircle', 'float', [['a', 'vec2'], ['V', 'vec2'], ['r', 'float']], (p) => {
+// blur — pół szerokości dodatkowego przejścia brzegu cienia [j.] (ślad piksela: z daleka brzeg nie przeskakuje o piksel)
+export const haloRoofSegCircle = haloPureFn('haloRoofSegCircle', 'float', [['a', 'vec2'], ['V', 'vec2'], ['r', 'float'], ['blur', 'float']], (p) => {
   const t = clamp(dot(p.a, p.V).negate().div(max(dot(p.V, p.V), 1e-6)), 0.0, 1.0);
-  return float(1.0).sub(smoothstep(p.r.sub(0.8), p.r.add(0.8), length(p.a.add(p.V.mul(t)))));
+  return float(1.0).sub(smoothstep(p.r.sub(0.8).sub(p.blur), p.r.add(0.8).add(p.blur), length(p.a.add(p.V.mul(t)))));
 });
+// cień prostokąta z brzegiem przejściem: dwie próbki metody płyt (pudło ± blur)
+const haloRoofSegBoxSoft = (a, V, h, blur) => haloRoofSegBox(a, V, h.add(blur)).add(haloRoofSegBox(a, V, max(h.sub(blur), vec2(0.0)))).mul(0.5);
 
 // Cień rzucany przez obiekt komórki (ii — indeks już zawinięty, jN, cls — jej klasa) na punkt
-// q (względem środka komórki). crossCells = komórek w poprzek pasa przemysłowego (uRoofLanes2.y).
+// q (względem środka komórki). crossCells = komórek w poprzek pasa przemysłowego (uRoofLanes2.y), blur — ¼ śladu piksela
+// [j.] (brzeg cienia przejściem — z daleka twardy brzeg przeskakiwał o piksel przy ruchu kamery).
 export const haloRoofIndShadow = haloPureFn('haloRoofIndShadow', 'float',
   [['ii', 'float'], ['jN', 'float'], ['cls', 'float'], ['q', 'vec2'], ['sdir', 'vec2'],
-    ['occ', 'vec4'], ['kinds', 'vec4'], ['cS', 'float'], ['cD', 'float'], ['crossCells', 'float']], (a) => {
+    ['occ', 'vec4'], ['kinds', 'vec4'], ['cS', 'float'], ['cD', 'float'], ['crossCells', 'float'], ['blur', 'float']], (a) => {
     const res = float(0.0).toVar();
     If(a.jN.greaterThanEqual(0.0).and(a.jN.lessThan(a.crossCells)), () => {
       const cell = haloRoofIndCell(a.ii, a.jN, a.cls, a.occ, a.kinds, a.cS, a.cD).toVar();
@@ -228,13 +233,13 @@ export const haloRoofIndShadow = haloPureFn('haloRoofIndShadow', 'float',
         const A = a.q.sub(ex.xy).toVar();
         const V = a.sdir.mul(c.w).toVar();
         If(c.x.lessThan(1.5).or(c.x.greaterThan(4.5)), () => {
-          res.assign(haloRoofSegCircle(A, V, c.y));
+          res.assign(haloRoofSegCircle(A, V, c.y, a.blur.mul(2.0)));
         }).ElseIf(c.x.lessThan(2.5), () => {
-          res.assign(haloRoofSegBox(A, V, c.yz.mul(0.5).add(0.4)));
+          res.assign(haloRoofSegBoxSoft(A, V, c.yz.mul(0.5).add(0.4), a.blur));
         }).ElseIf(c.x.lessThan(3.5), () => {
-          res.assign(haloRoofSegBox(A, V, ex.z.greaterThan(0.5).select(vec2(22.0, 20.0), vec2(20.0, 22.0))).mul(0.55));
+          res.assign(haloRoofSegBoxSoft(A, V, ex.z.greaterThan(0.5).select(vec2(22.0, 20.0), vec2(20.0, 22.0)), a.blur).mul(0.55));
         }).Else(() => {
-          res.assign(max(haloRoofSegCircle(A, V, c.y), haloRoofSegBox(A, a.sdir.mul(14.0), vec2(11.0))));
+          res.assign(max(haloRoofSegCircle(A, V, c.y, a.blur.mul(2.0)), haloRoofSegBoxSoft(A, a.sdir.mul(14.0), vec2(11.0), a.blur)));
         });
       });
     });
@@ -297,9 +302,9 @@ export function haloRoofTSL(u) {
     roofIndCell: (i, j, cls) => haloRoofIndCell(i, j, cls, occ, kinds, cells.x, lanes2.w),
     // → mat4: .element(0) = działka, .element(1).xyz = wieża, .element(2).xy = przesunięcie wieży
     roofPlot: (L, row, cls) => haloRoofPlot(L, row, cls, plotEmpty),
-    roofIndShadow: (iN, jN, q, sdir) => {
+    roofIndShadow: (iN, jN, q, sdir, blur) => {
       const ii = haloWrapI(iN, cells.z).toVar();
-      return haloRoofIndShadow(ii, jN, roofClassOf(ii), q, sdir, occ, kinds, cells.x, lanes2.w, lanes2.y);
+      return haloRoofIndShadow(ii, jN, roofClassOf(ii), q, sdir, occ, kinds, cells.x, lanes2.w, lanes2.y, blur);
     }
   };
   roofCache.set(u, R);
@@ -308,6 +313,31 @@ export function haloRoofTSL(u) {
 
 // Odcisk w punkcie dachu (dawne haloRoofImpression): sRel wzdłuż, d od krawędzi habitatu.
 // albedo / emit modyfikowane w miejscu (zmienne), shade = cień pozorny (0..1). Wklejane.
+// Z daleka bez migotania (2026-10-23, docs/AUDYT-migotanie-z-daleka-2026-10-23.md): detal dachu mniejszy niż piksel
+// trafiał w środek piksela albo nie — przy ruchu kamery o ułamek piksela kreski, kontenery, krawędzie brył i cienie
+// przeskakiwały. Przerywane światła i kreski — haloSquareWave (haloRingTSL.js), linie, pokrycie i cienie — niżej.
+// cienka linia: x — odległość od osi, hw — pół szerokości [j.], fw — ślad piksela [j.]. Gdy linia jest szersza niż pół
+// śladu — dawny wzór 1 − smoothstep(hw, hw + fw, |x|) bit w bit; węższa (z daleka ~1 px, rysowała się kropkami i
+// mrugała przy ruchu kamery) rośnie do pół śladu, a jasność maleje tak, że całka w poprzek linii zostaje jak dawniej
+// (hw + fw / 2 na stronę) — ten sam ciężar linii, ~2 px szerokości
+const roofLine = (x, hw, fw) => {
+  const w = max(fw.mul(0.5), hw).toVar();
+  return float(1.0).sub(smoothstep(w, w.add(fw), abs(x))).mul(fw.mul(0.5).add(hw).div(w.add(fw.mul(0.5))));
+};
+// pokrycie piksela przez wnętrze odcisku (sd < 0) przy śladzie fw [j.] — z bliska jak step(sd, 0)
+const roofSdCover = (sd, fw) => {
+  const h = max(fw.mul(0.5), 1e-3).toVar();
+  return float(1.0).sub(smoothstep(h.negate(), h, sd));
+};
+// cień pasa [c − r, c + r] na odcinku promienia [lo, hi] (dawniej step · step): brzegi przejściem szerokości piksela
+const roofBandHit = (lo, hi, c, r, fw) => {
+  const h = max(fw.mul(0.5), 1e-3).toVar();
+  return smoothstep(h.negate(), h, c.add(r).sub(lo)).mul(smoothstep(h.negate(), h, hi.sub(c.sub(r))));
+};
+// średni cień brył komórki przemysłowej na dach według klasy sektora (Monte Carlo na lustrze CPU industrialCellRule,
+// słońce 49° nad ringiem, kierunki uśrednione) — cel zaniku cieni komórek mniejszych niż ~3 px
+const ROOF_IND_SHADE_MEAN = [0.21, 0.23, 0.3, 0.29];
+
 function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, emit, shade }) {
   const U = H.uniforms;
   const { lanes0, lanes1, lanes2, cells } = R;
@@ -335,17 +365,17 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
     const dA = rimBand.select(float(30.0), lanes1.w.add(20.0)).toVar();
     const dB = rimBand.select(float(110.0), Wr.sub(20.0)).toVar();
     const hT = float(HALO_ROOF.trussHeight);
-    const chord = max(float(1.0).sub(smoothstep(4.0, fwd.add(4.0), abs(d.sub(dA)))), float(1.0).sub(smoothstep(4.0, fwd.add(4.0), abs(d.sub(dB))))).toVar();
+    const chord = max(roofLine(d.sub(dA), 4.0, fwd), roofLine(d.sub(dB), 4.0, fwd)).toVar();
     const pc = S.haloPat(6, sRel).toVar();
     const uu = pc.y.sub(0.5).mul(cS).toVar();
-    const crossB = float(1.0).sub(smoothstep(3.0, fwS.add(3.0), abs(abs(uu).sub(cS.mul(0.5))))).mul(step(dA, d)).mul(step(d, dB));
+    const crossB = roofLine(abs(uu).sub(cS.mul(0.5)), 3.0, fwS).mul(step(dA, d)).mul(step(d, dB));
     const truss = max(chord, crossB).mul(mix(0.5, 1.0, detailK));
     albedo.assign(mix(albedo, steel, truss));
     // cień pasów: czy odcinek [d, d + sdir.y · hT] mija któryś pas
     const dy = sdir.y.mul(hT).toVar();
     const lo = min(d, d.add(dy)).toVar();
     const hi = max(d, d.add(dy)).toVar();
-    const sh = max(step(lo, dA.add(4.0)).mul(step(dA.sub(4.0), hi)), step(lo, dB.add(4.0)).mul(step(dB.sub(4.0), hi)));
+    const sh = max(roofBandHit(lo, hi, dA, 4.0, fwd), roofBandHit(lo, hi, dB, 4.0, fwd));
     shade.assign(max(shade, sh.mul(0.8).mul(float(1.0).sub(chord))));
   }).ElseIf(rowA.or(rowB), () => {
     const lot = S.haloPat(7, sRel).toVar();
@@ -360,7 +390,7 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
     const road = step(halfA, abs(uu)).add(step(halfB, abs(w))).toVar();
     If(road.greaterThan(0.5), () => {
       albedo.assign(vec3(0.042, 0.044, 0.047));
-      const dash = float(1.0).sub(smoothstep(1.0, fwd.add(1.0), abs(abs(w).sub(halfB).sub(5.0)))).mul(step(0.5, fract(sRel.div(24.0))));
+      const dash = roofLine(abs(w).sub(halfB).sub(5.0), 1.0, fwd).mul(haloSquareWave(sRel.div(24.0), 0.5, fwS.mul(1.5).div(24.0)));
       albedo.assign(mix(albedo, vec3(0.2, 0.19, 0.15), dash.mul(detailK).mul(step(abs(uu), halfA))));
     }).Else(() => {
       const cls = R.roofClassOf(Lid.mul(cells.w).add(2.0)).toVar();
@@ -375,33 +405,36 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
       });
       // plac: beton, obwódka, siatka fundamentów, narożniki
       const pad = vec3(0.115, 0.117, 0.12).mul(float(0.92).add(float(0.16).mul(haloHash12(vec2(Lid, row))))).toVar();
-      const border = float(1.0).sub(smoothstep(1.3, fwd.add(1.3), abs(max(abs(uu).sub(halfA), abs(w).sub(halfB)).add(8.0)))).toVar();
+      const border = roofLine(max(abs(uu).sub(halfA), abs(w).sub(halfB)).add(8.0), 1.3, fwd).toVar();
       const g = abs(fract(vec2(uu, w).div(30.0)).sub(0.5)).mul(30.0).toVar();
-      const grid = float(1.0).sub(smoothstep(0.6, fw.add(0.6), min(g.x, g.y))).mul(detailK).toVar();
+      const grid = roofLine(min(g.x, g.y), 0.6, fw).mul(detailK).toVar();
       const cq = vec2(halfA, halfB).sub(abs(vec2(uu, w))).toVar();
-      const corner = step(cq.x, 26.0).mul(step(cq.y, 26.0)).mul(float(1.0).sub(smoothstep(2.0, fw.add(2.0), min(abs(cq.x.sub(8.0)), abs(cq.y.sub(8.0)))))).toVar();
+      // ramiona narożnika 26 j. od rogu działki (końce przejściem szerokości piksela, nie step)
+      const corner = roofSdCover(cq.x.sub(26.0), fw).mul(roofSdCover(cq.y.sub(26.0), fw)).mul(roofLine(min(abs(cq.x.sub(8.0)), abs(cq.y.sub(8.0))), 2.0, fw)).toVar();
       albedo.assign(pad.mul(float(1.0).sub(float(0.25).mul(grid))));
       albedo.assign(mix(albedo, vec3(0.28, 0.25, 0.15), max(border.mul(pl.x.lessThan(0.5).select(1.0, 0.4)), corner).mul(mix(0.4, 1.0, detailK))));
       const q = vec2(uu, w).toVar();
+      // cień bryły działki: pudło powiększone i pomniejszone o ¼ śladu piksela (dwie próbki metody płyt) — brzeg cienia
+      // przejściem zamiast twardego step, który z daleka przeskakiwał o piksel
+      const hb = fw.mul(0.25).toVar();
+      const boxShadow = (a, V, h) => haloRoofSegBoxSoft(a, V, h, hb);
       If(pl.x.greaterThan(0.5).and(pl.x.lessThan(1.5)), () => {
         const sdP = haloRoofBoxSdf(q, pl.yz.mul(0.5)).toVar();
         const qt = q.sub(to).toVar();
         const sdT = haloRoofBoxSdf(qt, tw.xy.mul(0.5)).toVar();
-        If(sdP.lessThan(0.0), () => { albedo.assign(vec3(0.14, 0.142, 0.146)); });
-        If(sdT.lessThan(0.0), () => {
-          albedo.assign(cls.greaterThan(0.5).and(cls.lessThan(1.5)).select(vec3(0.05, 0.065, 0.08), vec3(0.26, 0.262, 0.26)));
-        });
-        If(sdT.greaterThanEqual(0.0), () => { shade.assign(max(shade, haloRoofSegBox(qt, sdir.mul(tw.z), tw.xy.mul(0.5)))); });
-        If(sdP.greaterThanEqual(0.0), () => { shade.assign(max(shade, haloRoofSegBox(q, sdir.mul(pl.w), pl.yz.mul(0.5)))); });
+        const cP = roofSdCover(sdP, fw).toVar();
+        const cT = roofSdCover(sdT, fw).toVar();
+        albedo.assign(mix(albedo, vec3(0.14, 0.142, 0.146), cP));
+        albedo.assign(mix(albedo, cls.greaterThan(0.5).and(cls.lessThan(1.5)).select(vec3(0.05, 0.065, 0.08), vec3(0.26, 0.262, 0.26)), cT));
+        shade.assign(max(shade, boxShadow(qt, sdir.mul(tw.z), tw.xy.mul(0.5)).mul(float(1.0).sub(cT))));
+        shade.assign(max(shade, boxShadow(q, sdir.mul(pl.w), pl.yz.mul(0.5)).mul(float(1.0).sub(cP))));
       }).ElseIf(pl.x.greaterThan(1.5).and(pl.x.lessThan(2.5)), () => {
         const sdH = haloRoofBoxSdf(q, pl.yz.mul(0.5)).toVar();
-        If(sdH.lessThan(0.0), () => {
-          const rib = float(1.0).sub(smoothstep(0.8, fwS.add(0.8), abs(fract(uu.div(12.0)).sub(0.5)).mul(12.0).sub(4.5))).toVar();
-          albedo.assign(vec3(0.085, 0.087, 0.09).mul(float(1.0).sub(float(0.3).mul(rib).mul(detailK))));
-          emit.addAssign(U.uHdrSodium.mul(night).mul(0.06).mul(detailK).mul(rib));
-        }).Else(() => {
-          shade.assign(max(shade, haloRoofSegBox(q, sdir.mul(pl.w), pl.yz.mul(0.5))));
-        });
+        const cH = roofSdCover(sdH, fw).toVar();
+        const rib = float(1.0).sub(smoothstep(0.8, fwS.add(0.8), abs(fract(uu.div(12.0)).sub(0.5)).mul(12.0).sub(4.5))).toVar();
+        albedo.assign(mix(albedo, vec3(0.085, 0.087, 0.09).mul(float(1.0).sub(float(0.3).mul(rib).mul(detailK))), cH));
+        emit.addAssign(U.uHdrSodium.mul(night).mul(0.06).mul(detailK).mul(rib).mul(cH));
+        shade.assign(max(shade, boxShadow(q, sdir.mul(pl.w), pl.yz.mul(0.5)).mul(float(1.0).sub(cH))));
       }).ElseIf(pl.x.greaterThan(2.5), () => {
         const ca = clamp(floor(uu.add(120.0).div(48.0)), 0.0, 4.0).toVar();
         const cb = clamp(floor(w.add(144.0).div(18.0)), 0.0, 15.0).toVar();
@@ -409,14 +442,16 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
         const ia = Lid.mul(5.0).add(ca).toVar();
         const ib = row.mul(16.0).add(cb).toVar();
         const miss = step(haloHashI(ia, ib, 37.0), 0.12);
-        const inYard = step(haloRoofBoxSdf(q, vec2(120.0, 144.0)), 0.0).toVar();
-        const inC = step(haloRoofBoxSdf(cq2, vec2(20.0, 6.0)), 0.0).mul(float(1.0).sub(miss)).mul(inYard).toVar();
+        // kontener 40 × 12 j.: krawędzie z pokrycia piksela, z daleka (bok 12 j. < ~1 px) plac kontenerów jak średnia
+        const inYard = roofSdCover(haloRoofBoxSdf(q, vec2(120.0, 144.0)), fw).toVar();
+        const inC = roofSdCover(haloRoofBoxSdf(cq2, vec2(20.0, 6.0)), fw).mul(float(1.0).sub(miss)).mul(inYard).toVar();
+        const dC = detailK.mul(float(1.0).sub(smoothstep(0.5, 1.0, fw.div(12.0)))).toVar();
         const palI = floor(haloHashI(ia, ib, 38.0).mul(4.0)).toVar();
         const cc = palI.lessThan(0.5).select(vec3(0.19, 0.06, 0.035),
           palI.lessThan(1.5).select(vec3(0.03, 0.08, 0.15), palI.lessThan(2.5).select(vec3(0.16, 0.12, 0.05), vec3(0.3))));
         const avg = vec3(0.13, 0.09, 0.07);
-        albedo.assign(mix(albedo, mix(avg, cc, detailK), mix(float(0.7).mul(inYard), inC, detailK)));
-        shade.assign(max(shade, float(1.0).sub(inC).mul(0.35).mul(inYard).mul(detailK)));
+        albedo.assign(mix(albedo, mix(avg, cc, dC), mix(float(0.7).mul(inYard), inC, dC)));
+        shade.assign(max(shade, float(1.0).sub(inC).mul(0.35).mul(inYard).mul(dC)));
       });
       // nocą: znaczniki placów świecą na niebiesko (bilboardy robią to z bliska)
       emit.addAssign(U.uHdrStrip.mul(corner).mul(night).mul(0.25).mul(pl.x.lessThan(0.5).select(1.0, 0.0)).mul(float(1.0).sub(detailK.mul(0.6))));
@@ -426,12 +461,14 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
     const g2 = lanes1.z.sub(30.0).toVar();
     const guide = max(float(1.0).sub(smoothstep(13.0, fwd.add(13.0), abs(d.sub(g1)))), float(1.0).sub(smoothstep(13.0, fwd.add(13.0), abs(d.sub(g2))))).toVar();
     albedo.assign(mix(vec3(0.04, 0.042, 0.046), vec3(0.11, 0.112, 0.116), guide));
-    const edge = max(float(1.0).sub(smoothstep(0.8, fwd.add(0.8), abs(abs(d.sub(g1)).sub(14.0)))), float(1.0).sub(smoothstep(0.8, fwd.add(0.8), abs(abs(d.sub(g2)).sub(14.0)))));
-    emit.addAssign(U.uHdrStrip.mul(edge).mul(float(0.12).add(float(0.35).mul(night))).mul(step(0.35, fract(sRel.div(40.0)))));
+    const edge = max(roofLine(abs(d.sub(g1)).sub(14.0), 0.8, fwd), roofLine(abs(d.sub(g2)).sub(14.0), 0.8, fwd));
+    // przerywane światła wzdłuż torów (co 40 j., świeci 65%): fala filtrowana śladem piksela — z daleka kreska ma ~2–3 px
+    // i przy ruchu kamery zapalała się i gasła w pikselach (kropkowany pas mrugał), dalej średnia 0,65
+    emit.addAssign(U.uHdrStrip.mul(edge).mul(float(0.12).add(float(0.35).mul(night))).mul(haloSquareWave(sRel.div(40.0), 0.35, fwS.mul(1.5).div(40.0))));
     const dy = sdir.y.mul(12.0).toVar();
     const lo = min(d, d.add(dy)).toVar();
     const hi = max(d, d.add(dy)).toVar();
-    const sh = max(step(lo, g1.add(13.0)).mul(step(g1.sub(13.0), hi)), step(lo, g2.add(13.0)).mul(step(g2.sub(13.0), hi)));
+    const sh = max(roofBandHit(lo, hi, g1, 13.0, fwd), roofBandHit(lo, hi, g2, 13.0, fwd));
     shade.assign(max(shade, float(1.0).sub(guide).mul(sh).mul(0.7)));
   }).ElseIf(ind, () => {
     const pc = S.haloPat(6, sRel).toVar();
@@ -441,8 +478,10 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
     const j = floor(dd.div(cD)).toVar();
     const w = dd.sub(j.add(0.5).mul(cD)).toVar();
     const cls = R.roofClassOf(i).toVar();
+    // komórka 56 j. mniejsza niż ~6 → 3 px: wzór komórek (jasność płyty, cienie brył, plamki lamp) przechodzi w średnią
+    const farI = smoothstep(0.2, 0.45, fw.div(cD)).toVar();
     const plate = cls.greaterThan(1.5).select(vec3(0.07, 0.062, 0.058), vec3(0.08, 0.082, 0.086));
-    albedo.assign(plate.mul(float(0.9).add(float(0.2).mul(haloHash12(vec2(i, j))))));
+    albedo.assign(plate.mul(float(0.9).add(float(0.2).mul(mix(haloHash12(vec2(i, j)), 0.5, farI)))));
     If(j.lessThan(lanes2.y), () => {
       const cell = R.roofIndCell(i, j, cls).toVar();
       const c0 = cell.element(0).toVar();
@@ -465,27 +504,44 @@ function roofImpressionTSL({ H, S, R, sRel, d, fwS, fwd, p, L, night, albedo, em
         const avgA = c0.x.greaterThan(2.5).and(c0.x.lessThan(3.5)).select(0.35, 0.6);
         albedo.assign(mix(albedo, objCol, mix(avgA.mul(0.5), objA, detailK)));
         // styk z dachem: ciemniejsza obwódka
-        albedo.mulAssign(float(1.0).sub(float(0.35).mul(float(1.0).sub(smoothstep(0.0, fw.add(3.0), sd))).mul(step(0.0, sd)).mul(detailK)));
+        albedo.mulAssign(float(1.0).sub(float(0.35).mul(float(1.0).sub(smoothstep(0.0, fw.add(3.0), sd))).mul(float(1.0).sub(roofSdCover(sd, fw))).mul(detailK)));
       });
       // cienie: ta komórka i sąsiednie w stronę słońca
       const si = sunT.x.greaterThanEqual(0.0).select(1.0, -1.0).toVar();
       const sj = sunT.y.greaterThanEqual(0.0).select(1.0, -1.0).toVar();
       const uw = vec2(uu, w).toVar();
-      const sh = R.roofIndShadow(i, j, uw, sdir).toVar();
-      sh.assign(max(sh, R.roofIndShadow(i.add(si), j, uw.sub(vec2(si.mul(cS), 0.0)), sdir)));
-      sh.assign(max(sh, R.roofIndShadow(i, j.add(sj), uw.sub(vec2(0.0, sj.mul(cD))), sdir)));
-      sh.assign(max(sh, R.roofIndShadow(i.add(si), j.add(sj), uw.sub(vec2(si.mul(cS), sj.mul(cD))), sdir)));
+      const hbI = fw.mul(0.25).toVar();
+      const sh = R.roofIndShadow(i, j, uw, sdir, hbI).toVar();
+      sh.assign(max(sh, R.roofIndShadow(i.add(si), j, uw.sub(vec2(si.mul(cS), 0.0)), sdir, hbI)));
+      sh.assign(max(sh, R.roofIndShadow(i, j.add(sj), uw.sub(vec2(0.0, sj.mul(cD))), sdir, hbI)));
+      sh.assign(max(sh, R.roofIndShadow(i.add(si), j.add(sj), uw.sub(vec2(si.mul(cS), sj.mul(cD))), sdir, hbI)));
       If(abs(sdir.x).greaterThan(abs(sdir.y)), () => {
-        sh.assign(max(sh, R.roofIndShadow(i.add(float(2.0).mul(si)), j, uw.sub(vec2(float(2.0).mul(si).mul(cS), 0.0)), sdir)));
+        sh.assign(max(sh, R.roofIndShadow(i.add(float(2.0).mul(si)), j, uw.sub(vec2(float(2.0).mul(si).mul(cS), 0.0)), sdir, hbI)));
       }).Else(() => {
-        sh.assign(max(sh, R.roofIndShadow(i, j.add(float(2.0).mul(sj)), uw.sub(vec2(0.0, float(2.0).mul(sj).mul(cD))), sdir)));
+        sh.assign(max(sh, R.roofIndShadow(i, j.add(float(2.0).mul(sj)), uw.sub(vec2(0.0, float(2.0).mul(sj).mul(cD))), sdir, hbI)));
       });
-      shade.assign(max(shade, sh.mul(step(0.0, sd)).mul(mix(0.6, 1.0, detailK))));
-      // nocą lampy sodowe (przemysł): nie w każdej komórce, w losowym miejscu
-      const lampOn = step(0.6, haloHashI(i, j, 41.0)).mul(step(1.5, cls));
-      const lpos = vec2(haloHashI(i, j, 42.0), haloHashI(i, j, 43.0)).sub(0.5).mul(vec2(cS, cD)).mul(0.8);
-      const lamp = float(1.0).sub(smoothstep(1.6, fw.add(1.6), length(vec2(uu, w).sub(lpos)))).mul(lampOn).mul(float(0.5).add(float(0.8).mul(haloHashI(i, j, 44.0))));
-      emit.addAssign(U.uHdrSodium.mul(night).mul(mix(float(0.006).mul(step(1.5, cls)), lamp, detailK)));
+      // cień poza bryłą (brzeg bryły z pokrycia piksela); z daleka średni cień klasy (ROOF_IND_SHADE_MEAN)
+      const shMean = byClass(cls, vec4(...ROOF_IND_SHADE_MEAN));
+      shade.assign(max(shade, mix(sh.mul(float(1.0).sub(roofSdCover(sd, fw))), shMean, farI).mul(mix(0.6, 1.0, detailK))));
+      // nocą lampy sodowe (przemysł): nie w każdej komórce, w losowym miejscu. Plamka lampy rośnie z fw (z daleka widać
+      // ją jako punkt), więc liczą się też lampy trzech sąsiednich komórek od strony piksela — dawniej plamkę ucinała
+      // granica komórki, która przeskakuje z pikselem. Komórki < ~3 px: średnia plamek (ta sama energia, bez iskrzenia).
+      If(night.greaterThan(0.0), () => {
+        const li = uu.greaterThanEqual(0.0).select(1.0, -1.0).toVar();
+        const lj = w.greaterThanEqual(0.0).select(1.0, -1.0).toVar();
+        const lampAt = (ii, jj, off) => {
+          const on = step(0.6, haloHashI(ii, jj, 41.0)).mul(step(0.0, jj)).mul(step(jj, lanes2.y.sub(1.0)));
+          const lpos = vec2(haloHashI(ii, jj, 42.0), haloHashI(ii, jj, 43.0)).sub(0.5).mul(vec2(cS, cD)).mul(0.8).add(off);
+          return float(1.0).sub(smoothstep(1.6, fw.add(1.6), length(vec2(uu, w).sub(lpos)))).mul(on).mul(float(0.5).add(float(0.8).mul(haloHashI(ii, jj, 44.0))));
+        };
+        const lamp = lampAt(i, j, vec2(0.0))
+          .add(lampAt(i.add(li), j, vec2(li.mul(cS), 0.0)))
+          .add(lampAt(i, j.add(lj), vec2(0.0, lj.mul(cD))))
+          .add(lampAt(i.add(li), j.add(lj), vec2(li.mul(cS), lj.mul(cD)))).mul(step(1.5, cls)).toVar();
+        // średnia plamek na komórkę: P(zapalona) 0,4 · jasność 0,9 · pole plamki π(1,6² + 1,6·fw + 0,3·fw²) / pole komórki
+        const lampMean = float(0.36 * Math.PI).mul(float(2.56).add(fw.mul(1.6)).add(fw.mul(fw).mul(0.3))).div(cS.mul(cD)).mul(step(1.5, cls));
+        emit.addAssign(U.uHdrSodium.mul(night).mul(mix(float(0.006).mul(step(1.5, cls)), mix(lamp, lampMean, farI), detailK)));
+      });
     });
   });
 }

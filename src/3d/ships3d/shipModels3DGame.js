@@ -24,7 +24,9 @@
 import * as THREE from 'three/webgpu';
 import { loadImageBitmap } from '../canvas2d.js';
 import { RenderWorld } from '../../render/renderWorld.js';
-import { Fn, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, fract, min, uv } from 'three/tsl';
+import { Fn, float, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, uv } from 'three/tsl';
+import { navBlinkNode } from '../tsl/navBlink.js';
+import { navBlinkCode, navPhaseOf } from '../../data/shipNavLights.js';
 import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
 import { FLEET3D_PALETTES } from './ships/fleetHulls3D.js';
 import { Core3D } from '../core3d.js';
@@ -51,6 +53,7 @@ import {
 } from './turretBatch3D.js';
 // Dysze SIDE 3D (wszystkie tryby wyglądu): lista klatki od EngineVfxSystem, jedna partia, farba frakcji kadłuba.
 import { SideNozzleFrame } from '../sideNozzleFrame.js';
+import { ProxyTurretFrame } from '../proxyTurretFrame.js';
 import { ThrusterBatch, createThrusterBatchMaterial, sideThrusterInstanceScratch, thrusterBatchWarmHolder } from './thrusterBatch3D.js';
 import {
   buildSideThrusterArrays, sideThrusterPaletteFor, SIDE_THRUSTER_AXIS_Z, SIDE_THRUSTER_HALF_WIDTH
@@ -59,6 +62,10 @@ import { resolveEntityHullProfileId } from '../../data/ships.js';
 // Modele broni z Blendera (GLB, weapons/weaponGlb.js): pliki idą w tle od importu (menu), gra czeka na nie
 // przed ekranem ładowania (prepareShipModels3D) — buildWeapon3D pyta rejestr synchronicznie przy pierwszym użyciu.
 import { loadWeaponGlbs, weaponGlbAutoLod, weaponGlbLodFor, weaponGlbFamilies } from './weapons/weaponGlb.js';
+// Lampki gotowości przy wieżach (2026-11-11): kod z rekordu wieży (gra — Turret2D, pole `ready`), billboardy CargoLights.
+import { TURRET_LAMP, TURRET_LAMP_TUNE, turretLampColor } from '../../data/turretReadyLamp.js';
+import { CARGO_LIGHT_VIEW, CargoLights } from '../cargo/drones.tsl.js';
+import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 
 const DEG = Math.PI / 180;
 
@@ -99,6 +106,8 @@ function liveHull(e) {
 /** Id modelu, którym encja rysuje się w tej klatce (opcja „Statki 3D”), albo null (skóra sprite'a). */
 export function shipModel3DIdFor(e) {
   if (!shipsOn() || !e || e.dead) return null;
+  // Widok proxy statku ruchu (E17b, dysze SIDE na sprite'cie proxy) — proxy nie ma modelu 3D.
+  if (e.isTrafficProxy === true) return null;
   // Maskowanie (src/game/cloakLook.js): na czas efektu okręt rysuje skóra sprite'a z shaderem maskowania
   // (mozaika heksów, refrakcja w warstwie DIST). AGENT: rozpuszczanie samej bryły 3D tym samym wzorem.
   if (e.__cloakLook && e.__cloakLook.active) return null;
@@ -291,6 +300,20 @@ function turretBatches() {
   return _batches;
 }
 
+// Lampki gotowości wież (src/data/turretReadyLamp.js): zielona — gotowa, bursztynowa — przeładowanie / ładowanie,
+// czerwona — pusta albo gniazdo zniszczone; okręt bez zasilania — bez lampki. Jedna pula billboardów addytywnych HDR
+// (CargoLights — jeden rysunek na wszystkie lampki w kadrze), na tyle obudowy wieży, nad jej warstwą głębi.
+const TURRET_LAMP_CAP = 2048;
+let _lamps = null;
+function turretLamps() {
+  if (!_lamps && Core3D.scene) {
+    _lamps = new CargoLights(Core3D.scene, TURRET_LAMP_CAP);
+    _lamps.mesh.name = 'wieże 3D: lampki gotowości';
+  }
+  return _lamps;
+}
+const _lampRgb = [0, 0, 0];
+
 // Dysze SIDE (thrusterBatch3D.js): materiał jak wieże (mapa otoczenia, maska słońca), jedna partia na grę.
 let _nozzleMat = null;
 function nozzleMaterial() {
@@ -370,8 +393,8 @@ function _warmHolder(geometry, material, receiveShadow = false) {
 
 // Światła modelu (lampy pozycyjne i reflektory z danych okrętu — w 2D rysuje je shader skóry sprite'a):
 // kule HDR pod bloom. Geometria instancji RAZ na model (Mesh + InstancedBufferGeometry — nie InstancedMesh,
-// którego uuid wchodzi do klucza programu), materiał raz na grę; miganie lamp w shaderze z czasu egzemplarza,
-// stan świateł (L — reflektory, wraki) per obiekt.
+// którego uuid wchodzi do klucza programu), materiał raz na grę; miganie lamp w shaderze (navBlinkNode: ten sam
+// zegar klatki i ta sama faza okrętu co billboardy lamp), stan świateł (L — reflektory, wraki) per obiekt.
 let _lightMat = null;
 let _lightBase = null;
 function lightMaterial() {
@@ -379,17 +402,17 @@ function lightMaterial() {
   const m = new THREE.MeshBasicNodeMaterial();
   m.name = 'światła okrętu 3D';
   const iPos = attribute('iPos', 'vec3');
-  const iCol = attribute('iCol', 'vec4'); // rgb × moc, w: 1 — reflektor, 0 — lampa pozycyjna
+  const iCol = attribute('iCol', 'vec4'); // rgb × moc, w: −1 — reflektor, inaczej kod migania lampy pozycyjnej
   const uT = uniform(0).onObjectUpdate(({ object }) => Number(object?.userData?.lightT) || 0);
+  const uPhase = uniform(0).onObjectUpdate(({ object }) => Number(object?.userData?.navPhase) || 0);
   const uOn = uniform(1).onObjectUpdate(({ object }) => (object?.userData?.lightsOn === false ? 0 : 1));
   const uRoad = uniform(1).onObjectUpdate(({ object }) => (object?.userData?.roadOn === false ? 0 : 1));
-  const road = iCol.w.greaterThan(0.5);
+  const road = iCol.w.lessThan(-0.5);
   m.positionNode = positionLocal.mul(select(road, 2.4, 2.0)).add(iPos);
   m.colorNode = Fn(() => {
-    // sekwencja lamp wzdłuż kadłuba (jak dawny rig świateł dema Atlasa)
-    const ph = fract(iPos.x.div(1800).mul(1.4).add(uT.mul(0.9)));
-    const tri = min(ph, ph.oneMinus()).mul(9);
-    const nav = exp(tri.mul(tri).negate()).mul(7).add(0.25);
+    // Przypisane przed wyborem (zmienne migania powstają w miejscu pierwszego użycia — pułapka 39).
+    const nav = float(0.0).toVar();
+    nav.assign(navBlinkNode(uT, iCol.w, uPhase).mul(7).add(0.25));
     return iCol.xyz.mul(select(road, uRoad.mul(2.2), nav)).mul(uOn);
   })();
   applyModelSlabDepth(m);
@@ -416,7 +439,7 @@ function lightsGeometry(m) {
     c.set(l.color || '#ff3030');
     const p = Number(l.power) || 1;
     col[i * 4] = c.r * p; col[i * 4 + 1] = c.g * p; col[i * 4 + 2] = c.b * p;
-    col[i * 4 + 3] = l.kind === 'road' ? 1 : 0;
+    col[i * 4 + 3] = l.kind === 'road' ? -1 : navBlinkCode(l.blink || 0, l.lag || 0);
   }
   g.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3));
   g.setAttribute('iCol', new THREE.InstancedBufferAttribute(col, 4));
@@ -457,6 +480,22 @@ class TurretState {
     this.wx = 0;
     this.wy = 0;
     this.muzzleZ = 0;
+    // Świecące akcenty (pasy E_*): 1 — świecą, przy wyłączonym okręcie gasną do TURRET_LAMP_TUNE.darkGlow; −1 — jeszcze
+    // nie ustawione (nowa wieża bierze stan od razu, bez rozjarzenia).
+    this.glow = -1;
+  }
+
+  /**
+   * Akcenty do stanu z kodu lampki (TURRET_LAMP.DARK — przygaszone), wykładniczo ze stałą `glowTau`. Wieża, której nie
+   * było w poprzedniej klatce (nowa, wraca z LOD, maskowania albo zza kadru), bierze stan od razu — inaczej rozjarzałaby
+   * się albo gasła na oczach po wejściu w kadr.
+   */
+  glowTo(code, dt) {
+    const want = code === TURRET_LAMP.DARK ? TURRET_LAMP_TUNE.darkGlow : 1;
+    if (this.glow < 0 || this.shown !== _frame - 1) { this.glow = want; return want; }
+    if (!(dt > 0)) return this.glow;
+    this.glow += (want - this.glow) * (1 - Math.exp(-dt / Math.max(1e-3, TURRET_LAMP_TUNE.glowTau)));
+    return this.glow;
   }
 
   /** recoil 0..1, dt → odrzut lufy (j. lokalne); pochylenie i wirnik jak dawne drzewo siatek wieży. */
@@ -499,14 +538,6 @@ function createInstance(entity) {
   return inst;
 }
 
-// Faza sekwencji lamp z id encji (bez Math.random gry).
-function fxSeed(e) {
-  const s = String(e?.id ?? e?.name ?? '');
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return ((h >>> 0) % 1000) / 100;
-}
-
 function setInstanceModel(inst, id) {
   if (inst.modelId === id) return;
   if (inst.hullMesh) { inst.modelGroup.remove(inst.hullMesh); inst.hullMesh = null; }
@@ -528,7 +559,7 @@ function setInstanceModel(inst, id) {
     lm.name = 'światła okrętu 3D';
     lm.frustumCulled = false;
     lm.userData.slab = inst.slab;
-    lm.userData.lightT = fxSeed(inst.entity);
+    lm.userData.navPhase = navPhaseOf(inst.entity);
     lm.layers.set(0);
     inst.modelGroup.add(lm);
     inst.lightMesh = lm;
@@ -728,9 +759,11 @@ export function syncShipModels3D(p) {
   let shown = 0;
   // Partie wież: liczniki na zero i początek przy kamerze (x, −y świata gry) — rekordy tej klatki względem niego.
   const batches = Core3D.scene ? turretBatches() : _batches;
+  const lamps = batches ? turretLamps() : null;
   if (batches) {
     sceneOriginNearCamera(_org);
     batches.begin(_org.x, _org.y);
+    if (lamps) lamps.begin();
   }
   {
     const dt = Math.max(0, Number(p.dt) || 0);
@@ -778,7 +811,7 @@ export function syncShipModels3D(p) {
         const lm = inst.lightMesh;
         if (lm) {
           lm.visible = !e.isWreck;
-          lm.userData.lightT += dt;
+          lm.userData.lightT = Core3D.frameNowMs() * 0.001;
           lm.userData.lightsOn = !e.lightsOff;
           lm.userData.roadOn = !e.roadLightsOff;
         }
@@ -795,7 +828,27 @@ export function syncShipModels3D(p) {
       shown++;
     }
   }
+  // Wieże proxy statków ruchu v2 (E17b): rekordy w spoczynku z klatki proxy (src/3d/proxyTurretFrame.js — proxy
+  // rysuje się wcześniej w tej klatce), ten sam LOD, rodziny i warstwa głębi co wieże na sprite'cie NPC.
+  if (batches && ProxyTurretFrame.count > 0) {
+    const dt = Math.max(0, Number(p.dt) || 0);
+    const zoom = Number(p.zoom) || 1;
+    const list = ProxyTurretFrame.list;
+    for (let i = 0; i < ProxyTurretFrame.count; i++) {
+      const g = list[i];
+      syncTurrets(g.holder, g.view, g.recs, 0, 0, 1, 0, 0, 0, 1, dt, false, zoom, p.zoomAt || null);
+    }
+  }
   if (batches) batches.end();
+  if (lamps) {
+    // Billboardy w płaszczyźnie gry (osie i skala ekranu wspólne z resztą CargoLights: kapsuły, łup, przeładunek).
+    if (lamps.count > 0) {
+      CARGO_LIGHT_VIEW.right.value.set(1, 0, 0);
+      CARGO_LIGHT_VIEW.up.value.set(0, 1, 0);
+    }
+    lamps.commit(null, Core3D.viewZoom ? Core3D.viewZoom(Core3D.activeCam1) : (Number(p.zoom) || 1));
+    lamps.mesh.position.set(batches.orgX, batches.orgY, 0);
+  }
   // Dysze SIDE 3D — w każdym wariancie wyglądu (lista klatki od EngineVfxSystem).
   syncSideNozzles(p);
   // Encje nieobecne w tej klatce (zniknęły, poza kadrem, opcje wyłączone) — chowamy; martwe po chwili zwalniamy.
@@ -831,6 +884,8 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
   const slab = onModel ? SLAB_TURRET_ON_MODEL : SLAB_TURRET_ON_SPRITE;
   const B = _batches;
   const T = _rec;
+  const lamps = _lamps;
+  const LT = TURRET_LAMP_TUNE;
   // pierścień obraca się z kadłubem (θ), obudowa i lufy z kursem lufy
   T.hullCos = c;
   T.hullSin = s;
@@ -880,6 +935,9 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     T.spin = t.spin;
     T.zb = zb;
     T.zt = Math.max(zb + t.height * K, zb + 1e-3);
+    // Lampka gotowości (kod z rekordu — gra): akcenty wyłączonego okrętu przygasają, lampka w kolorze stanu.
+    const code = rec.ready | 0;
+    T.glow = t.glowTo(code, dt);
     // wylot lufy nad płaszczyzną (turretMuzzleZ — błysk i pocisk w kamerach 3D)
     t.wx = rec.wx;
     t.wy = rec.wy;
@@ -889,6 +947,17 @@ function syncTurrets(inst, e, recs, ox, oy, c, s, scx, scy, k, dt, onModel, zoom
     let lod = 0;
     if (t.autoLod) { lod = weaponGlbLodFor(t.lod, rpx); t.lod = lod; }
     B.family(fam, lod).push(T);
+    if (lamps && rpx >= LT.minTurretPx && turretLampColor(code, _lampRgb)) {
+      // Na tyle obudowy (wstecz od kursu lufy), nad wieżą: z góry — nad jej warstwą głębi (T.hi), kamery 3D — nad bryłą.
+      const R2 = (Number(rec.spec?.r) || 10) * (Number(rec.scale) || 1);
+      const back = LT.back * R2;
+      const lz = _cfg.view3D ? T.zt + LT.lift : T.hi + LT.lift;
+      // rozmiar ∝ wieży (bez stałego minimum, które przy oddaleniu robiło z lampki plamę większą od wieży), z daleka gaśnie
+      const lr = Math.min(LT.maxPx, Math.max(LT.minPx, rpx * LT.frac)) / Math.max(1e-4, z);
+      const fadeIn = Math.min(1, (rpx - LT.minTurretPx) / Math.max(1e-3, (LT.fullTurretPx || LT.minTurretPx) - LT.minTurretPx));
+      const k = fadeIn > 0 ? fadeIn : 0;
+      lamps.push(T.x - T.yawCos * back, T.y - T.yawSin * back, lz, lr, _lampRgb[0] * k, _lampRgb[1] * k, _lampRgb[2] * k, 0);
+    }
   }
   // Stan wież niewidzianych od 300 klatek (zdjęta broń, odcięta część) — przegląd co 64 klatki.
   if ((_frame & 63) === 0) {
@@ -1082,6 +1151,10 @@ Core3D.warmup?.add({ name: 'modele 3D statków i broni (kamery 3D)', objects: ()
 const WARM_FLEET = Object.keys(SHIP3D_MODELS).filter((id) => /^(terran|pirate)_/.test(id) || id === 'supercapital' || id === 'capital_carrier');
 Core3D.warmup?.add({ name: 'modele 3D floty', objects: () => warmupShipModels3D(WARM_FLEET), layer: 0, phase: 'after' });
 Core3D.warmup?.add({ name: 'modele 3D floty (kamery 3D)', objects: () => warmupShipModels3D(WARM_FLEET), layer: 0, ortho: false, phase: 'after' });
+// Lampki gotowości wież: pula billboardów rysowana od pierwszej klatki gry (Atlas z wieżami) — ekran ładowania.
+const lampWarm = () => { const l = turretLamps(); return l ? [l.mesh] : []; };
+Core3D.warmup?.add({ name: 'lampki gotowości wież', objects: lampWarm, layer: 0, phase: 'loading', variant: WARIANT_INSTANCJI });
+Core3D.warmup?.add({ name: 'lampki gotowości wież (kamery 3D)', objects: lampWarm, layer: 0, ortho: false, phase: 'loading', variant: WARIANT_INSTANCJI });
 
 /** Stan ostatniej klatki: egzemplarze, widoczne (model albo wieże), wieże w partiach, skóry, rysunki partii. */
 export function shipModels3DStats() {

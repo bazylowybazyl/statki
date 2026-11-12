@@ -13,9 +13,9 @@ import { run as runResources } from './tests/resources.test.mjs';
 import { run as runSalvage } from './tests/salvage.test.mjs';
 import { run as runFactions } from './tests/factions.test.mjs';
 import { run as runStationEconomy } from './tests/stationEconomy.test.mjs';
-import { run as runCargoFleet } from './tests/cargoFleet.test.mjs';
-import { run as runTransitController } from './tests/transitController.test.mjs';
-import { run as runCargoTransit } from './tests/cargoTransit.test.mjs';
+import { run as runShipmentOrders } from './tests/shipmentOrders.test.mjs';
+import { run as runMarketBook } from './tests/marketBook.test.mjs';
+import { run as runEconomySave } from './tests/economySave.test.mjs';
 import { run as runCourseRegistry } from './tests/courseRegistry.test.mjs';
 import { run as runTravelNetwork } from './tests/travelNetwork.test.mjs';
 import { run as runDockLayout } from './tests/dockLayout.test.mjs';
@@ -40,6 +40,7 @@ import { run as runHaloPortTraffic } from './tests/haloPortTraffic.test.mjs';
 import { run as runPortParking } from './tests/portParking.test.mjs';
 import { run as runTrafficWorld } from './tests/trafficWorld.test.mjs';
 import { run as runTrafficCore } from './tests/trafficCore.test.mjs';
+import { run as runWorkforce } from './tests/workforce.test.mjs';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -51,9 +52,9 @@ const suites = [
   runSalvage,
   runFactions,
   runStationEconomy,
-  runCargoFleet,
-  runTransitController,
-  runCargoTransit,
+  runShipmentOrders,
+  runMarketBook,
+  runEconomySave,
   runCourseRegistry,
   runTravelNetwork,
   runDockLayout,
@@ -77,7 +78,8 @@ const suites = [
   runHaloPortTraffic,
   runPortParking,
   runTrafficWorld,
-  runTrafficCore
+  runTrafficCore,
+  runWorkforce
 ];
 const results = [];
 

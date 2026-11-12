@@ -25,6 +25,10 @@ import {
   buildTravelNetwork, addStationNode, getNode, chooseRoute
 } from '../../src/game/traffic/travelNetwork.js';
 import { snapshotMarket, findTradeOpportunities } from '../../src/game/traffic/tradeMarket.js';
+import { resourcePrice } from '../../src/game/stationEconomy.js';
+import { getActiveCourses } from '../../src/game/traffic/courseRegistry.js';
+import { buildTrafficWorld, stepTrafficWorld, TRAFFIC_STEP_SECONDS } from '../../src/game/traffic/trafficWorld.js';
+import { addMarket, addMarketBuilding } from '../../src/game/traffic/markets.js';
 
 export function run() {
   const t = createSuite('playerStation');
@@ -173,6 +177,38 @@ export function run() {
   t.check('handel z nową stacją ma sens ekonomiczny',
     okazje.some(o => o.target.id === 'przyczolek-gracza' || o.source.id === 'przyczolek-gracza'),
     `(${okazje.length} okazji)`);
+
+  // ----------------------------------------------------------
+  t.section('Stacja gracza jako rynek świata ruchu (addMarket)');
+
+  // Ten sam scenariusz w PEŁNYM świecie: jedno wywołanie zakłada węzeł,
+  // magazyn, doki, stocznię i port domowy — bez ręcznego składania części.
+  const swiat = buildTrafficWorld({ economyScale: 4, capacityMultiplier: 4, seed: 9 });
+  for (let i = 0; i < 60; i++) stepTrafficWorld(swiat, TRAFFIC_STEP_SECONDS);
+  const ceres = swiat.stations.find(s => s.id === 'ceres');
+  const ID = 'stacja-gracza';
+  const baza = addMarket(swiat, {
+    id: ID, label: 'Stacja gracza', kind: 'player',
+    position: { source: 'point', x: ceres.x + 300_000, y: ceres.y },
+    factionId: FACTION.TERRA_NOVA,
+    industry: { buildings: ['foundry', 'shipworks'], size: 0.4 },
+    docks: { layout: 'piers' }
+  });
+  t.check('rynek gracza wchodzi jednym wywołaniem', !!baza && swiat.markets.get(ID)?.kind === 'player');
+  t.check('ma pomosty z redą', swiat.docks.get(ID)?.berths.length > 0 && !!swiat.parking.get(ID));
+  t.check('ma stocznię (budynek okrętowy)', swiat.shipyards.yards.some(yard => yard.stationId === ID));
+  t.check('ma ceny skupu wsadu', resourcePrice(baza, swiat.getEconomy(ID), 'iron_ore')?.bid > 0);
+  t.check('trasa do niej istnieje', !!chooseRoute(swiat.network, 'earth', ID, { mass: 100, value: 1000 }));
+  let obsluzona = false;
+  for (let krok = 0; krok < 1440 && !obsluzona; krok++) {
+    stepTrafficWorld(swiat, TRAFFIC_STEP_SECONDS);
+    obsluzona = getActiveCourses(swiat.registry).some(course => course.stages?.some(stage =>
+      stage.toId === ID || stage.nodeId === ID));
+  }
+  t.check('kursy lecą do stacji gracza', obsluzona);
+  const huta = addMarketBuilding(swiat, ID, 'electronics');
+  t.check('kolejny budynek przez rynek', huta?.buildings?.length === 3);
+
 
   return t.results;
 }

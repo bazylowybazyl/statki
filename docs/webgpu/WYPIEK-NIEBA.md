@@ -1,7 +1,11 @@
 # Wypiekacz nieba (tło kosmosu) — `src/3d/skybake/`
 
-Stan: 2026-10-06. Kroki 1–3 zrobione: pętla oceny, styl „galaktyka” (w grze — § „W grze”: `nebula.webp`, jasność wg
-strefy) i styl „mgławica” (mgławica objętościowa, § „Krok 3” — kandydat wypieczony, tło gry NIE podmienione).
+Stan: 2026-10-26. Kroki 1–3 zrobione: pętla oceny, styl „galaktyka” (w grze — § „W grze”: `nebula.webp`, jasność wg
+strefy) i styl „mgławica” (mgławica objętościowa, § „Krok 3” — kandydat wypieczony, tło gry NIE podmienione). Od
+2026-10-26 tło gry to NIEBO-SFERA (§ „Niebo-sfera”, DECYZJE-2 N1–N3): equirect całego nieba z wypiekacza w trybie sfery,
+obracany z drogi statku; dawna płaszczyzna (`nebula.webp`) zostaje dla tła menu i A/B `?niebo=plaska`. 2026-10-27 —
+nowe PRAWO TEMPA nieba (§ „Niebo-sfera — prawo tempa 2026-10-27”: walka 3,3×, hipercruise 3–4×, warp 5–6× szybciej;
+A/B `?nieboTempo=stare`).
 
 ## Po co
 
@@ -223,3 +227,328 @@ oglądania, nie do repo. Pętla: `niebo-arkusz.mjs --styl mglawica` (iteracje m0
    docelowo per region (§ „Otwarte” wyżej, pkt 2).
 2. Kompozycja referencyjnych nastaw (obręcz rozety, filary ref. 9) — dziś jedna geometria mas dla wszystkich nastaw.
 3. Faza wsteczna stała (−0,35) i udział 0,35 — ewentualnie suwak.
+
+## Niebo-sfera (DECYZJE-2 N1–N3, 2026-10-26)
+
+Decyzja użytkownika po teście warpa: „no to robimy [skybox]”. Tło gry to sfera w nieskończoności zamiast płaszczyzny
+z paralaksą 0,02 (która w walce stała — 0,11 px/s, w warpie płynęła 39 px/s bez związku z resztą warstw). Analiza opcji:
+raport skybox i krytyk (katalog opcji sesji 2026-10-26); tu stan i pomiary.
+
+### Obrót z drogi statku (`src/3d/skyScroll.js`, moduł czysty)
+
+- Kwaternion świat ← niebo całkowany co klatkę renderu z drogi STATKU (`RenderWorld.playerPose`, bez niej encja): oś =
+  z × kierunek ruchu w osiach sceny, kąt = vN_wygł · dt · p · zoom / f (zoom = px bufora / j., f = (H / 2) / tg 17,5°
+  px bufora / rad; vN — droga nieba, prawo tempa § niżej; do 2026-10-27: min(droga, 14 000 · dt) · 0,03 · zoom / f —
+  dziś `?nieboTempo=stare`). Kop warpa i wysunięcie riga nie szarpią nieba (droga statku, nie kamery). Skok położenia
+  > 4 · max(v, v poprzedniej klatki) · dt + 50 j. (teleport, cięcie, odrodzenie) nie obraca nieba (w tej klatce niebo
+  biegnie wygładzoną prędkością). Orientacji nie zapisujemy — start `SKY_START` (ten sam kadr co
+  dawna płaszczyzna: środek tekstury 7,5° od rdzenia pasa, pas pod 27°, zgrubienie ~39° dalej wzdłuż pasa); nowa gra
+  przeładowuje stronę, więc zawsze startuje z `SKY_START`.
+- Droga = okręt PROWADZONY PRZEZ KAMERĘ: statek gracza, a przy sterach fregaty zwiadu fregata (`RenderWorld.cameraLead`
+  — { x, y, v, w }: poza z kamery fregaty `scoutCamLast`, prędkość, waga przejazdu kamery `scoutCamW`; strona —
+  `window.__cameraLead` z getterami w bloku ZWIAD `index.html`, worker — `HEAD.LEAD_*` migawki). Każdy okręt ma swój
+  tropiciel drogi z cięciem (`skyTrackStep`), drogi miesza waga w (przejazd kamery Atlas ↔ fregata nie obraca nieba o
+  drogę kamery między okrętami, test). Fregata 510–1470 j/s → niebo 12–35 px/s przy zoomie 0,45 i 1080p (sufit
+  głębi; bez niego 23–66, dawne prawo 7–19).
+- Podzielony ekran (co-op): gracz 2 ma własny stan obrotu (droga `RenderWorld.player2Ship`, zoom i obrót kadru
+  `RenderWorld.camera2`); hak passa tła ustawia widok (macierz, udział drobnych gwiazd) przed każdym `renderSingle`
+  (kamera gracza 2 = `Core3D.activeCam1` drugiego renderu), pamięć nieba w podziale wyłączona (dwa widoki w klatce).
+- CZAS KROKU = przyrost zegara klatek strony (`RenderWorld.frameClock` — w workerze `HEAD.T_FRAME`, suma dt klatek; off —
+  dt klatki). Worker rysuje najnowszą stronę i pomija strony: z dt jednej strony droga kilku stron wyglądała na teleport
+  (cięcie) albo sufit 14 tys. j/s przycinał obrót — w warpie niebo obracało się w workerze o 7,3° zamiast 32,3° (44 cięcia
+  w jednym przebiegu). Po poprawce (2026-10-27, 2560 × 1440): warp 32,26° w workerze / 32,25° w off, 1 cięcie na teleport.
+- Fregata zwiadu w trybie off rysuje się w pozie kroku fizyki (60 Hz, bez `renderPoses`) — niebo przy jej sterach idzie
+  wtedy krokami 60 Hz jak kadr; w workerze (poza interpolowana) płynnie: 12,65 px/s przy 1483 j/s i zoomie 0,284 = prawo.
+- Obrót kadru (`cam.roll` — kurs w górę w skoku i hipercruisie) wchodzi w macierz widok → niebo, więc niebo płynie od
+  dziobu ku rufie przy każdym kursie (test).
+- Holonomia: krążenie w bitwie (r 20 tys., 507 j/s, 4 min) obraca niebo wokół osi widoku o ~11° na okrążenie (0,05 °/s;
+  dawne prawo ~1°) — w ruchu niewidoczne (test).
+
+### Niebo-sfera — prawo tempa 2026-10-27
+
+Uwaga użytkownika po teście nieba-sfery (2026-10-27): „za słabo płynie tło, zbyt delikatnie” (wcześniej, 2026-10-26: „chcę,
+żeby tło się przewijało, jak lecę statkiem … skybox można dobrze przewijać i zastosować w warp”). Dawne prawo (min(v,
+14 tys.) · 0,03 · zoom) dawało w walce 3–7 px/s (0,11 °/s — niebo praktycznie stało), a hipercruise i warp jechały na
+TYM SAMYM suficie (49 px/s, 1,65 °/s): skok obracał niebo o ~23–36°, przelot nad planetą (prędkość × 0,16) był w niebie
+niewidoczny (dalej ponad sufitem).
+
+PRAWO (`src/3d/skyScroll.js`, `SKY_SCROLL`): droga nieba vN = v do kolana 5 tys. j/s (walka i dopalacz — liniowo),
+wyżej 5000 · (1 + ln(v / 5000)) — bez sufitu, ciągła i gładka; wygładzona w czasie klatek (0,15 s, `RenderWorld.frameClock`);
+tempo [px bufora/s] = vN_wygł · p_ef · zoom, p_ef = min(0,1; 0,75 · camZ / (camZ + 50 000)) · mnożnik (`?nieboTempo=<liczba>`),
+camZ = f / zoom.
+
+- SUFIT GŁĘBI (recenzja 2026-10-27): planety bez ringu stoją na z = −50 000 i płyną z paralaksą camZ / (camZ + 50 000)
+  — 0,138 przy 16:9 w zoomie bojowym, 0,074 przy 32:9, 0,097 po przybliżeniu × 1,5. Stałe p 0,1 dawało przy 32:9
+  w walce niebo 1,35× szybsze od tarczy planety (przy zbliżeniu × 2 — 2,6×): planeta zasłania niebo, a niebo przesuwa się
+  za nią szybciej — tarcza wygląda na naklejoną. Sufit 0,75 × paralaksy planety: przy 16:9 w zoomie bojowym i w kadrze skoku
+  nie działa (liczby 16:9 bez zmian), przy 32:9 w walce p_ef 0,056 — kątowo tyle co 16:9 (0,40 wobec 0,36 °/s), w skoku
+  przy 32:9 0,0955 (−4,5%), po przybliżeniu (16:9 od × 1,04 zoomu domyślnego) tempo w px przestaje rosnąć z zoomem
+  (dopalacz: ~0,9–1 °/s przy każdym zbliżeniu; dawne prawo przy zoomie 3,2 jechało 109 px/s, szybciej niż planety). A/B
+  bez sufitu: `?nieboSufit=0`.
+- KLATKA BEZ DROGI (recenzja 2026-10-27): pauza i `worldFrozen` wołają render z dt > 0 przy stojącej pozie (worker:
+  HEAD.T_FRAME rośnie też w pauzie). Wygładzona droga nieba gasła wtedy przez ~1,5 s: w pauzie w warpie Mk II niebo
+  dojeżdżało 39 px, mid 51–102 px (144 Hz, hipercruise 21 / 27–53 px), choć świat i warstwa speed stały. Teraz klatka bez
+  drogi i bez cięcia nie obraca nieba i nie zmienia vN_wygł — po wznowieniu niebo rusza z tą samą prędkością.
+- STRAŻ W0: vN_wygł ≤ 3,5 · min(v, 14 tys.) (v ze stanu okrętu) — przy twardym hamowaniu (koniec rampy wyjścia:
+  16,2 → 2,7 tys. j/s w 0,17 s, potem 1,5 tys. w jednej klatce) niebo nie wyprzedza warstwy speed GameStars. Przez nią
+  `?nieboTempo` > 1 działa najwyżej × 3,5 w walce i × 2,15 w warpie Mk II.
+- Warstwa mid GameStars jedzie w trybie sfery tą samą drogą nieba z paralaksą 0,13–0,26 (zamiast kamery z sufitem 14 tys.
+  i 0,055–0,18) — niebo < mid z zapasem ≥ 1,26× (1,3 × skala ekranowa warstw na z = −250) w każdej klatce, gdy kamera
+  jedzie ze statkiem.
+
+Tempo [px CSS/s · °/s] w stanie ustalonym (zoom bojowy Atlasa 0,2 · szerokość / 1800 — 0,2133 przy 1920 px; kadr skoku
+i hipercruise'u × 0,55; 1440p 16:9 — te same °/s, px × 1,33; 32:9 — zoom ∝ szerokość: w skoku ~1,9× 16:9 kątowo, w walce
+sufit głębi wyrównuje kąty z 16:9):
+
+| tryb | v [j/s] | vN [j/s] | 1080p 16:9 | 1440p 16:9 | 1080p 32:9 | 1440p 32:9 | 1440p 32:9 bez sufitu | dawne (1080p 16:9) |
+|---|---|---|---|---|---|---|---|---|
+| walka | 300 | 300 | 6,4 · 0,21 | 8,5 · 0,21 | 7,1 · 0,24 | 9,5 · 0,24 | 17,1 · 0,43 | 1,9 · 0,06 |
+| walka (Atlas) | 507 | 507 | 10,8 · 0,36 | 14,4 · 0,36 | 12,1 · 0,40 | 16,1 · 0,40 | 28,8 · 0,72 | 3,2 · 0,11 |
+| walka | 800 | 800 | 17,1 · 0,57 | 22,8 · 0,57 | 19,0 · 0,64 | 25,4 · 0,64 | 45,5 · 1,14 | 5,1 · 0,17 |
+| dopalacz | 1137 | 1137 | 24,3 · 0,81 | 32,3 · 0,81 | 27,0 · 0,90 | 36,1 · 0,90 | 64,7 · 1,62 | 7,3 · 0,24 |
+| walka | 1500 | 1500 | 32,0 · 1,07 | 42,7 · 1,07 | 35,7 · 1,19 | 47,6 · 1,19 | 85,3 · 2,14 | 9,6 · 0,32 |
+| dopalacz z bliska (zoom 0,45) | 1137 | 1137 | 27,1 · 0,91 | 36,2 · 0,91 | 28,1 · 0,94 | 37,5 · 0,94 | 136 · 3,42 | 15,3 · 0,51 |
+| hipercruise Mk I przy planecie (× 0,6) | 12 000 | 9377 | 110 · 3,68 | 147 · 3,68 | 210 · 7,03 | 280 · 7,03 | 293 · 7,36 | 42,2 · 1,41 |
+| hipercruise Mk I | 20 000 | 11 931 | 140 · 4,68 | 187 · 4,68 | 267 · 8,95 | 357 · 8,95 | 373 · 9,37 | 49,3 · 1,65 |
+| hipercruise Mk II | 30 000 | 13 959 | 164 · 5,48 | 218 · 5,48 | 313 · 10,47 | 417 · 10,47 | 437 · 10,96 | 49,3 · 1,65 |
+| hipercruise Mk III | 40 000 | 15 397 | 181 · 6,04 | 241 · 6,04 | 345 · 11,55 | 460 · 11,55 | 482 · 12,09 | 49,3 · 1,65 |
+| warp nad planetą (podłoga 0,15 · 225 tys.) | 33 750 | 14 548 | 171 · 5,71 | 228 · 5,71 | 326 · 10,91 | 435 · 10,91 | 455 · 11,42 | 49,3 · 1,65 |
+| warp Mk I | 100 000 | 19 979 | 234 · 7,84 | 313 · 7,84 | 448 · 14,98 | 597 · 14,98 | 625 · 15,68 | 49,3 · 1,65 |
+| warp Mk II | 175 000 | 22 777 | 267 · 8,94 | 356 · 8,94 | 511 · 17,08 | 681 · 17,08 | 713 · 17,88 | 49,3 · 1,65 |
+| warp Mk II (plan S1) | 225 000 | 24 033 | 282 · 9,43 | 376 · 9,43 | 539 · 18,02 | 718 · 18,02 | 752 · 18,87 | 49,3 · 1,65 |
+| warp Mk III | 250 000 | 24 560 | 288 · 9,64 | 384 · 9,64 | 551 · 18,42 | 734 · 18,42 | 768 · 19,28 | 49,3 · 1,65 |
+| warp Mk III (sufit planu) | 576 923 | 28 741 | 337 · 11,28 | 450 · 11,28 | 644 · 21,56 | 859 · 21,56 | 899 · 22,56 | 49,3 · 1,65 |
+| ślizg wyjścia (kadr przylotu × 0,1) | 16 200 | 10 878 | 23,2 · 0,78 | 30,9 · 0,78 | 46,4 · 1,55 | 61,9 · 1,55 | 61,9 · 1,55 | 9,0 · 0,30 |
+| koniec ślizgu (zoom bojowy) | 16 200 | 10 878 | 232 · 7,76 | 309 · 7,76 | 259 · 8,65 | 345 · 8,65 | 619 · 15,53 | 89,6 · 3,00 |
+
+Obrót nieba w całym skoku (symulator `warp-soczewka-sym.mjs` — kontrola `W0-niebo` i tabela „Niebo-sfera”, 16:9;
+w nawiasie dawne prawo; 32:9 1440p Mk II: S1 207°, S4 231°, S10 314°, S11 232°, S2 64°, S9 99°):
+
+| scenariusz | Mk I | Mk II | Mk III |
+|---|---|---|---|
+| S1 Ziemia → Jowisz (Mars w trawersie) | 150° (35°) | 109° (23°) | 91° (18°) |
+| S4 Jowisz → Saturn | 170° (39°) | 125° (26°) | 104° (21°) |
+| S10 Wenus → Saturn (przelot nad Ziemią i Jowiszem) | 234° (56°) | 168° (36°) | 137° (28°) |
+| S11 Mars → Saturn (nad ringiem Jowisza) | 171° (41°) | 125° (27°) | 105° (22°) |
+| S2 Ziemia → Mars (krótki) | 38° (11°) | 35° (10°) | 35° (10°) |
+| S9 skok awaryjny 400 tys. j. | 60° (16°) | 55° (14°) | 55° (14°) |
+
+Najszybciej w locie 8,6–10,2 °/s (Mk I–III, 1080p: 256–305 px/s). Przelot obok Marsa w S1 (prędkość 225 → 36 tys. j/s):
+niebo 9,4 → 5,9 → 9,0 °/s (dawniej stałe 1,65). W0 klatka po klatce we wszystkich scenariuszach, z kamerą równą statkowi:
+niebo / mid ≤ 0,793 (= 0,1 / 0,13 / skala z = −250), mid / speed ≤ 0,892 (straż W0 na końcu rampy wyjścia).
+
+WYJĄTEK W0 — RUCH KAMERY WZGLĘDEM STATKU (recenzja 2026-10-27; kontrola informacyjna `W0-niebo-kamera` symulatora, tylko
+klatki z wolniejszą warstwą ≥ 5 px/s przy 1080p). Mid dostaje ruch kamery względem statku (kop, wyprzedzenie riga, kadr
+przylotu), niebo nie (droga statku — „kop warpa i wysunięcie riga nie szarpią nieba”). Gdy kamera COFA SIĘ względem
+statku — przybliżanie kadru przy stałym wyprzedzeniu w px — mid zwalnia, a niebo nie:
+
+| przebieg (Mk II, 1080p) | niebo / mid najwyżej | czas > 1 | niebo [px/s] | dawne prawo (najwyżej w przebiegu) |
+|---|---|---|---|---|
+| S10 wyjście | 1,97 | 0,38 s | 110 | 53,7 w kopie, 0,02 s przy 6,6 px/s |
+| S11 wyjście | 1,87 | 0,53 s | 167 | 5,8 w kopie, 0,02 s przy 6,0 px/s |
+| S4 wyjście | 1,75 | 0,40 s | 157 | 0,78 |
+| S8 przylot (Io za Jowiszem, kadr przybliża się 5 s) | 3,36 | 6,0 s | 25 | 6,5 przy wyjściu, 0,1 s przy 6,5 px/s |
+| S1 / S2 powrót zoomu po przylocie (mid jedzie wstecz) | ∞ | 0,7–0,8 s | 10 | S1: 3,5 w kopie, 0,02 s; powrót pod progiem (3 px/s) |
+| S3, S7, S9, S12 wyjście | 1,06–1,07 | ≤ 0,03 s | 207–211 | 0,65–0,71 |
+
+Mid / speed z kamerą: najwyżej 2,3–3,1 (S1 i S8 przy końcu rampy wyjścia, S11 w kopie; speed wtedy 13–19 px/s — kamera
+wolniejsza od statku, a straż W0 liczy prędkość statku). Dawne prawo miało odwrócenia nieba i mid w tych samych fazach,
+ale niebo jechało tam 3–7 px/s. Naprawa to decyzja użytkownika: (a) niebo i mid z drogi KAMERY ściśniętej tym samym c = vN_wygł / v
+(W0 zawsze; niebo reaguje na kop, wyprzedzenie riga i patrzenie kursorem), (b) mid bez ruchu kamery względem statku
+(W0 zawsze; gwiazdy mid przestają reagować na patrzenie kursorem i kop), (c) zostawić — odwrócenia trwają ułamek sekundy
+przy wyjściu albo zachodzą przy ~25 px/s w kadrze przylotu.
+
+Warstwy (px/s; mid i speed ze skalą ekranową z = −250; speed bez zmian — kamera gwiazd, w skoku sufit 14 tys.):
+
+| tryb | 1080p 16:9: niebo | mid (sfera) | speed | 1440p 32:9: niebo | mid (sfera) | speed | dawne niebo / mid (1080p) |
+|---|---|---|---|---|---|---|---|
+| walka 507 j/s | 10,8 | 13,6–27,3 | 107–187 | 16,1 | 35,3–70,6 | 277–483 | 3,2 / 5,9–19,5 |
+| dopalacz 1137 j/s | 24,3 | 30,6–61,2 | 240–419 | 36,1 | 79,2–158 | 621–1084 | 7,3 / 13,3–43,7 |
+| dopalacz z bliska (0,45) | 27,1 | 62,4–125 | 490–855 | 37,5 | 157–314 | 1230–2147 | 15,3 / 28,1–92,1 |
+| hipercruise Mk I | 140 | 179–358 | 1647–2875 | 357 | 469–938 | 4320–7539 | 49,3 / 90–296 |
+| hipercruise Mk III | 181 | 231–462 | 1647–2875 | 460 | 606–1211 | 4320–7539 | 49,3 / 90–296 |
+| warp Mk II | 267 | 342–683 | 1647–2875 | 681 | 896–1792 | 4320–7539 | 49,3 / 90–296 |
+| warp Mk III (sufit planu) | 337 | 431–862 | 1647–2875 | 859 | 1130–2261 | 4320–7539 | 49,3 / 90–296 |
+
+Mid w walce przy 16:9 2,3× / 1,4× szybciej niż dawniej (najwolniejsza / najszybsza), ale nadal 13–25% tempa świata
+(108 px/s przy 507 j/s) — warstwa speed (99–173%) zostaje najbliższa. Przy 32:9 sufit głębi zwalnia samo niebo, mid nie
+(mid / niebo 2,2–4,4). Skały w warpie: najszybsza mid wyprzedzała najwolniejsze skały dalekie (mid max / skała min 1,24 /
+1,14 / 1,44 przy 33,75 / 175 / 577 tys. j/s, dawniej 0,83 / 0,49 / 0,49) — wyjątek W0 zniknął razem ze skałami skoku
+(usunięte 2026-10-27, decyzja użytkownika; `tests/warpDebrisLayers.test.mjs` usunięty z nimi). Ciała soczewki w warpie płyną
+w 69–98% klatek wolniej niż niebo (dawniej 32–95%) — `WARP-SOCZEWKA.md`.
+
+WORKER POMIJA STRONY (recenzja 2026-10-27): sufit kroku warstwy speed (14 tys. j/s × czas) liczył się z dt JEDNEJ strony,
+a mid jechała drogą nieba z zegara stron — przy rysunku co N-tą stronę speed zwalniała N razy i od N ≈ 2,2–2,8 (warp Mk I–III)
+mid wyprzedzała speed. `StarSystem` bierze czas kroku z przyrostu `RenderWorld.frameClock` (`starClockDt`,
+`src/3d/starParallax.js`; tryb off — dt klatki), jak niebo — także w trybie płaskim.
+
+DROBNE GWIAZDY (siatki 1–2, σ_eff ≈ 0,58 px): NIOSĄ ruch tła (mgławica jest gładka), więc próg w px BUFORA NA RYSOWANĄ
+KLATKĘ to 6 → 12 (~10 σ). Pierwsza wersja prawa miała 1,5 → 3,5 px/kl. i gasiła je w warpie przy 60 i 144 Hz, a przy
+32:9 1440p także przy 240 Hz (udział 0,17 w warpie Mk II) — dokładnie tam, gdzie tło ma płynąć (recenzja obrazu W3;
+reguła miała dawniej próg kątowy właśnie dlatego, że próg w px gasił je w warpie na 4K). Dawny próg kątowy 2 → 4 °/s
+gasiłby je już w hipercruisie. Przesuw na klatkę [px] i udział (60 / 144 / 240 Hz):
+
+| tryb | 1080p 16:9 | 1440p 16:9 | 4K 16:9 | 1440p 32:9 |
+|---|---|---|---|---|
+| walka 1500 j/s | 0,53 / 0,22 / 0,13 — 1 / 1 / 1 | 0,71 / 0,30 / 0,18 — 1 / 1 / 1 | 1,07 / 0,44 / 0,27 — 1 / 1 / 1 | 0,79 / 0,33 / 0,20 — 1 / 1 / 1 |
+| hipercruise Mk I | 2,33 / 0,97 / 0,58 — 1 / 1 / 1 | 3,11 / 1,30 / 0,78 — 1 / 1 / 1 | 4,67 / 1,94 / 1,17 — 1 / 1 / 1 | 5,94 / 2,48 / 1,49 — 1 / 1 / 1 |
+| warp Mk II | 4,45 / 1,86 / 1,11 — 1 / 1 / 1 | 5,94 / 2,47 / 1,48 — 1 / 1 / 1 | 8,91 / 3,71 / 2,23 — 0,52 / 1 / 1 | 11,35 / 4,73 / 2,84 — 0,03 / 1 / 1 |
+| warp Mk III | 4,80 / 2,00 / 1,20 — 1 / 1 / 1 | 6,40 / 2,67 / 1,60 — 0,99 / 1 / 1 | 9,61 / 4,00 / 2,40 — 0,35 / 1 / 1 | 12,24 / 5,10 / 3,06 — 0 / 1 / 1 |
+
+Walka zostaje pełna przy każdym zbliżeniu (sufit głębi). Migotanie drobnicy w walce (szczyt jasności pulsuje o ±18%
+z fazą subpikselową: 10,8 Hz przy 1080p, 16 Hz przy 32:9 z sufitem) — do oceny w grze.
+
+JASNE GWIAZDY (kwady): smuga w skoku i hipercruisie = ruch nieba w ekspozycji 0,05 s × `WARP_STARS.stretch` (najwyżej
+48 px CSS), NAJMNIEJ dawna smuga 0,22 · stretchPx ≈ 16 px — w ładowaniu skoku statek stoi, a smuga rośnie z `stretch`
+(„zapowiedź” skoku z BRIEF-warp; czysty ruch w ekspozycji dawał tam ~0 px przy mid 43 i speed 130 px). 1080p 16:9 —
+16 px w hipercruisie i warpie (ruch 7 / 13 px), 1440p — 16 / 18 px, 4K — 16 / 27 px, 32:9 1440p — 18 / 34 px.
+
+PAMIĘĆ NIEBA i koszt GPU (szacunek z pomiarów 5120 × 1440, RTX 5080: odczyt pamięci ~0,09 ms, rysunek wprost ~0,34 ms,
+przeliczenie = odczyt + rysunek): hipercruise i warp — wprost przed i po zmianie (bez zmiany kosztu); walka przy 507 j/s —
+przesuw 0,045 px/kl. (1080p, 240 Hz) → przeliczenie co ~6 klatek (~0,15 ms średnio; dawniej co ~19 — ~0,11 ms); 32:9
+1440p przy 60 Hz — 0,27 px/kl. (sufit głębi) → wprost 0,34 ms (dawniej co 2 klatki ~0,26 ms). Najgorszy przypadek
++0,08 ms klatki w walce; kwady jasnych gwiazd z dłuższą smugą ~0,9 mln fragmentów w skoku 32:9 (pomijalne). Bez nowych
+materiałów i pipeline'ów (smuga i warstwa mid — uniformy; rozgrzewka bez zmian). Pomiar w grze (`cacheStats`,
+`Core3D.gpuFrameMs`) — osobny etap.
+
+A/B: `?nieboTempo=stare` (dokładnie dawne: prawo, bez wygładzenia, próg kątowy drobnych gwiazd, smuga 16 px, dawna mid),
+`?nieboTempo=0.5` / `2` — mnożnik nowego tempa (mnoży całe prawo z sufitem głębi; mid przyspiesza z niebem powyżej 1;
+straż W0 przycina mnożnik do × 3,5 w walce i × 2,15 w warpie Mk II), `?nieboSufit=0` — nowe prawo bez sufitu głębi.
+Pomiar w grze — osobny etap.
+
+Dawna tabela (prawo do 2026-10-26, px CSS przy 1080p): walka 3,2 px/s (0,11 °/s), z bliska 6,8, dopalacz 7,3, hipercruise
+i warp 49,3 (1,65 °/s); skok o medianie 21 s obracał niebo o ~35°; smugi gwiazd nieba ≤ 16 px. Pomiar w grze
+(`niebo-gra.mjs --klip 1`): 5,9 px CSS/s przy ~430 j/s i zoomie 0,45 — zgodnie z dawnym prawem. Skały w warpie (zespół S:
+621–1402 px/s — między mid a speed) usunięte 2026-10-27.
+
+### Człon zwykłego lotu 2026-10-31
+
+Prośba użytkownika: „zwiększ prędkość poruszania gwiazd podczas lotu statkiem (zwykły lot — gwiazdy niech się szybciej
+poruszają, żeby był lepszy efekt prędkości)”. Gwiazdy widoczne w walce to gwiazdy nieba-sfery (drobne na piksel i jasne
+z katalogu): GameStars (26 000 na 220 tys.² j.) dają w zoomie bojowym ~24 punkty na kadr 1080p (14 bez schowanej deep),
+w kadrze skoku ~80 — przyspieszenie samej warstwy mid nie byłoby widać. Przy 16:9 w zoomie bojowym p 0,1 stoi już na
+suficie głębi (0,104), a przy 32:9 sufit trzyma 0,056 — samo p nie ma zapasu.
+
+Prawo: vN += (B − 1) · v · (1 − v / cruiseTo)² poniżej cruiseTo (`cruiseBoost` B = 2,5, `cruiseTo` 8 tys. j/s) — przy
+małej prędkości vN = 2,5 v, walka 507 j/s × 2,32, dopalacz 1137 × 2,10, 2,5 tys. × 1,71, 4 tys. × 1,38, kolano 5 tys.
+× 1,21, od 8 tys. bez członu (hipercruise i warp jak w tabeli wyżej). Rosnąca (najmniejsza pochodna dvN / dv 0,36 przy
+~6,2 tys.), gładka w cruiseTo. Niebo i mid jadą tą samą drogą — W0 bez zmian (`tests/skyScroll.test.mjs`, symulator
+`warp-soczewka-sym.mjs`: W0-niebo OK we wszystkich przebiegach, niebo / mid ≤ 0,793, mid / speed ≤ 0,892); mid ≤ 0,26 ·
+2,5 · v = 0,65 v < speed 1,02 v. Człon omija sufit głębi: w walce niebo płynie ~1,7× szybciej niż tarcza planety bez
+ringu (planety tła w walce rzadko są w kadrze; efekt prędkości ważniejszy).
+
+| tryb (stan ustalony) | przed | po |
+|---|---|---|
+| walka 507 j/s, 1080p 16:9 | 10,8 px/s (0,36 °/s) | 25,1 px/s (0,84 °/s) |
+| dopalacz 1137 j/s, 1080p 16:9 | 24 px/s | 51 px/s |
+| walka 507 j/s, 1440p 32:9 | 16 px/s (0,40 °/s) | 37 px/s (0,93 °/s) |
+| mid w walce 507 j/s, 1080p | 14–27 px/s | 32–63 px/s |
+| hipercruise, warp | — | bez zmian |
+
+Skutki uboczne: holonomia przy krążeniu (r 20 tys., 507 j/s, 4 min) 11° → 56° (0,22 °/s wobec przepływu 0,84 °/s);
+`?nieboTempo` > 1 w walce działa najwyżej × 1,5 (straż W0: 3,5 / 2,32); pamięć nieba w walce przy 144 Hz przelicza się
+co ~1,4 klatki (0,17 px/kl. < progu wprost 0,25) — przy 150 j/s co ~4–5 klatek. Hipercruise Mk I (140 px/s) jest
+już tylko ~2,2× szybszy od walki przy 1500 j/s (dawniej ~4,4×).
+
+### Obraz (`src/3d/sky3D.js`: `SkySphere`, materiały `src/3d/skySphere.tsl.js`)
+
+- KAMERA Z GÓRY: czworokąt pełnoekranowy w passie tła (warstwa 1, renderOrder −1000), piksel → kierunek RZUTEM
+  RÓWNOODLEGŁYM (r / f = kąt od osi widoku): tempo i smugi równe w całym kadrze także na 32:9 (rzut gnomoniczny dawałby
+  brzegi ×2,26 szybciej; kadr 32:9 — 5120 × 1440, f = 2283,5 px / rad — widzi ±64,2° w poziomie (2560 / f = 1,121 rad),
+  rozciągnięcie styczne brzegu θ / sin θ ≈ 1,25; ruch nieba przy kursie w górę: brzeg w kierunku ruchu płynie jak środek,
+  brzeg boczny wolniej — test „rzut równoodległy” w `tests/skyScroll.test.mjs`). Soczewka bańki
+  (`skyBend.js`) przesuwa piksel przed wyznaczeniem kierunku. Bez rulonu (`rulonBend = false`, bez `rulonInverse`).
+- TREŚĆ: `public/assets/sky-equirect.webp` (6144 × 3072, WebP bezstratny 11,2 MB, wartości tekstury po odwróceniu ACES jak
+  `nebula.webp`, bez gwiazd) + gwiazdy drobne (siatki 1–2) liczone na piksel w PRZESTRZENI KIERUNKÓW: ściany sześcianu w
+  rzucie równokątnym (α = atan u, β = atan v; kąt bryłowy komórki 0,71–1, gęstość poprawiona o niego), 2 × 2 komórki na
+  siatkę (8 zamiast 26 płaszczyzny), profil Gaussa σ_eff² = σ² + 1/12 znormalizowany; gęstość i odcień z gładkiego nieba
+  jak na płaszczyźnie. Gasną przy szybkim niebie — od 2026-10-27 próg w PX BUFORA NA RYSOWANĄ KLATKĘ 6 → 12 (tabela
+  w § „Niebo-sfera — prawo tempa 2026-10-27”; okres klatki — średnia krocząca po klatkach, zacięcie nie gasi), udział
+  wygładzony w czasie (stała 0,35 s). Do 2026-10-27 (dziś `?nieboTempo=stare`): próg w PRĘDKOŚCI KĄTOWEJ 2 → 4 °/s
+  (= 60 → 120 px CSS/s przy 1080p) — przy dawnym tempie hipercruise i warp (1,65 °/s przy 16:9) ich nie gasiły; koniec
+  ślizgu wyjścia (~2,8 °/s przez ułamek sekundy) — udział najniżej 0,91 (pomiar w grze, 2560 × 1440, off; worker 0,999).
+  Przy nowym tempie próg kątowy gasiłby je już w hipercruisie Mk I (4,7 °/s), choć przy 240 Hz przesuw to 0,6 px/kl.;
+  próg w px / klatkę mierzy to, co naprawdę psuje obraz (gwiazda σ_eff ≈ 0,58 px skacze o ~10 σ na klatkę).
+- JASNE GWIAZDY (siatki 3–4 z halo): ~14,7 tys. kandydatów z haszu (ten sam lowbias32, sól ściany i komórki co GPU —
+  te same gwiazdy, które kamery 3D liczą na piksel), kwady instancjonowane (jeden przeplatany bufor, jeden rysunek),
+  gęstość i odcień z tekstury w wierzchołku; w skoku smuga wzdłuż KURSU na ekranie (`WARP_STARS.heading` — jeden wektor,
+  nie wachlarz) o długości ruchu nieba w ekspozycji 0,05 s, najmniej 0,22 · `stretchPx` (uniform `streakLen`; do
+  2026-10-27 — stała długość warstwy deep 0,22 · `stretchPx`) i front wyjścia od dziobu (`WARP_STARS.frontPx`); światło
+  dokładane tak jak na pikselu płaszczyzny: acesGryInv((gładkie + gwiazda) · jasność) − acesGryInv(gładkie · jasność).
+- PAMIĘĆ NIEBA: jak płaszczyzna — niebo z gwiazdami drobnymi do celu HalfFloat w rozmiarze bufora, przeliczane, gdy obraz
+  obróci się o ≥ 0,25 px na brzegu kadru (kąt · max(f, pół przekątnej)), zmieni się rozmiar, tekstura albo udział gwiazd
+  drobnych. WPROST (bez pamięci): soczewka bańki, podzielony ekran i niebo płynące ≥ 0,25 px NA KLATKĘ (obrót widoku tej
+  klatki — droga i obrót kadru; `cacheStats.fast`): w warpie i hipercruisie (140–340 px/s przy 1080p) i przy obrocie
+  kadru pamięć przeliczałaby się w każdej klatce (zapis + odczyt drożej niż rysunek wprost). W walce pamięć przelicza się
+  co ~2–6 klatek (prawo z 2026-10-27; dawniej co ~10–40), przy 60 Hz na 32:9 dopalacz już wprost. A/B: `Core3D.skyCacheEnabled`.
+- JASNOŚĆ STREFY (`skyRegion.js`) i smuga cienia słońca (`sunShaftBackdrop`) — jak na płaszczyźnie; pas asteroid 0,56
+  w obu trybach (zrzut `niebo-gra.mjs`).
+- WARSTWA DEEP GameStars (paralaksa 0,010–0,028) w trybie sfery jest zwinięta w wierzchołku (uniform `hideDeep` materiału
+  gwiazd) — niebo ją zastępuje (N3). Warstwa MID od 2026-10-27 jedzie drogą nieba z paralaksą 0,13–0,26 (uniformy
+  `midSphere`, `cameraOffsetMid`; W0 przy szybszym niebie — § „Niebo-sfera — prawo tempa 2026-10-27”); speed bez zmian.
+- KAMERY 3D: sfera `Sky3D` z tą samą treścią (kierunek sceny → nieba macierzą `worldMat`, siatki 3–4 na piksel 3 × 3).
+- MENU: bez zmian — płat mgławicy `nebula.webp` w materiale tła menu (`menuBackdrop3D.tsl.js`, poza zakresem zespołu;
+  przejście na equirect = nowy materiał nieba menu i nowe ustawienie kadru menu — do oceny użytkownika).
+- Rozgrzewka: wpisy `niebo-sfera: kamera z góry`, `niebo-sfera: jasne gwiazdy`, `niebo-sfera: pamięć nieba` (faza
+  `'loading'`), sfera kamer 3D — dawny wpis `kamery 3D: niebo`. Pipeline'y synchroniczne po starcie: 0 (tryb off i worker,
+  `warp-ped-gra.mjs`, `hipercruise-efekt-gra.mjs`).
+- Koszt GPU (5120 × 1440, RTX 5080, ta sama sesja, mediana `Core3D.gpuFrameMs`): sfera z pamięcią 0,63 ms klatki, bez
+  kwadów 0,61, bez pamięci (najgorszy przypadek — soczewka bańki) 0,88, bez nieba 0,54; płaszczyzna: 0,69 z pamięcią,
+  1,23 bez pamięci. Niebo-sfera kosztuje ~0,09 ms z pamięcią (walka, postój) i ~0,34 ms wprost — warp, hipercruise,
+  obrót kadru, podzielony ekran (dwa rysunki wprost), soczewka bańki (płaszczyzna ~0,6 ms bez pamięci). Przed przejściem
+  na rysunek wprost w szybkim locie pamięć przeliczała się prawie w każdej klatce (warp: zapis + odczyt — szacunek z pomiarów wyżej ~0,43 ms przy 5120 × 1440).
+- PAMIĘĆ GPU: equirect 6144 × 3072 RGBA8 ~75 MB (wgranie w wolnej chwili z kolejki `Core3D.queueTextureUpload`, nie w
+  klatce gry); `nebula.webp` (~65 MB) ładuje się dalej — tło menu pożycza teksturę płaszczyzny (strona i worker), więc
+  razem ~141 MB. Paczka Electrona +11,7 MB.
+
+### Gwiazdy pod bryłami tła (2026-11-03)
+
+Zgłoszenie użytkownika: „gwiazdy tła przebijają się przez różne rzeczy — doki, ring, planetę w misji 1”. Pass tła
+(warstwa 1) niesie oprócz nieba bryły: dolną część ringu, hale K-7 i planetoidę Hidalgo pod bazą piratów. Kwady jasnych
+gwiazd (`createSkyStarQuadsMaterial`, bez testu głębi) i GameStars (`createStarMaterial`, z = −250) miały
+`transparent = true` — three r183 rysuje listę przezroczystych PO wszystkich nieprzezroczystych `render()`, a `renderOrder`
+(−998, −1) sortuje tylko w obrębie listy, więc gwiazdy kładły się na bryłach. Poprawka: oba materiały nieprzezroczyste
+z mieszaniem addytywnym (three miesza każde mieszanie ≠ Normal bez względu na `transparent`) — kolejność w passie tła:
+niebo → jasne gwiazdy → GameStars → bryły; przezroczyste rzeczy tła (powłoka powietrza ringu, poświaty, mgła) dalej leżą
+nad gwiazdami. Pułapka 41 w regule `webgpu-tsl`, strażnik z prawdziwą listą renderu three w `tests/skySphere.test.mjs`.
+
+Sonda w grze (tryb off, 1600 × 900; kadr z gwiazdami i bez — gwiazdy chowane maską warstw, bo widoczność nieba ustawiają
+moduły co klatkę; bryła = piksel niezerowy w kadrze bez nieba i gwiazd, próg 0,035 luminancji): piksele, które gwiazdy
+zmieniają na bryłach, przed → po: hala K-7 (zoom 0,35) 3 120 → 191, hala z ringiem (0,12) 2 687 → 172, baza piratów nad
+osadą (0,2) 5 455 → 0, baza z planetoidą (0,08) 6 273 → 15, cała skała (0,035) 3 694 → 1, ring przy porcie (0,2)
+882 → 767, Ziemia z ringiem (0,02) 313 → 43. Reszta leży na półprzezroczystej poświacie nad pustą przestrzenią (powłoka
+powietrza ringu, mgiełka przy hali) — tam gwiazdy prześwitują słusznie. Ciemne bryły (skała w cieniu, podłoga ringu nocą)
+maska bierze za niebo: łącznie piksele gwiazd w kadrach bazy 17–18 tys. → 0,7–7,3 tys.
+
+### Wypiek sfery (`SkyBaker({ sphere: true })`, styl galaktyki z `sphere`)
+
+- Cel = equirect 2 : 1 (λ = (x / W − 0,5) · 2π, φ = (0,5 − y / H) · π, wiersz 0 = biegun N), `ctx.dir()`, `ctx.lonLat()`;
+  gęstość tekseli jak płaszczyzna gry (6144 / 2π = 977,8 tekseli / rad; jednostka nieba = 3200 tekseli = 3,27 rad;
+  `resScale` = szerokość / 6144).
+- Galaktyka na WIELKIM KOLE (równik): s = λ / K, d = φ / K; szumy pasa WALCOWE (punkt (k·s + c, …) na walcu o obwodzie
+  k · P — pas zamyka się na 2π bez szwu, częstotliwość wzdłuż pasa jak na płaszczyźnie; `skyFbm3`, nowy `skyRidged3`),
+  szumy izotropowe (grudkowatość, mgiełka) — 3D z kierunku, rzeczy lokalne (zgrubienie, odnogi, gromady, H II) —
+  różnica s zawinięta. Kąt pasa i krzywizna nie działają na sferze; eksport z `srodekX = srodekY = 0`.
+- Łaty mgławic: wypiekacze płaskie stylu „mgławica” (½ rozdzielczości, bez gwiazd) — nastawa `gra` (ziarno 3) na
+  λ 22°, φ 38°, `kolorowa` (ziarno 1, siła 0,75) na λ −150°, φ −36°, pół szerokości 48° / 44°; pass „laty” kładzie obraz
+  rzutem równoodległym wokół kierunku łaty, miękki brzeg 14 %, złożenie „ekranem”.
+- Narzędzie: `node scripts/webgpu/niebo-sfera.mjs [--res 1] [--zapisz 1] [--plaska 1] [--set klucz=w]` (demo
+  `dema/niebo-webgpu.html`: `__demo.sfera.bake / snapshot / exportPrepare`, nastawy `SFERA_DEFAULTS`): wypiek 6144 × 3072
+  ~3,5–4,6 s na RTX 5080 (z łatami), podgląd całości i kadrów gry (rzut równoodległy, bez bloomu), eksport do
+  `public/assets/sky-equirect.webp`. W grze: `node scripts/webgpu/niebo-gra.mjs --query niebo=sfera [--klip 1]`.
+
+### Otwarte
+
+1. Menu na equirect (jedno niebo także w menu) — decyzja użytkownika (kadr menu jest ustawiony pod płat mgławicy).
+2. Kompozycja całej sfery: dziś pas + dwie łaty + mgiełka — połowa sfery > 30° od pasa jest ciemna (zgodnie z raportem
+   skybox); kolejne łaty / gromady kulistych mgławic — strojenie na `niebo-sfera.mjs`.
+3. Warstwa deep GameStars znika w trybie sfery (kilka miękkich punktów na ekran) — jeśli ich brakuje, można ją wrócić
+   między niebem a mid (paralaksa 0,1–0,13 na drodze nieba), bez łamania hierarchii.
+4. `nebula.webp` w trybie sfery służy tylko tłu menu (~65 MB GPU obok equirect) — zwolnienie po wejściu do gry wymaga
+   ponownego wczytania przy powrocie do tła menu (worker też rysuje menu); do zrobienia razem z decyzją o menu na equirect.
+5. Prawo tempa 2026-10-27 — do oceny w grze: poziom (`?nieboTempo=0.7` / `1.5`); sufit głębi (`?nieboSufit=0` — 32:9
+   w walce 1,8× szybciej, przy zbliżeniu tempo rośnie z zoomem, ale niebo wyprzedza planety tła); 32:9 w skoku ~1,9× 16:9
+   kątowo (skok Mk II ~207°, warp ~17 °/s; `?nieboTempo=0.5` — kąty 16:9); mid w walce 2,3× szybciej niż dawniej; drobne
+   gwiazdy przy 60 Hz gasną w warpie na 32:9 i częściowo na 4K; koniec rampy wyjścia (skok prędkości 2,7 → 1,5 tys. j/s
+   w klatce) zwalnia niebo w tej klatce razem ze światem (straż W0); wyjątki W0 z ruchem kamery, skał i ciał soczewki
+   (§ „Niebo-sfera — prawo tempa 2026-10-27”).

@@ -1,5 +1,5 @@
 // Odłamki kadłubów na belkach (hullBodies.js) — pogięte płyty poszycia i kształtowniki
-// z dema belek (geometria: metalDebrisGeometry.js; pula dema — beamDebris3D.js), koziołkujące w locie, w kolorze blachy z komórki.
+// z dema belek (geometria: metalDebrisGeometry.js), koziołkujące w locie, w kolorze blachy z komórki.
 //
 // Różnice względem puli dema:
 //  - światło: słońce gry (kierunek od słońca do kamery, jak kadłuby) + maska cienia
@@ -285,5 +285,5 @@ if (typeof window !== 'undefined') {
   window.HullDebris3D = HullDebris3D;
   // Wołane z hullBodies (onNodeDebris) — gra, y w dół.
   window.spawnHullDebris = (x, y, vx, vy, r, g, b, scale, structural, z = 0, vz = 0) =>
-    HullDebris3D.spawn(x, y, vx, vy, r, g, b, scale, structural, performance.now() * 0.001, z, vz);
+    HullDebris3D.spawn(x, y, vx, vy, r, g, b, scale, structural, Core3D.frameNowMs() * 0.001, z, vz);
 }

@@ -6,7 +6,7 @@
  *
  * Szyb habitatu (kawałek H-C, płaszczyzna gry) trzyma WIEŻĘ (H-T: szyja z głową — BRYŁA 3D, pirateBaseBodies.js)
  * kotwicami osi o skończonej wytrzymałości (kontakt v2 silnika belek). Gdy taran zerwie część kotwic pierścienia szyi
- * (albo przebije rurę szyi, albo szyb pęknie z progu punktów), szyja jest zerwana:
+ * (albo przebije rurę szyi, albo szarża F dociśnie okręt do szybu, albo szyb pęknie z progu punktów), szyja jest zerwana:
  *  1. kotwice wieży puszczają (worldBodies.detachPiece) — wieża jest swobodną bryłą 3D z grawitacją habitatu (−z,
  *     ku dyskowi), a resztka szyi to PRZEGUB w nasadzie (silnik: addJoint) przesunięty ku stronie upadku;
  *  2. podcięta wieża przechyla się W STRONĘ, Z KTÓREJ PRZYSZEDŁ TARAN (dół jedzie z taranem, wierzch zostaje):
@@ -74,7 +74,8 @@ export function createNeckState() {
     frozen: 0,                // kotwice wieży zamrożonej w spoczynku (0 — nie zamarzła)
     landX: 0, landY: 0,
     cx: NaN, cy: NaN, neckR: 0,  // środek habitatu (gra) i promień rury szyi — z kroku
-    ramInNeck: false          // styk taranu z szybem W rurze szyi (przebita na wylot)
+    ramInNeck: false,         // styk taranu z szybem W rurze szyi (przebita na wylot)
+    ramCharge: false          // szarża (F) gracza dociśnięta do szybu (noteNeckRam z charging)
   };
 }
 
@@ -82,13 +83,21 @@ export function createNeckState() {
  * Taran kawałka habitatu (styk okrętu spoza piratów — klej gry, CollisionFX): zapamiętuje prędkość i miejsce
  * taranującego. `piece` — kawałek worldBodies, `rammer` — encja okrętu (vx, vy w grze), x, y — punkt styku.
  */
-export function noteNeckRam(st, piece, rammer, simTime, x, y) {
+export function noteNeckRam(st, piece, rammer, simTime, x, y, charging = false) {
   if (!st || st.phase !== 'attached' || !piece || piece.structure !== 'habitat' || !rammer) return;
-  const vx = Number(rammer.vx) || 0, vy = Number(rammer.vy) || 0;
-  if (vx * vx + vy * vy < 1) return;
+  let vx = Number(rammer.vx) || 0, vy = Number(rammer.vy) || 0;
+  // Szarża (F) dociśnięta do szybu: ściana bębna zjada jej rozpęd i statek dochodzi do szybu z kilkudziesięcioma j/s, a przy
+  // takim docisku styk z kotwicami jest sprężysty — szyja nie pękała do drugiej szarży (zgłoszenie użytkownika 2026-11-07:
+  // „trzeba na dwa razy”). Silniki na pełnym ciągu pchają szyb, więc taki styk zrywa szyję; kierunek taranu z dziobu.
+  const chargeOnCore = !!charging && piece.id === 'H-C';
+  let v = Math.sqrt(vx * vx + vy * vy);
+  if (chargeOnCore) {
+    const a = Number(rammer.angle) || 0, m = Math.max(1, v);
+    vx = Math.cos(a) * m; vy = Math.sin(a) * m; v = m;
+    st.ramCharge = true;
+  } else if (v < 1) return;
   st.ramT = simTime; st.ramVx = vx; st.ramVy = vy;
   // szczyt prędkości taranu w oknie (zerwanie przychodzi, gdy taranujący już hamuje w szybie)
-  const v = Math.sqrt(vx * vx + vy * vy);
   if (v >= st.ramPeak || simTime - st.ramPeakT > NECK_TUNE.ramWindow) { st.ramPeak = v; st.ramPeakT = simTime; }
   st.ramX = Number.isFinite(x) ? x : Number(rammer.x) || 0;
   st.ramY = Number.isFinite(y) ? y : Number(rammer.y) || 0;
@@ -118,6 +127,47 @@ export function piecePinCount(piece) {
 
 const pieceOf = (site, id) => site?.pieces?.find((p) => p.id === id) || null;
 
+// Wieżowce w pasie upadku wieży: kąt środka wieżowca od kierunku upadku najwyżej tyle [rad] (trzon r 240 i korona r 560
+// kładą się na pasie ~±570 j. przy wewnętrznym pierścieniu i ~±830 j. przy zewnętrznym).
+export const TOWER_FALL_HALF_ANGLE = 0.62;
+const inFallBand = (b, a) => Math.abs(Math.atan2(Math.sin(b.a - a), Math.cos(b.a - a))) <= TOWER_FALL_HALF_ANGLE;
+
+/**
+ * Wieża pada na STOJĄCE wieżowce (prośba użytkownika 2026-11-11: „gracz przestrzeli wieżowce z jakiejś strony i walnie
+ * w wieżę — wieża upadnie na wieżowce i przebije dolną warstwę”): znak kierunku upadku (hx, hz — kierunek w układzie
+ * bazy). −1 = odwróć: w pasie upadku po tej stronie stoi mniej wieżowców niż po przeciwnej (wyłom); inaczej 1 (kierunek
+ * z taranu albo strzałów zostaje — także przy równej liczbie). isDown(id) → wieżowiec zniszczony.
+ */
+export function towerFallSign(layout, hx, hz, isDown) {
+  const list = layout?.habitat?.buildings;
+  if (!list || typeof isDown !== 'function') return 1;
+  const a = Math.atan2(hz, hx);
+  let here = 0, opp = 0;
+  for (const b of list) {
+    if (isDown(b.id)) continue;
+    if (inFallBand(b, a)) here++;
+    else if (inFallBand(b, a + Math.PI)) opp++;
+  }
+  return here < opp ? -1 : 1;
+}
+
+/**
+ * Co wieża miażdży przy uderzeniu: wieżowce w pasie upadku (od wewnętrznego pierścienia) i sektory dysku mieszkalnego
+ * pod torem wieży (sektor pod kierunkiem upadku i sąsiad od strony, na którą kierunek się odchyla). dir — { x, z }
+ * kierunek upadku w układzie bazy. Zwraca { buildings: ['B-nn', …], sectors: ['D-k', …] }.
+ */
+export function towerCrushChunks(layout, dir) {
+  const H = layout.habitat;
+  const a = Math.atan2(dir.z, dir.x);
+  const n = H.discSectors;
+  const step = (Math.PI * 2) / n;
+  const k = Math.round(a / step);
+  const side = a - k * step >= 0 ? 1 : -1;
+  const id = (i) => `D-${((i % n) + n) % n + 1}`;
+  const buildings = H.buildings.filter((b) => inFallBand(b, a)).sort((p, q) => p.ring - q.ring || p.index - q.index).map((b) => b.id);
+  return { buildings, sectors: [id(k), id(k + side)] };
+}
+
 // Najniższa wysokość żywych węzłów ciała 3D (świat silnika) — nasada wieży.
 function bodyBottomZ(body) {
   const s = body.nodeStore, q = body.quat;
@@ -136,7 +186,8 @@ function bodyBottomZ(body) {
  * Zerwanie szyi: kotwice wieży puszczają, przegub w nasadzie, przechył startowy ku stronie upadku. Wołane przez
  * stepNeck albo wprost (dev, próg punktów). dirX, dirY — kierunek taranu w grze (wieża pada przeciwnie), speed —
  * prędkość taranującego. ctx: { worldBodies, engine (silnik belek — addJoint), layout, habitat: { x, y } (środek
- * w grze), simTime, onSnap(st) }. Zwraca true = zerwana.
+ * w grze), simTime, onSnap(st), pickFall(fx, fy) → { x, y } | null — klej gry może odwrócić kierunek upadku (wieża
+ * pada na stojące wieżowce — towerFallSign) }. Zwraca true = zerwana.
  */
 export function snapNeck(st, site, ctx, dirX, dirY, speed) {
   if (!st || st.phase !== 'attached' || !site) return false;
@@ -152,6 +203,11 @@ export function snapNeck(st, site, ctx, dirX, dirY, speed) {
   st.dirX = ux; st.dirY = uy; st.speed = v;
   // podcięta u dołu wieża przewraca się ku stronie, z której przyszedł taran
   st.fallX = -ux; st.fallY = -uy;
+  const pick = typeof ctx.pickFall === 'function' ? ctx.pickFall(st.fallX, st.fallY) : null;
+  if (pick && Number.isFinite(pick.x) && Number.isFinite(pick.y) && (pick.x !== 0 || pick.y !== 0)) {
+    const pl = Math.sqrt(pick.x * pick.x + pick.y * pick.y);
+    st.fallX = pick.x / pl; st.fallY = pick.y / pl;
+  }
   const wrecks = wb.detachPiece(head, {});
   if (!wrecks.length) return false;
   let tower = wrecks[0];
@@ -205,7 +261,7 @@ export function stepNeck(st, site, ctx, dt) {
     if (!core) return;
     if (ctx.habitat) { st.cx = ctx.habitat.x; st.cy = ctx.habitat.y; }
     st.neckR = ctx.layout?.habitat?.neckR ?? 150;
-    let broken = !!core.__broken || core.lost || st.ramInNeck;
+    let broken = !!core.__broken || core.lost || st.ramInNeck || st.ramCharge;
     if (!broken && core.state === 'live') {
       const pins = piecePinCount(core);
       if (st.pinsInit < 0) st.pinsInit = pins;

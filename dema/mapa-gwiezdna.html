@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Mapa gwiezdna — strefa międzygwiezdna</title>
+<!--
+  Mapa gwiezdna (three.js r183 przez Vite: `npm run dev`, /dema/mapa-gwiezdna.html): strefa międzygwiezdna, po
+  której Atlas lata między układami — jak nadprzestrzeń w Starsectorze. Dane sektora z ziarna:
+  src/game/sector/ (moduł czysty — układy, mgławice, burze, szlaki, floty, mgła eksploracji). Obraz:
+  dema/mapa-gwiezdna-obraz.js (tło z wypiekacza nieba + gwiazdy w rozdzielczości ekranu, mgławice z wypieków
+  stylu „mgławica”). Opis i plan wpięcia w grę: docs/PLAN-mapa-gwiezdna.md.
+
+  Sterowanie: W ciąg, S hamowanie, A / D obrót, Shift nurt (szybciej, 2 × paliwo), kółko — przybliżenie,
+  M — cały sektor / lot, LPM — wybór układu (trasa: odległość, czas, paliwo), PPM — autopilot do układu
+  (do jego punktu skoku) albo punktu, E — skok w punkcie skoku (tu tylko komunikat; w grze przeładowanie
+  strony z id układu), F — eskorta (podgląd floty gracza: Atlas + 3 okręty), Esc — odznacz.
+  Obraz: tło z paralaksą (wypiek galaktyki, trzy warstwy gwiazd, ośrodek międzygwiezdny przypięty do mapy, pył przed
+  kamerą ze smugami), floty jako sylwetki kadłubów gry w szyku z ogonami w barwach frakcji (dema/mapa-gwiezdna-floty.js).
+  Parametry: ?seed=1 (ziarno sektora), ?test=1 (klatki tylko z __mapa.runFrames — scripts/webgpu/mapa-gwiezdna-demo.mjs).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #d8e2f0;
+    font: 13px/1.4 system-ui, "Segoe UI", sans-serif; user-select: none; }
+  #root canvas { display: block; }
+  #hud { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .panel { position: fixed; background: rgba(5, 9, 18, .72); border: 1px solid rgba(120, 160, 230, .2);
+    border-radius: 6px; padding: 8px 11px; backdrop-filter: blur(2px); }
+  #topbar { top: 10px; left: 50%; transform: translateX(-50%); padding: 5px 14px; font-size: 12px; letter-spacing: .04em;
+    color: #9fb2cc; white-space: nowrap; }
+  #topbar b { color: #e3ecff; letter-spacing: .12em; font-weight: 600; margin-right: 8px; }
+  #ship { left: 12px; bottom: 34px; width: 268px; }
+  #card { right: 12px; top: 12px; width: 286px; max-height: calc(100% - 210px); overflow: hidden; }
+  #log { right: 12px; bottom: 34px; width: 330px; font-size: 12px; color: #aebbd0; }
+  #log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #log .t { color: #6f7f96; margin-right: 6px; font-variant-numeric: tabular-nums; }
+  #log .hot { color: #ff9d8a; }
+  #log .disc { color: #9fe0c0; }
+  .lbl { color: #7f8ea6; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .row { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: rgba(255, 255, 255, .08); border-radius: 3px; overflow: hidden; margin: 3px 0 6px; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, #ffb347, #ffd27a); }
+  .bar.low i { background: linear-gradient(90deg, #ff5a4a, #ff8a5a); }
+  .warn { color: #ffcf7a; }
+  .danger { color: #ff8a7a; }
+  h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; color: #f0f4ff; }
+  .sub { color: #9fb0c8; font-size: 12px; margin-bottom: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+  .chip { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .1); }
+  .chip i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
+  .muted { color: #6f7f96; }
+  #banner { left: 50%; bottom: 96px; transform: translateX(-50%); text-align: center; display: none; padding: 9px 18px;
+    border-color: rgba(140, 220, 255, .45); box-shadow: 0 0 24px rgba(80, 180, 255, .18); }
+  #banner .big { font-size: 15px; color: #e8f6ff; letter-spacing: .03em; }
+  #banner .small { font-size: 12px; color: #9fc4dc; margin-top: 2px; }
+  #keys { position: fixed; left: 0; right: 0; bottom: 8px; text-align: center; font-size: 11.5px; color: #66768e; pointer-events: none; }
+  #keys b { color: #93a4bd; font-weight: 600; }
+  #err { position: fixed; left: 12px; right: 12px; top: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .92); padding: 10px;
+    border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none; z-index: 9; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<canvas id="hud"></canvas>
+<div id="topbar" class="panel"><b>MAPA GWIEZDNA</b><span id="topinfo">uruchamianie…</span></div>
+<div id="ship" class="panel"></div>
+<div id="card" class="panel"></div>
+<div id="log" class="panel"></div>
+<div id="banner" class="panel"></div>
+<div id="keys"><b>W</b> ciąg · <b>S</b> hamuj · <b>A / D</b> obrót · <b>Shift</b> nurt · <b>kółko</b> przybliżenie · <b>M</b> cały sektor · <b>LPM</b> wybór · <b>PPM</b> autopilot · <b>E</b> skok · <b>F</b> eskorta</div>
+<div id="err"></div>
+<script type="module" src="./mapa-gwiezdna.js"></script>
+</body>
+</html>

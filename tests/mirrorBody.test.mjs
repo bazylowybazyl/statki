@@ -112,3 +112,35 @@ test('replika ciała: ten sam brud i te same dane co ciało gry w każdej rysowa
   assert.ok(drawn > 800);
   assert.equal(mismatches, 0);
 });
+
+// Pakujący wysyła węzły tylko ciałom w pudle rozgrzania (`activeNodes` zawsze): replika ciała spoza pudła ma topologię
+// bez stanu węzłów — `nodesReceived` mówi o tym czytelnikom (podzbiór skóry odłamu ciała świata czeka, worldBodies3D).
+test('replika ciała spoza pudła rozgrzania: bez stanu węzłów (nodesReceived), węzły dochodzą po wejściu do pudła', () => {
+  const B = makeBody(60);
+  const entB = { x: 0, y: 0, angle: 0, beamHull: { body: B, srcWidth: 100, srcHeight: 100, scale: 1, pivot: { x: 0, y: 0 } } };
+  const packer = new SnapshotPacker({ shared: false });
+  const frame = createSnapshotFrame();
+  Object.assign(frame, { ship: entB, npcs: [], wrecks: [], cam: { x: 0, y: 0, zoom: 1 }, consumeDirty: true,
+    cull: { x: 1e6, y: 1e6, halfW: 500, halfH: 500, drawHalfW: 500, drawHalfH: 500 } });
+  const mirror = new MirrorBody(0, 1);
+  const page = () => {
+    frame.lastConsumed = packer.k;
+    packer.begin(frame);
+    const v = packer.view;
+    const bs = packer.ids.bodies.peek(B);
+    const storeVer = v.bodyI32[bs * BODY.stride.i32 + BODY.I32.STORE_VER];
+    if (mirror.storeVer !== storeVer) mirror.setTopology(describeBodyTopology(B), storeVer);
+    assert.ok(applyBodyPage(mirror, v, bs));
+    packer.finish(frame);
+  };
+  for (let k = 0; k < 3; k++) page();
+  assert.equal(mirror.nodesReceived, false, 'poza pudłem: bez stanu węzłów');
+  assert.equal(mirror.activeNodes, 60, '`activeNodes` idzie zawsze');
+  assert.ok(mirror.nodeStore.active.every((a) => a === 0), '`active` repliki puste');
+  frame.cull = { x: 0, y: 0, halfW: 500, halfH: 500, drawHalfW: 500, drawHalfH: 500 };
+  page();
+  assert.equal(mirror.nodesReceived, true, 'w pudle: węzły doszły');
+  assert.deepEqual(Array.from(mirror.nodeStore.active), Array.from(B.nodeStore.active));
+  mirror.setTopology(describeBodyTopology(B), mirror.storeVer + 1);
+  assert.equal(mirror.nodesReceived, false, 'nowa topologia — znów bez stanu węzłów');
+});

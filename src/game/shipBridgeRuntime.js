@@ -73,6 +73,15 @@ export function resolveBridgeHullKey(entity) {
   return null;
 }
 
+/**
+ * Wariant stref NPC: megafrachtowiec typu `megafreighter` (bez modułu w typie) buduje kadłub ze sprite'a CAŁEGO
+ * składu (TRAFFIC_HULLS — statek ruchu po awansie, getHullSpriteForNpc) — strefa `sklad`; lokomotywa pociągu
+ * (`megafreighter_front`) i reszta — wariant domyślny.
+ */
+export function resolveBridgeVariant(entity) {
+  return String(entity?.type || '').toLowerCase() === 'megafreighter' ? 'sklad' : null;
+}
+
 /** Układ stref dla kadłuba (px PNG) albo null, gdy kadłub mostków nie ma. */
 export function resolveBridgeLayout(key, variant = null) {
   const entry = key ? BRIDGE_LAYOUT_PROPOSALS[key] : null;
@@ -89,7 +98,8 @@ export function resolveBridgeLayout(key, variant = null) {
 export function attachEntityBridges(entity, { key: keyIn = null, bridges = null, variant = null } = {}) {
   if (!entity) return null;
   const key = keyIn != null ? normalizeBridgeHullKey(keyIn) : resolveBridgeHullKey(entity);
-  const list = Array.isArray(bridges) && bridges.length ? bridges : resolveBridgeLayout(key, variant);
+  const list = Array.isArray(bridges) && bridges.length ? bridges
+    : resolveBridgeLayout(key, variant ?? (keyIn != null ? null : resolveBridgeVariant(entity)));
   const beam = !!entity.beamHull && entity.beamHull.entity === entity;
   if (!list || !beam) {
     if (entity.bridgeState) releaseShipBridges(entity);

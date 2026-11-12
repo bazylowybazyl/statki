@@ -11,7 +11,8 @@
  * krok świata co 5 s gry trafia w klatkę (śr. 12–18 ms przy ×60) i widać to
  * w wierszu PerfHUD („ruch v2”).
  *
- * Czas: `time` to czas świata ruchu po stronie gry — suma `advance(dt)`.
+ * Czas: `time` to czas świata ruchu po stronie gry — suma `advance(dt)`
+ * plus przeliczona już rozgrzewka świata (E15, `warmup.seconds` z workera).
  * Gra woła `advance` z krokami fizyki, więc pauza (brak kroków) zatrzymuje
  * gospodarkę. Odcinki kursów w buforze mają `T0` w tym samym czasie.
  *
@@ -22,8 +23,13 @@
  */
 
 import {
-  TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD
+  TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD,
+  TRAFFIC_WARMUP_FALLBACK_SECONDS
 } from './traffic/trafficProtocol.js';
+import { BELT_MSG, SALVAGE_MSG } from './traffic/trafficProtocol.js';
+import { moveStock } from './traffic/marketStock.js';
+import { findTradePartners as computeTradePartners, TRADE_PARTNER_TUNE } from './tradePartners.js';
+import { describeWorkforce } from './workforce.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
 const RECENT_WRECK_LIMIT = 64;
@@ -37,10 +43,15 @@ function now() {
 
 function createMirror(resources) {
   const zeros = () => Object.fromEntries(resources.map(key => [key, 0]));
-  return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros() };
+  // `sell` / `buy` — oferta portu dla kupca (E7): ile sprzeda ponad rezerwę, ile skupi do celu.
+  // `crew` — obsada z bufora `tick.crew` (W5, `CREW_FIELD`): ludzie w drodze, powroty, wydajność, zakładnicy.
+  return {
+    resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros(), sell: zeros(), buy: zeros(),
+    crew: { inbound: 0, outbound: 0, returning: 0, leaving: 0, efficiency: 1, hostages: 0 }
+  };
 }
 
-/** Te same reguły co `applyStockDelta` w dyspozytorze: 0…pojemność, 0 = bez limitu. */
+/** Te same reguły co `applyStockDelta` w workerze — wspólne `moveStock` (API rynku): 0…pojemność, 0 = bez limitu. */
 function applyToMirror(mirror, bag) {
   const applied = {};
   if (!mirror || !bag) return applied;
@@ -48,14 +59,13 @@ function applyToMirror(mirror, bag) {
     if (!(id in mirror.resources)) continue;
     const delta = Number(raw);
     if (!Number.isFinite(delta) || delta === 0) continue;
-    const stock = Math.max(0, Number(mirror.resources[id]) || 0);
-    const cap = Number(mirror.capacity[id]);
-    const next = delta > 0
-      ? (Number.isFinite(cap) && cap > 0 ? Math.min(cap, stock + delta) : stock + delta)
-      : Math.max(0, stock + delta);
-    if (next === stock) continue;
-    mirror.resources[id] = next;
-    applied[id] = next - stock;
+    const moved = moveStock(mirror, id, delta);
+    if (moved === 0) continue;
+    applied[id] = moved;
+    // Oferta portu kurczy się od razu: kupione schodzi z oferty sprzedaży, sprzedane — ze skupu
+    // (skup −1 = port towaru nie używa — zostaje, nawet gdy towar wszedł inną drogą, np. rozbiórka wraku).
+    if (moved < 0 && mirror.sell) mirror.sell[id] = Math.max(0, (Number(mirror.sell[id]) || 0) + moved);
+    if (moved > 0 && mirror.buy?.[id] > 0) mirror.buy[id] = Math.max(0, mirror.buy[id] - moved);
   }
   return applied;
 }
@@ -82,6 +92,11 @@ export class TrafficBridge {
     /** Ostatni błąd zgłoszony przez rdzeń (świat działa dalej). */
     this.lastError = null;
     this.time = 0;
+    /**
+     * Rozgrzewka świata w workerze (E15): `{ total, seconds, active, ms }` — `seconds` są już w `time`
+     * (zegar mostu = zegar świata także po rozgrzewce). Bańka rusza po jej końcu.
+     */
+    this.warmup = { total: 0, seconds: 0, active: false, ms: 0 };
     this.clock = 0;
     this.step = 5;
     this.seed = null;
@@ -91,11 +106,40 @@ export class TrafficBridge {
     this.stationIndex = new Map();
     /** `stationId` → kopia magazynu `{ resources, capacity, duress, bid, ask }`. */
     this.market = new Map();
+    /**
+     * Numer stanu kopii rynku: rośnie przy każdym buforze rynku z workera, zmianie gry (`stockDelta`) i nowej tabeli
+     * stacji. Komputer handlowy (`findTradePartners`) trzyma wyniki zapytań do następnej zmiany numeru.
+     */
+    this.marketSeq = 0;
+    /** Ile buforów rynku przyszło z workera (0 — kopia jeszcze pusta, komputer handlowy „liczy”). */
+    this.marketBuffers = 0;
+    this._partnerCache = new Map();
+    this._partnerCacheSeq = -1;
     /** Kursy w bańce: `data` (Float64Array, `COURSE_STRIDE`), `count`, `clock`. */
     this.courses = { data: new Float64Array(0), count: 0, clock: 0, time: 0 };
+    /**
+     * Encje bańki workera (E6): `data` (Float64Array, `ACTOR_STRIDE`), `count`,
+     * `time` (czas mostu, w którym pozy są ważne), `seq` (numer wiadomości), `ms`.
+     */
+    // `cargo` — przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`): Float32Array albo null.
+    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0, cargo: null };
+    /**
+     * Postoje statków ruchu przy stanowiskach (kontrakt `DockRecord`, `trafficProtocol.js` — przeładunek E12):
+     * numer kursu → { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }. Worker przysyła zmiany.
+     */
+    this.actorDocks = new Map();
+    /** Ładunek encji bańki (kontenery-łup K1): numer kursu → { id, cargo, mass, value }. Worker przysyła zmiany. */
+    this.actorManifests = new Map();
+    /**
+     * Praca encji bańki (E24, `WorkRecord` z `trafficProtocol.js`): numer kursu → { id, kind, phase, x, y, t0, dur, gid } —
+     * górnik w etapie wydobycia, złomiarz przy wraku albo z wrakiem na linie. Worker przysyła zmiany.
+     */
+    this.actorWorks = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
+    /** Wyrwy w pasie (id → `{ id, x, y, r, depth }`) — rejestr uszczuplenia świata ruchu, dla świata pasa gry. */
+    this.beltHoles = new Map();
     this.listeners = new Map();
 
     this._initMessage = null;
@@ -170,6 +214,8 @@ export class TrafficBridge {
   _startFallback(reason) {
     this.mode = 'main-fallback';
     this.fallbackReason = String(reason?.message || reason || '');
+    // Na głównym wątku rozgrzewka przycinałaby menu i pierwsze klatki — tryb awaryjny startuje bez niej (E15).
+    if (this._initMessage && this._initMessage.warmup) this._initMessage.warmup = TRAFFIC_WARMUP_FALLBACK_SECONDS;
     if (typeof this.options.coreFactory === 'function') {
       this._attachCore(this.options.coreFactory);
       return;
@@ -253,6 +299,7 @@ export class TrafficBridge {
     this._enter();
     try {
       const applied = applyToMirror(this.market.get(id), bag);
+      this.marketSeq++;
       const seq = ++this._stockSeq;
       this._pendingStock.push({ seq, stationId: id, bag: { ...bag } });
       this._post({ type: TRAFFIC_MSG.STOCK, seq, stationId: id, bag: { ...bag }, reason: String(reason) });
@@ -268,17 +315,72 @@ export class TrafficBridge {
   }
 
   attach(course) { this._send({ type: TRAFFIC_MSG.ATTACH, course }); }
-  detach(course, progress) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress }); }
+  /**
+   * Gra oddaje kurs (`pose` — { x, y, angle, speed }: NPC wraca do bańki tam, gdzie był — E6, awans
+   * do pełnego NPC). `progress` — postęp etapu albo null (bez zmiany).
+   */
+  detach(course, progress, pose = null) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress, pose }); }
   reportProgress(course, progress) { this._send({ type: TRAFFIC_MSG.PROGRESS, course, progress }); }
   completeStage(course) { this._send({ type: TRAFFIC_MSG.STAGE_DONE, course }); }
 
   /** Statek kursu zginął w grze. `options`: `x`, `y`, `reason`, `byPirates`. */
+  /**
+   * Encja bez kursu (STOCK / PARKED — id ujemny, DEPARTED — numer zamkniętego kursu) przejęta przez grę jako
+   * pełny NPC (`on`) albo oddana (E6, taran i ogień): statek firmy nie dostanie kursu, dopóki NPC żyje.
+   */
+  entityHold(id, on = true) { this._send({ type: TRAFFIC_MSG.ENTITY_HOLD, id, on: !!on }); }
+
+  /** Encja bez kursu zniszczona w grze: strata zapasu frakcji albo statku firmy. `options`: `x`, `y`, `reason`. */
+  entityLost(id, options = {}) { this._send({ type: TRAFFIC_MSG.ENTITY_LOST, id, ...options }); }
+
+  /** Kapsuły ratunkowe (E22 K4): kapsuła z ludźmi promu `course` doleciała do `stationId` (magazyn stacji dolotu). */
+  podsLanded(course, stationId, people) {
+    this._send({ type: TRAFFIC_MSG.PODS_LANDED, course, stationId: String(stationId || ''), people: Math.max(0, Math.floor(Number(people) || 0)) });
+  }
+
   destroyCourse(course, options = {}) {
     this._send({ type: TRAFFIC_MSG.DESTROYED, course, ...options });
   }
 
+  /**
+   * Stanowiska zajęte przez gracza (pełny zbiór id jak w `ready.berths`) —
+   * dyspozytor ich nie przydziela, kurs w podejściu przenosi na inne (E6).
+   */
+  setBerthHolds(berthIds) {
+    this._send({ type: TRAFFIC_MSG.BERTH_HOLD, berths: Array.isArray(berthIds) ? berthIds.map(String) : [] });
+  }
+
   stationDestroyed(stationId) {
     this._send({ type: TRAFFIC_MSG.STATION, stationId: String(stationId || ''), destroyed: true });
+  }
+
+  // ---------- rynki (E1, `traffic/markets.js`) ----------
+  // Kopia rynku widzi zmianę po odpowiedzi workera (`tick` z nową tabelą
+  // stacji, wysłany od razu) — do tego czasu `hasStation` zwraca stan sprzed.
+
+  /**
+   * Nowy rynek w trakcie gry: MarketDef (`src/data/markets.js`) — np. kryjówka
+   * misji `{ id, label, kind: 'hideout', position: { source: 'point', x, y },
+   * factionId: 'pirates', docks: { layout: 'hangar' } }`.
+   */
+  addMarket(def) {
+    if (!def?.id) return;
+    this._send({ type: TRAFFIC_MSG.MARKET_ADD, def: JSON.parse(JSON.stringify(def)) });
+  }
+
+  /** Budynek przemysłu na rynku (archetyp z `INDUSTRY_ARCHETYPES`, np. `foundry`). */
+  addMarketBuilding(stationId, role) {
+    this._send({ type: TRAFFIC_MSG.MARKET_BUILDING, stationId: String(stationId || ''), role: String(role || '') });
+  }
+
+  /** Nowy właściciel rynku; `null` = opuszczony. */
+  setMarketOwner(stationId, factionId) {
+    this._send({ type: TRAFFIC_MSG.MARKET_OWNER, stationId: String(stationId || ''), factionId: factionId || null });
+  }
+
+  /** Rynek znika ze świata ruchu (i z kopii rynku po odpowiedzi workera). */
+  removeMarket(stationId) {
+    this._send({ type: TRAFFIC_MSG.MARKET_REMOVE, stationId: String(stationId || '') });
   }
 
   /** Pokrętła deweloperskie: `piracyPressure`, `piracyEnabled`, `protectObserved`. */
@@ -288,10 +390,32 @@ export class TrafficBridge {
 
   /** Podsumowanie świata (dyspozytor, stocznie, wojna, piractwo…) — do konsoli. */
   requestSnapshot() {
+    return this._request(TRAFFIC_MSG.SNAPSHOT);
+  }
+
+  /** Stan ekonomii do zapisu gry (E7, `economySave.js`) — obietnica obiektu JSON albo `null`. */
+  requestEconomySave() {
+    return this._request(TRAFFIC_MSG.ECONOMY_SAVE);
+  }
+
+  /**
+   * Zapis ekonomii (`exportEconomyState`) na świat już zbudowany — gra woła to po wyborze w menu, przed
+   * pierwszym krokiem. Obietnica liczb `{ stations, pending, mining, fleets }` albo `null`.
+   */
+  restoreEconomy(state) {
+    return this._request(TRAFFIC_MSG.ECONOMY_RESTORE, { state });
+  }
+
+  /** Agregat dla komputera handlowego (E7, `tradeSummary.js`): trasy, porty, towar w drodze, okazje. */
+  requestTradeSummary() {
+    return this._request(TRAFFIC_MSG.TRADE_SUMMARY);
+  }
+
+  _request(type, payload = null) {
     const requestId = this._requestId++;
     return new Promise((resolve, reject) => {
       this._pending.set(requestId, { resolve, reject });
-      this._send({ type: TRAFFIC_MSG.SNAPSHOT, requestId });
+      this._send({ ...payload, type, requestId });
     });
   }
 
@@ -305,6 +429,57 @@ export class TrafficBridge {
   }
 
   // ============================================================
+  // Pas w ekonomii (E3): urobek gracza i wyrwy
+  // ============================================================
+
+  /**
+   * Urobek platformy gracza (tony rudy w ładowni) w punkcie świata gry — ten sam rejestr uszczuplenia
+   * pasa co wyprawy NPC. Wyrwa, jeśli powstanie, wraca zdarzeniem `belt-holes`.
+   */
+  reportMining(x, y, tons) {
+    const amount = Number(tons);
+    if (!(amount > 0) || !Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return;
+    this._send({ type: BELT_MSG.MINED, x: Number(x), y: Number(y), tons: amount });
+  }
+
+  // ============================================================
+  // Złomiarze i wraki gry (E24)
+  // ============================================================
+
+  /**
+   * Wraki gry w bańce gracza do rejestru złomiarzy świata ruchu: `[{ gid, x, y, classId, scale, towable, factionId,
+   * source }]` (`SALVAGE_MSG.WRECK_REPORT`). Złomiarz, który skończy pracę, wraca zdarzeniem `salvage-taken`.
+   */
+  reportWrecks(wrecks) {
+    if (!Array.isArray(wrecks) || !wrecks.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_REPORT, wrecks });
+  }
+
+  /** Gracz pracuje przy zgłoszonych wrakach (`on`) albo je zostawił — złomiarze ich nie ruszają, dopóki trwa praca gracza. */
+  wrecksHold(gids, on = true) {
+    if (!Array.isArray(gids) || !gids.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_HOLD, gids, on: !!on });
+  }
+
+  /** Zgłoszone wraki gry, których już nie ma (zabrał je gracz, przepadły) — złomiarz w drodze wraca pusty. */
+  wrecksGone(gids) {
+    if (!Array.isArray(gids) || !gids.length) return;
+    this._send({ type: SALVAGE_MSG.WRECK_GONE, gids });
+  }
+
+  /** Wyrwy z workera: kopia `beltHoles` i zdarzenie `belt-holes` ze zmianami (depth 0 = usunięta). */
+  _onBeltHoles(message) {
+    const list = Array.isArray(message.holes) ? message.holes : [];
+    if (message.full) this.beltHoles.clear();
+    for (const hole of list) {
+      if (!hole || hole.id == null) continue;
+      if (Number(hole.depth) > 0) this.beltHoles.set(String(hole.id), hole);
+      else this.beltHoles.delete(String(hole.id));
+    }
+    if (list.length || message.full) this._emit('belt-holes', list);
+  }
+
+  // ============================================================
   // Świat → gra
   // ============================================================
 
@@ -315,15 +490,25 @@ export class TrafficBridge {
         case TRAFFIC_MSG.READY: this._onReady(message); break;
         case TRAFFIC_MSG.TICK: this._onTick(message); break;
         case TRAFFIC_MSG.BUBBLE: this._applyBubble(message); this._emit('bubble', this.courses); break;
-        case TRAFFIC_MSG.SNAPSHOT_RESULT: {
+        case TRAFFIC_MSG.ACTORS: this._applyActors(message); break;
+        case TRAFFIC_MSG.SNAPSHOT_RESULT:
+        case TRAFFIC_MSG.ECONOMY_SAVE_RESULT:
+        case TRAFFIC_MSG.ECONOMY_RESTORE_RESULT:
+        case TRAFFIC_MSG.TRADE_SUMMARY_RESULT: {
           const pending = this._pending.get(message.requestId);
           this._pending.delete(message.requestId);
-          pending?.resolve(message.snapshot);
+          pending?.resolve(message.snapshot ?? message.state ?? message.summary ?? message.restored ?? null);
           break;
         }
         case TRAFFIC_MSG.ERROR:
           this.lastError = message;
           this._emit('error', message);
+          break;
+        case BELT_MSG.HOLES: this._onBeltHoles(message); break;
+        // Kapsuły ratunkowe (E22 K4): cel kapsuł promu zniszczonego w grze (port nadania, ludzie z kontraktu).
+        case TRAFFIC_MSG.PODS_TARGET: this._emit('pods-target', message); break;
+        case SALVAGE_MSG.TAKEN:
+          if (Array.isArray(message.taken) && message.taken.length) this._emit('salvage-taken', message.taken);
           break;
         default: break;
       }
@@ -341,25 +526,57 @@ export class TrafficBridge {
       factions: message.factions || [],
       kinds: message.kinds || [],
       /** `stationId` → id stanowisk portu; `BERTH` kursu to indeks w tej liście. */
-      berths: message.berths || {}
+      berths: message.berths || {},
+      /** Porty bańki (E6): `stationId` → stanowiska z geometrią w układzie gry ({ id, x, y, angle, … }). */
+      bubblePorts: message.bubblePorts || {},
+      /** Budowle doków portów bez ringu (E14): `stationId` → `{ kind, mix, repeats, dockCount, x, y, angle, keepR, style }`. */
+      bubbleDocks: message.bubbleDocks || {}
     };
+    /** Wersja tabeli doków — gra przebudowuje kolizje i listę obrazu tylko po zmianie. */
+    this.docksVersion = (this.docksVersion || 0) + 1;
     this.step = Number(message.step) || this.step;
     this.clock = Number(message.clock) || 0;
     this.seed = message.seed ?? null;
     this.buildMs = Number(message.buildMs) || 0;
-    this.stationIndex = new Map(this.tables.stations.map((entry, index) => [entry.id, index]));
+    this._applyWarmup(message.warmup);
     this.market.clear();
-    for (const entry of this.tables.stations) {
-      this.market.set(entry.id, createMirror(this.tables.resources));
-    }
+    this._indexStations();
     this._emit('ready', message);
     this._resolveReady(message);
+  }
+
+  /** Indeks i kopie magazynów po tabeli stacji — kopie istniejących rynków zostają. */
+  _indexStations() {
+    const stations = this.tables.stations;
+    this.stationIndex = new Map(stations.map((entry, index) => [entry.id, index]));
+    for (const id of [...this.market.keys()]) {
+      if (!this.stationIndex.has(id)) this.market.delete(id);
+    }
+    for (const entry of stations) {
+      if (!this.market.has(entry.id)) this.market.set(entry.id, createMirror(this.tables.resources));
+    }
+    this.marketSeq++;
   }
 
   _onTick(message) {
     this.clock = Number(message.clock) || 0;
     this.stats = message.stats || null;
+    this._applyWarmup(message.warmup);
+    // Nowa tabela rynków (MARKET_* albo zniszczona stacja) przed rynkiem —
+    // bufor `market` ma już jej układ.
+    if (Array.isArray(message.stations) && this.tables) {
+      this.tables.stations = message.stations;
+      if (message.berths) this.tables.berths = message.berths;
+      if (message.bubblePorts) this.tables.bubblePorts = message.bubblePorts;
+      if (message.bubbleDocks) {
+        this.tables.bubbleDocks = message.bubbleDocks;
+        this.docksVersion = (this.docksVersion || 0) + 1;
+      }
+      this._indexStations();
+      this._emit('markets', this.tables.stations);
+    }
     if (message.market) this._applyMarket(message.market, Number(message.stockSeq) || 0);
+    if (message.crew) this._applyCrew(message.crew);
     if (message.bubble) this._applyBubble(message.bubble);
     if (Array.isArray(message.stationFactions) && this.tables) {
       message.stationFactions.forEach((factionId, index) => {
@@ -396,11 +613,72 @@ export class TrafficBridge {
         else delete mirror.duress[key];
         mirror.bid[key] = data[offset + MARKET_FIELD.BID];
         mirror.ask[key] = data[offset + MARKET_FIELD.ASK];
+        mirror.sell[key] = data[offset + MARKET_FIELD.SELL];
+        mirror.buy[key] = data[offset + MARKET_FIELD.BUY];
       }
     });
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.
     this._pendingStock = this._pendingStock.filter(entry => entry.seq > stockSeq);
     for (const entry of this._pendingStock) applyToMirror(this.market.get(entry.stationId), entry.bag);
+    this.marketBuffers++;
+    this.marketSeq++;
+  }
+
+  /** Obsada portów (W5): bufor `tick.crew` w układzie tabeli `stations` → `mirror.crew`. */
+  _applyCrew(data) {
+    const tables = this.tables;
+    if (!tables || !(data instanceof Float64Array)) return;
+    tables.stations.forEach((entry, stationIndex) => {
+      const crew = this.market.get(entry.id)?.crew;
+      const offset = stationIndex * CREW_STRIDE;
+      if (!crew || offset + CREW_STRIDE > data.length) return;
+      crew.inbound = data[offset + CREW_FIELD.INBOUND];
+      crew.outbound = data[offset + CREW_FIELD.OUTBOUND];
+      crew.returning = data[offset + CREW_FIELD.RETURNING];
+      crew.leaving = data[offset + CREW_FIELD.LEAVING];
+      crew.efficiency = data[offset + CREW_FIELD.EFFICIENCY];
+      crew.hostages = data[offset + CREW_FIELD.HOSTAGES];
+    });
+  }
+
+  /**
+   * Postęp rozgrzewki (E15): przeliczone sekundy świata dochodzą do `time` od razu — czasy z workera
+   * (`actors.time`, `T0` kursów, `DockRecord.t0`) liczą się od zegara świata, który rozgrzewka przesunęła.
+   * Koniec rozgrzewki → zdarzenie `warmup`.
+   */
+  _applyWarmup(info) {
+    if (!info) return;
+    const w = this.warmup;
+    const seconds = Math.max(0, Number(info.seconds) || 0);
+    if (seconds > w.seconds) this.time += seconds - w.seconds;
+    const wasActive = w.active;
+    w.seconds = Math.max(w.seconds, seconds);
+    w.total = Math.max(0, Number(info.total) || 0);
+    w.active = !!info.active;
+    w.ms = Number(info.ms) || 0;
+    if (wasActive && !w.active) this._emit('warmup', { ...w });
+  }
+
+  /** Bufor encji bańki z workera — gra czyta go co klatkę (`trafficBubble.js`) po `seq`. */
+  _applyActors(message) {
+    if (Array.isArray(message.hulls)) this.hulls = message.hulls;
+    const actors = this.actors;
+    actors.data = message.data instanceof Float64Array ? message.data : new Float64Array(0);
+    actors.count = Number(message.count) || 0;
+    actors.time = Number(message.time) || 0;
+    actors.ms = Number(message.ms) || 0;
+    actors.cargo = message.cargo instanceof Float32Array ? message.cargo : null;
+    actors.seq++;
+    if (Array.isArray(message.undocked)) for (const id of message.undocked) this.actorDocks.delete(id);
+    if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
+    if (Array.isArray(message.unmanifested)) for (const id of message.unmanifested) this.actorManifests.delete(id);
+    if (Array.isArray(message.manifests)) for (const rec of message.manifests) this.actorManifests.set(rec.id, rec);
+    if (Array.isArray(message.unworked)) for (const id of message.unworked) this.actorWorks.delete(id);
+    if (Array.isArray(message.works)) for (const rec of message.works) this.actorWorks.set(rec.id, rec);
+    if (!actors.count && this.actorWorks.size) this.actorWorks.clear();
+    // Pusta bańka (wyjście z zasięgu portów) — postoje i manifesty znikają razem z encjami.
+    if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
+    if (!actors.count && this.actorManifests.size) this.actorManifests.clear();
   }
 
   _applyBubble(bubble) {
@@ -417,7 +695,7 @@ export class TrafficBridge {
   // Odczyt
   // ============================================================
 
-  /** Czy świat ruchu zna tę stację (planety gry tak, misyjna kryjówka nie). */
+  /** Czy świat ruchu zna tę stację (planety gry; kryjówka misji — po `addMarket` i odpowiedzi workera). */
   hasStation(stationId) {
     return this.market.has(String(stationId || ''));
   }
@@ -429,6 +707,47 @@ export class TrafficBridge {
    */
   getEconomy(stationId) {
     return this.market.get(String(stationId || '')) || null;
+  }
+
+  /**
+   * KOMPUTER HANDLOWY (E23a, `src/game/tradePartners.js`): kto skupi (`side = 'buy'`) albo sprzeda (`'sell'`) towar
+   * `resourceId` w układzie strony — cena z reputacją jak w terminalu, ile port przyjmie, odległość i czas lotu,
+   * frakcja i stosunki, kolejność po zysku z uwzględnieniem drogi. Liczone na żądanie z kopii rynku; wynik zostaje
+   * w pamięci do następnego bufora rynku (albo zmiany gry — `marketSeq`), więc karta, która pyta co klatkę, nie
+   * alokuje. Klucz: towar, strona, ilość, cena zakupu, pominięta stacja i kubełek pozycji gracza
+   * (`TRADE_PARTNER_TUNE.positionBucket`). Wynik jest wspólny — tylko do odczytu. Filtry: `findTradePartners`
+   * w `tradePartners.js` (`hidden` — mgła wojny, `positionOf`, `drives`, `reputation`, `limit`).
+   */
+  findTradePartners(resourceId, side = 'buy', filters = {}) {
+    if (this._partnerCacheSeq !== this.marketSeq) {
+      this._partnerCache.clear();
+      this._partnerCacheSeq = this.marketSeq;
+    }
+    const bucket = TRADE_PARTNER_TUNE.positionBucket;
+    const fx = Number(filters.from?.x);
+    const fy = Number(filters.from?.y);
+    const cacheKey = `${resourceId}|${side}|${Math.round(Number(filters.amount) || 0)}|`
+      + `${Math.round((Number(filters.costBasis) || 0) * 10)}|${filters.excludeId ?? ''}|${filters.limit ?? ''}|`
+      + `${Number.isFinite(fx) ? Math.round(fx / bucket) : 'x'}|${Number.isFinite(fy) ? Math.round(fy / bucket) : 'y'}`;
+    const cached = this._partnerCache.get(cacheKey);
+    if (cached) return cached;
+    const result = computeTradePartners({ stations: this.tables?.stations || [], market: this.market, ready: this.marketBuffers > 0 },
+      resourceId, side, filters);
+    result.marketSeq = this.marketSeq;
+    // Przed pierwszym buforem rynku nie zapamiętujemy — karta pyta dalej i pokazuje „liczę…”.
+    if (!result.pending) {
+      if (this._partnerCache.size >= TRADE_PARTNER_TUNE.cacheSize) this._partnerCache.clear();
+      this._partnerCache.set(cacheKey, result);
+    }
+    return result;
+  }
+
+  /**
+   * Obsada portu (W5, karta „Kadry”): `describeWorkforce` z tabeli stacji i kopii rynku — potrzeba,
+   * ludzie na miejscu, obsada, wydajność, rotacja, ludzie w drodze, źródła. `null` — stacja spoza świata.
+   */
+  getWorkforce(stationId) {
+    return describeWorkforce(this.getStation(stationId), this.getEconomy(stationId));
   }
 
   /** Opis stacji z tabeli `ready` (`id`, `name`, `factionId`, `x`, `y`, `moon`…). */
@@ -490,7 +809,10 @@ export class TrafficBridge {
       buildMs: this.buildMs,
       time: this.time,
       clock: this.clock,
+      warmup: { ...this.warmup },
       courses: this.courses.count,
+      actors: this.actors.count,
+      actorMs: this.actors.ms,
       pendingStock: this._pendingStock.length,
       stats: this.stats,
       lastError: this.lastError
@@ -501,7 +823,7 @@ export class TrafficBridge {
   // Zdarzenia
   // ============================================================
 
-  /** `ready`, `tick`, `market`, `bubble`, `wrecks`, `war-wrecks`, `error`. Zwraca wypisanie. */
+  /** `ready`, `tick`, `market`, `markets` (nowa tabela stacji), `bubble`, `wrecks`, `war-wrecks`, `belt-holes`, `warmup` (koniec rozgrzewki), `error`. Zwraca wypisanie. */
   on(type, listener) {
     if (typeof listener !== 'function') return () => {};
     let list = this.listeners.get(type);

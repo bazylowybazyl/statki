@@ -149,7 +149,7 @@ export function cargoResourceKey(index) {
 //
 // Pola układu:
 //   hullId        — id kadłuba ruchu (transportCompanies.hullForVanClass)
-//   vanClass      — klasa ładowni (cargoFleet VAN_CLASSES: van/hauler/bulk/heavy/mega)
+//   vanClass      — klasa ładowni (VAN_CLASSES w traffic/shipmentOrders.js: van/hauler/bulk/heavy/mega)
 //   png           — wymiary płótna sprite'a (obie wersje mają to samo płótno)
 //   renderLength  — dłuższy bok płótna w świecie (getHullRenderSize: długość
 //                   profilu × 0,6; wagon: stały prostokąt składu 2760 × 1554)

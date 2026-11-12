@@ -16,19 +16,20 @@
 // Obraz: post Core3D (src/3d/fog/) — koła wzroku i soczewki sygnatur; logika rysunku omija byty `fogHides`.
 // ============================================================
 
+import { SHIP_RANGE_PROFILES, shipRangeClassOf } from '../data/shipRanges.js';
+
 export const FOG_TUNE = Object.freeze({
-  // Zasięg wzroku (j. świata). Atlas 18 km — ~2,5× dalej niż jego bateria (Yamato 7 km od 2026-10-07,
-  // src/data/weapons.js § ZASIĘGI): wroga widać przed walką; dalej strzela się z cudzego zwiadu (sojusznik,
-  // dron) — Mjolnir 20 km. Brzeg kręgu widać po oddaleniu kamery (domyślny kadr Atlasa ma ~9 km szerokości —
-  // kadłub 20% kadru, cameraRig.js; najdalszy zoom 0,035 — ~46 km przy 1600 px). Okręt z profilem czujników
-  // `role: 'radar'` (Corvus) to zwiadowca.
+  // Wzrok i limit kamery z tej samej skali klas (shipRanges.js): 5/8/11/14/18 km.
+  // Atlas widzi przed walką (Yamato po premii 7 km); Mjolnir 20 km wymaga cudzego zwiadu.
+  // Corvus ma 7 km jako fregata zwiadu; jawne visionRange (np. fregata z ładowni) wygrywa.
   vision: Object.freeze({
-    atlas: 18000,
-    capital: 15000,
-    battleship: 13000,
-    destroyer: 10000,
-    frigate: 8000,
-    radar: 26000,
+    atlas: SHIP_RANGE_PROFILES.supercapital.visionRange,
+    supercapital: SHIP_RANGE_PROFILES.supercapital.visionRange,
+    capital: SHIP_RANGE_PROFILES.capital.visionRange,
+    battleship: SHIP_RANGE_PROFILES.battleship.visionRange,
+    destroyer: SHIP_RANGE_PROFILES.destroyer.visionRange,
+    frigate: SHIP_RANGE_PROFILES.frigate.visionRange,
+    radar: 7000,
     fighter: 5000,
     drone: 20000,
     probe: 18000,
@@ -40,6 +41,9 @@ export const FOG_TUNE = Object.freeze({
   entityMarginMax: 1500,
   // Sygnatura masy: czas wygaszania po rozpoznaniu (s).
   massResolveSec: 1.8,
+  // Wzrok wobec okrętu wyłączonego albo w gazie (2026-11-11, `src/game/shipPower.js`, `src/game/gasCover.js`): koło wzroku
+  // × sygnatura bytu (`e.__sigMul`, pisze ją fleetAwareness co odświeżenie), nie mniej niż ten ułamek; strefy fabuły bez zmian.
+  visionSigFloor: 0.5,
   // Najwięcej źródeł wzroku w jednym kroku (pula bez alokacji; nadmiar — najmniejsze koła odpadają).
   maxSources: 96
 });
@@ -72,11 +76,8 @@ export function visionRangeOf(e, tune = FOG_TUNE) {
   if (e.sensors?.role === 'radar' || e.sensorProfile?.role === 'radar') return V.radar;
   const type = String(e.type || e.shipFrame || '').toLowerCase();
   if (e.fighter || FIGHTER_RE.test(type)) return V.fighter;
-  if (e.isPlayer === true || type === 'atlas') return V.atlas;
-  if (e.isCapitalShip || type.includes('carrier') || type.includes('supercapital') || type.includes('capital')) return V.capital;
-  if (type.includes('battleship')) return V.battleship;
-  if (type.includes('destroyer')) return V.destroyer;
-  return V.frigate;
+  const cls = shipRangeClassOf(e);
+  return cls === 'supercapital' ? V.atlas : (V[cls] || V.frigate);
 }
 
 export function createFogState(tune = FOG_TUNE) {
@@ -136,6 +137,30 @@ export function fogPointVisible(state, x, y, margin = 0) {
     if (dx * dx + dy * dy <= r * r) return true;
   }
   return false;
+}
+
+/**
+ * Jak `fogPointVisible`, ale koła wzroku (bez stref fabuły) × `mul` — byt wyłączony albo w gazie widać z bliższa.
+ * `mul` ≥ 1 — dokładnie `fogPointVisible`.
+ */
+export function fogPointVisibleMul(state, x, y, margin = 0, mul = 1) {
+  if (!(mul < 1)) return fogPointVisible(state, x, y, margin);
+  const S = state.sources;
+  for (let i = 0; i < state.sourceCount; i++) {
+    const s = S[i];
+    const r = (s.kind === FOG_KIND.reveal ? s.r : s.r * mul) + margin;
+    const dx = x - s.x, dy = y - s.y;
+    if (dx * dx + dy * dy <= r * r) return true;
+  }
+  return false;
+}
+
+/** Mnożnik wzroku wobec bytu z jego sygnatury stanu (`__sigMul`), z podłogą `visionSigFloor`. */
+function entityVisionMul(state, e) {
+  const m = e.__sigMul;
+  if (!(m < 1)) return 1;
+  const floor = state.tune.visionSigFloor ?? 0.5;
+  return m > floor ? m : floor;
 }
 
 function entityMargin(state, e) {
@@ -209,7 +234,7 @@ export function stepFogEntities(state, { player = null, npcs = null, stations = 
       const e = npcs[i];
       if (!e) continue;
       if (!on || isFogFriendly(e, player)) { e.__fogVisible = true; continue; }
-      const seen = fogPointVisible(state, posX(e), posY(e), entityMargin(state, e))
+      const seen = fogPointVisibleMul(state, posX(e), posY(e), entityMargin(state, e), entityVisionMul(state, e))
         || (finite(e.__fogRevealUntil, -1) > state.time);
       e.__fogVisible = seen;
       if (seen) e.__fogDiscovered = true;

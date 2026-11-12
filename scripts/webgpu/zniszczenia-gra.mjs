@@ -17,8 +17,8 @@
 //   habitatu — kawałek-ciało odpada fizycznie (onBaseDamageStep → storyBaseBreak).
 // --hexlance: faza „shipyard”, Atlas 4 km na południe od habitatu, Hexlance (4, ładowanie, 4) w bęben.
 // --final: faza „shipyard”, progi punktów habitatu do 3/8 (wszystkie kawałki habitatu ciałami, także duchy: część
-// techniczna i dysk), wypiek skór, śmierć habitatu → rozpad misji (_chainExplosion: implozja, reakcja w rurach od
-// habitatu) — kadry 30–36, czasy klatek w rozpadzie i po nim, rysunki, odłamy.
+// techniczna i dysk), wypiek skór, śmierć habitatu → rozpad misji (_chainExplosion: implozja, rur nie zapala)
+// — kadry 30–36, czasy klatek w rozpadzie i po nim, rysunki, odłamy.
 // Raport: <out>/raport.json — WorldBodies.stats, kanały broni, skóra, stan kawałków, pipeline'y synchroniczne, błędy.
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -73,7 +73,7 @@ if (args.czujka) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { sourc
     const Wb = window.WorldBodies, sites = Wb && Wb.sites;
     if (!sites || !sites.length) return;
     for (const site of sites) for (const p of site.pieces) {
-      if ((p.kind !== 'drum' && p.kind !== 'pier') || p.state !== 'live') continue;
+      if ((p.kind !== 'highrise' && p.kind !== 'pier') || p.state !== 'live') continue;
       const n = p.alive | 0, was = W.prev[p.id];
       W.prev[p.id] = n;
       if (was && n < was - 20 && W.hits.length < 12) {
@@ -120,7 +120,7 @@ const camHub = (x, z, zoom) => ev(`(() => {
   return true;
 })()`);
 
-const PIECES = ['YA-1', 'YA-2', 'YB-1', 'NP', 'H-W', 'H-S', 'H-N', 'H-E', 'H-C', 'FP'];
+const PIECES = ['YA-1', 'YA-2', 'YB-1', 'NP', 'B-19', 'B-16', 'B-22', 'B-13', 'H-C', 'FP'];   // wieżowce zewnętrzne na osiach (W, S, N, E)
 // kawałek bazy po id (miejsca ciał na budowlę)
 const PIECE_OF = `const pieceOf = (id) => { for (const s of window.WorldBodies.sites) for (const q of s.pieces) if (q.id === id) return q; return null; };`;
 const worldState = () => ev(`(() => {
@@ -206,7 +206,7 @@ const fireHub = (weaponId, x, z, tx, tz, n, every) => ev(`new Promise((res) => {
 
 // --final: faza „shipyard”, progi punktów habitatu do 3/8 (wszystkie kawałki habitatu ciałami, skóry pieką się w tle),
 // potem śmierć habitatu i rozpad misji (StoryGame._chainExplosion → storyBaseBreak → worldBodies.breakPiece: ćwiartki
-// bębna, szyb, część techniczna i dysk — duchy — pękają na odłamy z odłamkami; reakcja w rurach od habitatu). Kadry
+// bębna, szyb, część techniczna i dysk — duchy — pękają na odłamy z odłamkami; rur nie zapala). Kadry
 // 30–36, czasy klatek w rozpadzie i po nim, rysunki, odłamy, skóry.
 const FRAME_REC = `(() => {
   const R = window.__frames = { on: false, dt: [], draws: [], last: 0 };
@@ -346,7 +346,7 @@ try {
     await sleep(1500);
     await camHub((L.F.x + L.A1.x) / 2 + 400, -800, 0.16);
     await shot('01-statyka', 1200);
-    await ev(`(() => { ${PIECE_OF} for (const id of ['YA-1', 'YA-2', 'YB-1', 'NP', 'H-W']) { const p = pieceOf(id); if (p && p.state === 'live') p.touched = true; } return true; })()`);
+    await ev(`(() => { ${PIECE_OF} for (const id of ['YA-1', 'YA-2', 'YB-1', 'NP', 'B-19']) { const p = pieceOf(id); if (p && p.state === 'live') p.touched = true; } return true; })()`);
     await shot('02-skora-bez-ruchu', 1200);
     // taran rzędu przy ramieniu A (tor layout.ram jak w baza-gra.mjs): rufą 400 j. przed początkiem toru, maskowanie,
     // rozpęd 700 j/s, W + Shift (dopalacz) trzymane
@@ -383,7 +383,7 @@ try {
     const mx = w.x + w.nx * 1500, mz = w.z + w.nz * 1500;
     await placeHub(sx, sz, Math.atan2(-w.nz, -w.nx), 0);
     await ev('(() => { window.ship.vel.x = 0; window.ship.vel.y = 0; if (window.fireControl) window.fireControl.posture = "hold"; return true; })()');
-    await waitFor(cdp, `(() => { ${PIECE_OF} const p = pieceOf('H-S'); return p && p.state === 'live'; })()`, 20000, 200);
+    await waitFor(cdp, `(() => { ${PIECE_OF} const p = pieceOf('B-16'); return p && p.state === 'live'; })()`, 20000, 200);
     await camHub(w.x + w.nx * 200, w.z + w.nz * 200, 0.32);
     await sleep(800);
     report.ostrzalPrzed = await worldState();

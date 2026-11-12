@@ -9,6 +9,7 @@ class AsteroidMining extends MiningBase {
 }
 import { MINING_CONFIG, rockMaterial, chargeReach, chargeForDepth, oreResourceOf } from '../src/game/asteroidMaterials.js';
 import { ROCK_TYPE_INDEX } from '../src/game/asteroidRockKinds.js';
+import { WYDAJNOSC } from './helpers/wydajnosc.mjs';
 
 // Kształt bez GPU: lekko pofalowana kula (średnia ~1 jak w banku).
 const lumpy = (shape, x, y, z) => 1 + 0.08 * Math.sin(3 * x + shape) * Math.cos(2 * y) + 0.05 * z * z;
@@ -481,14 +482,29 @@ test('piorun kulisty: determinizm (te same operacje = ten sam lot i wybuch)', ()
   assert.deepEqual(run(), run());
 });
 
-test('koszt: budowa dużej skały i wybuch mieszczą się w klatce-dwóch', () => {
+// Duża skała (r 1000): budowa i wybuch zawsze, czasy — test wydajności (tests/helpers/wydajnosc.mjs).
+function bigRockBlast() {
   const sys = new AsteroidMining({ radiusAt: lumpy, seed: 5 });
   const t0 = performance.now();
   const b = sys.activate(rockRecord('copper', 1000), { z: -1450 });
   const build = performance.now() - t0;
+  const mass = b.mass;
   const t1 = performance.now();
-  sys.detonate(b, b.p[0], b.p[1], b.p[2], 16);
+  const res = sys.detonate(b, b.p[0], b.p[1], b.p[2], 16);
   const blast = performance.now() - t1;
+  return { sys, b, mass, res, build, blast };
+}
+
+test('duża skała (r 1000): ładunek 16 w środku — wybuch zawarty, masa bez zmian', () => {
+  const { sys, mass, res } = bigRockBlast();
+  assert.ok(mass > 0 && Number.isFinite(mass));
+  assert.equal(res.outcome, 'contained', `głębokość ${res.depth?.toFixed(0)} j.`);
+  assert.equal(res.bodies.length + res.pebbles.length, 0, 'bez odłamów');
+  assert.ok(Math.abs(totalMass(sys) - mass) < 1e-6 * mass);
+});
+
+test('koszt: budowa dużej skały i wybuch mieszczą się w klatce-dwóch', WYDAJNOSC, () => {
+  const { build, blast } = bigRockBlast();
   assert.ok(build < 400, `budowa ${build.toFixed(0)} ms`);
   assert.ok(blast < 400, `wybuch ${blast.toFixed(0)} ms`);
 });

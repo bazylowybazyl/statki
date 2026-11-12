@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { forEachTrafficSalvageWreck } from '../src/game/trafficSalvage.js';
 
 // Zimne wraki: warunki zamrożenia, budżety klatki, limit liczby zimnych, ten sam obiekt wraku po odmrożeniu
 // i wpięcie w index.html. Prawdziwe kadłuby na belkach (HullBodies); atrapą jest tylko obraz (płyta RGBA) i to,
@@ -13,7 +14,6 @@ window.wrecks = [];
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { TowConstraintSystem } = await import('../src/game/towSystem.js');
 const { createColdWreckSystem, COLD_WRECK_CONFIG, THAW_RESULT } = await import('../src/game/coldWrecks.js');
-const { SHIPMENT_STATUS } = await import('../src/game/cargoFleet.js');
 const { readIndexHtml, sliceFunction, loadIndexFunction } = await import('./helpers/indexSource.mjs');
 const D = HullBodies.engine;
 
@@ -247,7 +247,9 @@ test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, lin
   const w = () => ({ isWreck: true });
   const refs = {
     cutting: w(), towed: w(), locked: w(), locked2: w(), multi: w(), hover: w(), selected: w(),
-    menu: w(), attack: w(), playerCmd: w(), npcCmd: w(), npcForce: w(), cargo: w(), ropeA: w()
+    menu: w(), attack: w(), playerCmd: w(), npcCmd: w(), npcForce: w(), cargo: w(), ropeA: w(),
+    // E24: wrak pod palnikiem złomiarza NPC (lina holu idzie przez TowSystem — wyżej)
+    npcCut: w()
   };
   const idle = w();
   const deadNpcCmd = w();
@@ -266,7 +268,9 @@ test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, lin
       { command: { targetEntity: refs.npcCmd }, forceTarget: refs.npcForce },
       { dead: true, command: { targetEntity: deadNpcCmd }, _cargoWreck: refs.cargo }
     ],
-    TowSystem: { constraints: [{ bodyA: refs.ropeA, bodyB: { isWreck: false } }] }
+    TowSystem: { constraints: [{ bodyA: refs.ropeA, bodyB: { isWreck: false } }] },
+    trafficSalvage: { jobs: new Map([[5, { active: true, rope: null, wreck: refs.npcCut }], [6, { active: false, rope: null, wreck: idle }]]) },
+    forEachTrafficSalvageWreck
   });
   mark(7);
   for (const [name, ref] of Object.entries(refs)) assert.equal(ref._coldRefStamp, 7, name);
@@ -278,21 +282,12 @@ test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, lin
   assert.equal(menuClosed._coldRefStamp, undefined, 'zamknięte menu nie trzyma wraku');
   assert.equal(refs.cutting._coldRefStamp, 8);
 
-  // Wprost: lina i ładunek w locie (partia jeszcze nie leży we wraku).
-  const orders = new Map([
-    ['o-transit', { status: SHIPMENT_STATUS.IN_TRANSIT }],
-    ['o-wreck', { status: SHIPMENT_STATUS.WRECK }]
-  ]);
+  // Wprost: lina. (Ładunek vanów w locie do wraku odszedł ze starą ekonomią — E2, 2026-10-22.)
   const roped = w();
   const direct = loadIndexFunction(src, 'function isColdWreckReferencedDirect(wreck)', 'isColdWreckReferencedDirect', {
-    TowSystem: { isAttached: (b) => b === roped },
-    getShipmentOrder: (_fleet, id) => orders.get(id),
-    cargoFleet: {},
-    SHIPMENT_STATUS
+    TowSystem: { isAttached: (b) => b === roped }
   });
   assert.equal(direct(roped), true);
-  assert.equal(direct({ isWreck: true, _cargoOrderId: 'o-transit' }), true, 'transfer w toku');
-  assert.equal(direct({ isWreck: true, _cargoOrderId: 'o-wreck' }), false, 'ładunek leżący we wraku nie blokuje');
   assert.equal(direct(idle), false);
 });
 

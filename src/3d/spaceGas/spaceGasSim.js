@@ -1,0 +1,1022 @@
+// src/3d/spaceGas/spaceGasSim.js
+//
+// POLE GAZU 2D Z TRANSPORTEM GĘSTOŚCI w otwartej przestrzeni (pas, ring, ławice mgły) — rdzeń portu dema
+// dema/gazy-transport-webgpu.html do gry (docs/PLAN-gazy-kosmos.md, etap GK-1; wygląd dema zaakceptowany 2026-10-16,
+// decyzje D1–D8 z rekomendacjami przyjęte 2026-10-22). Sam rdzeń: kernele, stan GPU, okno i krok — bez obrazu (GK-3)
+// i bez wejścia gry (GK-2).
+//
+// Okno N × N komórek po `cell` j. wokół kamery, przesuwane o całe komórki (komórki wjeżdżające dostają POLE DALEKIE).
+// Kernele 1:1 z dema (strojenie SPACE_GAS_TUNE = SIMT dema): wiry → adwekcja RK2 prędkości + siły → MacCormack skalarów,
+// ciągłość z faktyczną dywergencją → dywergencja − cel → Jacobi → rzut z komórkami stałymi i otwartym brzegiem.
+// Fizyka (opis dema): pole dalekie (start okna, komórki wjeżdżające, dopływ przez brzeg, gęstość ODNIESIENIA), ciśnienie
+// gazu κ(ρ − ρ_ref), STREFY ŚCIŚLIWE (stożek dyszy, front wybuchu, „pług” wokół kadłuba — D6), opór (ku wiatrowi, w próżni,
+// kwadratowy), wiatr = prędkość tła (D4), pozycje spoczynkowe faktury.
+//
+// Różnice względem dema (blokery z przeglądu 2026-10-15, plan § 2):
+//   • UKŁAD: świat GRY (y w dół) WZGLĘDEM KOTWICY sceny (`anchor` — pas: Słońce; ring: planeta), liczony na CPU w double.
+//     Bufory trzymają tylko stan komórek (bez pozycji bezwzględnych), więc 5–10 mln j. świata nie dotyka float32,
+//     a szum pola dalekiego ma argumenty rzędu setek. Zmiana kotwicy = start okna od nowa.
+//   • bez bufora `flagB`: komórka stała = znacznik w `velB.w` (2; strefa ściśliwa ≤ 1), prędkość ciała w `velB.xy` —
+//     kAdvect i kProject mają po 7 buforów storage (zapas jednego do limitu 8); kShift przenosi ciśnienie przez
+//     `velB.z` (kShiftCopy → prsB), więc oba kernele przesunięcia też mieszczą się w 7 buforach.
+//   • KADŁUBY = maski obrysu z żywych węzłów belek (rekord GAS_HULL_REC — jak przeszkody gazu wybuchów), nie koła; pas
+//     „pługa” wokół OBRYSU (pole odległości od zapalonych teksli maski z normalną — hullShellFieldCpu; do 2026-11-03
+//     od prostokąta maski: w mgle pasa okręt pchał gaz pudłem).
+//   • OLBRZYMY PASA = raster przekroju z = 0 od gry (128 × 128 na okno, tekstura R8): komórki stałe i zasłona strug.
+//   • POLE DALEKIE wstrzykiwane przez scenę (`farEnv(q, U)` → vec4 gęstości kanałów; q — punkt względem kotwicy).
+//   • OBRAZ 60 Hz → dwie pary tekstur (krok na zmianę): obraz przenika poprzedni i bieżący krok wg ułamka kroku (plan
+//     § 2 pkt 5), każda tekstura z własnym rogiem okna (przesunięcie okna nie przestawia już zapisanej tekstury).
+//   • ZEGAR GRY (2026-10-29): z zegarem w wejściu (`frame(…, clock)`) krok k pola = krok k fizyki z CAŁKOWITEGO
+//     licznika kroków (index.html `physicsTickId`; ?physHz=120 — co drugi krok fizyki; kadłuby w polu są w pozie tego
+//     kroku), a ułamek przenikania = chwila renderu kadłubów (alfa interpolacji z różnicy SimClock.sim − .render) — obraz
+//     gazu w tej samej chwili co kadłuby. Nie ⌊SimClock.sim · 60⌋: suma 1/60 dryfuje (poniżej −1e-6 od ~1 h 55 min,
+//     −1,4e-5 po 6 h) i krok wychodził o jeden za mały na stałe. Bez zegara — własny akumulator z dt klatki (faza wobec
+//     fizyki losowa, worker gubił czas pominiętych stron).
+//   • okno przesuwane TYLKO w klatce z krokiem (lekcja drżenia dema 2026-10-13).
+//
+// Zero `window`, DOM i referencji do encji (szew gra ↔ render): wejście klatki pakuje właściciel (spaceGas.js).
+
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, Loop, Return, float, int, ivec2, vec2, vec3, vec4, uniform, uniformArray, instancedArray, instanceIndex,
+  textureStore, texture, mix, smoothstep, saturate, clamp, exp, max, min, abs, dot, length, floor, select
+} from 'three/tsl';
+import { gnoise } from './spaceGasNoise.js';
+import { GAS_HULL_MASK } from '../gas/gasObstacleLayout.js';
+import { SPACE_GAS_RASTER, SPACE_GAS_HZ, spaceGasWindowCells } from './spaceGasLayout.js';
+
+/** Bok komórki pola [j.] — strojenie jest w jednostkach komórek (D5: stała). */
+export const SPACE_GAS_CELL = 64;
+/** Tempo kroku pola [Hz] (stała w spaceGasLayout.js — czyta ją też gra), krok symulacji [s] i najwięcej kroków na klatkę (× 4 w rozgrzaniu sceny). */
+export { SPACE_GAS_HZ };
+export const SPACE_GAS_SUB = 1 / SPACE_GAS_HZ;
+export const SPACE_GAS_MAX_SUB = 2;
+/**
+ * Zasięg stożka w poprzek osi [× szerokość stożka w tym miejscu]: kernel (`srcShape`), lustro CPU (`srcShapeCpu`)
+ * i pudło dyszy w budżecie źródeł (spaceGas.js `_engines` — margines 2,6 × szerokość końca stożka).
+ */
+export const SPACE_GAS_CONE_REACH = 2.6;
+
+/** Strojenie pola (= SIMT dema; po zmianie `sim.syncTune()`). */
+export function createSpaceGasTune() {
+  return {
+    drag: 0.2,            // opór prędkości ku wiatrowi [1/s]
+    dragVac: 2.0,         // dodatkowy opór tam, gdzie gazu brak (ρ < vacRho): pas spalin po zgaszeniu silnika staje
+    vacRho: 0.25,
+    dragQuad: 0.3,        // opór szybkiego gazu poza stożkami [1/komórka]: wał zepchnięty przez strumień staje w ~1 s
+    cmTau: 1.0,           // pamięć strefy ściśliwej [s]
+    hullShell: 130,       // pas „pługa” wokół kadłuba [j.]
+    // pług od OBRYSU kadłuba (pole odległości od zapalonych teksli maski — hullShellFieldCpu, 2026-11-03); 0 — od
+    // prostokąta maski (dawniej: w mgle pasa okręt pchał gaz pudłem — A/B: sim.tune.plowOutline = 0 + syncTune())
+    plowOutline: 1,
+    vort: 1.0,            // wzmacnianie wirów [komórki]
+    soft: 0.004,          // miękki rzut [1/komórka²] — wał przed dziobem / na czole strumienia / wybuchu
+    baro: 0.012,          // ciśnienie gazu κ [1/s] — kanał zamyka się dopływem w ~minutę
+    baroFloor: 0.3,       // ρ₀ — próżnia nie jest „rozrzedzona”
+    turb: 0.008,          // turbulencja w gazie [komórki/s²]
+    turbShear: 0.6,       // waga |ω| [s] w turbulencji
+    restRelax: 0.35,      // powrót pozycji spoczynkowych faktury [1/s]
+    restMax: 6,           // najdalsze przesunięcie faktury [komórki]
+    maxSpeed: 4200,       // sufit prędkości [j/s]
+    warm: 0.9,            // rozgrzanie ciśnienia
+    shiftPrs: 1,          // przesunięcie okna przenosi ciśnienie (A/B 0 — od zera: rzut bez rozgrzania co przesunięcie)
+    jacobi: 31,           // iteracje (nieparzyste — wynik w prsB)
+    diff: 0.05,           // dyfuzja skalarów [komórki²/s]
+    capRef: 3.0,          // sufit zagęszczenia: capRef × gęstość odniesienia + capAdd
+    capAdd: 0.6,
+    decay: [0.002, 0.002, 0.004, 0.04]   // zanik w próżni [1/s] na kanał (w — wyrzut)
+  };
+}
+
+const v4Array = (n, name) => uniformArray(Array.from({ length: n }, () => new THREE.Vector4()), 'vec4').setName(name);
+
+function imageTexture(N, name) {
+  const t = new THREE.StorageTexture(N, N);
+  t.type = THREE.HalfFloatType;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  t.name = name;
+  return t;
+}
+
+/** Tryby źródła (srcC.z). */
+export const SPACE_GAS_SRC = Object.freeze({ cone: 0, ball: 1, front: 2 });
+
+/**
+ * Lustro CPU profilu źródła `srcShape` (bez zasłaniania przeszkodami): { prof, near, cmp, tx, ty }. A, B, C — tablice 4
+ * liczb jak rekord źródła (A: początek, kierunek; B: długość / promień, szerokość u nasady / grubość frontu, rozszerzanie,
+ * prędkość [j/s]; C: tempo narzucania, wydatek objętości, tryb, zasięg źródła od wylotu). Zmiana kernela = zmiana lustra.
+ */
+export function srcShapeCpu(px, py, A, B, C, out = {}) {
+  out.prof = 0; out.near = 0; out.cmp = 0; out.tx = 0; out.ty = 0;
+  const rx = px - A[0], ry = py - A[1];
+  if (C[2] > 1.5) {
+    const d = Math.sqrt(rx * rx + ry * ry);
+    if (d < B[0] + B[1]) {
+      out.prof = Math.min(1, Math.max(0, 1 - Math.abs(d - B[0]) / B[1]));
+      out.cmp = 1;
+      const k = B[3] / Math.max(d, 1);
+      out.tx = rx * k; out.ty = ry * k;
+    }
+  } else if (C[2] > 0.5) {
+    const d = Math.sqrt(rx * rx + ry * ry);
+    if (d < B[0] * 1.7) {
+      const x = d / B[0];
+      out.prof = Math.exp(-2 * x * x);
+      out.near = out.prof;
+      out.cmp = out.prof;
+      const k = B[3] / Math.max(d, 1);
+      out.tx = rx * k; out.ty = ry * k;
+    }
+  } else {
+    const along = rx * A[2] + ry * A[3];
+    if (along > -B[1] && along < B[0]) {
+      const across = -rx * A[3] + ry * A[2];
+      const width = B[1] + Math.max(along, 0) * B[2];
+      const x = across / width;
+      const ss = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+      const fade = (1 - ss(B[0] * 0.5, B[0], along)) * ss(-B[1], 0, along);
+      if (Math.abs(x) < SPACE_GAS_CONE_REACH && fade > 1e-3) {
+        const x2 = x * x;
+        out.prof = Math.exp(-2.2 * x2) * fade;
+        out.near = out.prof * (1 - ss(C[3] * 0.5, C[3], along));
+        const sp = B[3] * (B[1] / width * 0.7 + 0.3);
+        const side = x * B[2] * sp * 2;
+        out.tx = A[2] * sp - A[3] * side;
+        out.ty = A[3] * sp + A[2] * side;
+        out.cmp = Math.exp(-0.5 * x2) * fade;
+      }
+    }
+  }
+  return out;
+}
+
+/** Zapas ramki pola odległości od obrysu ponad pas pługa [j.] (ramka = prostokąt maski + hullShell + zapas z każdej strony). */
+export const SPACE_GAS_HULL_SHELL_PAD = 16;
+
+// Bufory robocze pola odległości (bez alokacji przy każdej przebudowie maski).
+let _sdOcc = new Uint8Array(0), _sdF = new Float64Array(0), _sdD = new Float64Array(0), _sdRow = new Float64Array(0),
+  _sdOut = new Float64Array(0), _sdV = new Int32Array(0), _sdZ = new Float64Array(0);
+const SD_INF = 1e20;
+
+// Kwadrat odległości 1D (Felzenszwalb–Huttenlocher) po n próbkach co `s` j.: f[off + q·stride] → d[off + q·stride].
+function edt1d(f, d, off, stride, n, s) {
+  if (_sdV.length < n) { _sdV = new Int32Array(n); _sdZ = new Float64Array(n + 1); _sdRow = new Float64Array(n); _sdOut = new Float64Array(n); }
+  const v = _sdV, z = _sdZ, g = _sdRow, o = _sdOut;
+  for (let q = 0; q < n; q++) g[q] = f[off + q * stride];
+  let k = 0;
+  v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    const qs = q * s;
+    let x;
+    for (;;) {
+      const p = v[k], ps = p * s;
+      x = ((g[q] + qs * qs) - (g[p] + ps * ps)) / (2 * (qs - ps));
+      if (x <= z[k]) { k--; continue; }   // z[0] = −∞ — pętla kończy się najpóźniej na k = 0
+      break;
+    }
+    k++;
+    v[k] = q; z[k] = x; z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    const qs = q * s;
+    while (z[k + 1] < qs) k++;
+    const p = v[k], dd = (q - p) * s;
+    o[q] = dd * dd + g[p];
+  }
+  for (let q = 0; q < n; q++) d[off + q * stride] = o[q];
+}
+
+/**
+ * POLE ODLEGŁOŚCI OD OBRYSU kadłuba dla „pługa” (2026-11-03, zgłoszenie użytkownika: „pył / mgła w asteroidach zamiast
+ * obrysu prawdziwego statka rysuje prostokąt — przelatując przez mgłę widzę, że hitbox statku to prostokąt”): pas pługa
+ * (gaz od strony ruchu burty dostaje jej prędkość normalną, strefa ściśliwa — wał przed dziobem i pusty ślad za rufą)
+ * liczył się od PROSTOKĄTA maski obrysu — zwężony dziób, rufa i wcięcia pchały gaz pudłem. Teraz od obrysu: odległość
+ * euklidesowa od zapalonych teksli maski (dwa przejścia 1D po siatce W × H z bokami teksli w j. — teksle maski nie są
+ * kwadratowe) i normalna na zewnątrz (gradient odległości) w osiach kadłuba.
+ * Wejście: słowa maski `words[wOff + k]` (bit k = wiersz · W + kolumna; liczby — także double z tablicy wejścia),
+ * W × H teksli, bok teksla tx / ty [j.], margines M [j.]. Ramka pola: q ∈ [−M/tx, W + M/tx] × [−M/ty, H + M/ty]
+ * (teksle maski), siatka W × H. Wyjście RGBA8 od `base` (bajty): R — odległość / M (0 w kadłubie, 255 — M i dalej),
+ * G, B — normalna na zewnątrz w osiach kadłuba ((n + 1) / 2), A — 255. Odczyt w kernelu `kAdvect` (pług), lustro odczytu:
+ * hullShellAtCpu. Koszt: ~0,1 ms na przebudowę maski (tylko przy zmianie uid / wersji obrysu albo marginesu).
+ */
+export function hullShellFieldCpu(words, wOff, W, H, tx, ty, M, out, base = 0) {
+  const n = W * H;
+  if (_sdOcc.length < n) { _sdOcc = new Uint8Array(n); _sdF = new Float64Array(n); _sdD = new Float64Array(n); }
+  const mx = M / tx, my = M / ty;
+  const su = (W + 2 * mx) / W, sv = (H + 2 * my) / H;        // bok teksla pola [teksle maski]
+  const sx = su * tx, sy = sv * ty;                          // [j.]
+  const bit = (a, b) => (words[wOff + ((b * W + a) >>> 5)] >>> ((b * W + a) & 31)) & 1;
+  // zajętość: teksel pola zawiera choć część zapalonego teksla maski (cienkie części kadłuba nie znikają)
+  let any = 0;
+  for (let j = 0; j < H; j++) {
+    const qy0 = -my + j * sv, qy1 = qy0 + sv;
+    const b0 = Math.max(0, Math.floor(qy0)), b1 = Math.min(H - 1, Math.ceil(qy1) - 1);
+    for (let i = 0; i < W; i++) {
+      const qx0 = -mx + i * su, qx1 = qx0 + su;
+      const a0 = Math.max(0, Math.floor(qx0)), a1 = Math.min(W - 1, Math.ceil(qx1) - 1);
+      let occ = 0;
+      for (let b = b0; b <= b1 && !occ; b++) for (let a = a0; a <= a1; a++) if (bit(a, b)) { occ = 1; break; }
+      _sdOcc[j * W + i] = occ;
+      _sdF[j * W + i] = occ ? 0 : SD_INF;
+      any |= occ;
+    }
+  }
+  const half = 0.5 * Math.min(sx, sy);
+  const D = _sdD;
+  if (any) {
+    for (let j = 0; j < H; j++) edt1d(_sdF, _sdF, j * W, 1, W, sx);
+    for (let i = 0; i < W; i++) edt1d(_sdF, _sdF, i, W, H, sy);
+    for (let k = 0; k < n; k++) D[k] = _sdOcc[k] ? 0 : Math.max(0, Math.sqrt(_sdF[k]) - half);
+  } else {
+    D.fill(M, 0, n);
+  }
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const k = j * W + i;
+      const d = D[k];
+      let nx = 0, ny = 0;
+      if (d > 0) {
+        const il = i > 0 ? i - 1 : i, ir = i < W - 1 ? i + 1 : i;
+        const jb = j > 0 ? j - 1 : j, jt = j < H - 1 ? j + 1 : j;
+        nx = (D[j * W + ir] - D[j * W + il]) / ((ir - il) * sx);
+        ny = (D[jt * W + i] - D[jb * W + i]) / ((jt - jb) * sy);
+        const l = Math.sqrt(nx * nx + ny * ny);
+        if (l > 1e-6) { nx /= l; ny /= l; } else { nx = 0; ny = 0; }
+      }
+      const o = base + k * 4;
+      out[o] = Math.round(Math.min(1, d / M) * 255);
+      out[o + 1] = Math.round((nx + 1) * 127.5);
+      out[o + 2] = Math.round((ny + 1) * 127.5);
+      out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/**
+ * Lustro CPU odczytu pola odległości w kernelu (pług): q — punkt w tekslach maski, pole od `base` (hullShellFieldCpu),
+ * próbka dwuliniowa jak tekstura (środki teksli w +0,5, przycięcie do brzegu). Zwraca { d [j.], nx, ny } (normalna
+ * w osiach kadłuba, nieznormowana po interpolacji) albo d = Infinity poza ramką.
+ */
+export function hullShellAtCpu(data, base, W, H, tx, ty, M, qx, qy, out = {}) {
+  const mx = M / tx, my = M / ty;
+  const u = (qx + mx) / (W + 2 * mx), v = (qy + my) / (H + 2 * my);
+  out.d = Infinity; out.nx = 0; out.ny = 0;
+  if (!(u > 0 && u < 1 && v > 0 && v < 1)) return out;
+  const fx = Math.min(Math.max(u * W, 0.5), W - 0.5) - 0.5, fy = Math.min(Math.max(v * H, 0.5), H - 0.5) - 0.5;
+  const i = Math.floor(fx), j = Math.floor(fy), a = fx - i, b = fy - j;
+  const i1 = Math.min(i + 1, W - 1), j1 = Math.min(j + 1, H - 1);
+  const at = (ii, jj, c) => data[base + (jj * W + ii) * 4 + c] / 255;
+  const lerp = (c) => (at(i, j, c) * (1 - a) + at(i1, j, c) * a) * (1 - b) + (at(i, j1, c) * (1 - a) + at(i1, j1, c) * a) * b;
+  out.d = lerp(0) * M;
+  out.nx = lerp(1) * 2 - 1;
+  out.ny = lerp(2) * 2 - 1;
+  return out;
+}
+
+export class SpaceGasSim {
+  /**
+   * @param {object} o
+   * @param {(q: any, U: object) => any} o.farEnv pole dalekie: vec4 gęstości kanałów (x, y, z — gazy sceny, w — wyrzut)
+   *   w punkcie q (vec2, świat gry względem kotwicy); U — uniformy pola (np. U.windOff — dryf wzoru z wiatrem)
+   * @param {number} [o.N] okno [komórki] (128 / 256 / 384 — D5)
+   * @param {number} [o.cell] bok komórki [j.]
+   * @param {number} [o.maxSources] źródeł na klatkę
+   * @param {number} [o.maxRocks] kół-przeszkód (przekroje olbrzymów pasa, jądra komet)
+   * @param {number} [o.maxHulls] kadłubów-przeszkód (maski obrysu) na klatkę
+   */
+  constructor({ farEnv, N = 256, cell = SPACE_GAS_CELL, maxSources = 64, maxRocks = 64, maxHulls = 32, name = 'spaceGas' } = {}) {
+    if (typeof farEnv !== 'function') throw new Error('SpaceGasSim: brak farEnv');
+    // Kernele pola liczą N² wątków BEZ strażnika `instanceIndex < N²` (three r183: ceil(N² / 64) grup po 64) — N w górę do
+    // wielokrotności 8 (N² % 64 = 0), z ostrzeżeniem; gra liczy okno tą samą funkcją (spaceGasLayout.js spaceGasWindowCells).
+    N = spaceGasWindowCells(N, `${name}: okno pola N`);
+    this.N = N;
+    this.cell = cell;
+    this.maxSources = maxSources;
+    this.maxRocks = maxRocks;
+    this.maxHulls = maxHulls;
+    this.name = name;
+    this.tune = createSpaceGasTune();
+    const NN = N * N;
+    const U = this.U = {
+      live: uniform(1),                         // 0 — kernele wychodzą od razu (rozgrzewka pustymi dispatchami)
+      origin: uniform(new THREE.Vector2()),     // róg komórki (0, 0) okna [j., świat gry względem kotwicy]
+      shift: uniform(new THREE.Vector2()),      // przesunięcie okna [komórki] (nowe − stare)
+      windOff: uniform(new THREE.Vector2()),    // całka wiatru [j.] — wzór pola dalekiego płynie z wiatrem
+      windC: uniform(new THREE.Vector2()),      // wiatr [komórki/s]
+      dt: uniform(SPACE_GAS_SUB),
+      step: uniform(0, 'int'),
+      time: uniform(0),                         // zegar pola [s] (turbulencja)
+      decay: uniform(new THREE.Vector4()),
+      srcCount: uniform(0, 'int'),
+      rockCount: uniform(0, 'int'),
+      hullCount: uniform(0, 'int'),
+      srcA: v4Array(maxSources, `${name}SrcA`),
+      srcB: v4Array(maxSources, `${name}SrcB`),
+      srcC: v4Array(maxSources, `${name}SrcC`),
+      srcD: v4Array(maxSources, `${name}SrcD`),
+      rock: v4Array(maxRocks, `${name}Rock`),   // x, y, promień, —
+      // kadłub (rekord GAS_HULL_REC → pole): A — kotwica xy, wiersz 0 macierzy K (świat → teksle maski);
+      // B — wiersz 1 K, przesunięcie (teksle); C — prędkość kotwicy [j/s], ω [rad/s], pasmo maski; D — bok teksla xy [j.],
+      // zasięg [j.], margines ramki pola odległości od obrysu [j.] (pług)
+      hullA: v4Array(maxHulls, `${name}HullA`),
+      hullB: v4Array(maxHulls, `${name}HullB`),
+      hullC: v4Array(maxHulls, `${name}HullC`),
+      hullD: v4Array(maxHulls, `${name}HullD`),
+      // raster olbrzymów: róg [j., względem kotwicy], bok rastra [j.], 1 — ma bryły
+      raster: uniform(new THREE.Vector4(0, 0, 1, 0))
+    };
+    const ST = this.ST = {};
+    for (const k of ['drag', 'dragVac', 'vacRho', 'dragQuad', 'cmTau', 'hullShell', 'vort', 'soft', 'baro', 'baroFloor',
+      'turb', 'turbShear', 'restRelax', 'restMax', 'maxSpeed', 'warm', 'diff', 'capRef', 'capAdd', 'shiftPrs', 'plowOutline']) ST[k] = uniform(0);
+    this.syncTune();
+
+    // maski obrysu kadłubów: pasmo 64 × 32 na slot (R8, filtr liniowy, próg 0,5)
+    const HM = GAS_HULL_MASK;
+    this.hullMaskData = new Uint8Array(HM.w * HM.h * maxHulls);
+    const mt = new THREE.DataTexture(this.hullMaskData, HM.w, HM.h * maxHulls, THREE.RedFormat, THREE.UnsignedByteType);
+    mt.minFilter = THREE.LinearFilter;
+    mt.magFilter = THREE.LinearFilter;
+    mt.generateMipmaps = false;
+    mt.name = `${name}HullMasks`;
+    mt.needsUpdate = true;
+    this.hullMaskTex = mt;
+    // pole odległości od OBRYSU (pług): pasmo 64 × 32 na slot, RGBA8 — odległość / margines, normalna na zewnątrz w osiach
+    // kadłuba (hullShellFieldCpu); ramka = prostokąt maski + margines (hullD.w) z każdej strony
+    this.hullShellData = new Uint8Array(HM.w * HM.h * maxHulls * 4);
+    const st = new THREE.DataTexture(this.hullShellData, HM.w, HM.h * maxHulls, THREE.RGBAFormat, THREE.UnsignedByteType);
+    st.minFilter = THREE.LinearFilter;
+    st.magFilter = THREE.LinearFilter;
+    st.wrapS = st.wrapT = THREE.ClampToEdgeWrapping;
+    st.generateMipmaps = false;
+    st.flipY = false;
+    st.colorSpace = THREE.NoColorSpace;
+    st.name = `${name}HullShell`;
+    st.needsUpdate = true;
+    this.hullShellTex = st;
+    this._shellM = new Float64Array(maxHulls).fill(NaN);
+    // raster przekroju olbrzymów (R8, filtr liniowy, próg 0,5 — brzeg na granicy teksli)
+    const RS = SPACE_GAS_RASTER;
+    this.rasterData = new Uint8Array(RS * RS);
+    const rt = new THREE.DataTexture(this.rasterData, RS, RS, THREE.RedFormat, THREE.UnsignedByteType);
+    rt.minFilter = THREE.LinearFilter;
+    rt.magFilter = THREE.LinearFilter;
+    rt.wrapS = rt.wrapT = THREE.ClampToEdgeWrapping;
+    rt.generateMipmaps = false;
+    rt.name = `${name}Raster`;
+    rt.needsUpdate = true;
+    this.rasterTex = rt;
+    this._rasterVer = -1;
+
+    const B = this.buf = {
+      velA: instancedArray(NN, 'vec2').setName(`${name}VelA`),
+      velB: instancedArray(NN, 'vec4').setName(`${name}VelB`),     // xy prędkość po siłach / ciała, z — cel dywergencji, w — strefa ściśliwa (2 = stała)
+      curlB: instancedArray(NN, 'vec2').setName(`${name}Curl`),
+      prsA: instancedArray(NN, 'vec4').setName(`${name}PrsA`),     // q, prawa strona, stała
+      prsB: instancedArray(NN, 'vec4').setName(`${name}PrsB`),
+      denA: instancedArray(NN, 'vec4').setName(`${name}DenA`),
+      denB: instancedArray(NN, 'vec4').setName(`${name}DenB`),
+      denC: instancedArray(NN, 'vec4').setName(`${name}DenC`),
+      restA: instancedArray(NN, 'vec4').setName(`${name}RestA`),   // przesunięcie faktury xy [komórki], z — gęstość odniesienia, w — strefa ściśliwa
+      restB: instancedArray(NN, 'vec4').setName(`${name}RestB`)
+    };
+    // obraz: gęstości (x, y, z — gazy, w — wyrzut) i faktura / stała / prędkość — dwie pary (krok na zmianę)
+    this.denTex = [imageTexture(N, `${name}Den0`), imageTexture(N, `${name}Den1`)];
+    this.restTex = [imageTexture(N, `${name}Rest0`), imageTexture(N, `${name}Rest1`)];
+    // stan obrazu dla warstwy: róg okna każdej tekstury (świat gry względem kotwicy), waga tekstury 1 w przenikaniu
+    this.image = { origin: [new THREE.Vector2(), new THREE.Vector2()], w1: 0, cur: 0, prev: 0, valid: false };
+
+    this._farEnv = farEnv;
+    this._buildKernels();
+
+    // okno i krok
+    this.ox = 0;                 // róg okna [komórki, względem kotwicy]
+    this.oy = 0;
+    this.acc = 0;
+    this.steps = 0;
+    this._tick = NaN;            // ostatni krok fizyki, do którego doszło pole (zegar gry)
+    this.warmLeft = 0;           // rozgrzanie po starcie okna [s] (czas pola × 4)
+    this._reset = true;
+    this._list = [];
+    this.srcN = 0;
+    this.rockN = 0;
+    this.hullN = 0;
+    this._maskDirty = false;
+    this.stats = { substeps: 0, dispatches: 0, sources: 0, rocks: 0, hulls: 0, resets: 0, shifts: 0 };
+  }
+
+  syncTune() {
+    const T = this.tune, ST = this.ST;
+    for (const k in ST) ST[k].value = T[k];
+    ST.maxSpeed.value = T.maxSpeed / this.cell;
+    const d = T.decay;
+    this.U.decay.value.set(d[0], d[1], d[2], d[3]);
+  }
+
+  /** Start okna od nowa w następnym kroku (nowa scena, zmiana kotwicy, teleport). */
+  requestReset(warmSeconds = 0) {
+    this._reset = true;
+    this.warmLeft = Math.max(this.warmLeft, warmSeconds);
+  }
+
+  // --- TSL ---------------------------------------------------------------------------------------------------------
+
+  _buildKernels() {
+    const N = this.N, NN = N * N, C = this.cell;
+    const U = this.U, ST = this.ST, B = this.buf, HM = GAS_HULL_MASK, maxHulls = this.maxHulls;
+    const { velA, velB, curlB, prsA, prsB, denA, denB, denC, restA, restB } = B;
+    const farEnv = (pw) => this._farEnv(pw, U);
+    const sum4 = (v) => v.x.add(v.y).add(v.z).add(v.w);
+    const ci = (v) => min(max(v, int(0)), int(N - 1));
+    const at = (x, y) => ci(x).add(ci(y).mul(int(N)));
+    this._at = at;
+    const rd = (buf, x, y) => buf.element(at(x, y));
+    const bil = (buf, pos) => {
+      const g = pos.sub(0.5).toVar();
+      const f0 = floor(g).toVar();
+      const f = g.sub(f0).toVar();
+      const ix = int(f0.x).toVar();
+      const iy = int(f0.y).toVar();
+      return mix(mix(rd(buf, ix, iy), rd(buf, ix.add(1), iy), f.x), mix(rd(buf, ix, iy.add(1)), rd(buf, ix.add(1), iy.add(1)), f.x), f.y);
+    };
+    const inDom = (pos) => pos.x.greaterThan(1.0).and(pos.x.lessThan(N - 1)).and(pos.y.greaterThan(1.0)).and(pos.y.lessThan(N - 1));
+    const cell = () => {
+      If(U.live.lessThan(0.5), () => { Return(); });
+      const id = int(instanceIndex).toVar();
+      const i = id.mod(int(N)).toVar();
+      const j = id.div(int(N)).toVar();
+      const p = vec2(float(i).add(0.5), float(j).add(0.5)).toVar();
+      const pw = U.origin.add(p.mul(C)).toVar();
+      return { id, i, j, p, pw };
+    };
+    const isSolid = (w) => w.greaterThan(1.5);
+
+    // Kadłub k w punkcie świata pw: q — teksle maski, rel — względem kotwicy.
+    const hullFrame = (k, pw) => {
+      const A = U.hullA.element(k).toVar();
+      const Bh = U.hullB.element(k).toVar();
+      const rel = pw.sub(A.xy).toVar();
+      const q = vec2(dot(A.zw, rel), dot(Bh.xy, rel)).add(Bh.zw).toVar();
+      return { A, Bh, rel, q };
+    };
+
+    // Raster olbrzymów w punkcie świata (> 0,5 — skała).
+    const rasterAt = (pw) => {
+      const R = U.raster;
+      const uv = pw.sub(R.xy).div(R.z);
+      return texture(this.rasterTex, uv).level(0).x;
+    };
+    // Komórka stała w punkcie świata: raster olbrzymów, koła (jądra), kadłuby (maska obrysu, prędkość ciała + ω × r).
+    // vec3(stała, vx, vy) [komórki/s].
+    const solidAt = (pw) => {
+      const f = vec3(0).toVar();
+      If(U.raster.w.greaterThan(0.5), () => {
+        If(rasterAt(pw).greaterThan(0.5), () => { f.assign(vec3(1.0, 0.0, 0.0)); });
+      });
+      Loop({ start: 0, end: U.rockCount, type: 'int', condition: '<', name: 'sgr' }, ({ sgr }) => {
+        const r = U.rock.element(sgr);
+        If(length(pw.sub(r.xy)).lessThan(r.z), () => { f.assign(vec3(1.0, 0.0, 0.0)); });
+      });
+      Loop({ start: 0, end: U.hullCount, type: 'int', condition: '<', name: 'sgh' }, ({ sgh }) => {
+        const H = hullFrame(sgh, pw);
+        If(H.q.x.greaterThan(0.0).and(H.q.x.lessThan(float(HM.w))).and(H.q.y.greaterThan(0.0)).and(H.q.y.lessThan(float(HM.h))), () => {
+          const Cc = U.hullC.element(sgh).toVar();
+          const mu = clamp(H.q.x, 0.5, HM.w - 0.5).mul(1 / HM.w);
+          const mv = Cc.w.mul(HM.h).add(clamp(H.q.y, 0.5, HM.h - 0.5)).mul(1 / (HM.h * maxHulls));
+          If(texture(this.hullMaskTex, vec2(mu, mv)).level(0).x.greaterThan(0.5), () => {
+            f.assign(vec3(1.0, Cc.x.sub(Cc.z.mul(H.rel.y)).div(C), Cc.y.add(Cc.z.mul(H.rel.x)).div(C)));
+          });
+        });
+      });
+      return f;
+    };
+    // Odcinek a → b wolny od kół-przeszkód (strumień nie przechodzi przez skałę).
+    const visible = (a, b) => {
+      const vis = float(1.0).toVar();
+      const ab = b.sub(a).toVar();
+      const ab2 = max(dot(ab, ab), 1.0).toVar();
+      Loop({ start: 0, end: U.rockCount, type: 'int', condition: '<', name: 'sgo' }, ({ sgo }) => {
+        const r = U.rock.element(sgo);
+        const t = saturate(dot(r.xy.sub(a), ab).div(ab2));
+        If(length(a.add(ab.mul(t)).sub(r.xy)).lessThan(r.z), () => { vis.assign(0.0); });
+      });
+      If(U.raster.w.greaterThan(0.5), () => {
+        for (const k of [0.2, 0.4, 0.6, 0.8]) If(rasterAt(a.add(ab.mul(k))).greaterThan(0.5), () => { vis.assign(0.0); });
+      });
+      return vis;
+    };
+    // Profil źródła (lustro CPU: srcShapeCpu).
+    const srcShape = (pw, A, Bs, Cc) => {
+      const prof = float(0.0).toVar();
+      const near = float(0.0).toVar();
+      const cmp = float(0.0).toVar();
+      const tgt = vec2(0.0).toVar();
+      const rel = pw.sub(A.xy).toVar();
+      If(Cc.z.greaterThan(1.5), () => {
+        const d = length(rel).toVar();
+        If(d.lessThan(Bs.x.add(Bs.y)), () => {
+          prof.assign(saturate(float(1.0).sub(abs(d.sub(Bs.x)).div(Bs.y))));
+          cmp.assign(1.0);
+          tgt.assign(rel.div(max(d, 1.0)).mul(Bs.w));
+        });
+      }).ElseIf(Cc.z.greaterThan(0.5), () => {
+        const d = length(rel).toVar();
+        If(d.lessThan(Bs.x.mul(1.7)), () => {
+          const x = d.div(Bs.x);
+          prof.assign(exp(x.mul(x).mul(-2.0)));
+          near.assign(prof);
+          cmp.assign(prof);
+          tgt.assign(rel.div(max(d, 1.0)).mul(Bs.w));
+        });
+      }).Else(() => {
+        const along = dot(rel, A.zw).toVar();
+        If(along.greaterThan(Bs.y.negate()).and(along.lessThan(Bs.x)), () => {
+          const across = rel.x.mul(A.w.negate()).add(rel.y.mul(A.z));
+          const width = Bs.y.add(max(along, 0.0).mul(Bs.z)).toVar();
+          const x = across.div(width).toVar();
+          const fade = float(1.0).sub(smoothstep(Bs.x.mul(0.5), Bs.x, along)).mul(smoothstep(Bs.y.negate(), 0.0, along)).toVar();
+          If(abs(x).lessThan(SPACE_GAS_CONE_REACH).and(fade.greaterThan(1e-3)), () => {
+            fade.mulAssign(visible(pw, A.xy));
+            const x2 = x.mul(x);
+            prof.assign(exp(x2.mul(-2.2)).mul(fade));
+            near.assign(prof.mul(float(1.0).sub(smoothstep(Cc.w.mul(0.5), Cc.w, along))));
+            const sp = Bs.w.mul(Bs.y.div(width).mul(0.7).add(0.3));
+            tgt.assign(A.zw.mul(sp).add(vec2(A.w.negate(), A.z).mul(x.mul(Bs.z).mul(sp).mul(2.0))));
+            cmp.assign(exp(x2.mul(-0.5)).mul(fade));
+          });
+        });
+      });
+      return { prof, near, tgt, cmp };
+    };
+
+    // 0. Start: całe okno z pola dalekiego, gaz płynie z wiatrem (obraz — tekstura 0).
+    this.kInit = Fn(() => {
+      const c = cell();
+      const far = farEnv(c.pw).toVar();
+      velA.element(c.id).assign(U.windC);
+      velB.element(c.id).assign(vec4(U.windC, 0.0, 0.0));
+      denA.element(c.id).assign(far);
+      restA.element(c.id).assign(vec4(0.0, 0.0, sum4(far), 0.0));
+      prsA.element(c.id).assign(vec4(0.0));
+      prsB.element(c.id).assign(vec4(0.0));
+      textureStore(this.denTex[0], ivec2(c.i, c.j), far);
+      textureStore(this.restTex[0], ivec2(c.i, c.j), vec4(0.0));
+    })().compute(NN).setName(`${this.name}Init`);
+
+    // Przesunięcie okna o całe komórki: stan z komórki (i + sx, j + sy); spoza starego okna — pole dalekie.
+    // CIŚNIENIE idzie razem ze stanem (2026-10-29): kShift kładzie q komórki źródłowej w velB.z (kAdvect i tak pisze
+    // velB od nowa), kShiftCopy przepisuje je do prsB — rozgrzanie Jacobiego (warm) zostaje po przesunięciu. Dawniej
+    // prsB = 0 przy każdym przesunięciu (w locie 10–20 razy na sekundę): rzut startował od zera, długie fale ciśnienia
+    // nie zbiegały się w 31 iteracjach — przepływ wokół kadłuba i wał przed dziobem pulsowały z tempem przesunięć.
+    // Po 7 buforów storage w obu kernelach (limit 8). A/B: tune.shiftPrs = 0 — od zera jak dawniej.
+    this.kShift = Fn(() => {
+      const c = cell();
+      const si = c.i.add(int(U.shift.x)).toVar();
+      const sj = c.j.add(int(U.shift.y)).toVar();
+      const ok = si.greaterThanEqual(int(0)).and(si.lessThan(int(N))).and(sj.greaterThanEqual(int(0))).and(sj.lessThan(int(N)));
+      If(ok, () => {
+        const o = si.add(sj.mul(int(N)));
+        velB.element(c.id).assign(vec4(velA.element(o), prsB.element(o).x.mul(ST.shiftPrs), 0.0));
+        denB.element(c.id).assign(denA.element(o));
+        restB.element(c.id).assign(restA.element(o));
+      }).Else(() => {
+        const far = farEnv(c.pw).toVar();
+        velB.element(c.id).assign(vec4(U.windC, 0.0, 0.0));
+        denB.element(c.id).assign(far);
+        restB.element(c.id).assign(vec4(0.0, 0.0, sum4(far), 0.0));
+      });
+    })().compute(NN).setName(`${this.name}Shift`);
+    this.kShiftCopy = Fn(() => {
+      If(U.live.lessThan(0.5), () => { Return(); });
+      const id = int(instanceIndex);
+      const vb = velB.element(id).toVar();
+      velA.element(id).assign(vb.xy);
+      prsB.element(id).assign(vec4(vb.z, 0.0, 0.0, 0.0));
+      denA.element(id).assign(denB.element(id));
+      restA.element(id).assign(restB.element(id));
+    })().compute(NN).setName(`${this.name}ShiftCopy`);
+
+    // 1. Wiry.
+    this.kCurl = Fn(() => {
+      const c = cell();
+      const V = (dx, dy) => rd(velA, c.i.add(dx), c.j.add(dy));
+      const w = V(1, 0).y.sub(V(-1, 0).y).sub(V(0, 1).x.sub(V(0, -1).x)).mul(0.5);
+      curlB.element(c.id).assign(vec2(w, abs(w)));
+    })().compute(NN).setName(`${this.name}Curl`);
+
+    // 2. Adwekcja prędkości (RK2) + siły, surowa adwekcja skalarów i faktury, dopływ z pola dalekiego przez brzeg, komórki
+    //    stałe, cel dywergencji (źródła + ciśnienie gazu).
+    this.kAdvect = Fn(() => {
+      const c = cell();
+      const p = c.p;
+      const dt = U.dt;
+      const v0 = velA.element(c.id).toVar();
+      const vm = bil(velA, p.sub(v0.mul(dt.mul(0.5))));
+      const pb = p.sub(vm.mul(dt)).toVar();
+      const vel = vec2(U.windC).toVar();
+      const den = vec4(0.0).toVar();
+      const rest = vec4(0.0).toVar();
+      If(inDom(pb), () => {
+        vel.assign(bil(velA, pb));
+        den.assign(bil(denA, pb));
+        rest.assign(bil(restA, pb));
+      }).Else(() => {
+        den.assign(farEnv(U.origin.add(pb.mul(C))));   // dopływ przez brzeg okna
+      });
+      const edgeC = min(min(p.x, float(N).sub(p.x)), min(p.y, float(N).sub(p.y)));
+      If(edgeC.lessThan(1.5), () => { vel.assign(U.windC); });
+      // faktura: przesunięcie względem wiatru (wzór pola dalekiego płynie z wiatrem osobno — windOff)
+      const off = rest.xy.add(pb.sub(p)).add(U.windC.mul(dt)).mul(exp(ST.restRelax.negate().mul(dt))).toVar();
+      off.mulAssign(min(float(1.0), ST.restMax.div(max(length(off), 1e-4))));
+      const rA = restA.element(c.id).toVar();
+      // gęstość odniesienia (pole dalekie w tym punkcie) — co 8. krok w ósmej części komórek
+      const ref = rA.z.toVar();
+      If(c.id.mod(int(8)).equal(U.step.mod(int(8))), () => { ref.assign(sum4(farEnv(c.pw))); });
+
+      // źródła: narzucona prędkość w stożku / kuli / na froncie, źródło objętości przy wylocie, strefa ściśliwa
+      const src = float(0.0).toVar();
+      const cm = rA.w.mul(exp(dt.negate().div(ST.cmTau))).toVar();
+      const jetW = float(0.0).toVar();
+      Loop({ start: 0, end: U.srcCount, type: 'int', condition: '<', name: 'sgv' }, ({ sgv }) => {
+        const A = U.srcA.element(sgv).toVar();
+        const Bs = U.srcB.element(sgv).toVar();
+        const Cc = U.srcC.element(sgv).toVar();
+        const S = srcShape(c.pw, A, Bs, Cc);
+        If(S.prof.greaterThan(1e-4).or(S.cmp.greaterThan(1e-4)), () => {
+          vel.assign(mix(vel, S.tgt.div(C), saturate(Cc.x.mul(dt).mul(S.prof))));
+          src.addAssign(Cc.y.mul(S.near));
+          cm.assign(max(cm, S.cmp));
+          jetW.assign(max(jetW, S.prof));
+        });
+      });
+      // kadłuby: PŁUG — gaz przy burcie od strony ruchu dostaje składową normalną prędkości burty (tylko pchanie, bez
+      // ssania); pas wokół OBRYSU kadłuba jest ściśliwy (wał przed dziobem i na burtach, pusty ślad za rufą). Odległość
+      // i normalna z pola odległości od obrysu (hullShellFieldCpu → hullShellTex; ramka = prostokąt maski + margines D.w)
+      // — dawniej od prostokąta maski: gaz pchało pudło, a nie kształt okrętu (2026-11-03). Lustro odczytu: hullShellAtCpu.
+      Loop({ start: 0, end: U.hullCount, type: 'int', condition: '<', name: 'sgp' }, ({ sgp }) => {
+        const H = hullFrame(sgp, c.pw);
+        const D = U.hullD.element(sgp).toVar();
+        const Cc = U.hullC.element(sgp).toVar();
+        const ex = H.A.zw.mul(D.x).toVar();          // oś x kadłuba (jednostkowa) = wiersz K × bok teksla
+        const fy = H.Bh.xy.mul(D.y).toVar();
+        const d = float(1e9).toVar();                // odległość od kadłuba [j.]
+        const nw = vec2(0.0).toVar();                // normalna na zewnątrz (świat, nieznormowana)
+        If(ST.plowOutline.greaterThan(0.5), () => {
+          // od OBRYSU: pole odległości w ramce prostokąt maski + margines D.w
+          const mx = D.w.div(D.x).toVar();
+          const my = D.w.div(D.y).toVar();
+          const du = H.q.x.add(mx).div(mx.mul(2.0).add(HM.w)).toVar();
+          const dv = H.q.y.add(my).div(my.mul(2.0).add(HM.h)).toVar();
+          If(du.greaterThan(0.0).and(du.lessThan(1.0)).and(dv.greaterThan(0.0)).and(dv.lessThan(1.0)), () => {
+            const su = clamp(du.mul(HM.w), 0.5, HM.w - 0.5).mul(1 / HM.w);
+            const sv = Cc.w.mul(HM.h).add(clamp(dv.mul(HM.h), 0.5, HM.h - 0.5)).mul(1 / (HM.h * maxHulls));
+            const S = texture(this.hullShellTex, vec2(su, sv)).level(0).toVar();
+            d.assign(S.x.mul(D.w));
+            const nb = S.yz.mul(2.0).sub(1.0);       // normalna w osiach kadłuba
+            nw.assign(ex.mul(nb.x).add(fy.mul(nb.y)));
+          });
+        }).Else(() => {
+          // A/B (dawniej): od prostokąta maski — w tekslach → świat (oś teksla × bok teksla)
+          const qc = clamp(H.q, vec2(0.0), vec2(HM.w, HM.h));
+          const dq = H.q.sub(qc).toVar();
+          nw.assign(ex.mul(dq.x.mul(D.x)).add(fy.mul(dq.y.mul(D.y))));
+          d.assign(length(nw));
+        });
+        const nl = length(nw).toVar();
+        If(d.greaterThan(0.5).and(d.lessThan(ST.hullShell)).and(nl.greaterThan(1e-3)), () => {
+          const ws = float(1.0).sub(d.div(ST.hullShell)).toVar();
+          const n = nw.div(nl).toVar();
+          const vb = vec2(Cc.x.sub(Cc.z.mul(H.rel.y)), Cc.y.add(Cc.z.mul(H.rel.x))).div(C);
+          const vn = dot(vb, n).toVar();
+          const push = max(vn.sub(dot(vel, n)), 0.0).mul(select(vn.greaterThan(0.0), ws, float(0.0)));
+          vel.addAssign(n.mul(push));
+          cm.assign(max(cm, ws));
+        });
+      });
+      // wzmacnianie wirów
+      const W = (dx, dy) => rd(curlB, c.i.add(dx), c.j.add(dy)).y;
+      const om = curlB.element(c.id).x;
+      const eta = vec2(W(1, 0).sub(W(-1, 0)), W(0, 1).sub(W(0, -1))).mul(0.5).toVar();
+      const nv = eta.div(max(length(eta), 1e-4));
+      vel.addAssign(vec2(nv.y.mul(om), nv.x.mul(om).negate()).mul(ST.vort).mul(dt));
+      // turbulencja w gazie (wolny szum świata)
+      const rho = sum4(den).toVar();
+      const tq = c.pw.div(2600.0).add(vec2(U.time.mul(0.05), U.time.mul(-0.04)));
+      const tn = vec2(gnoise(tq), gnoise(tq.add(vec2(17.3, -9.1))));
+      vel.addAssign(tn.mul(ST.turb).mul(min(rho, 1.0).add(abs(om).mul(ST.turbShear))).mul(dt));
+      // opór ku wiatrowi; w próżni mocniejszy; kwadratowy dla szybkiego gazu poza stożkami
+      const rv = vel.sub(U.windC).toVar();
+      const dragE = ST.drag.add(ST.dragVac.mul(float(1.0).sub(smoothstep(0.0, ST.vacRho, rho))))
+        .add(ST.dragQuad.mul(length(rv)).mul(float(1.0).sub(saturate(jetW.mul(2.0)))));
+      vel.assign(U.windC.add(rv.mul(exp(dragE.negate().mul(dt)))));
+      // ciśnienie gazu: rozrzedzony — zbieżność (dopływ), zagęszczony — rozpływ
+      const baro = clamp(rho.sub(ref).div(max(ref, ST.baroFloor)).mul(ST.baro), ST.baro.negate(), ST.baro);
+      const fl = solidAt(c.pw).toVar();
+      const solid = fl.x.greaterThan(0.5).toVar();
+      // stała: prędkość ciała w xy, znacznik 2 w w (strefa ściśliwa ≤ 1)
+      velB.element(c.id).assign(vec4(select(solid, fl.yz, vel), select(solid, float(0.0), src.add(baro)), select(solid, float(2.0), cm)));
+      denB.element(c.id).assign(select(solid, vec4(0.0), den));
+      restB.element(c.id).assign(vec4(select(solid, vec2(0.0), off), ref, select(solid, float(1.0), cm)));
+    })().compute(NN).setName(`${this.name}Advect`);
+
+    // 3. Skalary: MacCormack obcięty do sąsiadów punktu wstecz, dyfuzja, ciągłość z faktyczną dywergencją, zanik.
+    this.kReact = Fn(() => {
+      const c = cell();
+      const p = c.p;
+      const dt = U.dt;
+      const v0 = velA.element(c.id).toVar();
+      const pb = p.sub(v0.mul(dt)).toVar();
+      const pf = p.add(v0.mul(dt)).toVar();
+      const phi = denA.element(c.id).toVar();
+      const res = denB.element(c.id).toVar();
+      If(inDom(pb).and(inDom(pf)), () => {
+        const tilde = bil(denB, pf);
+        const mc = res.add(phi.sub(tilde).mul(0.5));
+        const g = pb.sub(0.5).floor().toVar();
+        const ix = int(g.x).toVar();
+        const iy = int(g.y).toVar();
+        const s00 = rd(denA, ix, iy).toVar();
+        const s10 = rd(denA, ix.add(1), iy).toVar();
+        const s01 = rd(denA, ix, iy.add(1)).toVar();
+        const s11 = rd(denA, ix.add(1), iy.add(1)).toVar();
+        res.assign(clamp(mc, min(min(s00, s10), min(s01, s11)), max(max(s00, s10), max(s01, s11))));
+        // dyfuzja (sąsiad stały — Neumann)
+        const ND = (dx, dy) => {
+          const k = at(c.i.add(dx), c.j.add(dy));
+          return select(isSolid(velB.element(k).w), phi, denA.element(k));
+        };
+        const lap = ND(1, 0).add(ND(-1, 0)).add(ND(0, 1)).add(ND(0, -1)).sub(phi.mul(4.0));
+        res.addAssign(lap.mul(min(ST.diff.mul(dt), 0.2)));
+      });
+      // ciągłość: Dρ/Dt = −ρ·∇·v (faktyczna dywergencja prędkości tego kroku)
+      const VD = (dx, dy) => rd(velA, c.i.add(dx), c.j.add(dy));
+      const divE = VD(1, 0).x.sub(VD(-1, 0).x).add(VD(0, 1).y.sub(VD(0, -1).y)).mul(0.5);
+      const grow = exp(clamp(divE.negate().mul(dt), -3.0, 0.4));
+      const capR = restA.element(c.id).z.mul(ST.capRef).add(ST.capAdd);
+      res.mulAssign(min(grow, max(float(1.0), capR.div(max(sum4(res), 1e-4)))));
+      res.mulAssign(exp(U.decay.negate().mul(dt)));
+      Loop({ start: 0, end: U.srcCount, type: 'int', condition: '<', name: 'sgi' }, ({ sgi }) => {
+        const D = U.srcD.element(sgi).toVar();
+        If(sum4(D).greaterThan(0.0), () => {
+          const S = srcShape(c.pw, U.srcA.element(sgi).toVar(), U.srcB.element(sgi).toVar(), U.srcC.element(sgi).toVar());
+          res.addAssign(D.mul(S.near.mul(dt)));
+        });
+      });
+      denC.element(c.id).assign(select(isSolid(velB.element(c.id).w), vec4(0.0), clamp(res, 0.0, 12.0)));
+    })().compute(NN).setName(`${this.name}React`);
+
+    // 4. Dywergencja (sąsiad stały oddaje prędkość ciała — ta sama `velB.xy`) minus cel; rozgrzanie ciśnienia.
+    this.kDiv = Fn(() => {
+      const c = cell();
+      const VN = (dx, dy) => rd(velB, c.i.add(dx), c.j.add(dy)).xy;
+      const vC = velB.element(c.id).toVar();
+      const solid = isSolid(vC.w);
+      // strefa ściśliwa (velB.w): rzut nie poprawia tam dywergencji (pchnięty gaz zostaje zepchnięty)
+      const div = VN(1, 0).x.sub(VN(-1, 0).x).add(VN(0, 1).y.sub(VN(0, -1).y)).mul(0.5).sub(vC.z).mul(saturate(vC.w).oneMinus());
+      prsA.element(c.id).assign(vec4(select(solid, float(0.0), prsB.element(c.id).x.mul(ST.warm)), select(solid, float(0.0), div),
+        select(solid, float(1.0), float(0.0)), 0.0));
+    })().compute(NN).setName(`${this.name}Divergence`);
+
+    // 5. Jacobi: (∇² − soft)·q = prawa strona; sąsiad stały — Neumann, poza oknem — 0 (otwarty brzeg).
+    const jac = (src, dst, nm) => Fn(() => {
+      const c = cell();
+      const C0 = src.element(c.id).toVar();
+      const Q = (dx, dy, inD) => {
+        const s = rd(src, c.i.add(dx), c.j.add(dy));
+        return select(inD, select(s.z.greaterThan(0.5), C0.x, s.x), float(0.0));
+      };
+      const q = Q(1, 0, c.i.lessThan(int(N - 1))).add(Q(-1, 0, c.i.greaterThan(int(0))))
+        .add(Q(0, 1, c.j.lessThan(int(N - 1)))).add(Q(0, -1, c.j.greaterThan(int(0)))).sub(C0.y).div(ST.soft.add(4.0));
+      dst.element(c.id).assign(vec4(select(C0.z.greaterThan(0.5), float(0.0), q), C0.y, C0.z, 0.0));
+    })().compute(NN).setName(nm);
+    this.kJacAB = jac(prsA, prsB, `${this.name}JacobiAB`);
+    this.kJacBA = jac(prsB, prsA, `${this.name}JacobiBA`);
+
+    // 6. Rzut, sufit prędkości, kopie do A, tekstury obrazu (para `k` — krok na zmianę).
+    const project = (k) => Fn(() => {
+      const c = cell();
+      const C0 = prsB.element(c.id).toVar();
+      const Q = (dx, dy, inD) => {
+        const s = rd(prsB, c.i.add(dx), c.j.add(dy));
+        return select(inD, select(s.z.greaterThan(0.5), C0.x, s.x), float(0.0));
+      };
+      const gx = Q(1, 0, c.i.lessThan(int(N - 1))).sub(Q(-1, 0, c.i.greaterThan(int(0))));
+      const gy = Q(0, 1, c.j.lessThan(int(N - 1))).sub(Q(0, -1, c.j.greaterThan(int(0))));
+      const vb = velB.element(c.id).toVar();
+      const solid = isSolid(vb.w).toVar();
+      const v = vb.xy.sub(vec2(gx, gy).mul(select(solid, float(0.0), float(0.5)))).toVar();
+      v.mulAssign(min(float(1.0), ST.maxSpeed.div(max(length(v), 1e-3))));
+      velA.element(c.id).assign(v);
+      const d = denC.element(c.id).toVar();
+      const r = restB.element(c.id).toVar();
+      denA.element(c.id).assign(d);
+      restA.element(c.id).assign(r);
+      textureStore(this.denTex[k], ivec2(c.i, c.j), d);
+      textureStore(this.restTex[k], ivec2(c.i, c.j), vec4(r.xy, select(solid, float(1.0), float(0.0)), length(v).mul(C)));
+    })().compute(NN).setName(`${this.name}Project${k}`);
+    this.kProject = [project(0), project(1)];
+  }
+
+  /** Wszystkie kernele (rozgrzewka, testy WGSL w Node). */
+  kernels() {
+    return [this.kInit, this.kShift, this.kShiftCopy, this.kCurl, this.kAdvect, this.kReact, this.kDiv, this.kJacAB, this.kJacBA,
+      this.kProject[0], this.kProject[1]];
+  }
+
+  /** Pipeline'y compute powstają synchronicznie — puste dispatche (kernele wychodzą od razu) na ekranie ładowania. */
+  warm(renderer) {
+    if (!renderer) return;
+    const live = this.U.live.value;
+    this.U.live.value = 0;
+    try { renderer.compute(this.kernels()); } finally { this.U.live.value = live; }
+  }
+
+  // --- wejście klatki (CPU) ----------------------------------------------------------------------------------------
+
+  /** Początek pakowania klatki: źródła, koła i kadłuby od zera. */
+  beginInputs() {
+    this.srcN = 0;
+    this.rockN = 0;
+    this.hullN = 0;
+  }
+
+  /**
+   * Źródło (świat gry względem kotwicy, j/s): A — początek xy, kierunek xy; B — długość / promień, szerokość / grubość,
+   * rozszerzanie, prędkość; C — tempo narzucania [1/s], wydatek objętości, tryb (SPACE_GAS_SRC), zasięg źródła;
+   * D — wstrzykiwanie gęstości na kanał [1/s]. false — brak miejsca.
+   */
+  addSource(ax, ay, dx, dy, len, w0, widen, speed, rate, vol, mode, reach, i1 = 0, i2 = 0, i3 = 0, ie = 0) {
+    if (this.srcN >= this.maxSources) return false;
+    const n = this.srcN++;
+    const U = this.U;
+    U.srcA.array[n].set(ax, ay, dx, dy);
+    U.srcB.array[n].set(len, w0, widen, speed);
+    U.srcC.array[n].set(rate, vol, mode, reach);
+    U.srcD.array[n].set(i1, i2, i3, ie);
+    return true;
+  }
+
+  /**
+   * Raster olbrzymów z wejścia gry (SPACE_GAS_IN: rasterOn, róg, bok teksla, wersja, słowa bitów) — rozpakowanie
+   * i wysyłka tylko przy nowej wersji.
+   */
+  setRaster(IN, I) {
+    const on = IN[I.rasterOn] > 0.5;
+    const RS = SPACE_GAS_RASTER;
+    this.U.raster.value.set(IN[I.rasterX0], IN[I.rasterY0], IN[I.rasterTexel] * RS, on ? 1 : 0);
+    const ver = IN[I.rasterVer];
+    if (!on || ver === this._rasterVer) return;
+    this._rasterVer = ver;
+    const D = this.rasterData;
+    for (let k = 0; k < RS * RS; k++) D[k] = ((IN[I.rasterBase + (k >>> 5)] >>> (k & 31)) & 1) ? 255 : 0;
+    this.rasterTex.needsUpdate = true;
+  }
+
+  /** Koło-przeszkoda (świat gry względem kotwicy). */
+  addRock(x, y, r) {
+    if (this.rockN >= this.maxRocks) return false;
+    this.U.rock.array[this.rockN++].set(x, y, r, 0);
+    return true;
+  }
+
+  /**
+   * Kadłub-przeszkoda z rekordu GAS_HULL_REC (F — tablica, o — początek rekordu; świat gry) z kotwicą (kx, ky):
+   * maska obrysu do pasma slotu (bity rozpakowane tylko przy zmianie uid / wersji). false — brak miejsca.
+   */
+  addHullRecord(F, o, R, kx, ky) {
+    if (this.hullN >= this.maxHulls) return false;
+    const n = this.hullN++;
+    const U = this.U;
+    const tx = F[o + R.tx] || 1, ty = F[o + R.ty] || 1;
+    const ex = F[o + R.ex], ey = F[o + R.ey], fx = F[o + R.fx], fy = F[o + R.fy];
+    U.hullA.array[n].set(F[o + R.ax] - kx, F[o + R.ay] - ky, ex / tx, ey / tx);
+    U.hullB.array[n].set(fx / ty, fy / ty, -F[o + R.x0] / tx, -F[o + R.y0] / ty);
+    U.hullC.array[n].set(F[o + R.vx], F[o + R.vy], F[o + R.w], n);
+    // margines ramki pola odległości od obrysu (pług): pas pługa + zapas — zmiana strojenia przelicza pole
+    const M = Math.max(1, this.tune.hullShell) + SPACE_GAS_HULL_SHELL_PAD;
+    U.hullD.array[n].set(tx, ty, F[o + R.reach], M);
+    this._syncMask(n, F, o, R, tx, ty, M);
+    return true;
+  }
+
+  _syncMask(n, F, o, R, tx = F[o + R.tx] || 1, ty = F[o + R.ty] || 1, M = Math.max(1, this.tune.hullShell) + SPACE_GAS_HULL_SHELL_PAD) {
+    if (!this._maskUid) { this._maskUid = new Float64Array(this.maxHulls).fill(NaN); this._maskVer = new Float64Array(this.maxHulls).fill(NaN); }
+    const uid = F[o + R.uid], ver = F[o + R.ver];
+    if (this._maskUid[n] === uid && this._maskVer[n] === ver && this._shellM[n] === M) return;
+    this._maskUid[n] = uid;
+    this._maskVer[n] = ver;
+    this._shellM[n] = M;
+    const HM = GAS_HULL_MASK, D = this.hullMaskData, base = n * HM.w * HM.h;
+    for (let k = 0; k < HM.w * HM.h; k++) D[base + k] = ((F[o + R.mask + (k >>> 5)] >>> (k & 31)) & 1) ? 255 : 0;
+    hullShellFieldCpu(F, o + R.mask, HM.w, HM.h, tx, ty, M, this.hullShellData, base * 4);
+    this._maskDirty = true;
+  }
+
+  // --- krok klatki -------------------------------------------------------------------------------------------------
+
+  /**
+   * Klatka pola: zegar kroku (1/60 s, ≤ SPACE_GAS_MAX_SUB na klatkę, × 4 w rozgrzaniu), okno przy środku okna (tylko
+   * w klatce z krokiem), kernele w JEDNYM renderer.compute(lista). Wejścia (źródła, koła, kadłuby) dodane przed wywołaniem.
+   * @param {object} renderer
+   * @param {number} dt czas gry klatki [s] (0 — pauza: pole stoi, obraz bez zmian) — wiatr, rozgrzanie, akumulator bez zegara
+   * @param {number} camX środek okna — świat gry względem kotwicy
+   * @param {number} camY
+   * @param {number} windX wiatr [j/s]
+   * @param {number} windY
+   * @param {{tick: number, hz: number, sim: number, render: number}|null} clock zegar gry: `tick` — numer kroku fizyki
+   *   (liczba całkowita, index.html `physicsTickId`), `hz` — tempo fizyki (PHYS_HZ), `sim` / `render` — SimClock.sim /
+   *   .render [s] (liczy się tylko ich RÓŻNICA: alfa interpolacji renderu). Krok pola k = ⌊tick · 60 / hz⌋ (kroki od
+   *   ostatniej klatki), ułamek przenikania = chwila renderu; null albo brak `tick` — akumulator z dt (dawniej)
+   * @returns {number} liczba kroków
+   */
+  frame(renderer, dt, camX, camY, windX = 0, windY = 0, clock = null) {
+    const U = this.U, C = this.cell, N = this.N, st = this.stats;
+    dt = Math.max(0, Math.min(dt || 0, 0.1));
+    U.srcCount.value = this.srcN;
+    U.rockCount.value = this.rockN;
+    U.hullCount.value = this.hullN;
+    st.sources = this.srcN; st.rocks = this.rockN; st.hulls = this.hullN;
+    if (this._maskDirty) { this.hullMaskTex.needsUpdate = true; this.hullShellTex.needsUpdate = true; this._maskDirty = false; }
+    U.windOff.value.x += windX * dt;
+    U.windOff.value.y += windY * dt;
+    U.windC.value.set(windX / C, windY / C);
+
+    const reset = this._reset;
+    const speed = this.warmLeft > 0 ? 4 : 1;
+    if (this.warmLeft > 0) this.warmLeft = Math.max(0, this.warmLeft - dt);
+    let n = 0;
+    let frac;
+    if (clock && Number.isFinite(clock.tick) && clock.hz > 0) {
+      // krok pola k = krok fizyki z CAŁKOWITEGO licznika (60 Hz: ten sam; ?physHz=120: co drugi), kroki od ostatniej
+      // klatki — pominięte strony workera dochodzą tu same (≤ SPACE_GAS_MAX_SUB); licznik cofnięty — bez kroku, od nowa.
+      // Iloczyn liczb całkowitych i jedno dzielenie: wynik dokładny albo ≥ 1/hz od liczby całkowitej (bez dryfu sumy).
+      const per = clock.hz / SPACE_GAS_HZ;           // kroki fizyki na krok pola (60 Hz: 1, 120 Hz: 2)
+      const tick = Math.floor(clock.tick * SPACE_GAS_HZ / clock.hz);
+      if (reset) { n = 1; this._tick = tick; } else if (!(this._tick <= tick)) this._tick = tick;
+      else {
+        n = Math.min(tick - this._tick, SPACE_GAS_MAX_SUB) * speed;
+        this._tick = tick;
+      }
+      // obraz w chwili renderu kadłubów: alfa interpolacji z RÓŻNICY zegarów (render = sim − (1 − alfa) · krok fizyki;
+      // pauza: render = sim → alfa 1), czas obrazu = render − (per − 1) kroków fizyki. Przy 60 Hz bez opóźnienia: ułamek
+      // = alfa, w pauzie 1 (ostatni krok). Przy 120 Hz najnowszy krok pola bywa o krok fizyki starszy od pozy, więc obraz
+      // idzie stale o krok fizyki (1/120 s) za kadłubami — dawny wzór dawał tu pół kroku pola postoju i skok o pół kroku.
+      const d = clock.sim - clock.render;
+      const alpha = Number.isFinite(d) ? Math.min(1, Math.max(0, 1 - d * clock.hz)) : 1;
+      frac = Math.min(1, Math.max(0, (clock.tick - tick * per + alpha) / per));
+      this.acc = frac * SPACE_GAS_SUB;
+    } else {
+      this._tick = NaN;
+      if (reset) this.acc = 0;
+      this.acc = Math.min(this.acc + dt * speed, SPACE_GAS_SUB * SPACE_GAS_MAX_SUB * speed);
+      while (this.acc >= SPACE_GAS_SUB && n < SPACE_GAS_MAX_SUB * speed) { this.acc -= SPACE_GAS_SUB; n++; }
+      if (reset && n === 0) n = 1;   // start okna: obraz od razu z pola (jeden krok)
+      frac = Math.min(1, this.acc / SPACE_GAS_SUB);
+    }
+
+    const L = this._list;
+    L.length = 0;
+    const img = this.image;
+    if (reset || n > 0) {
+      const ox = Math.floor(camX / C) - (N >> 1), oy = Math.floor(camY / C) - (N >> 1);
+      const sx = ox - this.ox, sy = oy - this.oy;
+      if (reset || Math.abs(sx) >= N || Math.abs(sy) >= N) {
+        L.push(this.kInit);
+        img.cur = 0; img.prev = 0;
+        st.resets++;
+        this._reset = false;
+      } else if (sx || sy) {
+        U.shift.value.set(sx, sy);
+        L.push(this.kShift, this.kShiftCopy);
+        st.shifts++;
+      }
+      this.ox = ox; this.oy = oy;
+      U.origin.value.set(ox * C, oy * C);
+      if (L[0] === this.kInit) img.origin[0].copy(U.origin.value);
+    }
+    for (let k = 0; k < n; k++) {
+      L.push(this.kCurl, this.kAdvect, this.kReact, this.kDiv);
+      for (let j = 0; j < this.tune.jacobi; j++) L.push(j % 2 === 0 ? this.kJacAB : this.kJacBA);
+      const tgt = img.cur ^ 1;
+      L.push(this.kProject[tgt]);
+      img.prev = img.cur;
+      img.cur = tgt;
+      img.origin[tgt].copy(U.origin.value);
+    }
+    // jeden zestaw uniformów na listę: przy dwóch krokach oba z tym samym zegarem (krok pola 1/60 s, turbulencja wolna)
+    this.steps += n;
+    U.step.value = this.steps;
+    U.time.value += n * SPACE_GAS_SUB;
+    if (L.length && renderer) renderer.compute(L);
+    // przenikanie obrazu: poprzedni → bieżący krok wg ułamka kroku (opóźnienie o krok, bez skoków przy 144 Hz; z zegarem
+    // gry — chwila renderu kadłubów)
+    img.w1 = img.prev === img.cur ? img.cur : (img.cur === 1 ? frac : 1 - frac);
+    img.valid = true;
+    st.substeps = n;
+    st.dispatches = L.length;
+    return n;
+  }
+}

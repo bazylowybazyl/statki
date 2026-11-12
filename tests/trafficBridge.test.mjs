@@ -182,3 +182,69 @@ test('stacja zniszczona w grze: most dostaje nowe frakcje', async () => {
   assert.equal(bridge.getStation('venus').derelict, true);
   assert.equal(TRAFFIC_MSG.STATION, 'station');
 });
+
+const KRYJOWKA = Object.freeze({
+  id: 'PIR', label: 'Kryjówka misji', kind: 'hideout',
+  position: { source: 'point', x: 4_000_000, y: 3_500_000 },
+  factionId: 'pirates', docks: { layout: 'hangar' }, hideout: true
+});
+
+test('rynek w trakcie gry: kopia widzi nowy rynek, budynek i usunięcie', async () => {
+  const bridge = new TrafficBridge({ useWorker: false, coreFactory: createTrafficCore });
+  const ready = await bridge.init(OPTS);
+  const tabele = [];
+  bridge.on('markets', stations => tabele.push(stations));
+  assert.equal(bridge.hasStation('PIR'), false);
+
+  bridge.addMarket(KRYJOWKA);
+  assert.equal(tabele.length, 1, 'nowa tabela przychodzi od razu, bez kroku świata');
+  assert.ok(bridge.hasStation('PIR'));
+  assert.equal(bridge.getStation('PIR').kind, 'hideout');
+  assert.equal(bridge.getStation('PIR').hasPort, true);
+  assert.ok(bridge.tables.berths.PIR.length > 0, 'stanowiska kryjówki dla bańki');
+  assert.equal(bridge.tables.stations.length, ready.stations.length + 1);
+  const mirror = bridge.getEconomy('PIR');
+  assert.ok(Object.values(mirror.capacity).some(value => value > 0), 'kopia magazynu ma pojemności z workera');
+  assert.ok(bridge.getEconomy('earth').resources.iron_ore > 0, 'stare kopie zostają');
+
+  bridge.addMarketBuilding('PIR', 'foundry');
+  assert.equal(tabele.length, 2);
+  bridge.setMarketOwner('PIR', 'belt_union');
+  assert.equal(bridge.getStation('PIR').factionId, 'belt_union');
+
+  bridge.removeMarket('PIR');
+  assert.equal(bridge.hasStation('PIR'), false, 'kopia rynku zapomina usunięty rynek');
+  assert.equal(bridge.tables.stations.length, ready.stations.length);
+  bridge.advance(5);
+  assert.ok(bridge.getEconomy('earth').resources.iron_ore > 0, 'rynek po usunięciu dalej się zgadza');
+});
+
+test('rynek przez workera: wiadomości MARKET_* i tabela przed rynkiem', async () => {
+  const fake = new FakeWorker();
+  const bridge = new TrafficBridge({ workerFactory: () => fake });
+  const readyPromise = bridge.init(OPTS);
+  fake.work();
+  fake.deliver();
+  await readyPromise;
+
+  bridge.addMarket(KRYJOWKA);
+  bridge.addMarketBuilding('PIR', 'foundry');
+  bridge.setMarketOwner('PIR', null);
+  bridge.removeMarket('PIR');
+  assert.deepEqual(fake.toWorker.map(message => message.type), [
+    TRAFFIC_MSG.MARKET_ADD, TRAFFIC_MSG.MARKET_BUILDING, TRAFFIC_MSG.MARKET_OWNER, TRAFFIC_MSG.MARKET_REMOVE
+  ]);
+  assert.equal(fake.toWorker[0].def.position.source, 'point', 'definicja idzie jako czyste dane');
+
+  fake.work(1);
+  assert.equal(bridge.hasStation('PIR'), false, 'zanim worker odpowie, kopia jest stara');
+  fake.deliver();
+  assert.ok(bridge.hasStation('PIR'));
+  const index = bridge.stationIndex.get('PIR');
+  assert.equal(bridge.tables.stations[index].id, 'PIR', 'indeks stacji po nowej tabeli');
+
+  fake.work();
+  fake.deliver();
+  assert.equal(bridge.hasStation('PIR'), false);
+  assert.equal(TRAFFIC_MSG.MARKET_ADD, 'market-add');
+});

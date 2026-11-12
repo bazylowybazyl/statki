@@ -48,7 +48,8 @@ export const REPAIR_MATERIALS = Object.freeze(['scrap', 'steel', 'hull_plate']);
 
 /**
  * Strojenie roju (mutowalne — window.RepairTune). Jednostki: j. świata gry, sekundy czasu gry.
- * Atlas ma ~3100 komórek (węzłów) kadłuba i ładowność 20: pełna ładownia stali = 800 komórek ≈ ¼ kadłuba.
+ * Atlas ma ~3100 komórek (węzłów) kadłuba; 20 t stali = 800 komórek ≈ ¼ kadłuba (ładowność Atlasa 400 t od 2026-10-27 —
+ * pełna ładownia stali to ~5 kadłubów: naprawę w polu ogranicza czas, drony i kredyty, nie ładownia).
  */
 export const REPAIR_TUNE = {
   // --- dron ---
@@ -96,6 +97,6 @@ export function repairMaterialCells(bag, tune = REPAIR_TUNE) {
 
 /**
  * Start kampanii: zapas naprawczy Atlasa w ładowni (jak startowe ładunki górnicze) — 10 t stali + 1 płyta = 600 komórek
- * (~19% kadłuba), 14 z 20 t ładowni: naprawa w polu w misji 2 działa, zanim przyleci holownik serwisowy.
+ * (~19% kadłuba), 14 t z 400 t ładowni: naprawa w polu w misji 2 działa, zanim przyleci holownik serwisowy.
  */
 export const REPAIR_START_CARGO = Object.freeze({ steel: 10, hull_plate: 1 });

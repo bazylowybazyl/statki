@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as THREE from 'three';
 import { buildSpriteBeamStructure } from '../src/game/beamSprite2D.js';
-import { BeamShips3D as R } from '../src/3d/beamShips3D.js';
-import { buildSpriteSkinTopology, writeSpriteSkinGeometry } from '../src/3d/beamSpriteSkin2D.js';
+import { buildSpriteSkinTopology, writeSpriteSkinGeometry, writeSpriteSkinQuads } from '../src/3d/beamSpriteSkin2D.js';
 import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js';
 import { buildBeamStructure, BEAM_TYPE } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 import { activeRegion } from '../src/game/beamActiveRegion3D.js';
 import { setPlanarHeading } from '../src/game/beamFlightControls2D.js';
 
@@ -219,34 +217,51 @@ test('skóra przyrostowa: po trafieniach i krokach solvera identyczna z pełnym 
   const s = plate(30, 12, 300);
   config(s.cellSize, true);
   const body = D.createBody(cloneBeamStructure(s), {});
-  const scene = new THREE.Scene();
-  R.init(scene);
-  const camera = new THREE.OrthographicCamera();
+  let topo = buildSpriteSkinTopology(body);
+  let positions = new Float32Array(topo.count * 12), colors = new Float32Array(topo.count * 12);
+  writeSpriteSkinGeometry(body, topo, positions, colors);
+  const range = { min: 0, max: -1 };
+  // Znaczniki zmian regionu po przepisaniu skóry (klatka obrazu): węzły zmienione od ostatniej klatki albo wszystkie.
+  const clearDirty = (region) => {
+    const skinDirty = body.nodeStore.skinDirty;
+    if (region.dirtyAll) { skinDirty.fill(0); region.dirtyAll = false; }
+    else for (let k = 0; k < region.dirtyCount; k++) skinDirty[region.dirty[k]] = 0;
+    region.dirtyCount = 0;
+  };
+  if (body._region) clearDirty(body._region);
   let partial = 0;
-  try {
-    R.sync([body], camera, 0);
-    for (let round = 0; round < 8; round++) {
-      const n = body.nodes[(round * 97 + 13) % body.nodes.length];
-      D.applyImpact(body, n.x + body.pos.x, n.y + body.pos.y, 0, 300, { x: 0, y: 1, z: 0 },
-        { radius: s.cellSize * 2, breakRadius: s.cellSize });
-      step([body], 3 + round);
-      R.sync([body], camera, 0);
-      const sprite = R.bodyData.get(body).sprite;
-      const ranges = sprite.mesh.geometry.attributes.position.updateRanges;
-      if (ranges.length && ranges[0].count < sprite.positions.length) partial++;
-      const topo = buildSpriteSkinTopology(body);
-      const positions = new Float32Array(sprite.positions.length), colors = new Float32Array(sprite.colors.length);
+  for (let round = 0; round < 8; round++) {
+    const n = body.nodes[(round * 97 + 13) % body.nodes.length];
+    D.applyImpact(body, n.x + body.pos.x, n.y + body.pos.y, 0, 300, { x: 0, y: 1, z: 0 },
+      { radius: s.cellSize * 2, breakRadius: s.cellSize });
+    step([body], 3 + round);
+    // Rozpad podmienia magazyny: wtedy skóra przebudowuje się od zera.
+    if (topo.store !== body.nodeStore || topo.beamStore !== body.beamStore) {
+      topo = buildSpriteSkinTopology(body);
+      positions = new Float32Array(topo.count * 12);
+      colors = new Float32Array(topo.count * 12);
       writeSpriteSkinGeometry(body, topo, positions, colors);
-      assert.deepEqual(Array.from(sprite.positions), Array.from(positions), `runda ${round}: pozycje skóry`);
-      assert.deepEqual(Array.from(sprite.colors), Array.from(colors), `runda ${round}: cieniowanie skóry`);
+      if (body._region?.store === body.nodeStore) clearDirty(body._region);
+    } else {
+      const region = body._region;
+      if (region && region.store === body.nodeStore && !region.dirtyAll) {
+        if (region.dirtyCount) {
+          const r = writeSpriteSkinQuads(body, topo, positions, colors, region.dirty, region.dirtyCount, range);
+          if (r.max >= r.min && (r.max - r.min + 1) < topo.count) partial++;
+          clearDirty(region);
+        }
+      } else {
+        writeSpriteSkinGeometry(body, topo, positions, colors);
+        if (region?.store === body.nodeStore) clearDirty(region);
+      }
     }
-    assert.ok(partial > 0, 'renderer nie użył ani razu przepisania przyrostowego');
-  } finally {
-    R.sync([], camera, 0);
-    R.disposeSpriteSkin(s.spriteSkin);
-    R.debris.dispose(R.scene);
-    R.debris = null;
+    const fresh = buildSpriteSkinTopology(body);
+    const fullPos = new Float32Array(positions.length), fullCol = new Float32Array(colors.length);
+    writeSpriteSkinGeometry(body, fresh, fullPos, fullCol);
+    assert.deepEqual(Array.from(positions), Array.from(fullPos), `runda ${round}: pozycje skóry`);
+    assert.deepEqual(Array.from(colors), Array.from(fullCol), `runda ${round}: cieniowanie skóry`);
   }
+  assert.ok(partial > 0, 'ani razu przepisanie przyrostowe');
 });
 
 test('solver lokalny: wyrwane mocowanie puszcza wręg, naprawa je przywraca', () => {

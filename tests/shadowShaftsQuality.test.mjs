@@ -137,10 +137,11 @@ test('planets and moons push analytic discs every frame', () => {
   assert.match(planetSource, /Core3D\.pushShaftDiscWorld\(this\.data\.x, this\.data\.y, scale, 1, visualZ\)/);
   assert.match(planetSource, /Core3D\.pushShaftDiscWorld\(mx, my, scale, 1, z\)/);
   // Soczewka warpa: tarcza za ciałem w kadrze skoku, siła 1 − β, oś z prawdziwego środka (b.x, b.y); położenie
-  // z pikseli soczewki przez lensToWorld (obrót kadru kamery — src/3d/viewRoll.js).
+  // z pikseli soczewki przez lensImageToWorld (worldLens.js — obrót kadru kamery, src/3d/viewRoll.js).
   const lensPushes = planetSource.match(/Core3D\.pushShaftDiscWorld\(lwx, lwy, Math\.max\(1e-3, fit\.size \* k\), real, b\.z, b\.x, b\.y\)/g) || [];
   assert.equal(lensPushes.length, 2, 'planeta i księżyc w soczewce');
-  assert.equal((planetSource.match(/const lw = lensToWorld\(L, o\.x \* k, o\.y \* k\);/g) || []).length, 3);
+  // planety, księżyce, małe ciała i słońce (DECYZJE M5 — słońce to źródło światła: bez tarczy okluzji w masce)
+  assert.equal((planetSource.match(/const lw = lensImageToWorld\(L, o\.x, o\.y, [^;]+, _lensWorld\);\s*const k = lw\.k;/g) || []).length, 4);
   // Oś smugi z CPU (uDiscAxis), nie ze środka tarczy w shaderze.
   assert.match(coreSource, /const axis = uDiscAxis\.element\(discIdx\)\.xy\.toVar\(\);/);
   assert.doesNotMatch(coreSource, /const axis = disc\.xy\.sub\(uSunWorld\)/);

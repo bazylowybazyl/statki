@@ -12,6 +12,8 @@
  */
 
 import { createSuite, runIfMain } from './harness.mjs';
+import { DRIVE_MODES, getNode } from '../../src/game/traffic/travelNetwork.js';
+import { hypercruiseSpec, TRAFFIC_CLASS_DRIVE } from '../../src/data/driveModes.js';
 import {
   COURSE_KIND, COURSE_STATUS, DWELL_REASON,
   createCourseRegistry, launchCourse, advanceCourses, getActiveCourses,
@@ -175,11 +177,13 @@ export function run() {
   // ----------------------------------------------------------
   t.section('Odporność na zły krok czasu');
 
+  // Prędkość napędu konwencjonalnego z tabeli napędów (src/data/driveModes.js — 1200 j/s od E5).
+  const vKonw = DRIVE_MODES.conventional.speed;
   const duzyRegistry = createCourseRegistry();
   const duzyKurs = launchCourse(duzyRegistry, {
     kind: COURSE_KIND.HAUL,
     unitClass: 'container_ship',
-    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 500, fuel: 10 })],
+    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 400_000 / vKonw, fuel: 10 })],
     fuelCapacity: 40
   });
   const duzyBubble = createBubble({ separationRadius: 0 });
@@ -190,15 +194,15 @@ export function run() {
   t.equal('ujemne dt nie cofa lotu', duzyActor.x, przedKrokiem.x);
 
   updateBubble(duzyBubble, network, duzyRegistry, indeks(duzyRegistry), { x: 0, y: 0 }, 500_000, 5);
-  t.close('dt=5 przesuwa statek przez pełne pięć sekund', duzyActor.x, 4_000, 0.001);
+  t.close('dt=5 przesuwa statek przez pełne pięć sekund', duzyActor.x, 5 * vKonw, 0.001);
   t.close('fizyczny lot aktualizuje elapsed kursu', duzyKurs.elapsed, 5, 0.001);
-  t.close('ETA kursu maleje podczas fizycznego lotu', duzyKurs.remaining, 495, 0.001);
+  t.close('ETA kursu maleje podczas fizycznego lotu', duzyKurs.remaining, 400_000 / vKonw - 5, 0.001);
 
   const drobnyRegistry = createCourseRegistry();
   const drobnyKurs = launchCourse(drobnyRegistry, {
     kind: COURSE_KIND.HAUL,
     unitClass: 'container_ship',
-    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 500, fuel: 10 })],
+    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 400_000 / vKonw, fuel: 10 })],
     fuelCapacity: 40
   });
   const drobnyBubble = createBubble({ separationRadius: 0 });
@@ -233,10 +237,82 @@ export function run() {
   const pose = actorRenderPose(drobnyActor, 0.5, {});
   t.close('interpolacja renderu w połowie kroku', pose.x, (drobnyActor.prevX + drobnyActor.x) / 2, 1e-9);
 
+  driveTableSection(t);
+  raidPastRingSection(t);
   integrationSection(t);
   costSection(t);
 
   return t.results;
+}
+
+/**
+ * Napęd encji z jednej tabeli (E6, uwaga E9): etap hipercruise leci silnikiem klasy ładowni kursu
+ * (`TRAFFIC_CLASS_DRIVE`) z rozpędem z `HYPERCRUISE_BY_CLASS` — van Mk II 30 tys. j./s, rozpęd ~5,8 s; hauler
+ * Mk I 20 tys., ~7 s. Wcześniej każdy kurs leciał trybem klasy domyślnej (20 tys.) i rozpędzał się w 1,7 s.
+ */
+function driveTableSection(t) {
+  t.section('Napęd encji z tabeli napędów (hipercruise wg klasy ładowni)');
+  const far = { nodes: new Map([['a', { id: 'a', x: 0, y: 0 }], ['b', { id: 'b', x: 3_000_000, y: 0 }]]) };
+  for (const [unitClass, vanClass] of [['freighter-small', 'van'], ['inter_station_shuttle', 'van'], ['container_ship', 'hauler']]) {
+    const spec = hypercruiseSpec(TRAFFIC_CLASS_DRIVE[vanClass].hypercruise, TRAFFIC_CLASS_DRIVE[vanClass].flightClass);
+    const registry = createCourseRegistry();
+    const course = launchCourse(registry, {
+      kind: COURSE_KIND.HAUL, unitClass,
+      stages: [travelStage('a', 'b', { mode: 'hypercruise', seconds: 200, distance: 3_000_000 })]
+    });
+    const bubble = createBubble();
+    const active = indeks(registry);
+    updateBubble(bubble, far, registry, active, { x: 0, y: 0 }, 50_000, 0);
+    const a = getActorList(bubble)[0];
+    t.equal(`${unitClass}: prędkość silnika klasy ${vanClass}`, a?.cruise, spec.vmax);
+    t.close(`${unitClass}: rozpęd z tabeli`, a?.driveAccel, spec.accel, 1e-9);
+    // Rozpęd od postoju (encja materializuje się w biegu rekordu — tu zatrzymana): po 2 s gry prędkość
+    // ≈ 2 · rozpęd z tabeli, nie 60% prędkości przelotowej na sekundę.
+    a.speed = 0;
+    for (let i = 0; i < 120; i++) updateBubble(bubble, far, registry, active, { x: a.x, y: a.y }, 50_000, 1 / 60);
+    const v = Math.abs(getActorList(bubble)[0]?.speed || 0);
+    t.check(`${unitClass}: po 2 s ~${Math.round(2 * spec.accel)} j./s (jest ${Math.round(v)})`,
+      v > spec.accel * 1.6 && v < spec.accel * 2.2);
+    t.check(`${unitClass}: rekord ruszony przez encję`, course.actorId != null);
+  }
+
+  // Strefa planety (E5, jak lot gracza): w studni hipercruise × max(0,6; strefa), warp × strefa (0,3).
+  for (const [mode, expectK] of [['hypercruise', 0.6], ['warp', 0.3]]) {
+    const registry = createCourseRegistry();
+    launchCourse(registry, {
+      kind: COURSE_KIND.HAUL, unitClass: 'container_ship',
+      stages: [travelStage('a', 'b', { mode, seconds: 200, distance: 3_000_000 })]
+    });
+    const bubble = createBubble({ zoneAt: (x) => (x < 1_000_000 ? 0.3 : 1) });
+    const active = indeks(registry);
+    updateBubble(bubble, far, registry, active, { x: 0, y: 0 }, 50_000, 0);
+    updateBubble(bubble, far, registry, active, { x: 0, y: 0 }, 50_000, 1 / 60);
+    const a = getActorList(bubble)[0];
+    t.close(`strefa planety: ${mode} × ${expectK}`, a.cruise / a.driveCruise, expectK, 1e-9);
+  }
+
+  // Hol złomiarza (E24, `towHaulSpeed` z `?hol=` gry): przelot powrotny kursu w trybie hol (ostatni etap) najwyżej
+  // z limitem konfiguracji bańki; przelot do wraku, kurs cięcia i limit 0 — prędkość trybu.
+  const conv = DRIVE_MODES.conventional.speed;
+  for (const [name, cap, salvageMode, haulLast, expect] of [
+    ['hol, przelot powrotny', 409, 'tow', true, 409],
+    ['hol, przelot do wraku', 409, 'tow', false, conv],
+    ['cięcie', 409, 'cut', true, conv],
+    ['hol bez limitu', 0, 'tow', true, conv]
+  ]) {
+    const registry = createCourseRegistry();
+    const trip = travelStage('a', 'b', { seconds: 3000, distance: 3_000_000 });
+    const hook = dwellStage('a', 1, DWELL_REASON.SERVICE, { x: 0, y: 0 });
+    const course = launchCourse(registry, {
+      kind: COURSE_KIND.TUG, unitClass: 'tug', stages: haulLast ? [hook, trip] : [trip, hook]
+    });
+    course.salvageMode = salvageMode;
+    if (haulLast) advanceCourses(registry, 2);
+    const bubble = createBubble({ towHaulSpeed: cap });
+    updateBubble(bubble, far, registry, indeks(registry), { x: 0, y: 0 }, 50_000, 0);
+    const a = getActorList(bubble)[0];
+    t.equal(`towHaulSpeed: ${name} — ${expect} j./s`, a?.cruise, expect);
+  }
 }
 
 /**
@@ -320,6 +396,73 @@ function integrationSection(t) {
   t.equal('żadne stanowisko z dwoma statkami', doubleBerth, 0);
   t.equal('bez wymuszonych przechwytów i etapów', s.forcedCaptures + s.forcedStages, 0);
   t.check('zwolnienie całej bańki oddaje zegary', attachedLeft === 0 && cleared >= 0);
+}
+
+/**
+ * Regresja (2026-10-28, znalezione przy E16 — inny przebieg świata): rajder piratów, kurs `raid`, lot konwencjonalny
+ * z Gniazda Hildy na Mimasa. Prosta między portami mija środek Ziemi o ~30 tys. j. — przez płytę ringu. Ścieżka
+ * bańki objeżdża dyski budowli przy OBU końcach (kryjówka, port Saturna), a router ringu dostawał tylko ostatni
+ * odcinek (od objazdu przy celu) — odcinek między objazdami szedł prostą przez płytę. Każdy wolny odcinek idzie
+ * teraz przez router ringu (`pushDiscDetour`).
+ */
+function raidPastRingSection(t) {
+  t.section('Przelot między portami bez ringu obok planety z ringiem: tylko tranzytami i objazdem, nie przez płytę');
+
+  const world = buildTrafficWorld({ economyScale: 60, capacityMultiplier: 4, seed: 7 });
+  const net = world.network;
+  const earth = getNode(net, 'earth');
+  const from = getNode(net, 'gniazdo-hildy');
+  const to = getNode(net, 'mimas');
+  const rings = createRingObstaclesForNetwork(net, world.docks);
+  const ring = rings.find(r => Math.hypot(r.x - earth.x, r.y - earth.y) < 1);
+  t.check('świat: kryjówka Hildy, Mimas i ring Ziemi', !!(from && to && ring));
+  if (!from || !to || !ring) return;
+  // Prosta rekordu: jak blisko środka Ziemi i w którym miejscu odcinka.
+  const vx = to.x - from.x;
+  const vy = to.y - from.y;
+  const len = Math.hypot(vx, vy);
+  const u = ((earth.x - from.x) * vx + (earth.y - from.y) * vy) / (len * len);
+  const miss = Math.abs((earth.x - from.x) * vy - (earth.y - from.y) * vx) / len;
+  // Mija środek bliżej niż wierzch płyty — przecina ją (31 tys. j.: korytarz wewnętrzny, płyta dwa razy).
+  t.check(`prosta Hilda → Mimas tnie płytę ringu (mija środek Ziemi o ${(miss / 1000).toFixed(0)} tys. j.)`, miss < ring.terrainTop);
+
+  const registry = createCourseRegistry();
+  const seconds = len / 1200;
+  const course = launchCourse(registry, {
+    kind: COURSE_KIND.RAID,
+    unitClass: 'raider',
+    stages: [travelStage('gniazdo-hildy', 'mimas', { distance: len, seconds, mode: 'conventional' })]
+  });
+  // Rekord ~120 tys. j. przed Ziemią; bańka przy Ziemi.
+  advanceCourses(registry, seconds * u - 120_000 / 1200);
+  const bubble = createBubble({ rings, docks: world.docks });
+  const focus = { x: earth.x, y: earth.y };
+  const active = () => new Map(getActiveCourses(registry).map(c => [c.id, c]));
+  updateBubble(bubble, net, registry, active(), focus, 160_000, 0);
+  const actor = bubble.actors.get(course.id);
+  t.check('rajder materializuje się przy Ziemi', !!actor);
+  if (!actor) return;
+  // Ścieżka (cała, od startu etapu) nie ma punktu w płycie — próbki co 200 j. wzdłuż odcinków.
+  let pathSlab = 0;
+  const path = actor.path;
+  for (let i = 1; i < path.count; i++) {
+    const x0 = path.data[(i - 1) * 5], y0 = path.data[(i - 1) * 5 + 1];
+    const x1 = path.data[i * 5], y1 = path.data[i * 5 + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 200));
+    for (let k = 0; k <= n; k++) if (pointInRingSlab(ring, x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n)) pathSlab++;
+  }
+  t.equal('ścieżka rajdera nie przecina płyty ringu', pathSlab, 0);
+  let slab = 0;
+  let minR = Infinity;
+  for (let time = 0; time < 300; time += 0.2) {
+    updateBubble(bubble, net, registry, active(), focus, 160_000, 0.2);
+    const a = bubble.actors.get(course.id);
+    if (!a) break;
+    if (pointInRingSlab(ring, a.x, a.y)) slab++;
+    minR = Math.min(minR, Math.hypot(a.x - earth.x, a.y - earth.y));
+  }
+  t.equal('rajder ani razu w płycie ringu', slab, 0);
+  t.check(`rajder mija Ziemię za ringiem (najbliżej ${(minR / 1000).toFixed(1)} tys. j. od środka)`, minR >= ring.keepR - 1600);
 }
 
 /**

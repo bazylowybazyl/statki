@@ -5,6 +5,9 @@
 //
 //   node scripts/webgpu/planety-mapy-gra.mjs [--tag nowe] [--obok stare] [--query planety=stare]
 //                                            [--out .tmp/planety-mapy] [--tylko dziura-dzien,ziemia-cala]
+//                                            [--js "wyrażenie"]  (w stronie przed każdym kadrem — A/B warstw, np.
+//                                            "(window._entities.find(e => e.name === 'earth').atmosphere.visible = false)")
+//                                            [--po "return Core3D.gpuFrameMs"]  (po klatkach kadru — wynik do wynik-<tag>.json)
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startChrome, attachLogs, waitFor, evaluate, osobneLosowanieUuid, repo } from './wspolne.mjs';
@@ -217,7 +220,7 @@ try {
     if (view.off) { x += view.off[0] * r; y += view.off[1] * r; }
     const info = { r: Math.round(r) };
     if (e && (e.pit || view.target) && view.pitX !== undefined) {
-      // kierunek celu w układzie siatki: punkt (lon, lat) albo środek dziury (pierwszy wierzchołek łaty)
+      // kierunek celu w układzie siatki: punkt (lon, lat) albo środek gryzu (pierwszy wierzchołek łaty = dno nad C)
       let cx, cy, cz;
       if (view.target) {
         const lo = view.target[0] * Math.PI / 180, la = view.target[1] * Math.PI / 180;
@@ -231,18 +234,35 @@ try {
       // słońce w płaszczyźnie sceny (y sceny = −y gry): znak x względem planety
       const sx = Math.sign((SUN.x - p.x) || 1);
       const want = view.pitX * sx * ring;      // pożądane x' dziury na tarczy
-      // obrót Y: x' = cx cos θ + cz sin θ = ring · sin(θ + atan2(cx, cz)), z' > 0
-      const base = Math.atan2(cx, cz);
-      const th = Math.asin(Math.max(-1, Math.min(1, want / ring))) - base;
+      let xs, ys = cy, th;
+      if (e._spinAxis) {
+        // Ziemia obraca się wokół osi ringu (src/3d/earthSpin.js — oś ku kamerze): doba = obrót wokół Z sceny; cel na
+        // tarczy w odległości ρ od środka, x' = ρ cos(a0 + θ) (górna połowa tarczy)
+        e._spinY = 0;
+        e._orient(null);
+        const q = e.mesh.quaternion;
+        const ix = q.w * cx + q.y * cz - q.z * cy, iy = q.w * cy + q.z * cx - q.x * cz;
+        const iz = q.w * cz + q.x * cy - q.y * cx, iw = -q.x * cx - q.y * cy - q.z * cz;
+        const wx = ix * q.w - iw * q.x - iy * q.z + iz * q.y, wy = iy * q.w - iw * q.y - iz * q.x + ix * q.z;
+        const rho = Math.hypot(wx, wy), a0 = Math.atan2(wy, wx);
+        th = Math.acos(Math.max(-1, Math.min(1, view.pitX * sx * rho / Math.max(rho, 1e-9)))) - a0;
+        xs = rho * Math.cos(a0 + th);
+        ys = rho * Math.sin(a0 + th);
+      } else {
+        // obrót Y: x' = cx cos θ + cz sin θ = ring · sin(θ + atan2(cx, cz)), z' > 0
+        const base = Math.atan2(cx, cz);
+        th = Math.asin(Math.max(-1, Math.min(1, want / ring))) - base;
+        xs = cx * Math.cos(th) + cz * Math.sin(th);
+      }
       e._spinY = th;
       e._orient(null);
-      const xs = cx * Math.cos(th) + cz * Math.sin(th);
       info.spin = +th.toFixed(4);
-      info.pitScreen = [+(xs).toFixed(3), +(cy).toFixed(3)];
+      info.pitScreen = [+(xs).toFixed(3), +(ys).toFixed(3)];
       if (view.center === 'pit') {
         x = p.x + xs * r;
-        y = p.y - cy * r;
-        const pitR = r * (860 / 6371);
+        y = p.y - ys * r;
+        // otwór gryzu 0,46 R (src/data/earthBite.js): promień kątowy ~26,6° → ~0,45 R na tarczy
+        const pitR = r * 0.45;
         zoom = view.zoom ?? (persp ? zoomFor(view.fill) : view.fill * 1080 / (2 * pitR * 1.25));
       }
     }
@@ -280,9 +300,11 @@ try {
     if (only && !only.has(view.name)) continue;
     const info = await place(view);
     if (info.blad) throw new Error(info.blad);
+    if (args.js) await ev(`(() => { ${args.js}; return true; })()`);
     await ev('window.__harness.frames(12)');
     await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);
     await ev('window.__harness.frames(6)');
+    if (args.po) info.po = await ev(`(async () => { ${args.po} })()`);
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     writeFileSync(join(out, `${view.name}__${tag}.png`), Buffer.from(data, 'base64'));
     const shots = [];

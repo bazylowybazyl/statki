@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import v8 from 'node:v8';
+import { untilSteady } from './helpers/alokacje.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 
 globalThis.window = globalThis.window || {};
@@ -162,7 +163,7 @@ function makeFleet(count) {
 // z kilkoma funkcjami (inaczej JIT wkleja mierzoną funkcję w pętlę pomiaru i mierzy co innego).
 // Poza zakresem: grid.addWorld siatki świateł (src/3d/fx/lightGrid.js — `add` przekracza limit
 // wklejania V8, liczby w argumentach są opakowywane: ~100 B na światło, uwaga w raporcie 19).
-test('bez alokacji na rakietę: lot (smugi, jony, łuki), kadłubki, płomienie, duszki, światła, siły', () => {
+test('bez alokacji na rakietę: lot (smugi, jony, łuki), kadłubki, płomienie, duszki, światła, siły', async () => {
   resetAll();
   const { rockets, fly } = makeFleet(40);
   const missiles = () => { rfx.bodies.begin(); rfx.plumes.begin(); director.addMissiles(rockets, 0, 0); };
@@ -175,7 +176,8 @@ test('bez alokacji na rakietę: lot (smugi, jony, łuki), kadłubki, płomienie,
   for (let w = 0; w < 3; w++) for (const fn of [empty, ...Object.values(parts)]) allocatedBytes(fn, 300);
   const base = minAlloc(empty, 1500);
   for (const [name, fn] of Object.entries(parts)) {
-    const used = minAlloc(fn, 1500) - base;
+    // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+    const used = await untilSteady(() => minAlloc(fn, 1500) - base, (b) => b < 16 * 1024);
     assert.ok(used < 16 * 1024, `${name}: ${used} B na 1500 klatek (40 rakiet)`);
   }
   assert.ok(director.stats.puffs > 10000 && director._lN >= 40, 'pomiar objął smugi i światła');
@@ -186,10 +188,14 @@ test('bez alokacji na rakietę: lot (smugi, jony, łuki), kadłubki, płomienie,
 // Klatka kroku „rakiety” (siły i krok dymu, światła do bufora, instancje, łuki, mgławica, mapa
 // gęstości): stały narzut (uniformy three z liczbą w `value`, liczby w argumentach wywołań raz
 // na klatkę) nie rośnie z liczbą rakiet.
-test('krok „rakiety”: alokacja nie rośnie z liczbą rakiet (4 → 40)', () => {
+test('krok „rakiety”: alokacja nie rośnie z liczbą rakiet (4 → 40)', async () => {
   const ctx = fx.ctx;
   ctx.renderer = gpu;
-  const measure = (count) => {
+  // Pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs). 4 rakiety: stały narzut w stanie
+  // ustalonym ~68 KB na 1000 klatek, a pierwsza runda po rozgrzewce (kod jeszcze niezoptymalizowany) — setki KB; taki
+  // pomiar 4 rakiet przepuszczał każdy przyrost 40 rakiet. Koniec pomiaru 4 rakiet poniżej 2 × dopuszczalnego
+  // przyrostu (warunek końca, nie asercja), 40 rakiet — gdy różnica przejdzie.
+  const measure = async (count, ok) => {
     resetAll();
     const { rockets, fly } = makeFleet(count);
     rfx.attachRockets(rockets);
@@ -197,12 +203,12 @@ test('krok „rakiety”: alokacja nie rośnie z liczbą rakiet (4 → 40)', () 
     const empty = () => {};
     for (let i = 0; i < 2500; i++) frame();
     for (let w = 0; w < 3; w++) { allocatedBytes(frame, 300); allocatedBytes(empty, 300); }
-    const used = minAlloc(frame, 1000) - minAlloc(empty, 1000);
+    const used = await untilSteady(() => minAlloc(frame, 1000) - minAlloc(empty, 1000), ok);
     rfx.attachRockets(null);
     return used;
   };
-  const few = measure(4);
-  const many = measure(40);
+  const few = await measure(4, (b) => b < 2 * 48 * 1024);
+  const many = await measure(40, (b) => b - few < 48 * 1024);
   assert.ok(many - few < 48 * 1024, `alokacja rośnie z liczbą rakiet: ${few} → ${many} B na 1000 klatek`);
 });
 

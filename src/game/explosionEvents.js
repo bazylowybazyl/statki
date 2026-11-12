@@ -13,10 +13,19 @@ import { HC, EXPLOSION } from '../render/hullCommands.js';
  * @param writer — pisarz rozkazów (RenderCommands.writer)
  * @param sweepDrones — (opts) → void: obrażenia dronów naprawczych w zasięgu wybuchu (gra)
  */
+/** Pojemność pierścienia ostatnich wybuchów (`api.recent`). */
+export const RECENT_BLASTS = 32;
+const RECENT = RECENT_BLASTS;
+
 export function createExplosionEvents(writer, { sweepDrones = null } = {}) {
   const api = {
     ready: false,
     stats: { written: 0, swept: 0 },
+    // Ostatnie wybuchy (x, y, size — świat gry) w pierścieniu: czytają je moduły gry, które same pakują wejście renderu
+    // (gaz w otwartej przestrzeni — src/game/spaceGasInput.js: front wybuchu wydmuchuje dziurę w gazie). `count` rośnie
+    // z każdym wybuchem — czytający pamięta, ile już widział.
+    recent: new Float64Array(RECENT * 3),
+    count: 0,
     /**
      * Wybuch z opcjami fabryki `{ x, y, size, profile, vx, vy, axisX, axisY, jetVelTau, tint, gasOnly, hostKey }`.
      * `drones` — zmieść drony naprawcze (dawne window.makeReactorBlow: rozpad bazy, szyja, fabuła, śmierć gracza bez
@@ -48,6 +57,11 @@ export function createExplosionEvents(writer, { sweepDrones = null } = {}) {
       d[r + E.HOST_KEY] = Number(o.hostKey) || 0;
       writer._commit();
       api.stats.written++;
+      const k = (api.count % RECENT) * 3;
+      api.recent[k] = o.x ?? 0;
+      api.recent[k + 1] = o.y ?? 0;
+      api.recent[k + 2] = o.size ?? 300;
+      api.count++;
       return true;
     }
   };

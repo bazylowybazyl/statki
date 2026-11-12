@@ -92,64 +92,8 @@ export const railgun = {
   },
 };
 
-function gatlingShot(E, V, t, s) {
-  const C = E.voice({ t }, { parent: V });
-  const k = E.vary(1, 0.05);
-  const g = E.vary(1, 0.12);
-  C.burst(t, 'white', { type: 'highpass', f: lerp(2400, 1400, s), Q: 0.7, attack: 0.0004, decay: 0.03, peak: 0.8 * g });
-  C.thump(t, lerp(240, 150, s) * k, lerp(95, 60, s) * k, 0.025, lerp(0.08, 0.14, s), 0.5 * g, { drive: 1.6 });
-  C.burst(t, 'pink', { type: 'bandpass', f: lerp(1900, 1100, s) * k, Q: 1.1, attack: 0.0008, decay: lerp(0.06, 0.1, s), peak: 0.5 * g });
-  C.finish();
-}
-
-export const gatling = {
-  id: 'gatling',
-  group: 'Działa',
-  name: 'Vulcan / Gatling',
-  desc: 'Rozkręcanie luf i seria.',
-  hold: true,
-  params: [
-    { id: 'rate', name: 'Szybkostrzelność', min: 15, max: 70, step: 1, value: 42, unit: '/s' },
-    { id: 'size', name: 'Kaliber', min: 0, max: 1, step: 0.01, value: 0.3 },
-  ],
-  length: (p, hold) => hold + 1.2,
-  play(E, p, at) {
-    const V = E.voice(at);
-    const h = E.handle(V);
-    const t = V.t;
-    const live = { rate: p.rate, size: p.size };
-    // silnik obrotu luf
-    const mo = V.osc('sawtooth', 70, t);
-    mo.frequency.exponentialRampToValueAtTime(260, t + 0.22);
-    const mb = V.bp(500, 2.5, t);
-    mb.frequency.exponentialRampToValueAtTime(1500, t + 0.22);
-    const mg = V.gain(0);
-    V.env(mg.gain, t, [[0, 0, 's'], [0.18, 0.05, 'l']]);
-    V.chain(mo, mb, mg, V.in);
-    // seria
-    E.loop(h, t + 0.13, (ts) => {
-      gatlingShot(E, V, ts, live.size);
-      return ts + E.vary(1 / live.rate, 0.035);
-    });
-    h.params.rate = (v) => {
-      live.rate = v;
-    };
-    h.params.size = (v) => {
-      live.size = v;
-    };
-    h.onRelease((tr) => {
-      E.hold(mo.frequency, tr);
-      mo.frequency.setTargetAtTime(45, tr, 0.3);
-      E.hold(mb.frequency, tr);
-      mb.frequency.setTargetAtTime(300, tr, 0.3);
-      E.hold(mg.gain, tr);
-      mg.gain.setTargetAtTime(0, tr, 0.18);
-      V.stop(tr + 1.2);
-    });
-    V.start();
-    return h;
-  },
-};
+// Seria Vulcan / CIWS — przepis we wspólnym module gry (gra gra go przy CIWS).
+export { gatling } from '../../src/audio/przepisySyntezy.js';
 
 export const laserPD = {
   id: 'laserPD',

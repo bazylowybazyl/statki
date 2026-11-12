@@ -349,6 +349,9 @@ const CACHE_MARGIN = 160;
 const CACHE_SETTLE = 6;
 // Pustych kafli (bez obrazu) w pamięci — wpis to kilkadziesiąt bajtów.
 const EMPTY_KEEP = 2048;
+// zapas budżetu na domknięcie kafla (barwy, ImageBitmap, kontury ~0,2–0,4 ms)
+const FINISH_MS = 0.6;
+const performanceNow = () => performance.now();
 
 function tileKey(k, tx, ty) {
   return k * 1099511627776 + (ty + 524288) * 1048576 + (tx + 524288);
@@ -360,11 +363,14 @@ export class CicBeltLayer {
    * @param {() => object|null} [o.getField] pole pasa (AsteroidBeltField)
    * @param {object} [o.tune] nadpisania CIC_BELT_TUNE
    * @param {boolean} [o.keepLines] trzymaj łańcuchy konturów (testy — w Node bez Path2D)
+   * @param {() => number} [o.clock] zegar budżetu wypieku i statystyk [ms] (domyślnie performance.now; testy —
+   *   zegar deterministyczny: czas ściany pod obciążeniem nie mówi nic o tym, czy wypiek trzyma budżet)
    */
   constructor(o = {}) {
     this.getField = o.getField || (() => null);
     this.tune = o.tune || CIC_BELT_TUNE;
     this.keepLines = !!o.keepLines;
+    this.clock = o.clock || performanceNow;
     this.field = null;
     this.tiles = new Map();
     this.k = -1;
@@ -442,14 +448,19 @@ export class CicBeltLayer {
     return { t, row: 0, ms: 0 };
   }
 
-  /** Krok wypieku: wiersze do terminu `deadline` (performance.now()); true — kafel gotowy. */
-  _bakeStep(job, deadline) {
+  /**
+   * Krok wypieku: wiersze do terminu `deadline` (zegar `clock`), co najmniej jeden; true — kafel gotowy.
+   * `first` — pierwszy krok klatki: kafel z policzonymi wierszami domyka się bez zapasu budżetu.
+   */
+  _bakeStep(job, deadline, first) {
     const f = this.field;
     const t = job.t;
     const c = t.cell;
     const TEX = CIC_BELT_TEX;
     const Wv = this._W, Fv = this._F, Rv = this._R, Pv = this._P;
-    const t0 = performance.now();
+    const now = this.clock;
+    const rows0 = job.row;
+    const t0 = now();
     while (job.row < TEX) {
       const j = job.row;
       const y = t.y0 + (j - PAD + 0.5) * c;
@@ -463,15 +474,16 @@ export class CicBeltLayer {
       }
       job.row++;
       this.stats.samples += TEX;
-      if (performance.now() > deadline) break;
+      if (now() > deadline) break;
     }
-    job.ms += performance.now() - t0;
+    job.ms += now() - t0;
     if (job.row < TEX) return false;
-    // domknięcie (barwy, ImageBitmap, kontury ~0,2–0,4 ms) — tylko z zapasem budżetu, inaczej w następnej klatce
-    if (performance.now() + 0.6 > deadline) return false;
-    const t1 = performance.now();
+    // Domknięcie — z zapasem budżetu, inaczej w następnej klatce; jako pierwsza praca klatki zawsze: zagłodzony
+    // wątek (wywłaszczenie między odczytami zegara) nie ma zapasu w żadnej klatce i kafel nie domknąłby się nigdy.
+    if (!(first && rows0 === TEX) && now() + FINISH_MS > deadline) return false;
+    const t1 = now();
     this._finishTile(t);
-    job.ms += performance.now() - t1;
+    job.ms += now() - t1;
     this.stats.baked++;
     this.stats.lastBakeMs = job.ms;
     return true;
@@ -561,13 +573,17 @@ export class CicBeltLayer {
 
   /**
    * Wypiek w budżecie: kafle w kadrze, korzenie (cały układ) pierwsze — zawsze jest czym zastąpić kafel w wypieku.
+   * Co najmniej jeden krok na klatkę (jak budowa ciał w worldBodies.js): budżet sprawdzany PRZED pierwszym krokiem
+   * przy zagłodzonym wątku (wywłaszczenie ≥ budżetu między odczytami zegara) nie dawał postępu w żadnej klatce.
    * @param {number} budgetMs
    */
   bake(budgetMs = this.tune.bakeMs) {
     if (!this.field || !(budgetMs > 0)) return;
-    const deadline = performance.now() + budgetMs;
+    const now = this.clock;
+    const deadline = now() + budgetMs;
     let guard = 0;
-    while (performance.now() < deadline && guard++ < 64) {
+    let steps = 0;
+    while ((steps === 0 || now() < deadline) && guard++ < 64) {
       if (!this.job) {
         const t = this._need.length ? this._need.shift() : null;
         if (!t) break;
@@ -575,9 +591,9 @@ export class CicBeltLayer {
         this.job = this._startJob(t);
         if (!this.job) continue;
       }
-      const t0 = performance.now();
-      const done = this._bakeStep(this.job, deadline);
-      const db = performance.now() - t0;
+      const t0 = now();
+      const done = this._bakeStep(this.job, deadline, steps++ === 0);
+      const db = now() - t0;
       this.stats.bakeMs += db;
       if (db > this.stats.maxBakeMs) this.stats.maxBakeMs = db;
       if (done) this.job = null;
@@ -639,11 +655,11 @@ export class CicBeltLayer {
         this.stats.direct++;
       } else if (!valid) {
         const g = cache.ctx;
-        const tr = performance.now();
+        const tr = this.clock();
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.clearRect(0, 0, cache.cw, cache.ch);
         this._render(g, rv, draws, field);
-        const dr = performance.now() - tr;
+        const dr = this.clock() - tr;
         if (dr > this.stats.maxRenderMs) this.stats.maxRenderMs = dr;
         cache.zoom = zoom; cache.version = version; cache.tkey = tkey; cache.field = field;
         cache.W = W; cache.H = H; cache.viewX = viewX; cache.viewY = viewY;
@@ -653,9 +669,9 @@ export class CicBeltLayer {
         valid = true;
       }
       if (valid) {
-        const ti = performance.now();
+        const ti = this.clock();
         ctx.drawImage(cache.canvas, dx - m, dy - m);
-        const di = performance.now() - ti;
+        const di = this.clock() - ti;
         if (di > this.stats.maxBlitMs) this.stats.maxBlitMs = di;
       }
     }

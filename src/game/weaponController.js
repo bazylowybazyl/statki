@@ -10,6 +10,7 @@ import {
   CHARGE_FIRE, CHARGE_CHARGING
 } from './weaponCharge.js';
 import { isTorpedoWeapon } from './torpedoAim.js';
+import { weaponRangeFor, weaponSpeedMul } from './shipModifiers.js';
 
 // Nośnik efektu ładowania (lufa okrętu) — jeden obiekt na moduł.
 const _chargeCarrier = createCarrier();
@@ -213,7 +214,7 @@ export class WeaponController {
           stepMountedWeaponAim(state, _aimBase, mouseWorld, dt, turretDriveFor(weapon, ship.turret));
           continue;
         }
-        const range = (weapon.baseRange || weapon.range || 1000) * (ship.modifiers?.range || 1);
+        const range = weaponRangeFor(ship, weapon, weapon.baseRange || weapon.range || 1000);
         // Stable round-robin assignment, shared by aiming and firing. No random
         // target switch at the instant of a shot, and no temporary target arrays.
         let count = 0;
@@ -238,7 +239,7 @@ export class WeaponController {
         if (state.target) {
           if (weapon.category !== 'beam' && typeof window.getLeadAim === 'function') {
             aimPoint = window.getLeadAim(_aimBase, state.target,
-              (weapon.baseSpeed || 1000) * (ship.modifiers?.projectileSpeed || 1),
+              (weapon.baseSpeed || 1000) * weaponSpeedMul(ship, weapon),
               undefined, writePointVelocity(ship, _aimBase.x, _aimBase.y, _aimVel));
           } else {
             _aimPoint.x = targetX(state.target);
@@ -615,7 +616,7 @@ export class WeaponController {
     const fmRangeScale = (this.owner === 'player' && typeof window.getFiringModeModifiers === 'function') ? (window.getFiringModeModifiers()?.rangeMul || 1.0) : 1.0;
     for (let i = 0; i < this.mainWeapons.length; i++) {
         const w = this.mainWeapons[i]?.weapon;
-        if (w && (w.baseRange * fmRangeScale) > maxRng) maxRng = w.baseRange * fmRangeScale;
+        if (w) maxRng = Math.max(maxRng, weaponRangeFor(this.ship, w, w.baseRange) * fmRangeScale);
     }
     const ship = this.ship;
     for (const t of this.lockedTargets) {

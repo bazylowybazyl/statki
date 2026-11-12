@@ -6,7 +6,7 @@
 // node --test tests/pulseBeamPoolLimit.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import v8 from 'node:v8';
+import { allocatedBytes, untilSteady } from './helpers/alokacje.mjs';
 import * as THREE from 'three/webgpu';
 import { Core3D } from '../src/3d/core3d.js';
 import { FxFrame } from '../src/3d/fx/fxFrame.js';
@@ -52,18 +52,14 @@ test('po zapełnieniu nadpisywany jest najstarszy impuls (głowa pierścienia)',
   assert.equal(activePulses(), PULSE_CAP);
 });
 
-const newSpaceUsed = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
-test('strzał impulsem i laserem PD bez alokacji obiektów (po rozgrzewce JIT)', () => {
+test('strzał impulsem i laserem PD bez alokacji obiektów (po rozgrzewce JIT)', async () => {
   WeaponFx.reset();
   const shot = (i) => { pulse(i & 1023); pulse(i & 1023, 'pd', 'laser_pd_mk1'); };
   for (let i = 0; i < 20000; i++) shot(i);
-  let best = Infinity;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const before = newSpaceUsed();
-    for (let i = 0; i < 2000; i++) shot(i);
-    const d = newSpaceUsed() - before;
-    if (d >= 0 && d < best) best = d;
-  }
+  // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+  const best = await untilSteady(() => allocatedBytes(shot, 2000), (b) => b < 2000 * 600, {
+    warm: () => { for (let i = 0; i < 5000; i++) shot(i); }
+  });
   // Wylot każdego impulsu to receptura (paczki GPU przez budowniczego — bez obiektów); zostaje
   // pakowanie liczb double w niewklejonych wywołaniach (jak w tests/weaponRecipes.test.mjs).
   assert.ok(best < 2000 * 600, `alokacja ${best} B na 2000 par strzałów (${(best / 2000).toFixed(0)} B na parę)`);

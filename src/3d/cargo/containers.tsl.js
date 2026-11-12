@@ -20,7 +20,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Discard, Fn, If, abs, attribute, clamp, cos, dot, float, floor, fract, fwidth, int, length, max, min, mix, normalize,
-  positionGeometry, select, sin, smoothstep, sqrt, step, varyingProperty, vec2, vec3, vec4
+  positionGeometry, renderGroup, select, sin, smoothstep, sqrt, step, uniform, varyingProperty, vec2, vec3, vec4
 } from 'three/tsl';
 import {
   CONTAINER_FAMILY_CODE, HOPPER_MATERIAL, containerLook, cargoHash01
@@ -128,17 +128,36 @@ function vnoise(p) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Światło paczek ŁUPU (kontenery-łup K2, wariant `{ loot: true }`): paczki dryfują w otwartej przestrzeni, bez lamp
+ * ładowni, a słońce kontenerów (CARGO_LIGHT.sunDir) jest prawie poziome jak na kadłubach — z góry widać ciemne
+ * wieka. Wariant poza ładownią świeci słońcem wyżej (ten sam azymut) z lekkim wypełnieniem, żeby barwa rodziny była
+ * czytelna z bliska. Uniformy grupy renderu (jeden zapis na render); kontenery E12 (bez wariantu) ich nie czytają.
+ */
+export const LOOT_CARGO_LIGHT = Object.freeze({
+  sunDir: uniform(new THREE.Vector3(-0.4, 0.5, 0.77).normalize()).setGroup(renderGroup),
+  fill: uniform(new THREE.Vector3(0.14, 0.14, 0.15)).setGroup(renderGroup)
+});
+
+/** Słońce paczek łupu z azymutu [rad, płaszczyzna sceny] i wysokości [°]. */
+export function setLootCargoSun(azimuth, elevDeg = 50) {
+  const e = THREE.MathUtils.degToRad(elevDeg);
+  LOOT_CARGO_LIGHT.sunDir.value.set(Math.cos(azimuth) * Math.cos(e), Math.sin(azimuth) * Math.cos(e), Math.sin(e));
+}
+
+/**
  * Materiał kontenerów. source (opcjonalnie) — poza z zewnątrz zamiast atrybutów iPos / iSize:
  * { name, pose: () => { pos: vec4 (podstawa x, y, z, kurs), size: vec4 (L, W, H, ładownia), visible: float } }
  * — np. kontenery roju z bufora symulacji GPU (src/3d/swarm/swarmUnits.tsl.js). Wzór i światło bez zmian.
+ * opts.loot — wariant paczek łupu (LOOT_CARGO_LIGHT poza ładownią); osobny graf budowany raz.
  */
-export function buildCargoContainerMaterial(source = null) {
-  return buildMaterial(source);
+export function buildCargoContainerMaterial(source = null, opts = {}) {
+  return buildMaterial(source, opts);
 }
 
-function buildMaterial(source = null) {
+function buildMaterial(source = null, opts = {}) {
+  const loot = !!opts.loot;
   const m = new THREE.NodeMaterial();
-  m.name = source?.name || 'Cargo:kontenery';
+  m.name = source?.name || (loot ? 'Cargo:kontenery-łup' : 'Cargo:kontenery');
   m.lights = false;
   m.fog = false;
   m.transparent = true;
@@ -348,7 +367,9 @@ function buildMaterial(source = null) {
       const lamp = bayLampLight(rec, P, Nl).add(bayFillLight(rec, P, Nl));
       col.assign(cargoShade(albedo, Nl, Ll, vis, occl, lamp, specK, specPow));
     }).Else(() => {
-      col.assign(cargoShade(albedo, Nw, CARGO_LIGHT.sunDir, float(1.0), float(1.0), vec3(0.0), specK, specPow));
+      // Paczka łupu: słońce wyżej i wypełnienie (barwa rodziny czytelna); kontenery E12 — jak dotąd.
+      if (loot) col.assign(cargoShade(albedo, Nw, LOOT_CARGO_LIGHT.sunDir, float(1.0), float(1.0), LOOT_CARGO_LIGHT.fill, specK, specPow));
+      else col.assign(cargoShade(albedo, Nw, CARGO_LIGHT.sunDir, float(1.0), float(1.0), vec3(0.0), specK, specPow));
     });
     return vec4(cargoSurfaceCap(col), 1.0);
   })();
@@ -365,7 +386,8 @@ function keepRanges() {}
  * Kontenery sceny: begin() → push…() → commit(). Współrzędne świata sceny (x, y = −y gry).
  */
 export class CargoContainers {
-  constructor(scene, capacity = 16384) {
+  /** opts.loot — wariant paczek łupu (LOOT_CARGO_LIGHT). */
+  constructor(scene, capacity = 16384, opts = {}) {
     this.capacity = capacity;
     const base = buildContainerGeometry();
     const geo = new THREE.InstancedBufferGeometry();
@@ -387,9 +409,9 @@ export class CargoContainers {
     geo.instanceCount = 0;
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
     this.geometry = geo;
-    this.material = buildMaterial();
+    this.material = buildMaterial(null, opts);
     this.mesh = new THREE.Mesh(geo, this.material);
-    this.mesh.name = 'Cargo:kontenery';
+    this.mesh.name = this.material.name;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = CONTAINER_RENDER_ORDER;
     this.mesh.visible = false;

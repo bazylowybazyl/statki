@@ -6,6 +6,7 @@
 //   node scripts/profil-bitwy-flot.mjs --sklad 50,20,10,3 [--trwanie 100] [--profile 1:3,8:6,45:6] [--prof 6]
 //        [--co 3] [--zoom 0.1] [--seed 7] [--diag 1] [--query physHz=60] [--out katalog] [--port 5294]
 //        [--ls 'sc_camera_frame=off;k=v'] [--tryb spokoj] [--zdarzenia 't@wyrażenie|…']
+//        [--scena baza] [--bazaOdstep 9500] [--okno 1] [--zrzuty 2,50] [--szer 5120 --wys 1440]
 // (2026-10-11, audyt FPS — docs/AUDYT-wydajnosc-2026-10-11.md: --ls wpisy localStorage przed startem strony, --tryb spokoj
 // = obie grupy Terra Nova bez walki — porównanie wersji kodu bez chaosu bitwy, --zdarzenia wyrażenia w stronie w zadanych
 // chwilach; w próbkach zoom kamery i percentyle czasu klatki z rAF: p50 / p95 / p99, udział klatek > 16,7 i > 25 ms.)
@@ -21,7 +22,7 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startVite, navigateAndWait, evaluate, sleep } from '../dema/rdzen-cdp.js';
-import { startChrome } from './webgpu/wspolne.mjs';
+import { startChrome, screenshotPng } from './webgpu/wspolne.mjs';
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf('--' + name);
@@ -50,6 +51,16 @@ const QUERY = arg('query', '');
 const LS = String(arg('ls', '')).split(';').filter(Boolean).map((kv) => { const i = kv.indexOf('='); return [kv.slice(0, i), kv.slice(i + 1)]; });
 // --tryb spokoj: obie grupy to Terra Nova (bez walki) — koszt na byt bez chaosu bitwy (porównanie wersji).
 const TRYB = arg('tryb', 'bitwa');
+// --scena baza (2026-11-02, klatka workera przy bazie — docs/AUDYT-klatka-workera-2026-11-02.md): bitwa przy bazie
+// piratów z misji 1 (skok dev ?story=shipyard — budowle na silniku belek, okręty stoczni, planetoida Hidalgo w passie
+// tła), Atlas nieśmiertelny --bazaOdstep j. na południe od obwiedni bazy (szyk flot sięga ~8,5 km w bok od osi bitwy —
+// mniejszy odstęp stawia okręty w budowlach), kamera RTS 0,4 odstępu na południe od krawędzi bazy (zoom 0,1 przy
+// 5120 × 1440: u góry ~3,4 km bazy, u dołu bitwa przy Atlasie). Domyślnie 'pustka':
+// orbita między Wenus a Ziemią. --zrzuty 't,t' — zrzuty ekranu w chwilach od pojawienia się flot (zrzut-t.png w --out).
+const SCENA = arg('scena', 'pustka');
+const BAZA = SCENA === 'baza';
+const BAZA_ODSTEP = Number(arg('bazaOdstep', 9500));
+const ZRZUTY = String(arg('zrzuty', '')).split(',').filter(Boolean).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
 // --zdarzenia '60@window.setFogOfWar(false)|90@…' — wyrażenia w stronie w chwilach od pojawienia się flot.
 const EVENTS = String(arg('zdarzenia', '')).split('|').filter(Boolean).map((v) => { const i = v.indexOf('@'); return { at: Number(v.slice(0, i)), expr: wkExpr(v.slice(i + 1)) }; }).sort((a, b) => a.at - b.at);
 // Kroki fizyki na takt AI (20 Hz): liczymy kroki z licznika taktów AI gry (window.__aiDecisionTickId).
@@ -61,12 +72,16 @@ const { server, base } = await startVite(PORT);
 // webgpu: false — bez flag „unsafe” (domyślny WebGPU Chrome jak u gracza); --diag: %HasFastProperties w stronie.
 // --szer / --wys (2026-10-17): rozmiar okna strony (np. 5120×1440 — pełny ekran gracza)
 const SZER = Number(arg('szer', 1920)), WYS = Number(arg('wys', 1080));
-const chrome = await startChrome({ width: SZER, height: WYS, webgpu: false,
-  extraArgs: DIAG ? ['--js-flags=--allow-natives-syntax'] : [] });
+// --okno 1 (2026-11-02): widoczne okno na cały ekran z vsync, jak u gracza (podgląd przebiegu; headless biegnie bez
+// limitu klatek) — bez dławienia, gdy coś okno zasłoni (flagi jak rytm-bitwy.mjs).
+const OKNO = arg('okno', '0') === '1';
+const chrome = await startChrome({ width: SZER, height: WYS, webgpu: false, headless: OKNO ? false : undefined,
+  extraArgs: [...(DIAG ? ['--js-flags=--allow-natives-syntax'] : []), ...(OKNO ? ['--window-position=0,0', '--start-fullscreen',
+    '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-features=CalculateNativeWinOcclusion'] : [])] });
 const { cdp, logs } = chrome;
 // Swobodna gra bez samouczka; --seed: Math.random z ziarnem (mulberry32) przed skryptami strony.
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
-  try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0');
+  try { localStorage.setItem('sc_story_campaign', '${BAZA ? '1' : '0'}'); localStorage.setItem('sc_story_tutorial', '0');
     ${LS.map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join(' ')} } catch {}
   ${SEED !== null ? `let s = ${Number(SEED) >>> 0};
   Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };` : ''}
@@ -266,22 +281,55 @@ const diagLine = (d) => `pary/krok ${d.paryNaKrok} (różnych ${d.roznychPar}) $
 const samples = [];
 const profiles = [];
 try {
-  const ready = await navigateAndWait(cdp, `${base}/index.html?dev=1${QUERY ? '&' + QUERY : ''}`,
-    '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.HullBodies)', 180000);
-  await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
+  const ready = await navigateAndWait(cdp, `${base}/index.html?dev=1${BAZA ? '&story=shipyard' : ''}${QUERY ? '&' + QUERY : ''}`,
+    BAZA ? '!!(window.ship && window.StoryGame && window.HullBodies)' : '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.HullBodies)', 240000);
+  if (BAZA) {
+    // jak gpu-baza-gra.mjs: nowa gra → kampania → start fazy z adresu (stocznia piratów, baza cała)
+    await sleep(2500);
+    await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
+    await sleep(700);
+    await ev(`(() => { document.querySelector('[data-story-campaign="1"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
+  } else await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
   let started = false;
   for (let t0 = Date.now(); !started && Date.now() - t0 < 240000;) {
     await sleep(250);
-    try { started = await ev('(window.__frameId || 0) > 30 && !!window.camera'); } catch { /* ładuje się */ }
+    try { started = await ev(BAZA ? "!!(window.StoryGame?.active && window.StoryGame.phase === 'shipyard' && window.StoryGame.site?.station && window.camera)"
+      : '(window.__frameId || 0) > 30 && !!window.camera'); } catch { /* ładuje się */ }
   }
   report('gra', { ready, started, gpu: await ev('!!window.Core3D?.ready') });
   await ev(`(async () => { const m = await import('/src/ui/perfHud.js'); window.__PH = m.PerfHUD; if (!m.PerfHUD.visible) m.PerfHUD.toggle();
     window.__ft = { d: [], last: 0 }; (function tick(t) { const f = window.__ft; if (f.last) f.d.push(t - f.last); f.last = t; requestAnimationFrame(tick); })(performance.now());
     return true; })()`);
 
+  // --scena baza: obwiednia wszystkich kawałków bazy w układzie gry (rogi pudeł przez dock.toGame), Atlas na południe
+  // od niej (y gry rośnie na południe), oś bitwy wschód–zachód (spawn niżej, kąt 0); kamera RTS nad środkiem między
+  // bazą a Atlasem — w kadrze budowle, bitwa i planetoida pod bazą.
+  if (BAZA) report('miejsce', await ev(`(() => {
+    const S = window.StoryGame, d = S.site.dock, l = d.layout;
+    let gx0 = Infinity, gx1 = -Infinity, gy0 = Infinity, gy1 = -Infinity, n = 0;
+    for (const q of l.chunkById.values()) {
+      if (!q || q.ghost || !q.box) continue; n++;
+      for (const [bx, bz] of [[q.box.x0, q.box.z0], [q.box.x1, q.box.z0], [q.box.x0, q.box.z1], [q.box.x1, q.box.z1]]) {
+        const p = d.toGame(bx, bz); gx0 = Math.min(gx0, p.x); gx1 = Math.max(gx1, p.x); gy0 = Math.min(gy0, p.y); gy1 = Math.max(gy1, p.y);
+      }
+    }
+    const cx = (gx0 + gx1) / 2, cy = (gy0 + gy1) / 2, px = cx, py = gy1 + ${BAZA_ODSTEP};
+    S.deps.placePlayer(px, py, 0);
+    window.ship.vel.x = 0; window.ship.vel.y = 0;
+    const c = window.camera;
+    if (c.mode !== 'rts' && typeof c.enterRtsMode === 'function') c.enterRtsMode();
+    // kadr: południowa część bazy u góry, bitwa (zbiega się przy Atlasie) u dołu
+    c.x = c.targetX = cx; c.y = c.targetY = gy1 + ${BAZA_ODSTEP} * 0.4; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${ZOOM};
+    for (const el of document.querySelectorAll('.st-hint, .st-objective')) el.style.display = 'none';
+    window.__godTimer = setInterval(() => { const s = window.ship; if (!s || s.destroyed) return;
+      if (s.hull) s.hull.val = s.hull.max; if (s.shield) s.shield.val = s.shield.max; }, 100);
+    const hab = S.site.structures?.habitat;
+    return { kawalkow: n, bazaKm: [+((gx1 - gx0) / 1000).toFixed(1), +((gy1 - gy0) / 1000).toFixed(1)], srodek: [Math.round(cx), Math.round(cy)],
+      atlas: [Math.round(px), Math.round(py)], habitatHp: hab ? Math.round(hab.hp) : null };
+  })()`));
   // Pusta przestrzeń: orbita w połowie między Wenus a Ziemią (poza pasem asteroid i studniami), kąt najdalej
   // od planet, księżyców i stacji.
-  report('miejsce', await ev(`(() => {
+  else report('miejsce', await ev(`(() => {
     const pl = (window.planets || []).map((p) => ({ x: p.x ?? p.pos?.x, y: p.y ?? p.pos?.y, n: p.name || p.id })).filter((p) => Number.isFinite(p.x));
     const st = (window.stations || []).map((s) => ({ x: s.x ?? s.pos?.x, y: s.y ?? s.pos?.y })).filter((p) => Number.isFinite(p.x));
     const sun = window.SUN || { x: 0, y: 0 };
@@ -350,6 +398,7 @@ try {
     if (r && Array.isArray(r.a) && r.a.length) ab.wins.push({ v: ab.i % WK_AB.length, t: ab.t0, ms: r.a, gpu: r.g || [] }); };
   while (sec() < TRWANIE) {
     if (WK_EVENTS.length && sec() >= WK_EVENTS[0].at) { const e = WK_EVENTS.shift(); report('wk zdarzenie', { at: e.at, expr: e.expr.slice(0, 80), wynik: await wkEval(e.expr) }); continue; }
+    if (ZRZUTY.length && sec() >= ZRZUTY[0]) { const t = ZRZUTY.shift(); report('zrzut', { at: t, plik: await screenshotPng(cdp, join(OUT, `zrzut-${t}.png`)).catch((e) => e.message) }); continue; }
     if (WK_AB.length && _wk.sid && sec() >= ab.next) {
       await abTake(); ab.i++; const v = ab.i % WK_AB.length; await wkEval(WK_AB[v]);
       await sleep(500); ab.n0 = await wkEval('globalThis.__rwFrameTimes.n'); ab.g0 = await wkEval('globalThis.__rwGpuTimes ? globalThis.__rwGpuTimes.n : 0'); ab.t0 = Math.round(sec()); ab.next = sec() + WK_AB_PERIOD - 0.5; continue;

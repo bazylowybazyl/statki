@@ -39,6 +39,70 @@ export const STAR_PARALLAX_LAYERS = Object.freeze([
   }),
 ]);
 
+/**
+ * WARSTWA MID W TRYBIE NIEBA-SFERY (prawo tempa nieba 2026-10-27, src/3d/skyScroll.js): niebo płynie z p 0,1 (w walce
+ * 3,3× szybciej niż dawne 0,03), więc gwiazdy mid (0,055–0,18) leżałyby częściowo POD niebem — tryb sfery przesuwa ich
+ * paralaksę liniowo na [parallaxMin, parallaxMax] (najwolniejsza mid ≥ 1,3 × niebo, najszybsza ≤ 0,26 — w walce
+ * 14–28 px/s przy 507 j/s i zoomie 0,2133 zamiast 5,9–19,5; świat jedzie 108 px/s, warstwa speed 110–192) i niesie ją
+ * DROGĄ NIEBA (ta sama skompresowana i wygładzona prędkość co niebo — W0: niebo < mid w każdym trybie i przejściu).
+ * Tryb płaski (`?niebo=plaska`) i dawne prawo (`?nieboTempo=stare`) — bez zmian (STAR_PARALLAX_LAYERS).
+ */
+export const STAR_MID_SPHERE = Object.freeze({ parallaxMin: 0.13, parallaxMax: 0.26 });
+
+/**
+ * Kamera gwiazd mid w trybie sfery (StarSystem, uniform `cameraOffsetMid`): przyrost = (ruch kamery gry − surowa droga
+ * okrętu prowadzącego tej klatki) + droga nieba × driveMul, podzielone przez kompensację zoomu k (jak advanceStarCamera).
+ * Ruch kamery względem okrętu (kop warpa, wyprzedzenie riga, przejazd kamery, teleport) idzie jak dawniej — z limitem
+ * maxStep w skoku (sufit kamery gwiazd) — a droga okrętu zostaje zastąpiona drogą nieba (skyScroll.js: driveX / driveY —
+ * skompresowana logarytmem i wygładzona), więc w locie mid / niebo = paralaksa mid / p nieba (W0) w każdym trybie.
+ * sc = { x, y, lx, ly } — stan wołającego; (cx, cy) — kamera gry (świat, y w dół); disp, drive — [j.] tej klatki.
+ */
+export function advanceStarCameraMid(sc, cx, cy, k, maxStep, dispX, dispY, driveX, driveY, driveMul = 1) {
+  const x = Number(cx) || 0;
+  const y = Number(cy) || 0;
+  if (!Number.isFinite(sc.lx) || !Number.isFinite(sc.ly)) {
+    sc.x = x; sc.y = y; sc.lx = x; sc.ly = y;
+    return sc;
+  }
+  let rx = x - sc.lx - (Number(dispX) || 0);
+  let ry = y - sc.ly - (Number(dispY) || 0);
+  sc.lx = x;
+  sc.ly = y;
+  const step = Number(maxStep) || 0;
+  if (step > 0) {
+    const d = Math.sqrt(rx * rx + ry * ry);
+    if (d > step) { rx *= step / d; ry *= step / d; }
+  }
+  const m = Number(driveMul) || 0;
+  const kk = Math.max(1e-6, Number(k) || 1);
+  sc.x += (rx + (Number(driveX) || 0) * m) / kk;
+  sc.y += (ry + (Number(driveY) || 0) * m) / kk;
+  return sc;
+}
+
+/**
+ * Czas kroku kamery gwiazd [s] do sufitu kroku (StarSystem: speedCap · czas) z zegara klatek strony
+ * (RenderWorld.frameClock — worker: HEAD.T_FRAME, suma dt stron). Worker rysuje NAJNOWSZĄ stronę i pomija strony, a kamera
+ * gry przesuwa się wtedy o drogę kilku stron — sufit z dt jednej strony zwalniał warstwę speed N razy, a mid (droga nieba,
+ * czas z tego samego zegara) nie: przy N ≥ 2,2–2,8 w warpie mid wyprzedzała speed (W0). Bez zegara (off: null) albo bez
+ * przyrostu — dt klatki. st = { clockLast, clockHas } — stan wołającego.
+ */
+export function starClockDt(st, clock, dt) {
+  const d = Math.max(0, Number(dt) || 0);
+  if (!Number.isFinite(clock)) { st.clockHas = false; return d; }
+  const out = st.clockHas && clock > st.clockLast ? clock - st.clockLast : d;
+  st.clockLast = clock;
+  st.clockHas = true;
+  return out;
+}
+
+/** Paralaksa gwiazdy mid w trybie sfery (lustro CPU grafu createStarMaterial): [0,055; 0,18] → STAR_MID_SPHERE. */
+export function starMidSphereParallax(parallax, sphere = STAR_MID_SPHERE) {
+  const mid = STAR_PARALLAX_LAYERS[1];
+  const k = (sphere.parallaxMax - sphere.parallaxMin) / (mid.parallaxMax - mid.parallaxMin);
+  return sphere.parallaxMin + ((Number(parallax) || 0) - mid.parallaxMin) * k;
+}
+
 export function pickStarParallaxLayer(random01) {
   const r = clamp01(random01);
   let cursor = 0;

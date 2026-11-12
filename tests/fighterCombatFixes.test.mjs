@@ -47,7 +47,8 @@ test('weapon camera shake moves the shared camera, not just the Three scenes', (
   // Od 2026-09-27 wstrząs strzałów wchodzi amplitudą (`mag`) do wspólnego
   // wstrząsu w px ekranu (src/game/cameraRig.js), a ten przesuwa `cam`.
   assert.match(html,
-    /const weaponShake = weaponShotShake;[\s\S]{0,700}Number\(weaponShake\.mag\)[\s\S]{0,400}cam\.x \+= _cameraShakePx\.x \/ cam\.zoom/);
+    // (obrót kadru w hipercruisie, 2026-10-23: px ekranu → świat przez rollToWorld)
+    /const weaponShake = weaponShotShake;[\s\S]{0,700}Number\(weaponShake\.mag\)[\s\S]{0,500}rollToWorld\(_cameraShakePx\.x, _cameraShakePx\.y, camRoll, _rollTmp\);\s*cam\.x \+= sw\.x \/ cam\.zoom/);
 });
 
 test('only the hangar-launch spawnFighter remains', () => {

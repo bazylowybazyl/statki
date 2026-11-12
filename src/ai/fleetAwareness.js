@@ -19,6 +19,7 @@
 import { resolveShipSensors } from '../game/scannerTargeting.js';
 import { getEntitySizeModifier } from '../game/sensorSystem.js';
 import { SHIP_SENSOR_PROFILES } from '../data/ships.js';
+import { SENSOR_PROFILE_BY_UNIT, unitSensorProfileKey } from '../data/sensorUnits.js';
 import { isCloakHidden } from '../game/cloak.js';
 
 export const AWARENESS_CONFIG = Object.freeze({
@@ -112,7 +113,18 @@ export function enemySideOf(side) {
 
 const FIGHTER_TYPE_RE = /fighter|interceptor|bomber|drone/;
 
+/** Jawny profil czujników bytu: własny `sensors` / `sensorProfile`, potem tabela jednostek (src/data/sensorUnits.js); null — brak. */
+export function unitSensorProfile(e) {
+  const own = e?.sensors || e?.sensorProfile;
+  if (own) return own;
+  const key = unitSensorProfileKey(e);
+  return key ? SHIP_SENSOR_PROFILES[SENSOR_PROFILE_BY_UNIT[key]] : null;
+}
+
 function fallbackSensorProfile(e) {
+  const key = unitSensorProfileKey(e);
+  if (key) return SHIP_SENSOR_PROFILES[SENSOR_PROFILE_BY_UNIT[key]];
+  // AWARYJNIE: profil zgadnięty z typu (żadna jednostka gry tu nie trafia — tests/zasiegiJednostek.test.mjs)
   const type = String(e?.type || '').toLowerCase();
   if (e?.fighter || FIGHTER_TYPE_RE.test(type)) return SHIP_SENSOR_PROFILES.fighter_combat;
   if (type.includes('frigate')) return SHIP_SENSOR_PROFILES.frigate_combat;
@@ -152,11 +164,27 @@ function pushSource(side, x, y, r) {
   side.sourceCount++;
 }
 
+// MNOŻNIK SYGNATURY STANU (2026-11-11): stan zasilania okrętu (src/game/shipPower.js) × osłona gazu (src/game/gasCover.js).
+// Hak daje gra (index.html), moduł liczy go raz na odświeżenie i trzyma na bycie (`__sigMul` — czyta też mgła gracza).
+// Bez haka i w stanie neutralnym mnożnik = 1 — wykrywanie bit w bit jak dawniej (szyk-floty, zasiegiJednostek).
+let signatureHook = null;
+export function setAwarenessSignatureHook(fn) {
+  signatureHook = typeof fn === 'function' ? fn : null;
+}
+function stampSignature(e) {
+  let m = 1;
+  if (signatureHook) {
+    const v = signatureHook(e, posX(e), posY(e));
+    if (v > 0 && v < 16) m = v; // > 1 — reflektor dziobowy zdradza okręt
+  }
+  e.__sigMul = m;
+}
+
 function collectSources(npcs, player) {
   sides.friendly.sourceCount = 0;
   sides.pirate.sourceCount = 0;
   generation++;
-  if (player) player.__awarenessGen = generation;
+  if (player) { player.__awarenessGen = generation; stampSignature(player); }
 
   if (player && !isGone(player)) {
     pushSource(sides.friendly, posX(player), posY(player), resolveAwarenessSensorRange(player));
@@ -177,6 +205,7 @@ function collectSources(npcs, player) {
     const e = list[i];
     if (isGone(e)) continue;
     e.__awarenessGen = generation;
+    stampSignature(e);
     const side = sideOfEntity(e, player);
     if (!side) continue;
     pushSource(sides[side], e.x, e.y, resolveAwarenessSensorRange(e));
@@ -210,7 +239,8 @@ function upsertContact(side, e, player) {
 function detectedBy(side, e) {
   const x = posX(e);
   const y = posY(e);
-  const mod = getEntitySizeModifier(e);
+  const sig = e.__sigMul;
+  const mod = sig > 0 && sig !== 1 ? getEntitySizeModifier(e) * sig : getEntitySizeModifier(e);
   for (let i = 0; i < side.sourceCount; i++) {
     const s = side.sources[i];
     const r = s.r * mod;

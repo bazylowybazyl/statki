@@ -470,7 +470,8 @@ test('index.html: wpięcie zimnych wraków na belkach', () => {
   assert.match(src, /syncShipModels3D\(\{ entities: renderSeenCold,/);
   assert.match(src, /_reactorCoreLists\[3\] = _coldNearList\.length > 0 \? _coldNearList : null;/);
   assert.match(src, /updateShields3D\(PAUSED \? 0 : frameDt, renderSeen,/, 'tarcze bez zimnych');
-  assert.match(src, /window\.rebuildWreckIndex\(wrecks, coldWrecks\);/);
+  // zimne wraki drugim argumentem indeksu przeszkód AI (trzeci — budowle: pirateBaseObstacles)
+  assert.match(src, /window\.rebuildWreckIndex\(wrecks, coldWrecks[,)]/);
   assert.match(sliceFunction(src, 'function refreshRadarFeed(range)'), /env\.coldWrecks = coldWrecks;/);
   const hex = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
   assert.match(hex, /updateColdBeamWrecks\(coldWrecks, cullInfo, camX, camY, cameraZoom, frameId, valid, validSet\)/);

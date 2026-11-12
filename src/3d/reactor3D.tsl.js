@@ -302,14 +302,70 @@ export function createReactorPlasmaMaterial(v) {
   const coilAng = U.uCoilAng.node;
   const coilCode = U.uCoilCode.node;
   const ringDirArr = U.uRingDir.node;
+  return plasmaMaterial(U, v, instanceAttributes(), {
+    coilCount: U.uCoilCount,
+    coilCode: (i) => coilCode.element(i),
+    coilAng: (i) => coilAng.element(i),
+    ringDir: (k) => ringDirArr.element(k),
+    flicker: U.uFlicker,
+    nrm: attribute('normal', 'vec3'),
+    aCenter: attribute('aCenter', 'vec3'),
+    aTube: attribute('aTube', 'float')
+  });
+}
+
+/**
+ * Plazma KILKU rodzajów jednym rysunkiem (2026-11-02, klatka workera — rysunek three r183 to ~10 µs CPU): rodzaje
+ * o tej samej topologii rury (terran i pirate — te same indeksy, aRing, aUV; reactor3D.js sprawdza), atrybuty rodzaju 1
+ * obok atrybutów rodzaju 0 w tym samym przeplecionym buforze (`normalB`, `aCenterB`, `aTubeB`), stałe rodzajów
+ * (cewki, kierunki pierścieni, migotanie) w tablicach uniformów, rodzaj instancji w `iKind.x` (0 / 1). Te same wzory co
+ * plazma rodzaju (wspólny plasmaMaterial) — wartości wybrane per instancja są te same co w materiale rodzaju.
+ * @param {object[]} kinds — dla każdego rodzaju { coilAng, coilCode, coilCount, ringDir, flicker } jak w
+ *   createReactorPlasmaMaterial; v — wspólne: streaks, filament, packet, coreEdge, maxCoils.
+ */
+export function createReactorPlasmaMergedMaterial(kinds, v) {
+  const maxCoils = v.maxCoils;
+  const U = uniformsAdapter({
+    uCoilAng: uniformArray(kinds.flatMap((k) => k.coilAng), 'float').setName('r3PlasmaCoilAng'),
+    uCoilCode: uniformArray(kinds.flatMap((k) => k.coilCode), 'float').setName('r3PlasmaCoilCode'),
+    // na rodzaj: liczba cewek, migotanie, kierunek pierścienia 0 i 1 (2 — kula Atlasa — zawsze 1)
+    uKinds: uniformArray(kinds.map((k) => new THREE.Vector4(k.coilCount, k.flicker, k.ringDir[0], k.ringDir[1])), 'vec4')
+      .setName('r3PlasmaKinds'),
+    uStreaks: uniform(v.streaks),
+    uFilament: uniform(v.filament),
+    uPacket: uniform(v.packet),
+    uTime: uniform(0)
+  });
+  const I = instanceAttributes();
+  I.iKind = attribute('iKind', 'vec4');
+  const kind = int(I.iKind.x);
+  const isB = I.iKind.x.greaterThan(0.5);
+  const coilBase = kind.mul(maxCoils);
+  // rodzaj we fragmencie: płaski varying (te same wartości co w etapie wierzchołków)
+  const fKind = varying(I.iKind.x, 'vR3PKind').setInterpolation('flat');
+  const fK = (frag) => U.uKinds.node.element(frag ? int(fKind) : kind);
+  return plasmaMaterial(U, v, I, {
+    coilCount: fK(false).x,
+    coilCode: (i) => U.uCoilCode.node.element(i.add(coilBase)),
+    coilAng: (i) => U.uCoilAng.node.element(i.add(coilBase)),
+    ringDir: (k) => (k === 2 ? float(1.0) : (k === 0 ? fK(true).z : fK(true).w)),
+    flicker: fK(true).y,
+    nrm: select(isB, attribute('normalB', 'vec3'), attribute('normal', 'vec3')),
+    aCenter: select(isB, attribute('aCenterB', 'vec3'), attribute('aCenter', 'vec3')),
+    aTube: select(isB, attribute('aTubeB', 'float'), attribute('aTube', 'float'))
+  });
+}
+
+// Graf plazmy (wspólny dla plazmy rodzaju i plazmy scalonej): S — źródła wartości rodzaju (liczba cewek, kod i kąt
+// cewki `i`, kierunek pierścienia `k` ∈ {0, 1, 2}, migotanie, normalna, środek rury, promień rury).
+function plasmaMaterial(U, v, I, S) {
   const maxCoils = v.maxCoils;
   const coreEdge = v.coreEdge;
-  const I = instanceAttributes();
-  const aCenter = attribute('aCenter', 'vec3');
-  const aTube = attribute('aTube', 'float');
+  const aCenter = S.aCenter;
+  const aTube = S.aTube;
   const aRing = attribute('aRing', 'float');
   const aUV = attribute('aUV', 'vec2');
-  const nrm = attribute('normal', 'vec3');
+  const nrm = S.nrm;
   const vUV = varying(aUV, 'vR3UV');
   const vRing = varying(aRing, 'vR3Ring');
   const vFace = varying(nrm.z, 'vR3Face');
@@ -323,10 +379,10 @@ export function createReactorPlasmaMaterial(v) {
     const leak = float(0.0).toVar();
     If(aRing.lessThan(1.5), () => {
       Loop(maxCoils, ({ i }) => {
-        If(i.greaterThanEqual(int(U.uCoilCount)), () => {
+        If(i.greaterThanEqual(int(S.coilCount)), () => {
           Break();
         });
-        const code = coilCode.element(i).toVar();
+        const code = S.coilCode(i).toVar();
         If(abs(mod(code, 10.0).sub(aRing)).greaterThan(0.5), () => {
           Continue();
         });
@@ -334,7 +390,7 @@ export function createReactorPlasmaMaterial(v) {
         If(broken.not(), () => {
           Continue();
         });
-        const d = abs(mod(ang.sub(coilAng.element(i)).add(PI), TWO_PI).sub(PI)).toVar();
+        const d = abs(mod(ang.sub(S.coilAng(i)).add(PI), TWO_PI).sub(PI)).toVar();
         leak.addAssign(exp(d.mul(d).negate().div(0.018)));
       });
     });
@@ -358,13 +414,13 @@ export function createReactorPlasmaMaterial(v) {
       Discard();
     });
     const ri = int(vRing.add(0.5)).toVar();
-    const dir = select(ri.equal(0), ringDirArr.element(0), select(ri.equal(1), ringDirArr.element(1), ringDirArr.element(2))).toVar();
+    const dir = select(ri.equal(0), S.ringDir(0), select(ri.equal(1), S.ringDir(1), S.ringDir(2))).toVar();
     const u = vUV.x.toVar();
     const phase = vState.z;
     const inst = vState.w;
     const pulse = vState2.z;
     const face = clamp(vFace, 0.0, 1.0);
-    const fl = float(1.0).sub(U.uFlicker.mul(step(0.86, r3Hash(floor(U.uTime.mul(18.0)).add(vColor.a.mul(31.0)))))).toVar();
+    const fl = float(1.0).sub(S.flicker.mul(step(0.86, r3Hash(floor(U.uTime.mul(18.0)).add(vColor.a.mul(31.0)))))).toVar();
     // pasma plazmy krążące w pierścieniu (u kuli — falowanie powierzchni)
     const s1 = sin(u.mul(U.uStreaks).sub(phase.mul(dir)).mul(TWO_PI)).mul(0.5).add(0.5).toVar();
     const s2 = sin(u.mul(U.uStreaks.mul(2.0).add(1.0)).sub(phase.mul(dir).mul(1.7)).mul(TWO_PI).add(1.3)).mul(0.5).add(0.5).toVar();

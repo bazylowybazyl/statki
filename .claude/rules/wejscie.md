@@ -15,7 +15,7 @@ paths:
 
 - Gra pyta o AKCJE, nie o klawisze i numery przycisków. Moduły czyste: `inputActions.js` (katalog akcji, układy klawiatury po `KeyboardEvent.code`, myszy i pada graczy 1 i 2 z etykietami, kolejność głównego keydown `KEYDOWN_ORDER`), `padDevice.js` (pady: mapowanie `standard`, martwe strefy promieniowe, krzywe, spusty z histerezą, zbocza, stuknięcie / przytrzymanie / podwójne, rodzina, podłączenie, AKTYWNY pad zamiast `pads[0]`; tablice typowane, bez alokacji na klatkę), `inputContext.js` (stos: menu → podzielony ekran → fabuła blokująca → pauza → stacja → CIC → gra; przycisk trzymany przy zmianie kontekstu jest „zjedzony” do puszczenia), `input.js` (całość: `window.Input`). Testy `tests/padDevice|inputContext|inputActions.test.mjs`.
 
-- Klej w `index.html` (blok „WEJŚCIE / PAD”): `pumpInput(now)` RAZ na klatkę rAF — woła go pętla wejścia `inputFrameLoop` (menu, podzielony ekran) i `loop()` przed krokami fizyki, strażnik znacznika rAF; to JEDYNY odczyt `navigator.getGamepads` (pilnuje test). Akcje gry = rejestr `GameActions` (id → { gate, run }); główny `keydown` mapuje `e.code` → akcje w kolejności `KEYDOWN_ORDER` (bramki jak w dawnym łańcuchu — tryby wydobycia i torped pierwsze); pad i Esc wołają `runGameAction(id)`.
+- Klej w `index.html` (blok „WEJŚCIE / PAD”): `pumpInput(now)` RAZ na klatkę rAF — woła go pętla wejścia `inputFrameLoop` (menu, podzielony ekran) i `loop()` przed krokami fizyki, strażnik znacznika rAF; to JEDYNY odczyt `navigator.getGamepads` (pilnuje test). Pętla wejścia kończy się z pierwszą klatką `loop()` (`gameLoopLive`): w grze `pumpInput` woła tylko `loop()`, raz na RYSOWANĄ klatkę — klatki pominięte przez limit klatek (reguła `opcje-grafiki`) wracają przed wejściem (zbocza pada obsługuje sam `pumpInput`, więc nie giną), a bez VSync pętla gry śpi bez pustych wywołań rAF. Akcje gry = rejestr `GameActions` (id → { gate, run }); główny `keydown` mapuje `e.code` → akcje w kolejności `KEYDOWN_ORDER` (bramki jak w dawnym łańcuchu — tryby wydobycia i torped pierwsze); pad i Esc wołają `runGameAction(id)`.
 
 - Logika gry NIE czyta `keys[...]` (obiektu już nie ma) ani padów wprost: `Input.keyHeld(akcja)` (klawiatura), `Input.padHeld / padPressed / padHoldCrossed / padAxis` (pad gracza, tylko w kontekście akcji), `Input.axis` (scalona oś — większy moduł), `Input.manualFlight()` (klawisze lotu albo lewa gałka ≥ 0,1 s poza strefą — przejęcie sterów od autopilota). Wejście lotu scala JEDNA ścieżka (`updateInput` → `applyP1Flight` / `applyP2Flight`): klawiatura na zdarzeniach jak dawniej, gałka co klatkę tylko, gdy daje wejście — bez pada wejście lotu jest bit w bit dawne. Dopalacz z dwóch źródeł (`boostHold`): każde gasi tylko swój.
 
@@ -35,9 +35,9 @@ paths:
 
 - `LPM` (trzymany) — ogień grupy W RĘKU w kursor
 
-- `PPM` — menu rozkazów
+- `PPM` (trzymany) — CZUJKA czujników: struna w stronę kursora, błona wokół okrętu (puszczenie gasi; reguła `kontakt-czujnikow`, „W grze”); `Alt` + `PPM` — menu rozkazów świata (2026-11-11, decyzja użytkownika: „menu PPM teraz działa tylko po Alt — w końcu PPM zabieramy na radar”). Tryb RTS, wydobycie, torpedy i CIC mają PPM po staremu
 
-- `ŚPM` (trzymany) — koło trybów okrętu: bojowy / tarcze / przelot / maskowanie / torpedy / wydobycie / flota; stuknięcie — poprzedni tryb
+- `ŚPM` (trzymany) — koło trybów okrętu: bojowy / tarcze / hipercruise / maskowanie / torpedy / wydobycie / flota; stuknięcie — poprzedni tryb
 
 - `1` / `2` / `3` — grupa w rękę (działa / bateria główna / rakiety); `Ctrl` lub `Alt` + `1` / `2` / `3` — auto grupy wł./wył.
 
@@ -47,7 +47,9 @@ paths:
 
 - `4` — Hexlance, `5` — pocisk specjalny (Supernowa)
 
-- `Shift` — dopalacz (Atlas ~1500 j/s, w PRZELOCIE do 3000 j/s)
+- `Shift` — dopalacz (Atlas 1137 j/s — `src/data/driveModes.js`; PRZELOTU nie ma)
+
+- `O` — hipercruise: rozruch / wyjście (akcja `nav.hypercruise`, ten sam sektor koła ŚPM; `S` też kończy; odcinki TRAVEL TO włączają go same); `Ctrl` — bieg w dół tylko w skrzyni podróżnej megafrachtowca
 
 - `CapsLock` / `9` — warp (przełącznik); kurs skoku stoi od ładowania — ustaw dziób przed skokiem
 
@@ -55,9 +57,9 @@ paths:
 
 - `` ` `` — łączność ze stacjami (dawniej CapsLock)
 
-- Mapa CIC / menu PPM / skaner — TRAVEL TO (podróż do punktu: obrót, skok, wyjście w celu)
+- Mapa CIC / menu Alt + PPM / skaner — TRAVEL TO (podróż do punktu: obrót, skok, wyjście w celu)
 
-- PPM (pusta przestrzeń albo cel) → DRON ZWIADU (odsłania mgłę wojny wokół siebie; mapa CIC → SEND DRONE)
+- Alt + PPM (pusta przestrzeń albo cel) → DRON ZWIADU (odsłania mgłę wojny wokół siebie; mapa CIC → SEND DRONE)
 
 - `M` — mapa
 

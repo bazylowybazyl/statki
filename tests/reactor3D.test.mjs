@@ -256,20 +256,35 @@ test('runtime: 3 meshe na rodzaj w passie ortho (warstwa 0); NOMINALNY — obudo
   try {
     assert.deepEqual(r3.kinds, [...REACTOR3D_KINDS]);
     const meshes = scene.children.filter((o) => o.name.startsWith('reactor3D:'));
-    assert.equal(meshes.length, REACTOR3D_KINDS.length * 3);
+    // 3 na rodzaj + scalone rysunki rodzajów (cień wszystkich, plazma terran + pirate)
+    assert.equal(meshes.length, REACTOR3D_KINDS.length * 3 + 2);
     for (const m of meshes) {
       assert.ok(m.layers.isEnabled(0) && !m.layers.isEnabled(CORE_FX_LAYER), `${m.name}: nie w passie ortho`);
       assert.equal(m.visible, false);
     }
     assert.equal(r3.layer, 0);
-    assert.equal(r3.warmupMeshes().length, REACTOR3D_KINDS.length * 3);
+    assert.equal(r3.warmupMeshes().length, REACTOR3D_KINDS.length * 3 + 2);
     assert.equal(core.state, CORE_STATE.NOMINAL);
     assert.equal(r3.sync([core], 0, 1 / 60), 3, 'konstrukcja, plazma, cień');
     assert.equal(r3.stats.instances, 1);
     assert.equal(marks(), 0, 'warstwa 0 rysuje się zawsze — bez zgłaszania');
     const t = r3.meshes.terran;
-    assert.ok(t.structure.visible && t.plasma.visible && t.shadow.visible);
-    assert.equal(t.shadow.geometry.instanceCount, 1);
+    // plazma i cień scalonymi rysunkami rodzajów — siatki rodzaju schowane
+    assert.ok(t.structure.visible && !t.plasma.visible && !t.shadow.visible);
+    assert.ok(r3.merged.plasmaMesh.visible && r3.merged.shadowMesh.visible);
+    assert.equal(r3.merged.shadowGeo.instanceCount, 1);
+    assert.equal(r3.merged.plasmaGeo.instanceCount, 1);
+    // A/B: rysunek na rodzaj
+    REACTOR3D_TUNE.mergeKinds = false;
+    try {
+      assert.equal(r3.sync([core], 0, 0), 3);
+      assert.ok(t.structure.visible && t.plasma.visible && t.shadow.visible);
+      assert.ok(!r3.merged.plasmaMesh.visible && !r3.merged.shadowMesh.visible);
+      assert.equal(t.shadow.geometry.instanceCount, 1);
+    } finally {
+      REACTOR3D_TUNE.mergeKinds = true;
+    }
+    r3.sync([core], 0, 0);
     const h = attr(r3, 'terran', 'iHouse');
     assert.equal(h[0], 0, 'cała komora — wszystkie sektory pokrywy na miejscu');
     assert.equal(h[1], 1, 'z obudową');
@@ -284,6 +299,34 @@ test('runtime: 3 meshe na rodzaj w passie ortho (warstwa 0); NOMINALNY — obudo
     assert.ok(Math.abs(p[2] - p[3] - REACTOR3D_TUNE.zBase) < 1e-3, 'podłoga modelu tuż nad pokładem');
     assert.equal(attr(r3, 'terran', 'iState2')[3], 1, 'plazma obecna (świeci przez kratę)');
   } finally { HullBodies.release(e); cleanup(); }
+});
+
+test('runtime: scalone rysunki rodzajów — rekordy rodzajów po kolei z iKind, plazma terran + pirate, cień wszystkich', () => {
+  // rodzaj z pozycji kadłuba: x < 0 — pirate, x = 0 — terran, x > 0 — atlas
+  const { r3 } = makeRuntime({ kindFor: (core) => (core.host.x < -1 ? 'pirate' : (core.host.x > 1 ? 'atlas' : 'terran')) });
+  const hulls = [coredHull(600, 0), coredHull(0, 0), coredHull(-600, 0), coredHull(-1200, 0)];
+  try {
+    const cores = hulls.map((h) => h.core);
+    // konstrukcja 3 rodzaje + plazma scalona + plazma Atlasa + cień scalony
+    assert.equal(r3.sync(cores, 0, 1 / 60), 6);
+    const M = r3.merged;
+    assert.ok(M.plasmaMesh, 'terran i pirate mają tę samą rurę plazmy');
+    assert.equal(M.n, 4);
+    assert.equal(M.shadowGeo.instanceCount, 4);
+    assert.equal(M.plasmaGeo.instanceCount, 3, 'plazma scalona bez Atlasa (dwa pierścienie — własny rysunek)');
+    assert.ok(r3.meshes.atlas.plasma.visible && !r3.meshes.terran.plasma.visible && !r3.meshes.pirate.plasma.visible);
+    const stride = M.buffer.stride;
+    const kindsOf = Array.from({ length: M.n }, (_, i) => M.data[i * stride + stride - 4]);
+    assert.deepEqual(kindsOf, [0, 1, 1, 2], 'rodzaje w kolejności REACTOR3D_KINDS (dawna kolejność rysunków)');
+    // rekord rodzaju skopiowany bez zmian
+    const t = r3.instance('terran', 0);
+    assert.deepEqual(Array.from(M.data.subarray(0, 4)), t.iBasis);
+    const p1 = r3.instance('pirate', 1);
+    assert.deepEqual(Array.from(M.data.subarray(2 * stride + 24, 2 * stride + 28)), p1.iHouse);
+  } finally {
+    for (const h of hulls) HullBodies.release(h.e);
+    cleanup();
+  }
 });
 
 test('runtime: ODSŁONIĘTY → sektory pokrywy nad wyrwą zdjęte, pasma HDR jak żar, baza = rama komory', () => {

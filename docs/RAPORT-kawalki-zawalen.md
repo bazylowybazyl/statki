@@ -1,0 +1,294 @@
+# Kawałki i zbrojenie w obrazie zawaleń: demo A/B (2026-11-08)
+
+Próba nowego OBRAZU zawaleń na wiązanych wokselach. Fizyka zostaje wokselowa: solver liczy te same węzły i wiązania, a zmienia się tylko to, co widać. Zamiast bloku na woksel rysują się nieregularne kawałki betonu, które jadą za swoimi węzłami, a w trzecim trybie także druty zbrojenia. Gra niczego nie dostaje: wpięcie w misję 1 to osobna decyzja.
+
+## Jak obejrzeć
+
+- `dema/woksele-zawalenia.html?kawalki=1` (dev server Vite). W panelu trzy przyciski: **Woksele** (dzisiejszy obraz), **Kawałki**, **Kawałki + zbrojenie**. Klawisz K przełącza je po kolei.
+- Woksele i Kawałki to ta sama fizyka: przełączenie działa w biegu, także w pauzie (spacja), więc da się porównać jedną i tę samą chwilę. Kawałki + zbrojenie mają pręty w fizyce, więc przełączenie do nich i z nich zaczyna scenę od nowa (kamera zostaje).
+- Sceny do porównania: **S1 podcięcie** (wieżowiec) i **S5 pochylona wieża** (wieża spada na dysk).
+- Bez `?kawalki=1` strona jest taka jak dotąd (solver i obraz bez nowych gałęzi).
+- Kadry, koszt i arkusze bez okna: `node scripts/webgpu/woksele-kawalki.mjs` (opis w `.claude/rules/woksele-zawalen.md`, „Jak sprawdzić”).
+
+## Baza piratów z misji 1 (dopisane po pierwszym przeglądzie)
+
+Użytkownik: „ciężko mi decydować, jak nie widzę gry”. Dlatego druga strona: `dema/baza-piratow-kawalki.html`, baza z misji 1 (85 tys. węzłów, dx = 40, ta sama budowa co w grze) bez skryptu zniszczeń, w barwach piratów, z kamery z góry jak w grze. Niszczy się ją narzędziami (klik w kadr bez przeciągania, klawisze 1–5):
+
+- **Krater**: w miejscu kliknięcia, w pierwszy element na linii wzroku.
+- **Działo** i **Ciężkie działo**: jak trafienie gracza w misji 1. Pocisk leci w płaszczyźnie gry od dołu kadru, krater w pierwszym elemencie pod nią, promień jak w grze (zwykłe około 80 j., ciężkie 200 j.). F trzymane: seria w kursor.
+- **Taran (statek)**: statek wpada od dołu kadru, nurkuje przez kliknięty punkt i ryje kanał przez bazę.
+- **U albo przycisk „Upadek (HP 0)”**: jak przy zniszczeniu bazy w grze. Szyja i sektory dysku pęknięte, po 3 s kotwice puszczają falą od osi habitatu i cała baza spada (w demie na podłogę 3,4 km niżej, w grze na planetoidę).
+
+Różnice wobec gry: w grze baza ma skórę z wypieku starego modelu (lampy, okna, napisy) i wnętrza pomieszczeń, tu jest sama barwa piratów. Pod bazą jest płaska podłoga zamiast planetoidy. Tryb Woksele na tej stronie nie zaokrągla kół habitatu (w grze robi to shader gry), kawałki je zaokrąglają.
+
+Sprawdzone bez okna (`node scripts/webgpu/woksele-baza-narzedzia.mjs`): działo, ciężkie działo, taran, upadek, w trybach Woksele i Kawałki, 0 pipeline'ów synchronicznych, bez błędów konsoli.
+
+### Gumowa szyja i kruchość betonu (drugi przegląd)
+
+Zgłoszenie: szyja habitatu wygięła się w łuk bez pękania. Przyczyny:
+- Zginanie w solverze jest plastyczne bez osłabienia. Przy dx = 40 jedno złącze trzech wokseli gnie się sprężyście o około 30° i pęka dopiero przy około 70°, a we wnętrzu ziarna (wiązania ×6 mocniejsze) granica jest jeszcze 3 razy dalej. Długi element wygina się więc w łuk, bo każde złącze bierze tylko trochę.
+- Rdzeń szyi i szybu w scenie bazy ma ×8 siły i ×8 granicy gięcia (pod zaplanowany upadek w grze: głowa ma się przewrócić, a nie skruszyć). Tej szyi nie da się złamać zginaniem.
+
+Porównanie na scenariuszu „szyja” (dwa kratery z boku u podstawy szyi, `node scripts/webgpu/woksele-baza-narzedzia.mjs --scenariusz szyja`, arkusz `.tmp/woksele-demo/KAW/arkusz_szyja.png`):
+
+| Wariant | Szyja |
+|---|---|
+| jak w grze (`giecieSzyi` 8) | zwija się w rurę |
+| `giecieSzyi` 1 (demo bazy, domyślnie) | prawie to samo: zwija się dalej, bo zwykły beton też gnie się bez granic |
+| beton kruchy (`?kruchosc=1`) | pęka po około 2 s, zostają wygięte odcinki |
+| beton bardzo kruchy (`?kruchosc=2`) | łamie się u podstawy, głowa spada i się rozbija |
+
+Ten sam przełącznik na wieżowcu S1 (`arkusz_s1_kruchosc_*.png`): wieża miażdży się we wszystkich wariantach. Przy „bardzo kruchym” hałda to prawie sam drobny żwir (94 % węzłów w bryłkach, dziś 70 %), czyli wraca „kupa jednakowych kształtów”. „Kruchy” jest pośrodku.
+
+W demie przełącznik „Beton: dziś / Kruchy / Bardzo kruchy” przeładowuje stronę (wypiek od nowa). Gra zostaje bez zmian, dopóki nie wybierzesz.
+
+### Przyczyna: za miękki beton (trzeci przegląd)
+
+Użytkownik: „szyja nie może się aż tak wygiąć”, „ciągnie klocek za klockiem, cała struktura nie leci w dół ani się nie przechyla”, „gdzieś jest bug”. Pomiar wiązań szyi z GPU (`--scenariusz szyja --analiza 1`): twardy limit rozrywania działa (żadne żywe wiązanie ponad 50 %), ale żywe wiązania mają 30–47 % rozciągnięcia, a ich długość spoczynkowa urosła do 1,22 długości z budowy.
+
+Przyczyna jest w materiale. Odkształcenie statyczne pod własnym ciężarem (z wypieku): szyja bazy do 23 %, wieżowce bazy i wieża S1 do 14 %, prawdziwy beton około 0,05 %. Na starcie tego nie widać, bo sprężenie trzyma kształt z budowy. Gdy szyja się przechyli, sprężenie zamienia się w dłuższą długość spoczynkową i zewnętrzna strona ma ponad 20 % luzu bez siły. Wzmocnienie szyi ×8 było obejściem właśnie tego (bez niego miękka szyja kruszyła się pod głową), a zrobiło z niej gumę. Użytkownik potwierdził: „to była sztywność”.
+
+Poprawka w demie: sztywność betonu `?sztywnosc=2|3` (sztywność ×4 albo ×9 przy tej samej wytrzymałości, solver robi 2 albo 3 razy więcej podkroków):
+
+| | Szyja po nacięciu (bez wzmocnienia ×8) | Wieżowiec S1 | Baza bez strzałów | Krok bazy (GPU) |
+|---|---|---|---|---|
+| ×1 (dziś, szyja ×8) | zwija się w rurę | miażdży się | stoi | 0,69 ms |
+| ×2 | pęka u podstawy, głowa wpada do bębna | miażdży się, zaczyna później | stoi, 0 zerwanych wiązań | 1,0 ms |
+| ×3 | pęka, prosta szyja z głową przechyla się w całości | miażdży się, górny blok zgniata piętra | stoi | 1,4 ms |
+
+Arkusze: `.tmp/woksele-demo/KAW/arkusz_szyja_sztywna_bez_wzmocnienia.png`, `arkusz_s1_sztywnosc_ukos.png`. Strona bazy ma teraz domyślnie ×2 i szyję bez wzmocnienia. Gra zostaje przy ×1 i szyi ×8, dopóki nie zdecydujesz. Druga opinia: osobna sesja „Silnik fizyki 3D Opus 5.5” analizuje model materiału (sprężenie, wytrzymałość na rozciąganie, zginanie, kotwice).
+
+### Druga opinia i poprawki (noc 2026-11-08/09)
+
+Druga opinia (sesja „Silnik fizyki 3D Opus 5.5” na Fable 5.1, surowe wyniki w jej scratchpadzie: `ANALIZA-guma-wokseli.md`) potwierdziła przyczynę: beton za miękki wobec ciężaru (g · H), sprężenie jest w porządku. Co z niej wzięte do kodu (gałąź `claude/unruffled-goodall-c42310`, gra bez zmian):
+
+1. **Prawdziwy uśpiony błąd:** wiązanie ze sprężeniem bez wypieku kończyło przez `Continue` i omijało twarde limity rozciągania (1,5 R0) i ściskania (0,45 R0). Takie wiązanie mogło się rozciągnąć ponad te limity, póki siła z F0 mieściła się w limicie wytrzymałości. Poprawka za flagą solvera `limityF0` (GPU i oba wzorce CPU, ta sama kolejność sprawdzeń). Test: bez flagi wiązanie z F0 przeciągnięte do 1,7 R0 przeżywa, z flagą pękają oba końce. W demie kawałków flaga jest domyślnie włączona (`?limityF0=0` wyłącza), gra jej nie ma (WGSL kF bez flagi bajt w bajt jak dotąd).
+2. **Szyja bez wzmocnienia dalej była „wnętrzem ziarna”:** rdzeń szyi dostawał klasę + 6 także przy `mocSzyi` 1, więc nie pękał po granicach ziaren, a fala go nie łamała. Teraz klasa + 6 tylko przy wzmocnieniu (`wnetrzeSzyi`, domyślnie `mocSzyi > 1`). Gra ma `mocSzyi` 8, więc bez zmian.
+3. **Demo bazy liczyło inaczej niż gra:** do gałęzi scalony `main` (fala względna z gry, puszczanie całych części, pole grawitacji). Baza B1R ustawia teraz to samo co `wGrze.zaladuj`: w bryle oderwanej od kotwic fala łamie od prędkości względnej, a stojąca konstrukcja wolniejsza niż próg fali jest tłumiona („stoi albo pęka”, `?jakWGrze=0` wyłącza). Narzędzie „Upadek” puszcza kotwice całymi częściami po kolei, jak gra (dawniej węzeł po węźle).
+4. **Harness w nocy:** `--noc 1` (albo `HULLFALL_HARNESS_TAKT=1`) uruchamia Chrome w takcie monitora, bez flag zdejmujących limit klatek.
+
+Czego nie wzięto (do decyzji, bez dowodu, że trzeba): sztywność 3 zamiast 2 (Fable poleca 3: odkształcenie statyczne 2,5 % zamiast 5,8 %), granica wytrzymałości w odkształceniu (Ft najwyżej K · R0 · 5 %: obciążone pręty dziś ustępują dopiero przy 20–130 % odkształcenia przy sztywności 1, przy 2 cztery razy mniej), granica gięcia malejąca ze sztywnością (przy sztywności 3 opór gięcia rośnie × 9, a wytrzymałość osiowa nie; ryzyko sztywnego, odbijającego się gruzu, na kadrach nie widać), pręty w ścianach szyi (przewracanie „jak drzewo” wymaga ciągliwej strony rozciąganej). Inne metody (dopasowanie kształtu, XPBD, solver niejawny) Fable odradza.
+
+Pomiary w nocy (`--noc 1`, 960 × 540, 60 kl/s, sztywność 2, krótkie przebiegi po kolei):
+
+| | Wynik |
+|---|---|
+| Szyja po nacięciu (`--scenariusz szyja --analiza 1`) | Żywe wiązania szyi najwyżej 6–7 % rozciągnięcia (przed poprawkami 12–13 %), w 9 s zerwanych 8004 (przed 6293). Głowa zgniata podstawę szyi i spada w bęben, bęben pęka pod jej ciężarem (przed: głowa leżała na krawędzi bębna). Arkusze `arkusz_noc_szyja.png`, `arkusz_noc_szyja_t3.png`. |
+| Baza bez strzałów (`--scenariusz stoi`) | 0 zerwanych z 1 037 806 wiązań przez 6 s, bez NaN. |
+| Pełny scenariusz (działo, ciężkie działo, taran, upadek) | Trzy strzały z działa w środek habitatu niszczą podporę szyi i wieża z głową spada w bęben do 5 s. Tak samo we wszystkich wariantach: wszystkie poprawki, szyja jako wnętrze ziarna jak dawniej, bez `limityF0`, bez ustawień z gry. To skutek wieczornego ustawienia B1R (sztywność 2, szyja bez wzmocnienia), nie poprawek z nocy. Bez ustawień z gry wieżowiec W-1 sypie się bardziej (pękło 1292 kawałków wobec 1079 w 9 s). Arkusze `arkusz_noc_ab_ukos.png`, `arkusz_noc_pelny_ukos.png`. |
+| Wieżowiec S1 z `limityF0` (sztywność 1) | Miażdży się tak samo jak bez poprawki (w 8 s pękło 582 wobec 596 kawałków poziomu 0). Arkusz `arkusz_noc_s1.png`. |
+| Pipeline'y synchroniczne, błędy konsoli | 0 we wszystkich przebiegach (także po upadku całymi częściami). |
+| Koszt kroku bazy | 1,02 ms GPU (8 podkroków), bez zmian. |
+
+Arkusze leżą w worktree w `.tmp/woksele-demo/KAW/`.
+
+### Baza bez bębna i klin w szyi (2026-11-09)
+
+Prośba użytkownika: bez bębna (dysku z wyłomem), szyja trochę grubsza, beton kruchy przy sztywności ×2 albo ×3. Demo B1R ma teraz bez bębna szyję r 200 (było 150), domyślnie beton kruchy i sztywność 2. Baza bez strzałów stoi (0 zerwanych z 955 670 wiązań przez 6 s).
+
+Uwaga użytkownika: „wieżowce, jak je podetnę klinem, potrafią spaść w bok, wieża nie, zawsze w dół. Może to kształt i podpory? Wieża w środku jest pusta, a wieżowiec nie.” Pomiar: klin dziesięcioma kraterami od +y u podstawy szyi (`--scenariusz klin`), przesunięcie środka głowy:
+
+| Wariant (beton kruchy) | W bok | W dół | Co widać |
+|---|---|---|---|
+| sztywność 2, szyja pusta (dziś) | 30 j. w 5 s | 2108 j. | szyja miażdży się od dołu, głowa siada |
+| sztywność 2, szyja ze stropami | 37 j. | 2034 j. | to samo |
+| sztywność 2, szyja pełna | 43 j. | 1516 j. | to samo, trochę wolniej |
+| sztywność 3, szyja pusta | 61 j. | 1935 j. | to samo |
+| sztywność 2, `mocSzyi` 2 | 21 j. w 10 s, potem siada | 1888 j. w 15 s | stoi 10 s, potem siada |
+| sztywność 2, `mocSzyi` 3 | 26 j. w 10 s | 38 j. | stoi, ledwo się przechyla |
+| sztywność 2, `mocSzyi` 3, bez tłumienia | 508 j. w 10 s | 3114 j. | prosta szyja kładzie się ku klinowi, głowa sypie się po drodze |
+
+Wniosek: pustka w szyi nie jest przyczyną. Głowa waży cztery razy tyle co szyja (6688 węzłów wobec 1618), a wytrzymałość wiązania to wielokrotność siły, którą niesie w spoczynku. Po klinie reszta przekroju jest przeciążona i miażdży się od dołu, a przechył od grawitacji rusza powoli (wieża 1,4 km). Mocniejsza szyja wytrzymuje, ale wtedy tłumienie „stoi albo pęka” z gry gasi powolny początek przechyłu. Wieżowiec jest prawie lity (stropy grube na dwie komórki co trzy warstwy) i nie ma ciężkiej głowy, więc klin go przechyla. Arkusze: `.tmp/woksele-demo/KAW/arkusz_klin.png`, `arkusz_klin_m3_ukos.png`.
+
+Decyzja użytkownika (2026-11-09): demo B1R ma domyślnie szyję ×3 (`mocSzyi`) i bez tłumienia. Na tych ustawieniach baza bez strzałów stoi (0 zerwanych wiązań przez 6 s), a wieża podcięta klinem kładzie się ku klinowi (głowa 612 j. w bok w 10 s). Powrót: `?baza={"mocSzyi":1}&tlumienie=1`.
+
+Potem (uwaga użytkownika: „szyja wisi w powietrzu”, „wypełnij ją jak wieżowiec”): szyja i szyb mają w środku stropy jak wieżowiec (`szyjaWnetrze` 1, +1061 węzłów, około 1 % sceny), a trzon pod szybem ma pokrywę i dno, więc szyb stoi na pokrywie. Baza bez strzałów stoi (0 zerwanych z 998 510 wiązań przez 6 s), klin: głowa 618 j. w bok w 10 s.
+
+### Skóra z gry, Atlas do taranowania, planetoida pod bazą (2026-11-09)
+
+Prośby użytkownika: „nałóż na demo skórkę”, „dodaj Atlasa latającego po płaszczyźnie gry, żebym mógł testować taranowanie”, „planetę pod bazą, tak jak w grze”. Spalanie odłamków w atmosferze (Ziemia, Mars) robi osobna sesja.
+
+- **Skóra:** baza w demie ma wygląd z misji 1: skórę z wypieku starej bryły, okna, lampy i wnętrza na przełomach. Działa w trybie Woksele i Kawałki, przy świetle dema. Gra bez zmian: WGSL brył, gruzu, kawałków i kerneli bez nowych opcji jest bajt w bajt taki jak przed zmianą (67 porównań z HEAD).
+- **Atlas:** sprite z gry w skali gry (1800 × 806 j.), sterowany z klawiatury w płaszczyźnie gry. Kadłub wchodzi do fizyki wokseli jako bryła kinematyczna: obrys z sprite'a, wypycha węzły, wyrywa kotwice, a pęd oddany bazie zwalnia Atlasa (masa 30 000 mas węzła).
+- **Planetoida:** Hidalgo z gry pod bazą, z polem grawitacji, kontaktem z bryłą skały i kraterami jak w grze. U zrzuca bazę na skałę.
+
+Pomiar bez okna (`--scenariusz atlas` i `--scenariusz planeta`, 960 × 540):
+
+| Chwila | Atlas | Głowa wieży |
+|---|---|---|
+| 2,2 s (dolot, pełny ciąg z dopalaczem) | 1500 j./s, bez styków | stoi |
+| 2,8 s (wejście w szyb) | 1443 j./s, 4392 styki, oddany pęd 1,8 mln | stoi |
+| 3,5 s | 1498 j./s (ciąg nadrabia), pęd 4,5 mln | 11 j. w bok, 85 j. w dół |
+| 5 s | przeszedł przez bazę, pęd 5,0 mln | 31 j. w bok, 950 j. w dół |
+| 10 s | 5,3 mln, razem około 180 j./s straty prędkości | 196 j. ku −y, 3212 j. w dół |
+
+Atlas przy 1500 j./s przechodzi przez szyb habitatu: kadłub wycina szyb w pasie z −150…150, wieża traci podporę i siada w dysk, odchylając się w stronę, z której przyszedł taran (podstawa wypchnięta do przodu, głowa zostaje). Część gruzu szybu i szyi jedzie na pokładzie Atlasa (tarcie na wierzchu kadłuba). Koszt kroku z kadłubem 0,97 ms GPU, rysunek 0,46 ms. Upadek na planetoidę: części puszczają od 3 s po U, pierwsze kratery na skale po około 20 s, po 32 s 153 kratery. Pipeline'y synchroniczne: 0 w obu przebiegach. Kadry: `.tmp/woksele-demo/KAW/atlas-1/arkusz_gora.png`, `arkusz_bok.png`, `.tmp/woksele-demo/KAW/planeta-1/`.
+
+Otwarte: z boku Atlas to stos plastrów sprite'a (z góry wygląda jak w grze). Kamera „Z planetą” w pierwszym przebiegu wpadała w limit orbity 30 km i kadr był pusty, teraz limit przy planecie to 500 km.
+
+### Ziemia i Mars: spalanie odłamków w atmosferze (2026-11-09)
+
+Prośba użytkownika: „gdyby baza była np. nad Ziemią/Marsem — planetą z atmosferą … palące się odłamki tak jak w realu. Wiadomo, że największe dolecą — ale muszą się bardziej pomniejszyć na tak dużej planecie.”
+
+- **Jak obejrzeć:** w panelu „Hidalgo / Ziemia / Mars” (albo `?planeta=ziemia|mars`, strona się przeładowuje), U zrzuca bazę. „Z boku” pokazuje cały słup od bazy do gruntu, „Z boku, bliżej” pas, w którym odłamki płoną. Hidalgo zostaje taki jak wyżej.
+- **Skala:** odłamki mają rozmiar prawdziwy, więc planety też: Ziemia R 6371 km, Mars 3390 km, powietrze z prawdziwych danych (skala wysokości 8,5 i 11,1 km, gęstość przy gruncie 1,225 i 0,020 kg/m³). Planety gry są ściśnięte około 170 razy wobec okrętów: z ich promieniem cała atmosfera byłaby niższa od bazy. Baza wisi 110 km nad Ziemią i 60 km nad Marsem, grawitacja jak w grze (Mars × 0,38), więc odłamki wchodzą w gęste powietrze z prędkością 5–9 km/s, jak śmieci wracające z orbity.
+- **Model:** strumień ciepła na czoło ∝ ρ·v³, czoło się cofa (ablacja), opór hamuje tylko czoło i przechodzi wiązaniami na resztę bryły, temperatura z równowagi promienistej z bezwładnością. Grzeje się tylko węzeł bez sąsiada przed sobą w kierunku lotu, więc wielka bryła traci warstwę po warstwie, a płyta grubości jednego węzła pali się cała. Stałe materiału są skuteczne dla konstrukcji (pomieszczenia i cienkie ścianki): lity beton prawie by się nie spalił.
+
+Wzorzec CPU (`tests/wokseleSpalanie.test.mjs`, spadek pionowy z wysokości bazy):
+
+| Odłamek | Ziemia | Mars |
+|---|---|---|
+| gruz 3–20 m | spala się na 20–8 km | dolatuje, ubytek 2–9 %, żar do 5600 K |
+| węzeł 40 m | spala się na 14 km | dolatuje, ubytek 2 % |
+| 5 warstw (200 m) | spala się tuż nad gruntem (1,7 km) | dolatuje cały |
+| 10 warstw (400 m) | dolatuje z 44 % grubości, 8,8 km/s | dolatuje cały, 4,3 km/s |
+| 20 warstw (800 m) | dolatuje z 72 % grubości | dolatuje cały |
+
+Na Ziemi plazma przed czołem ma do ~28 000 K (biała kula ognia), na Marsie do ~6000 K (strumień ciepła ponad 20 razy mniejszy). Ścianki odłamka świecą najwyżej jak materiał przy wrzeniu (~2800 K, żółtobiałe), biel daje plazma.
+
+Bez okna (`node scripts/webgpu/woksele-baza-narzedzia.mjs --scenariusz spalanie --planeta ziemia|mars --noc 1 --rozmiar 960x540`), U w 0,5 s:
+
+| Chwila | Ziemia: żywe węzły, wysokość nad gruntem (mediana / najniżej) | Mars |
+|---|---|---|
+| 14 s | 79 914 z 80 882, 90 / 71 km | — |
+| 19 s | 79 914, 64 / 38 km, 7,5 km/s | — |
+| 23 s | 79 849, 36 / 15 km, 8,1 km/s | 79 914, najniżej 12 km |
+| 25 s | 79 617, 19 / 15 km (niżej czoło się wypala) | 79 914, najniżej 3,5 km |
+| 28 s | 28 143 (spłonęły albo uderzyły w grunt) | 68 446 (reszta uderzyła w grunt, nic nie spłonęło) |
+
+Z kamery z góry (6,7 km nad bazą przy 540 px, w teście 9,8 km) odłamki przy gruncie są około 10 razy mniejsze niż baza na starcie; na Hidalgo w grze około 6 razy. Koszt (960 × 540, 23 s, najwięcej płonie): kernele spalania 0,016 ms GPU, rysunek obrazu 0,50 → 0,70 ms z głowicami i smugami; pipeline'y synchroniczne 0 na obu planetach. Kadry: `.tmp/woksele-demo/SPAL/ziemia5/arkusz.png` i `mars5/arkusz.png` (góra: z góry, dół: z boku bliżej; 16, 21, 23, 25, 28 s), pojedyncze `s_t*_gora|bok|blisko.png`, liczby `ziemia6/raport.json`, koszt `ziemia-koszt/`, `mars-koszt/`.
+
+Strojenie po kadrach: przy pierwszej wersji cała baza świeciła płaską bielą (ścianki liczone jak plazma do 28 000 K, głowice i smugi setek węzłów czoła nakładały się addytywnie, gęsty dym leżał nad odłamkami i z góry przykrywał bazę). Teraz ścianki do 2800 K, jedna głowica i jeden odcinek smugi to ułamek docelowej jasności, a dym jest rzadki i nieregularny.
+
+Otwarte: uderzenie w grunt Ziemi i Marsa to błysk i kłąb pyłu bez krateru na mapie (Hidalgo ma kratery z `planetaDema.js`); smugi z góry widać słabo, bo odłamki lecą prosto od kamery (smuga to wtedy punkt); duży dysk habitatu spada w ostatniej fali kotwic, więc z góry długo wydaje się większy od reszty.
+
+### Druga iteracja Fable (2026-11-11): przewrót wieży, spalanie, taran
+
+Użytkownik poprosił o drugą iterację przeglądu na nowym modelu (Fable 5.2, sesja „Silnik fizyki 3D”). Fable pracował w Node na kopii wzorca CPU z prawdziwym wypiekiem wieży B1R (zgodność z pomiarami GPU: klin 44 / 2243 j. wobec 37 / 2034, taran 5,04 mln pędu wobec 5,0). Pełny raport: `ANALIZA-2-woksele-taran-przewrot-spalanie.md` w jego scratchpadzie.
+
+Ustalenia i co z nimi zrobione:
+
+| | Ustalenie | Stan |
+|---|---|---|
+| U1 | Błąd: węzeł zabity w `kSpal` zeruje tylko własne maski, sąsiedzi zrywali linie zginania do jego zamrożonej pozycji (12–15 % zdrowych wiązań i kop ~200 j./s przy każdym wypaleniu warstwy czoła) | naprawione: po `kSpal` idą `kCzysc` i `kCzyscS` |
+| U2 | Wieża siada przez kruchość przy karbie, nie przez ciężar: po klinie przekrój nie jest przeciążony (p90 0,86 siły spoczynkowej), wiązanie przy ostrzu pęka przed przejęciem siły przez sąsiednie. Przy szyi ×3 szyja kładzie się jak pień, a głowa odrywa się od piasty za promieniem wzmocnienia (r 480) i spada pionowo | ciągliwość jako przełącznik (`?ciagliwosc=3|8`, panel), domyślnie wyłączona |
+| U3 | Tabela mięknięcia na GPU brała klasy z parametrów solvera, nie z wypieku (nakładka działała tylko na CPU) | naprawione |
+| U4 | Fala łamiąca w bryle z kotwicami liczy prędkość bezwzględną, a szczyt przewracającej się wieży przekracza próg przy 2,5°/s | flaga solvera `falaPion` (`?falaPion=1`, panel), domyślnie wyłączona |
+| U5 | Kernel kadłuba Atlasa bez błędów (masa 1, zaokrąglenie 1e−5, 0 węzłów w kadłubie, opóźnienie odczytu bez znaczenia); moment bezwładności z prostokąta sprite'a był ~1,4× za duży | moment z obrysu kadłuba |
+| U6 | Planeta i spalanie: rzędy wielkości się zgadzają; `w.g` w spalaniu nie istniało (zawsze 400), komentarz o błędzie przybliżenia nieprawdziwy | poprawione |
+
+Pomiar GPU (bez okna, 960 × 540, sztywność 2, beton kruchy, szyja ×3, bez tłumienia; klin 10 kraterów od +y). Przesunięcie środka głowy (w bok / w dół, j.):
+
+| Wariant | 5 s | 8 s | 10 s | Co widać (arkusz `.tmp/woksele-demo/KAW/arkusz_klin_ciagliwosc.png`) |
+|---|---|---|---|---|
+| dziś | 162 / 867 | 432 / 2056 | 640 / 3625 | głowa rozpada się w locie, szyja się kładzie, reszta siada |
+| ciągliwość 8 | 251 / 102 | 1117 / 1056 | 1758 / 2988 | cała wieża kładzie się z głową, głowa kruszy się trochę przed upadkiem |
+| ciągliwość 8, fala w dół | 251 / 102 | 1176 / 989 | 1918 / 2855 | cała wieża z całą głową, głowa pęka dopiero przy uderzeniu |
+| ciągliwość 3, fala w dół | 256 / 104 | 1186 / 1073 | 1961 / 2965 | jak przy 8 |
+
+S1 (sztywność 2, kruchy) z ciągliwością 8 nie robi się plastelinowy: dalej miażdży się pod własnym ciężarem, tylko wolniej i większymi kawałkami. Po 8 s węzły na poziomach kawałków (całe / części / bryłki): dziś 2777 / 1547 / 10 618, z ciągliwością 8 6276 / 3809 / 4857 (żwiru o połowę mniej, płyta dachu leży na hałdzie). Arkusz `.tmp/woksele-demo/KAW/arkusz_s1_ciagliwosc.png`.
+
+Ziemia po poprawce U1: żywe węzły po 25 s 79 628 (przed poprawką 79 617), bryły świecą spójne, smugi plazmy jak dotąd (arkusz `.tmp/woksele-demo/SPAL/ziemia-p1/arkusz_p1.png`); kernele spalania 0,026 ms GPU. Pipeline'y synchroniczne: 0 we wszystkich siedmiu przebiegach.
+
+Gra bez zmian: 63 kernele solvera bez nowych flag bajt w bajt jak w main, wypiek bez pola `ciagliwosc` jak dotąd (test `tests/wokseleCiagliwosc.test.mjs`).
+
+Decyzja użytkownika (2026-11-11): w B1R domyślnie ciągliwość 3 i fala tylko w dół (`?ciagliwosc=1&falaPion=0` wraca do kruchego betonu). Sprawdzenie na nowych domyślnych:
+- baza bez strzałów: 0 zerwanych z 998 510 wiązań przez 6 s;
+- klin: głowa 2007 j. w bok i 2946 j. w dół po 10 s, cała wieża kładzie się z głową;
+- taran Atlasa: szyb wycięty, wieża siada w dysk (głowa 3031 j. w dół, 188 j. ku tyłowi po 10 s), pęd oddany 6,1 mln (przy kruchym betonie 5,3 mln).
+
+Pipeline'y synchroniczne: 0.
+
+### Miasto w demie i ciągliwość (2026-11-12)
+
+Zgłoszenie użytkownika po przebudowie środka bazy (miasto 24 wieżowców wokół wieży, 2026-11-11): „wieżowce na środku mają zupełnie inny feel, walą się bardzo powoli albo wcale, nie lecą na boki”. Pomiar nowym scenariuszem `woksele-baza-narzedzia.mjs --scenariusz miasto` (jeden wieżowiec, przesunięcie dachu, czyli górnych 15 % wysokości, w bok i w dół). Klin: 10 kraterów r 110 od −y w dwóch rzędach nisko, przez całą szerokość ściany. Stary układ: worktree `111e708e`, `--cel W-1`.
+
+| Klin, po 14 s | Dach w bok | Dach w dół | Co widać |
+|---|---|---|---|
+| B-16, ciągliwość 3 i fala w dół (domyślne z 11-11) | 75 | 18 | stoi, przechyla się kilka j./s |
+| B-16, ciągliwość 3, bez fali w dół | 75 | 18 | stoi (czyli winna jest ciągliwość) |
+| B-16, ciągliwość 1, fala w dół (nowe domyślne) | 1069 | 10 531 | pada od 2,5 s, przez krawędź dysku |
+| B-16, ciągliwość 1, bez fali w dół | 1353 | 10 897 | pada od 2,5 s |
+| dawny W-1, ciągliwość 3 i fala w dół | 34 | 7 | stoi |
+| dawny W-1, ciągliwość 1, bez fali w dół | 978 | 4624 | pada od 5–7 s, z pomostu |
+| B-03 (wewnętrzny pierścień), nowe domyślne | 110 | 997 | siada w 1,5–3,5 s, w bok mało: za nim stoją B-15 i B-16 |
+
+Przyczyna: ciągliwość ×3 z 11-11, nie przebudowa. Ciągliwy beton nie rozpina przekroju od ostrza klina, więc wieżowiec z klinem na jedną trzecią głębokości stoi. Tak samo dawny W-1, którego użytkownik po włączeniu ciągliwości już nie podcinał. Przy pełnym przekroju (Atlas, pięć strzałów z ciężkiego działa) ciągliwość prawie nic nie zmienia: B-03 po ciężkim dziale siada w 2,5–3,5 s przy ×1 i przy ×3, a B-16 po Atlasie przy ×1 i ×3 w 3–4 s.
+
+Nowa wieża (trzon r 240, korona r 340–560) od klina z miasta (`--scenariusz klin --klinY 600 --glowaZ 1400`) się nie przewraca. Korona przesuwa się o 52 j. w 14 s przy ciągliwości 1 i 3, z falą w dół i bez niej, ze wzmocnieniem całej wieży i bez niego: liczby są identyczne. Klin nie przeciąża trzonu (szyja ×3 i wnętrze ziarna w promieniu 340), więc ciągliwość nie ma tu nic do roboty.
+
+Zmiana w demie B1R: ciągliwość ×1 (fala w dół zostaje, wieżowcom nie przeszkadza). Przełącznik w panelu i `?ciagliwosc=3` działają jak dotąd.
+
+Przy okazji, baza bez strzałów (`--scenariusz stoi`, teraz z rozbiciem na części): reaktor AG-1 tracił w pierwszej sekundzie pierścień pola (≈110 węzłów, 670 wiązań; przy ciągliwości 3 tak samo). Środek AG-1 leży na siatce (x = −3440), więc warunek ramienia |ax − ay| < 0,75 dx dawał łańcuch pojedynczych komórek po przekątnej, połączonych tylko wiązaniami ukośnymi (8 węzłów ramion na warstwę wobec 20 w AG-2, który leży poza siatką). Ramię ≤ dx daje schodek z wiązaniami osiowymi (AG-1: 24 na warstwę, AG-2 bez zmian). Po poprawce baza stoi: 170 zerwanych wiązań z 1 475 708, wszystkie w trzonie pod wieżą (z −180…−140, żaden węzeł się nie ruszył, tylko przy ciągliwości 1). Poprawka zmienia też węzły AG-1 w grze (ta sama scena), WGSL bez zmian. Test `tests/wokseleBaza.test.mjs` („reaktory: pierścień pola…”) pada na dawnym warunku.
+
+Otwarte: gruz wieżowca miasta schodzi pod dysk. Po ciężkim dziale góra B-03 jest po 14 s średnio 3,4–4,1 km niżej, po Atlasie góra B-16 1,4–3,7 km niżej. Taras to pusta skrzynia ~600 j. z jednowarstwowym pokładem i żebrami co 40°. Dawny W-1 stał na pomoście wzmocnionym ×30, a jego gruz spadał z boków pomostu, więc było go widać na boki. Próba z kotwicami w pokładzie tarasu pod wieżowcem (rzut + 2 komórki) nic nie dała (B-03 po ciężkim dziale 4,1 km w dół). Gruz rozjeżdża się poza łatę, a statek i kratery wbijają go w dół z dużą prędkością. Opcję usunięto. Pipeline'y synchroniczne: 0 we wszystkich przebiegach.
+
+## Jak to działa (krótko)
+
+- **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.
+- **Trzy poziomy.** Kawałek (poziom 0) dzieli się na mniejsze części (poziom 1, różnej wielkości), a te na bryłki pojedynczych węzłów (poziom 2). Kawałek pęka na stałe, gdy zniknie jego węzeł, gdy pęknie ponad 20 % jego wiązań wewnętrznych albo gdy jego węzły odejdą od ruchu sztywnego (zgniot, zginanie). Wtedy rysują go części, a w końcu bryłki. Kawałek nie jest więc sztywny na zawsze: obraz schodzi niżej tam, gdzie fizyka naprawdę miażdży.
+- **Ruch.** Co krok fizyki kernel liczy dla każdego kawałka środek i obrót z pozycji jego węzłów (dopasowanie sztywne). Bryłka jedzie z ramą swojego węzła, jak dzisiejszy blok.
+- **Kształt.** Jedna siatka narożników na wszystkich poziomach. Ściany budynku zostają płaskie, a granica kawałków zamiast schodka z wokseli dostaje skośną, falistą płaszczyznę przełomu. Po oderwaniu kawałka narożniki na jego brzegu się odłupują. Bryłki mają poszarpane narożniki, mocniej przy większym uszkodzeniu. Poziomy stykają się bez szpar (test liczy objętość bryłek: równa liczbie węzłów).
+- **Zbrojenie.** Część wiązań osiowych na granicach kawałków (pręty w stropach i dysku poziomo, w słupach i rdzeniu pionowo) staje się ciągliwa: rozciąga się 4 razy dalej niż beton i ma 3 razy większą siłę zerwania. Rysuje się jako drut, który wygina się razem z kawałkami, a po zerwaniu zostają kikuty sterczące z przełomu. W solverze to nowy rodzaj wiązania za flagą (`ciagliwe`); wypiek bez prętów liczy się bit w bit jak dziś (sprawdzone na wzorcu CPU i na WGSL kerneli).
+
+## Kryteria wyglądu (ustalone przed budową) i ocena
+
+Arkusze kadrów: `.tmp/woksele-demo/KAW/koniec/arkusz_<scena>_<kamera>.png` (kolumny: Woksele, Kawałki, Kawałki + zbrojenie; kamery: z ukosa, z góry jak w misji 1, z bliska, zbliżenie na druty).
+
+1. **Wieżowiec dalej miażdży się pod własnym ciężarem, a nie przewraca się w całości jak wydmuszka: SPEŁNIONE.** W trybie Kawałki ruch jest ten sam co dziś, bo to ta sama fizyka (kadry z ukosa są identyczne co do sylwetki). Ze zbrojeniem wieża też miażdży się piętro po piętrze, tylko około pół sekundy później, a stropy dłużej trzymają się jako całe płyty. Na S5 zbrojenie zmienia koniec sceny: dysk rwie się wokół dziury inaczej niż dziś, a łuk sekcji wisi dłużej w jednym kawałku.
+2. **Kawałki ostre i różnej wielkości, nie pudełka: SPEŁNIONE W WIĘKSZOŚCI.** Z bliska widać lite płyty stropów, odcinki słupów i drobny gruz, bez dzisiejszej kratki co woksel. Przełomy są skośne i nierówne. Wyjątek: cienkie elementy (słupki fasady, słupy) mają przekrój 1–2 wokseli, więc dalej wyglądają jak prostokątne belki. Nierówne są tylko ich końce.
+3. **Druty widać przy zbliżeniu: SPEŁNIONE CZĘŚCIOWO.** Przy zbliżeniu widać rdzawe pręty sterczące z przełomów. Długich drutów, na których wiszą kawałki, jest mało: przy obecnej sile pręt zrywa się, zanim kawałek zawiśnie. Przy sile ×10 kawałki trzymają się, ale cała wieża zmienia ruch (stropy schodzą jak naleśniki). To decyzja niżej.
+4. **Gruz na ziemi nie zamienia się w kupę jednakowych kształtów: SPEŁNIONE.** Hałda to duże płyty i belki plus drobny, nieregularny gruz. Dziś to stos kostek z tą samą kratką.
+
+Uwaga, którą trzeba znać przed decyzją: **z kamery z góry w skali misji 1 różnica jest mała.** Widać rysy między kawałkami na dachu i na pokładzie dysku i trochę mniej kratki, ale sylwetka zawalenia, pył i hałda wyglądają z góry prawie tak samo. Duża różnica jest od średniej odległości w dół (zbliżenie gracza, kamery reżysera). Ładny efekt uboczny: zanim kawałki się rozjadą, ich granice widać jako sieć cienkich rys (pokład S5 po uderzeniu wieży).
+
+## Koszt GPU
+
+RTX 5080, okno 1280 × 720, ta sama chwila zawalenia (S1: t = 5 s, S5: t = 4 s), kamera z ukosa, mediany ze znaczników czasu GPU. „Dziś” to strona bez `?kawalki`.
+
+| Scena, chwila | Obraz | Krok fizyki + kernele obrazu [ms] | w tym kernele obrazu [ms] | Rysunek z cieniem [ms] | Razem [ms] |
+|---|---|---|---|---|---|
+| S1, t = 5 s | dziś (strona bez `?kawalki`) | 0,46 | 0,01 | 1,16 | 1,62 |
+| | Woksele (strona z kawałkami) | 0,48 | 0,05 | 1,25 | 1,73 |
+| | Kawałki | 0,48 | 0,04 | 0,30 | 0,78 |
+| | Kawałki + zbrojenie | 0,48 | 0,05 | 0,36 | 0,84 |
+| S5, t = 4 s | dziś (strona bez `?kawalki`) | 0,41 | 0,01 | 1,60 | 2,01 |
+| | Woksele (strona z kawałkami) | 0,55 | 0,15 | 1,77 | 2,32 |
+| | Kawałki | 0,56 | 0,15 | 0,29 | 0,85 |
+| | Kawałki + zbrojenie | 0,51 | 0,14 | 0,49 | 1,00 |
+
+- Kernele kawałków (dopasowanie sztywne i wybór poziomu) kosztują +0,03 ms na S1 i +0,14 ms na S5. Najdłuższy wątek liczy największy kawałek, dlatego wielkie składowe (sekcja dysku S5 miała 870 węzłów) dzielą się już przy wypieku do najwyżej 160 węzłów; przed tym podziałem S5 kosztował +0,58 ms.
+- Rysunek jest 4–5 razy tańszy niż dzisiejsze bloki, także z passem cienia i głębi: jedna siatka 340–540 tys. trójkątów, a dziś w środku zawalenia każdy węzeł ma 7 instancji po 24 wierzchołki (blok, 5 odłamków, pręt) w każdym passie.
+- Zastrzeżenia: pomiar w środku zawalenia, gdy dzisiejszy obraz rysuje już wszystkie sloty. Przed pierwszym zdarzeniem dziś rysuje się sam blok, więc tam różnica jest mniejsza. Wiersz ze zbrojeniem to inna fizyka, więc w tej samej chwili inny stan sceny. Mediany z 15 klatek (krok) i 11 klatek (rysunek), bez innych pomiarów GPU w tym czasie.
+
+Pipeline'y synchroniczne po rozgrzewce: **0** (strona z kawałkami i strona dzisiejsza, wszystkie sceny i tryby, także po przełączeniach i resetach).
+
+Pamięć: siatka kawałków S1 to 339 tys. trójkątów (9 MB), S5 540 tys. (15 MB), budowa w wątku 0,6–1,5 s na scenę.
+
+## Co nie wyszło albo jest otwarte
+
+- Słupki fasady i słupy zostają prostokątne (przekrój 1–2 wokseli, ich boki to ściany budynku).
+- W miejscach mocnego zgniotu duża część węzłów schodzi do bryłek (S1 pod koniec około 70 % węzłów). Bryłka to poszarpany kamień, nie kostka, ale z bliska widać, że są podobnej wielkości.
+- Druty: mało długich, rozciągniętych drutów przy obecnej sile prętów (punkt 3).
+- Żadnej pracy nad wejściem do gry: skóra z wypieku, wnętrza, przekrój wysokości i koła habitatu z `wGrze` nie mają jeszcze odpowiednika w kawałkach.
+
+## Decyzje dla użytkownika
+
+1. **Czy ten obraz w ogóle idzie dalej** (obejrzeć demo z bliska i z góry).
+2. **Gęstość kawałków.** Dziś: kawałek z ziarna fizyki (płyta 7 × 7 wokseli stropu, odcinek słupa 6 wokseli), części poziomu 1 po 4–14 węzłów. Większe kawałki = mniej szczegółu w zgniocie, mniejsze = bliżej dzisiejszych kostek.
+3. **Ile zbrojenia:** (a) bez prętów w fizyce, druty tylko jako kikuty w obrazie, ruch jak dziś; (b) obecne pręty (40 % linii, ×4 rozciąganie, ×3 siła): ruch trochę inny, kikuty z przełomów; (c) mocne pręty (siła ×10): kawałki wiszą na drutach, stropy schodzą całymi płytami, ruch wyraźnie inny niż dziś. Dla (c) przebieg: `--zbrojenie '{"gestosc":0.5,"ciagl":6,"sila":10}'`.
+4. **Kruchość betonu:** dziś, kruchy czy bardzo kruchy (szyja i hałda wyżej). Możliwe też osobne ustawienie: bardzo kruchy tylko dla smukłych elementów (szyja, słupy), reszta jak dziś.
+5. **Czy wpiąć w misję 1.** Z góry różnica jest mała, z bliska duża. Wpięcie to osobna praca: skóra z wypieku i wnętrza na kawałkach, przekrój wysokości, koła habitatu, LOD.
+6. **Szyja w demie bazy:** przy sztywności 2 bez wzmocnienia wieża spada po trzech strzałach w środek habitatu. Zostawić tak, przywrócić część wzmocnienia (np. `?baza={"mocSzyi":2}`) czy spróbować sztywności 3 (Fable).
+7. **Co przenieść do gry** (dziś gra nie ma żadnej z tych zmian): sztywność betonu, poprawkę limitów w gałęzi sprężenia, szyję bez wzmocnienia ×8. W grze szyję i tak zrywa skrypt (`voxNeck`), więc gumową szyję widać w grze tylko wtedy, gdy zegnie się przed zerwaniem.
+
+## Pliki
+
+- `src/3d/woksele/kawalki.js`: prefraktura przy wypieku (poziomy, siatka narożników, geometria) i wybór prętów. Moduł czysty, bez three.
+- `src/3d/woksele/kawalkiObraz.js`: kernele dopasowania sztywnego i wyboru poziomu, materiały kawałków i drutów w TSL.
+- `src/3d/woksele/obraz.js`: opcja `kawalki` i tryb obrazu (sama widoczność siatek).
+- `src/3d/woksele/solver.js`: flagi `ciagliwe` (klasy wiązań 12–17) i `limityF0` (twarde limity w gałęzi sprężenia), `dema/woksele-zawalenia/wzorzec-cpu.js` i `wzorzecF32.js`: to samo na CPU.
+- `src/3d/woksele/scenaBazy.js`: `wnetrzeSzyi` (klasa wnętrza ziarna rdzenia szyi tylko przy wzmocnieniu). `dema/woksele-zawalenia/narzedzia.js`: upadek całymi częściami jak w grze.
+- `src/3d/woksele/budowa.worker.js`: pole `kawalki` wiadomości.
+- `dema/woksele-zawalenia/pokaz.js`, `glowny.js`: `?kawalki=1`, panel, klawisz K, API harnessu (`pokaz.tryb`, `pokaz.statKawalki`).
+- `scripts/webgpu/woksele-kawalki.mjs`: kadry, koszt, arkusze. `tests/wokseleKawalki.test.mjs`: testy w Node.

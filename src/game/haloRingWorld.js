@@ -5,8 +5,8 @@
 //   • `entries` [{ key, planet, collider, place, service }] — kolidery (płyta, teren, ściany portu K-7:
 //     HaloRingCollider), rejestr hal i zatok (pozy obsługi stanowisk, lampki, poziom lamp), automat obsługi
 //     stanowisk capital (k7BerthService.js);
-//   • teren w kolizjach: Mars (ECUMENE) i Jowisz (Fable) od razu z czystych planów CPU (ecumenePlan.js,
-//     fablePlan.js — ta sama funkcja, którą ring-archetyp liczy z treści po zbudowaniu); Ziemia z mapy CPU ringu
+//   • teren w kolizjach: Mars (ECUMENE) i Jowisz (BUDOWA) od razu z czystych planów CPU (ecumenePlan.js,
+//     budowaPlan.js — ta sama funkcja, którą ring-archetyp liczy z treści po zbudowaniu); Ziemia z mapy CPU ringu
 //     renderu po jego zbudowaniu (`setRingTerrain` — w trybie `inline` funkcja ringu, w workerze profil z = 0
 //     przez postMessage);
 //   • automat obsługi stanowisk K-7 w CZASIE GRY dla każdego ringu, bez bramki widoczności (dawniej krokowany
@@ -24,7 +24,7 @@ import { createK7BerthService, stepK7BerthService, syncK7BerthLamps } from './k7
 import { k7BeaconClock } from '../3d/haloRing/haloPortK7Lights.js';
 import { resolveHaloProfile } from '../3d/haloRing/haloRingProfiles.js';
 import { createEcumenePlan } from '../3d/haloRing/arch/ecumenePlan.js';
-import { createFablePlan } from '../3d/haloRing/arch/fablePlan.js';
+import { createBudowaPlan } from '../3d/haloRing/arch/budowaPlan.js';
 
 export const HALO_WORLD = Object.freeze({
   // Wysokość słońca nad płaszczyzną ringu [°] (jak obraz — HALO_GAME.sunElevationDeg; zgodność pilnuje test).
@@ -37,7 +37,7 @@ export const HALO_WORLD = Object.freeze({
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 // Teren ringów-archetypów z planu (archRing.js `terrainHeightAt`: θ = atan2(y, x) w [0, 2π), z = 0).
-const ARCH_PLANS = Object.freeze({ ecumene: createEcumenePlan, fable: createFablePlan });
+const ARCH_PLANS = Object.freeze({ ecumene: createEcumenePlan, budowa: createBudowaPlan });
 
 function archTerrainFor(key, layout) {
   const spec = HALO_RING_PLANETS[key];
@@ -154,12 +154,14 @@ export class HaloRingWorld {
   /**
    * Klatka gry (render(), przed obrazem ringów i wejściem pyłu hal): zegar migania świateł hal (zegar ściany —
    * jak dawniej), automat obsługi stanowisk w czasie gry (0 w pauzie i scenach fabuły) dla gracza, lampki
-   * z automatu, poziom lamp hal ze słońca gry.
-   * @param {{ nowMs: number, gameDt: number, ship: object|null, sun: {x:number,y:number}|null }} f
+   * z automatu, poziom lamp hal ze słońca gry, poziom reflektorów podejścia stanowisk (`berth.approachLight` —
+   * narasta / gaśnie w czasie klatki `frameDt`, jak miganie soczewek; brak — czas gry).
+   * @param {{ nowMs: number, gameDt: number, frameDt?: number, ship: object|null, sun: {x:number,y:number}|null }} f
    */
-  frame({ nowMs, gameDt = 0, ship = null, sun = null } = {}) {
+  frame({ nowMs, gameDt = 0, frameDt = NaN, ship = null, sun = null } = {}) {
     this.clock = k7BeaconClock(nowMs);
     const dt = Number.isFinite(gameDt) ? Math.max(0, gameDt) : 0;
+    const lightDt = Number.isFinite(frameDt) ? Math.max(0, frameDt) : dt;
     const alive = ship && !ship.dead && ship.pos;
     this._ships[0] = alive ? ship : null;
     for (let i = 0; i < this.entries.length; i++) {
@@ -167,8 +169,8 @@ export class HaloRingWorld {
       e.collider.setPlanet(e.planet);
       // Obsługa stanowisk capital w grze swobodnej (src/game/k7BerthService.js): gracz stoi na polu stanowiska —
       // zamki pola, ramiona i przewody paliwowe podpinają się, rusza — awaryjne odpięcie. Pozy fabuły
-      // (owner = 'story') nietknięte.
-      stepK7BerthService(e.service, dt, e.place, this._ships, 1);
+      // (owner = 'story') nietknięte. Reflektory podejścia: gracz w pasie stanowiska — reflektor rozjaśnia się.
+      stepK7BerthService(e.service, dt, e.place, this._ships, 1, undefined, lightDt);
       const halls = e.collider.registry.halls;
       this._updateSun(e, sun);
       for (let k = 0; k < halls.length; k++) {
@@ -224,6 +226,40 @@ export class HaloRingWorld {
       if (res.hit) hit = res;
     }
     return hit;
+  }
+
+  // Odległość wzdłuż kursu do płyty najbliższego ringu (HaloRingCollider.rayToSlab) albo Infinity.
+  rayToSlab(x, y, dx, dy, len, pad = 0) {
+    let best = Infinity;
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.collider.setPlanet(e.planet);
+      const s = e.collider.rayToSlab(x, y, dx, dy, Math.min(len, best), pad);
+      if (s < best) best = s;
+    }
+    return best;
+  }
+
+  // Wylot z hali K-7 / zatoki któregoś ringu (HaloRingCollider.dockExit — wyjście ze studni startu napędem): true, punkt
+  // wylotu i oś doku w `out`; statek poza dokami — false.
+  dockExit(x, y, reach, out) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.collider.setPlanet(e.planet);
+      if (e.collider.dockExit(x, y, reach, out)) return true;
+    }
+    return false;
+  }
+
+  // Środek statku przeszedł w kroku przez płytę któregoś ringu (HaloRingCollider.blockTunnel) — cofnięty; wynik albo null.
+  blockTunnel(ship, prevX, prevY) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.collider.setPlanet(e.planet);
+      const res = e.collider.blockTunnel(ship, prevX, prevY);
+      if (res.hit) return res;
+    }
+    return null;
   }
 
   // Punkt świata gry w płycie któregoś ringu (pociski).

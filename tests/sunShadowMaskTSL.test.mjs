@@ -179,6 +179,53 @@ test('Core3D: maska do celu przed passami, placeholdery zamiast null, wyłączon
   U.uSunShadowMap.value = mask.SUN_SHADOW_MAP_PLACEHOLDER;
 });
 
+test('Core3D: pole przesłaniające z SIŁĄ (zanik pola pasa przy skoku gracza) — uniform i WGSL', () => {
+  const pass = createShadowShaftsPass();
+  const wgsl = buildWGSL(pass.material, { geometry: pass.quad.geometry }).fragment;
+  // T → 1 − (1 − T) · siła: gałąź od siły > 0,001, próbka × siła
+  const on = /if \( \( object\.(\w+) > 0\.001 \) \)/.exec(wgsl)?.[1];
+  assert.ok(on, 'gałąź pola od siły > 0,001');
+  const smp = /(\w+) = textureSampleLevel\( \w+, \w+_sampler, \w+, 0\.0 \);/.exec(wgsl)?.[1];
+  assert.ok(smp, 'próbka pola poziomem 0');
+  assert.match(wgsl, new RegExp(`= \\( 1\\.0 - \\( \\( 1\\.0 - ${smp}\\.x \\) \\* object\\.${on} \\) \\);`), 'T → 1 − (1 − T) · siła');
+  const target = { texture: { isTexture: true }, width: 800, height: 600 };
+  let current = null;
+  const fakeRenderer = {
+    getRenderTarget: () => current, setRenderTarget: (t) => { current = t; }, render: () => {},
+    info: { render: { drawCalls: 0, triangles: 0, points: 0, lines: 0 } }
+  };
+  const core = Object.assign(Object.create(Core3D), {
+    renderer: fakeRenderer, shadowShaftsPass: pass, sunShadowTarget: target, width: 800, height: 600,
+    activeCam1: { x: 0, y: 0, zoom: 0.5 }, sunOcclusionField: null, shaftHullTexture: null,
+    shaftDiscs: new Float32Array(48 * 4), shaftDiscCount: 0, shaftHulls: new Float32Array(32 * 12), shaftHullCount: 0,
+    shaftRings: new Map(), lastFrameRenderInfo: null, _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 }
+  });
+  const cfg = { discLenMul: 5, capsuleLenMul: 3, capsuleBudget: 24, hullSteps: 24 };
+  const tex = { isTexture: true, name: 'mapa pola' };
+  const u = pass.material.uniforms;
+  // dawne wywołanie (bez siły) — pełne pole
+  core.setSunOcclusionField(tex, 0, 0, 100, 100);
+  assert.equal(core._renderSunShadowMask(false, { x: 1000, y: 0 }, cfg), true, 'pole liczy maskę bez smug');
+  assert.equal(u.uFieldOccOn.value, 1);
+  assert.equal(u.uFieldOcc.value, tex);
+  core.setSunOcclusionField(tex, 0, 0, 100, 100, 0.4);
+  core._renderSunShadowMask(false, { x: 1000, y: 0 }, cfg);
+  assert.ok(Math.abs(u.uFieldOccOn.value - 0.4) < 1e-9, 'siła w uniformie');
+  // siła 0 (pole puste na końcu ładowania) — jak bez pola: bez smug maska wyłączona, ze smugami bez członu pola
+  core.setSunOcclusionField(tex, 0, 0, 100, 100, 0);
+  assert.equal(core._renderSunShadowMask(false, { x: 1000, y: 0 }, cfg), false);
+  assert.equal(mask.sunShadowUniforms.uSunShadowOn.value, 0);
+  assert.equal(core._renderSunShadowMask(true, { x: 1000, y: 0 }, cfg), true);
+  assert.equal(u.uFieldOccOn.value, 0);
+  assert.equal(u.uFieldOcc.value, pass.fieldOccPlaceholder);
+  // rekord pola bez siły (stary kształt) — pełne pole
+  core.sunOcclusionField = { texture: tex, x0: 0, y0: 0, w: 100, h: 100 };
+  core._renderSunShadowMask(false, { x: 1000, y: 0 }, cfg);
+  assert.equal(u.uFieldOccOn.value, 1);
+  mask.sunShadowUniforms.uSunShadowMap.value = mask.SUN_SHADOW_MAP_PLACEHOLDER;
+  mask.sunShadowUniforms.uSunShadowOn.value = 0;
+});
+
 test('Core3D: tarcze ciał tła tam, gdzie je widać (perspektywa), oś z prawdziwego środka, kadr = cel sceny', () => {
   // Zgłoszenie „cienie planet się rozjeżdżają” (2026-10-08): planety tła (z = −50 000) rysuje pass planet
   // kamerą perspektywy, a maska stawiała ich tarczę w prawdziwym miejscu płaszczyzny gry — smuga była

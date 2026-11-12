@@ -9,13 +9,16 @@ import {
 import { getBattleSlot } from './fleetCoordinator.js';
 import { AWARENESS_CONFIG, SIDE_FRIENDLY, fleetStanceOverride } from './fleetAwareness.js';
 import { isCloakHidden } from '../game/cloak.js';
+import { shipPowerOn } from '../game/shipPower.js';
+import { hullPointPowered } from '../game/hullMounts.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
 import { MOUNT_ARCS, mountFireArc } from '../game/weaponAim.js';
 import { AI_SNAP_FIGHTER, trafficAvoidanceObjects, trafficAvoidanceRange, trafficAvoidanceSnapshot } from './aiNeighborKernels.js';
 import { getWreckIndex, wreckLowerBound } from './aiWreckIndex.js';
+import { staticRouteAim } from './staticRoutes.js';
 import { npcHasEngineBurst, stepNpcShipSystem } from './npcShipSystem.js';
-import { modifierFireRate } from '../game/shipModifiers.js';
+import { modifierFireRate, weaponRangeFor } from '../game/shipModifiers.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -315,7 +318,8 @@ function considerWrecks(W, nx, ny, myR, d1x, d1y, d2x, d2y, has2, look, brake, b
       const p2 = ry * d2x - rx * d2y;
       hit = a2 > -ext && a2 < look + ext && p2 < ext && p2 > -ext;
     }
-    if (!hit || W.refs[i] === _obsIgnore) continue;
+    // cel rozkazu (wrak albo budowla, której kapsuła to — W.owner) nie jest przeszkodą
+    if (!hit || W.refs[i] === _obsIgnore || (_obsIgnore !== null && W.owner[i] === _obsIgnore)) continue;
     considerWreck(W.refs[i], i, W, nx, ny, myR, d1x, d1y, d2x, d2y, has2, look, brake, blk);
   }
   _blkWreck = blk.along < alongShips;
@@ -379,7 +383,7 @@ export function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = f
       }
     }
   }
-  // Wraki (aiWreckIndex.js — duże, posortowane po x, przebudowa co takt AI): ogranicznik
+  // Wraki i budowle (aiWreckIndex.js — kapsuły posortowane po x, przebudowa co takt AI): ogranicznik
   // i objazd jak dla okrętów, węższa geometria (considerWreck). Pas x ± zasięg
   // wyszukiwaniem binarnym.
   const W = getWreckIndex();
@@ -444,13 +448,27 @@ function resolveFaceBlend(spec) {
 // opts.combatFacing (burta/działa na wroga), płynnie w pasie `faceBlend`.
 // Hamowanie i obrót planuje pilot z tej samej specyfikacji, więc okręt dojeżdża
 // bez przestrzelenia i nie krąży wokół punktu, do którego nie umie skręcić.
+// Budowla między okrętem a celem (staticRoutes.js — graf widoczności wokół przeszkód
+// statycznych): okręt leci do najdalszego widocznego punktu trasy; promień przybycia,
+// prędkość punktu i kurs bojowy działają dopiero przy celu widocznym wprost.
+const _routeAim = { x: 0, y: 0, len: 0 };
+// Pół-szerokość korytarza okrętu — jak w omijaniu wraków (considerWreck).
+function shipCorridor(npc) {
+  return Math.max(WRECK_AVOID_TUNE.shipWidthMin, (npc.radius || 100) * WRECK_AVOID_TUNE.shipWidthK);
+}
 function capitalArriveControls(npc, tx, ty, opts = {}) {
   const spec = resolveShipFlightSpec(npc);
+  const goalDist = Math.hypot(tx - npc.x, ty - npc.y);
+  const routed = !opts.noObstacleCap && WRECK_AVOID_TUNE.enabled && staticRouteAim(npc, tx, ty, shipCorridor(npc), _routeAim);
+  if (routed) {
+    tx = _routeAim.x;
+    ty = _routeAim.y;
+  }
   const dx = tx - npc.x;
   const dy = ty - npc.y;
   const dist = Math.hypot(dx, dy);
-  const arrival = Math.max(0, Number(opts.arrival) || 50);
-  const speedMode = opts.speedMode || (dist > (Number(opts.combatRadius) || COMBAT_RADIUS) ? 'cruise' : 'combat');
+  const arrival = routed ? 0 : Math.max(0, Number(opts.arrival) || 50);
+  const speedMode = opts.speedMode || ((routed ? _routeAim.len : dist) > (Number(opts.combatRadius) || COMBAT_RADIUS) ? 'cruise' : 'combat');
   let speedLimit = spec ? flightSpeedLimit(spec, speedMode) : Math.max(40, Number(npc.maxSpeed) || 200);
   if (Number(opts.speedMul) > 0) speedLimit *= Number(opts.speedMul);
 
@@ -459,9 +477,10 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
   let aimX = tx;
   let aimY = ty;
   let aimArrival = arrival;
-  let refVx = Number(opts.matchVx) || 0;
-  let refVy = Number(opts.matchVy) || 0;
-  const face = Number.isFinite(opts.combatFacing) ? opts.combatFacing : NaN;
+  let refVx = routed ? 0 : (Number(opts.matchVx) || 0);
+  let refVy = routed ? 0 : (Number(opts.matchVy) || 0);
+  const combatFacing = Number.isFinite(opts.combatFacing) ? opts.combatFacing : NaN;
+  const face = routed ? NaN : combatFacing;
   if (!opts.noObstacleCap) {
     const invD = dist > 1e-4 ? 1 / dist : 0;
     const vlen = Math.hypot(npc.vx || 0, npc.vy || 0);
@@ -505,7 +524,7 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
     speedLimit,
     approachCap,
     totalCap,
-    noBrake: opts.noBrake === true,
+    noBrake: !routed && opts.noBrake === true,
     refVx,
     refVy,
     face,
@@ -513,15 +532,15 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
     faceFar: arrival + faceBlend,
     // Kurs na wroga: cofanie zostaje dziobem do niego (model lotu). Kurs szyku
     // (przelot, eskorta lidera) — bez tego: szybki ruch zawsze dziobem naprzód.
-    backFace: opts.backFace === true
+    backFace: !routed && opts.backFace === true
   });
-  return { facing: face, dist, budget: Math.min(speedLimit, approachCap) };
+  return { facing: combatFacing, dist: goalDist, budget: Math.min(speedLimit, approachCap) };
 }
 
 // Wygodny wrapper: intencja arrive + zatwierdzenie (separacja). Używany m.in.
-// przez formację guard w index.html, żeby capitale wsparcia latały tym samym
-// pilotem co w walce.
-function capitalArriveTo(npc, tx, ty, opts = {}) {
+// przez formację guard w index.html i ucieczkę okrętu misji (storyNpcControl.js), żeby
+// latały tym samym pilotem co w walce (omijanie okrętów, wraków i budowli).
+export function capitalArriveTo(npc, tx, ty, opts = {}) {
   const ctl = capitalArriveControls(npc, tx, ty, opts);
   commitCapitalFlight(npc, 0, Number(opts.dt) || (1 / 20));
   return ctl;
@@ -544,6 +563,14 @@ const _cmdBlk = { on: false, x: 0.5, y: 0.5, vx: 0.5, vy: 0.5, c: 0.5, along: In
 const COMMAND_STUCK_CAP = 160;
 export function capitalCommandSteer(npc, tx, ty, arrival, ignore, loose, out) {
   const spec = resolveShipFlightSpec(npc);
+  // Budowla między okrętem a punktem rozkazu: lot do punktu trasy (staticRoutes.js) jak do objazdu (out.detour,
+  // przybycie 0) — ukończenie rozkazu pilot rozkazów liczy dalej od prawdziwego punktu.
+  const routed = WRECK_AVOID_TUNE.enabled && staticRouteAim(npc, tx, ty, shipCorridor(npc), _routeAim, ignore || null);
+  if (routed) {
+    tx = _routeAim.x;
+    ty = _routeAim.y;
+    arrival = 0;
+  }
   const dx = tx - npc.x;
   const dy = ty - npc.y;
   const dist = Math.hypot(dx, dy);
@@ -605,6 +632,18 @@ export function capitalCommandSteer(npc, tx, ty, arrival, ignore, loose, out) {
     if (approachCap < DETOUR_BLOCKED_SPEED && ox * ox + oy * oy < lim * lim) out.blocked = 1;
     else if (still) out.blocked = 2;
   }
+  if (routed) {
+    if (!out.detour) {
+      out.detour = true;
+      out.aimX = tx;
+      out.aimY = ty;
+      out.aimVx = 0;
+      out.aimVy = 0;
+    }
+    // Punkt trasy to nie punkt rozkazu: „stoi przed przeszkodą przy punkcie” i postój przy wraku albo budowli rozkazu
+    // nie kończą (trasa prowadzi dookoła); tłum stojących okrętów (2) — jak dawniej.
+    if (out.blocked === 1 || blkWreck) out.blocked = 0;
+  }
   _obsIgnore = null;
   out.approachCap = approachCap;
   out.totalCap = totalCap;
@@ -631,7 +670,7 @@ export function capitalCommandFreePoint(npc, tx, ty, ignore, out) {
     let moved = false;
     const px = out.x;
     for (let i = wreckLowerBound(px - reach); i < W.count && W.x[i] <= px + reach; i++) {
-      if (W.refs[i] === ignore) continue;
+      if (W.refs[i] === ignore || (ignore && W.owner[i] === ignore)) continue;
       const ux = W.ux[i];
       const uy = W.uy[i];
       const h = W.h[i];
@@ -1273,7 +1312,7 @@ function takeKeptWeapon(prev, hp, def) {
   return null;
 }
 
-function initAutonomousWeapons(npc) {
+export function initAutonomousWeapons(npc) {
   if (npc.autoWeapons !== undefined && npc._weaponsInit) return;
 
   npc._weaponsInit = true;
@@ -1455,13 +1494,16 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
   for (let i = 0; i < npc.autoWeapons.length; i++) {
     const weapon = npc.autoWeapons[i];
     if ((weapon.scanProfile || 'slow') !== scanProfile) continue;
-    maxRange = Math.max(maxRange, Number(weapon.def?.baseRange) || 1000);
+    maxRange = Math.max(maxRange, weaponRangeFor(npc, weapon.def, Number(weapon.def?.baseRange) || 1000));
     if (!needsRocketThreats && weapon.prefers?.includes('rocket')) needsRocketThreats = true;
   }
   if (!(maxRange > 0)) maxRange = 1000;
   cache.maxRange = maxRange;
   const maxRangeSq = maxRange * maxRange;
 
+  // Okręt ruchu z urazą do gracza (E13, src/game/trafficPromotion.js): poza stronami — wieże biją gracza i jego
+  // własne jednostki (`playerOwned`), nie sojuszników frakcji, z którą gracz nie walczy.
+  const grudgeOnly = npc.playerGrudge === true && !npc.isPirate;
   // Zamaskowany gracz (src/game/cloak.js) nie trafia do listy celów wież.
   if (!npc.friendly && window.ship && !window.ship.dead && !isCloakHidden(window.ship)) {
     const playerX = window.ship.pos?.x ?? window.ship.x ?? 0;
@@ -1483,6 +1525,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (!enemy || enemy.dead || enemy === npc || enemy === window.ship) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      if (grudgeOnly && !enemy.playerOwned) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
       const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
       const dx = enemyX - npc.x;
@@ -1500,6 +1543,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (enemy === window.ship || isCloakHidden(enemy)) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      if (grudgeOnly && !enemy.playerOwned) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
       const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
       const dx = enemyX - npc.x;
@@ -1514,6 +1558,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (!enemy || enemy.dead || enemy === npc) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      if (grudgeOnly && !enemy.playerOwned) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
       const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
       const dx = enemyX - npc.x;
@@ -1677,6 +1722,8 @@ function stepNpcWeaponCharge(npc, weapon, aimErr, dt) {
 // Eksport dla testów (tests/pointDefenseTargeting.test.mjs); gra woła przez mózgi.
 export function processAutonomousWeapons(npc, dt) {
   if (!npc) return;
+  // Stan zasilania (src/game/shipPower.js — opcja NPC): broń, PD, hangary i system F tylko w PRACY.
+  if (!shipPowerOn(npc)) return;
   // Carrier: wypuszczanie eskadr z hangarów (early-return wewnątrz dla nie-carrierów).
   if (window.updateNpcHangars) window.updateNpcHangars(npc, dt);
   initAutonomousWeapons(npc);
@@ -1704,6 +1751,9 @@ export function processAutonomousWeapons(npc, dt) {
     if (hpRef && (hpRef.destroyed || !hpRef.mount || (weapon.id && hpRef.mount !== weapon.id))) {
       continue;
     }
+    // Zasilanie z siatki belek (src/game/hullPower.js): wieża w części kadłuba odciętej od komory reaktora nie strzela.
+    if (hpRef && npc.beamHull && !hullPointPowered(npc, hpRef, (Number(hpRef.x) || 0) * (npc.__hardpointScaleX || npc.__hardpointScale || 1),
+      (Number(hpRef.y) || 0) * (npc.__hardpointScaleY || npc.__hardpointScale || 1))) continue;
     const restAngle = (npc.angle || 0) + weapon.mountAngle;
     if (weapon.visualAngle === undefined) weapon.visualAngle = restAngle;
 
@@ -1718,7 +1768,7 @@ export function processAutonomousWeapons(npc, dt) {
       continue;
     }
 
-    const range = weapon.def.baseRange || 1000;
+    const range = weaponRangeFor(npc, weapon.def, weapon.def.baseRange || 1000);
     const rangeSq = range * range;
     weapon.scanCd = Math.max(0, (weapon.scanCd || 0) - dt);
     let bestTarget = weapon.cachedTarget || null;

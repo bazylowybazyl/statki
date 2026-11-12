@@ -55,6 +55,9 @@ export function createNeaFlyby3D({ core, getBelt, getFlyby }) {
       if (!rock || !rock.alive || !belt || !belt.active || !ensure()) { hide(); return; }
       const origin = ctx.origin;
       group.position.set(origin.x, origin.y, 0);
+      // Core3D liczy macierze sceny RAZ na klatkę, PRZED krokami Core3D.fx (`_syncSceneMatrices`) — bez odświeżenia klatka
+      // przeskoku początku pul rysowała skałę (dane już względem nowego początku) ze starą macierzą grupy: obok
+      group.updateMatrixWorld();
       set.setOrigin(origin.x, -origin.y);
       const v = belt._view;
       frame.cam.zoom = Math.max(1e-5, Number(v?.zoom) || 1);

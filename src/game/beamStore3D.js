@@ -13,7 +13,7 @@
 // liczby co zwykłe pola obiektów JS, więc symulacja jest bit w bit jak dawniej.
 // heat / heatStamp: żar blachy (szczyt 0–1 i czas w sekundach zegara renderera) —
 // tylko do rysowania, fizyka ich nie czyta.
-// temp: temperatura węzła z broni cieplnej (beamPhysicalWeapons3D: 1 = mięknie, 2 = topnienie) —
+// temp: temperatura węzła z broni cieplnej (1 = mięknie, 2 = topnienie) —
 // solver jej nie czyta; osłabienie belek liczy moduł broni wprost na `brk` / `stiffness`.
 // patch: ŁATA polowa (1 = komórka odbudowana przez rój dronów naprawczych z materiału z ładowni — src/game/repairRig.js):
 // słabsza (sufit HP węzła × łata), rysuje się podkładem ze spawami (beamHullSkin.js → hexShips3D.tsl.js) aż do remontu

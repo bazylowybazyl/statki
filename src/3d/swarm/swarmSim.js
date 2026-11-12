@@ -8,12 +8,14 @@
 // w rekordzie zadania), licznik kolumny = kontenery w niej (zamki i kolejność operacji).
 // Lustro CPU maszyny stanów (bez unikania): src/game/swarm/swarmExecCpu.js.
 //
-// KROK (stały dt, jedno renderer.compute(lista) na klatkę z kilkoma krokami):
-//   kClear — zerowanie liczników siatki (i statystyk na początku klatki),
-//   kBin — drony do komórek siatki mieszającej xy (atomicAdd, komórka ≤ GRID_K),
+// KROK (stały dt, jedno renderer.compute(lista) na klatkę z kilkoma krokami; 3 dispatche na krok):
+//   kBin — zerowanie statystyk kroku i drony do komórek siatki mieszającej xy (atomicAdd, komórka ≤ GRID_K),
 //   kSteer — maszyna stanów, nawigacja i UNIKANIE (czyta pozycje i prędkości sąsiadów z kroku
-//            poprzedniego — piszą je dopiero w kIntegrate, więc bez wyścigu), zamki kolumn,
-//   kIntegrate — całkowanie, stan widoczny dla sąsiadów (NBR), niesiony kontener, status.
+//            poprzedniego — piszą je dopiero w kIntegrate, więc bez wyścigu), zamki kolumn, przepełnienie siatki,
+//   kIntegrate — całkowanie, stan widoczny dla sąsiadów (NBR), niesiony kontener, status; zeruje siatkę na krok
+//            następny (kSteer już ją przeczytał — osobny dispatch), więc między krokami siatka jest pusta.
+// (E12 — dawny osobny kClear scalony: o dispatch mniej na krok; stan po kroku bit w bit jak z kClear —
+// scripts/webgpu/roj-stan-ab.mjs --krok.)
 //
 // UNIKANIE (wolny lot): ORCA (van den Berg i in., RVO2) na PROSTOKĄTACH obrysów z kursem — sąsiad,
 // którego pas wysokości (dron z kontenerem pod hakiem) nakłada się z moim teraz albo w horyzoncie
@@ -332,7 +334,6 @@ export class SwarmSim {
       hf: uniform(new THREE.Vector4(0, 0, 8, 1)),    // x0, y0, komórka, W
       hfH: uniform(1)
     };
-    this.kClear = this._buildClear();
     this.kBin = this._buildBin();
     this.kSteer = this._buildSteer();
     this.kIntegrate = this._buildIntegrate();
@@ -470,7 +471,7 @@ export class SwarmSim {
     if (n <= 0) return 0;
     this.acc -= n * dt;
     const list = [];
-    for (let k = 0; k < n; k++) list.push(this.kClear, this.kBin, this.kSteer, this.kIntegrate);
+    for (let k = 0; k < n; k++) list.push(this.kBin, this.kSteer, this.kIntegrate);
     this.U.time.value = this.time;
     renderer.compute(list);
     this.time += n * dt;
@@ -478,11 +479,15 @@ export class SwarmSim {
     return n;
   }
 
-  /** Odczyt stanu dronów (planista) i statystyk — co klatkę, z opóźnieniem 1–3 klatek. */
-  requestReadback(renderer) {
+  /**
+   * Odczyt stanu dronów (planista) i statystyk — co klatkę, z opóźnieniem 1–3 klatek. withStats = false — sam stan
+   * dronów (gra: statystyk nikt nie czyta, a każdy odczyt to osobne polecenie kolejki i mapAsync).
+   */
+  requestReadback(renderer, withStats = true) {
     if (!this.readback) this.readback = new SwarmReadback(renderer, this.status, this.maxDrones * 4, 3);
-    if (!this.statsReadback) this.statsReadback = new SwarmReadback(renderer, this.statsBuf, SWARM_STATS_SLOTS, 2);
     this.readback.request(this.count * 4);
+    if (!withStats) return;
+    if (!this.statsReadback) this.statsReadback = new SwarmReadback(renderer, this.statsBuf, SWARM_STATS_SLOTS, 2);
     this.statsReadback.request(SWARM_STATS_SLOTS);
     const raw = this.statsReadback.latest;
     // Bufor atomowy u32 → liczby (widok Float32 kopii — przepisz bity); przed pierwszym odczytem
@@ -508,21 +513,6 @@ export class SwarmSim {
   // Kernele
   // -------------------------------------------------------------------------
 
-  _buildClear() {
-    const cnt = this.gridCount;
-    const st = this.statsBuf;
-    return Fn(() => {
-      const i = instanceIndex;
-      atomicStore(cnt.element(i), uint(0));
-      // Statystyki chwilowe (każdy krok od nowa; odczyt widzi ostatni krok klatki).
-      If(i.lessThan(uint(SWARM_STATS_SLOTS)), () => {
-        const big = i.equal(uint(0)).or(i.equal(uint(SWARM_STATS.MIN_PAIR))).or(i.equal(uint(SWARM_STATS.MIN_PAIR_KIND)))
-          .or(i.equal(uint(SWARM_STATS.MIN_GAP)));
-        atomicStore(st.element(i), select(big, uint(0xffffffff), uint(0)));
-      });
-    })().compute(SWARM_GRID_CELLS).setName('swarmClear');
-  }
-
   _cellHash(cx, cy) {
     // Komórki dodatnie (przesunięcie 2^15) — mnożenia na u32 bez zależności od znaku.
     const ux = uint(cx.add(32768));
@@ -538,6 +528,13 @@ export class SwarmSim {
     const st = this.statsBuf;
     return Fn(() => {
       const i = instanceIndex;
+      // Statystyki chwilowe (każdy krok od nowa; odczyt widzi ostatni krok klatki) — kBin ich nie pisze (przepełnienie
+      // liczy kSteer), piszą kSteer i dalej; siatkę zeruje kIntegrate kroku poprzedniego.
+      If(i.lessThan(uint(SWARM_STATS_SLOTS)), () => {
+        const big = i.equal(uint(0)).or(i.equal(uint(SWARM_STATS.MIN_PAIR))).or(i.equal(uint(SWARM_STATS.MIN_PAIR_KIND)))
+          .or(i.equal(uint(SWARM_STATS.MIN_GAP)));
+        atomicStore(st.element(i), select(big, uint(0xffffffff), uint(0)));
+      });
       If(i.greaterThanEqual(U.nDrones), () => { Return(); });
       const base = i.mul(uint(DV));
       const ctl = D.element(base.add(uint(DR.CTL)));
@@ -550,10 +547,8 @@ export class SwarmSim {
       const k = atomicAdd(cnt.element(h), uint(1)).toVar();
       If(k.lessThan(uint(SWARM_GRID_K)), () => {
         items.element(h.mul(uint(SWARM_GRID_K)).add(k)).assign(i);
-      }).Else(() => {
-        atomicAdd(st.element(uint(SWARM_STATS.OVERFLOW)), uint(1));
       });
-    })().compute(this.maxDrones).setName('swarmBin');
+    })().compute(Math.max(this.maxDrones, SWARM_STATS_SLOTS)).setName('swarmBin');
   }
 
   _buildSteer() {
@@ -1353,6 +1348,19 @@ export class SwarmSim {
       D.element(base.add(uint(DR.AUX))).assign(nAux);
       If(code.equal(float(SWARM_STATUS_CODE.WAITING)), () => { atomicAdd(st.element(uint(SWARM_STATS.WAITING)), uint(1)); });
       If(nPhase.notEqual(P_(P.PARKED)), () => { atomicAdd(st.element(uint(SWARM_STATS.ACTIVE)), uint(1)); });
+      // Przepełnienie siatki (statystyka; kBin zeruje statystyki, więc nie może ich pisać): dron spoza gniazda,
+      // którego nie ma na liście swojej komórki (kBin: komórka pełna). POSE jak w kBin — kSteer jej nie pisze.
+      If(int(ctl.x).notEqual(int(P.PARKED)), () => {
+        const p0 = D.element(base.add(uint(DR.POSE)));
+        const h0 = this._cellHash(int(floor(p0.x.div(U.cell))), int(floor(p0.y.div(U.cell)))).toVar();
+        If(atomicLoad(cnt.element(h0)).greaterThan(uint(SWARM_GRID_K)), () => {
+          const found = uint(0).toVar();
+          Loop({ start: uint(0), end: uint(SWARM_GRID_K), type: 'uint', condition: '<', name: 'ovk' }, ({ ovk }) => {
+            If(items.element(h0.mul(uint(SWARM_GRID_K)).add(ovk)).equal(i), () => { found.assign(uint(1)); });
+          });
+          If(found.equal(uint(0)), () => { atomicAdd(st.element(uint(SWARM_STATS.OVERFLOW)), uint(1)); });
+        });
+      });
     })().compute(this.maxDrones).setName('swarmSteer');
   }
 
@@ -1363,8 +1371,12 @@ export class SwarmSim {
     const Un = this.units;
     const S = this.status;
     const CT = this.classTable;
+    const cnt = this.gridCount;
     return Fn(() => {
       const i = instanceIndex;
+      // Siatka mieszająca na krok następny: kSteer tego kroku już ją przeczytał (osobny dispatch) — zerowanie tutaj
+      // zamiast osobnego kernela (dispatch na całą siatkę).
+      If(i.lessThan(uint(SWARM_GRID_CELLS)), () => { atomicStore(cnt.element(i), uint(0)); });
       If(i.greaterThanEqual(U.nDrones), () => { Return(); });
       const dt = U.dt;
       const base = i.mul(uint(DV));
@@ -1412,6 +1424,6 @@ export class SwarmSim {
         });
       });
       S.element(i).assign(vec4(ctl.x, ctl.z, aux.x, motion.w));
-    })().compute(this.maxDrones).setName('swarmIntegrate');
+    })().compute(Math.max(this.maxDrones, SWARM_GRID_CELLS)).setName('swarmIntegrate');
   }
 }

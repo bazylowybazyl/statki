@@ -4,9 +4,9 @@
 //   node scripts/webgpu/wybuchy-demo.mjs [--przypadki capital@0.3,final@0.3,escort@0.3,capital@0.14,chain,kino]
 //        [--klatki 0.05,0.15,0.35,0.7,1.2,2,3.5,6] [--out .tmp/wybuchy-demo] [--rozmiar 1600x900] [--port 5294]
 //        [--tune klucz=wartość,…] (EXPLOSION_TUNE) [--look k=v,…] (obraz gazu) [--gaz k=v,…] (fizyka gazu) [--rez k=v,…] (reżyser gazu) [--ab klucz] (każdy kadr też z wyłączoną warstwą: *-bez-klucz.png)
-//        [--koszt] (koszt GPU: łańcuch doku w czasie rzeczywistym, z gazem i bez)
-// Przypadek: profil@zoom (wybuch w środku galerii, size z profilu demo), `chain` (łańcuch rozpadu doku), `threshold`
-// (progi punktów doku), `station` (rozpad stacji), `kino` (kamera 3D, okręt liniowy).
+//        [--koszt] (koszt GPU: łańcuch bazy w czasie rzeczywistym, z gazem i bez)
+// Przypadek: profil@zoom (wybuch w środku galerii, size z profilu demo), `chain` (łańcuch rozpadu bazy), `threshold`
+// (progi punktów bazy), `station` (rozpad stacji), `kino` (kamera 3D, okręt liniowy).
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo, writeJson } from './wspolne.mjs';

@@ -19,7 +19,7 @@ import { SHIPYARD_SPEC, shipyardPadTower } from './portShipyardLayout.js';
 
 export const PB_MAT = K7_MAT;
 export const PB_STRIDE = 20;
-export const PB_MAX_GROUPS = 48;
+export const PB_MAX_GROUPS = 64;   // baza piratów od 2026-11-12: 52 kawałki (24 wieżowce miasta osobno)
 export const PB_CHANNELS = 16;
 export const PB_MAX_LAMPS = 8;
 
@@ -37,7 +37,7 @@ export const PB_MAX_LAMPS = 8;
  *   launch  bieg świateł pasa (1,2 Hz, faza = pozycja) tylko, gdy kanał[parametr] ≥ 0,5
  *           (zejście okrętu z pochylni); inaczej przygaszone stałe
  *   alarm   obrotowy kogut (1,6 Hz, faza = przesunięcie) tylko, gdy kanał[parametr] ≥ 0,5; inaczej prawie
- *           zgaszony (suchy dok piratów: alarm stoczni)
+ *           zgaszony (baza piratów: alarm)
  */
 export const PB_FX = Object.freeze({ steady: 0, blink: 1, chase: 2, fill: 3, weld: 4, status: 5, queue: 6, show: 7, launch: 8, alarm: 9 });
 
@@ -1307,5 +1307,5 @@ export function buildHangarScene(l, style) {
 }
 
 
-// Pomocniki rejestratora dla innych budowli z tym samym shaderem (suchy dok piratów — pirateDryDockScene.js).
+// Pomocniki rejestratora dla innych budowli z tym samym shaderem (baza piratów — pirateBaseScene.js).
 export { plate as pbPlate, label as pbLabel, stripe as pbStripe, arrow as pbArrow, hazard as pbHazard, hatchFrame as pbHatchFrame, hash1 as pbHash1 };

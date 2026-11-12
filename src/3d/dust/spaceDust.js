@@ -25,6 +25,9 @@
 
 import { FxRandom } from '../fx/fxRandom.js';
 import { MAIN_EXHAUST_PALETTES } from '../../data/engineFx.js';
+import { rolledHalfExtents } from '../viewRoll.js';
+
+const _rollHalf = { hw: 0, hh: 0 };
 
 /** Nagłówek tablicy uniformów (vec4): widok, smugi, siatka świateł, barwa i widoczność, liczba stożków dysz. */
 export const DUST_HEADER_VEC4 = 5;
@@ -180,8 +183,9 @@ const _oct = { k0: 0, t: 0 };
  * Uniformy jednego renderu (widoku): `out` = Float32Array(dustUniformCount × 4). Stożki dysz pisze osobno
  * writeDustPlumes (przed albo po) — tu tylko ich liczba z `view.plumes`.
  * view = { camX, camY — kamera passa w SCENIE (double), zoomPx — px celu na j. świata, halfW, halfH — pół kadru
- *          [px], velX, velY — prędkość kamery w scenie [j/s] (wygładzona), gridX, gridY — kamera względem
- *          początku siatki świateł (double na CPU), time [s], vis — widoczność 0..1, plumes — liczba stożków }
+ *          [px], roll — obrót kadru [rad] (src/3d/viewRoll.js; brak = 0), velX, velY — prędkość kamery w scenie
+ *          [j/s] (wygładzona), gridX, gridY — kamera względem początku siatki świateł (double na CPU), time [s],
+ *          vis — widoczność 0..1, plumes — liczba stożków }
  */
 export function writeDustUniforms(tune, view, out) {
   const halfW = Math.max(1, finiteOr(view.halfW, 1));
@@ -198,8 +202,12 @@ export function writeDustUniforms(tune, view, out) {
   out[4] = Math.max(0, tune.streakMaxPx); out[5] = clamp01(tune.restAlpha); out[6] = tune.speedPx[0]; out[7] = Math.max(tune.speedPx[0] + 1e-3, tune.speedPx[1]);
   out[8] = finiteOr(view.gridX, 0); out[9] = finiteOr(view.gridY, 0); out[10] = zoomPx; out[11] = Math.max(0, Number(tune.lightGain) || 0);
   out[12] = c[0] * I; out[13] = c[1] * I; out[14] = c[2] * I; out[15] = tune.enabled === false ? 0 : clamp01(finiteOr(view.vis, 0));
-  out[16] = Math.max(0, Math.min(DUST_PLUME_CAP, finiteOr(view.plumes, 0) | 0)); out[17] = 0; out[18] = 0; out[19] = 0;
-  const viewMax = 2 * Math.max(halfW, halfH);
+  // G4: stożki dysz; obrót kadru (cos, sin roll — shader obraca wzór drobin do osi ekranu)
+  const roll = finiteOr(view.roll, 0);
+  out[16] = Math.max(0, Math.min(DUST_PLUME_CAP, finiteOr(view.plumes, 0) | 0)); out[17] = Math.cos(roll); out[18] = Math.sin(roll); out[19] = 0;
+  // kontener wzoru obejmuje obrócony kadr (pudło osi sceny wokół kadru — przy roll = 0 dawne pół kadru)
+  const rh = rolledHalfExtents(halfW, halfH, roll, _rollHalf);
+  const viewMax = 2 * Math.max(rh.hw, rh.hh);
   const base = DUST_HEADER_VEC4 * 4;
   for (let li = 0; li < DUST_MAX_LAYERS; li++) {
     const L = tune.layers[li];

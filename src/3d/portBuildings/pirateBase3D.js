@@ -8,7 +8,7 @@
 //   habitat   0..1 — zasilanie bębna i części technicznej (okna); disc — dysku mieszkalnego (gasną od środka)
 //   bays      0/1 — hangary dronów (światła startu); fuel, warehouse — zasilanie zbiorników i magazynu
 //   daylight, lampPower — lampy budowli
-// Zniszczenia jak w suchym doku: breakChunk(id, opts) — kawałek odpada (macierz grupy: dryf, obrót, zniknięcie),
+// Zniszczenia: breakChunk(id, opts) — kawałek odpada (macierz grupy: dryf, obrót, zniknięcie),
 // ramChunk, hideChunk, setChunkSkinned (kawałek rysuje skóra ciała świata), resetChunks. Losowość z haszu kawałka.
 import * as THREE from 'three';
 import { k7HeightToZ } from '../haloRing/haloPortK7Layout.js';

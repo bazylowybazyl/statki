@@ -168,7 +168,8 @@ export function sampleWarpArrival(a, t, out = {}) {
 
 // ── Rozpęd przylotu, odlot, wyjście gracza (demo „Nurt”, iteracja 3 — 2026-10-03) ──────────
 // User 2026-10-03: przylot i odlot „jak w Star Wars” — BEZ portalu (szczelina / tunel usunięte:
-// po wyjściu z niej okręt jeszcze kawałek leciał) i BEZ smugi („normalnie widoczny statek”).
+// po wyjściu z niej okręt jeszcze kawałek leciał) i BEZ smugi („normalnie widoczny statek”) — od 2026-10-30 obraz
+// przylotu i odlotu ma smugi i kadłub ze światła (src/3d/warp/warpSW.js, user: „ustaw domyślne”); osie poniżej bez zmian.
 // Okręt pojawia się daleko za celem, wpada z dużą prędkością i gwałtownie hamuje; odlot — kop
 // od rufy, rozpęd ∝ t³ i zniknięcie od dziobu w punkcie skoku. Wyjście Atlasa z warpa = ten sam
 // przylot (spójność): zwolnienie do prędkości wlotu, wlot, hamowanie (dema/warp-webgpu/scenes.js:
@@ -438,12 +439,14 @@ export function sampleWarpDeparture(d, t, out = {}) {
 /**
  * WYJŚCIE GRACZA Z WARPA = przylot jak u NPC (user 2026-10-03: spójność — Atlas też „hamuje”):
  *   ZWOLNIENIE `slow` s — prędkość spada z warpowej do prędkości wlotu (warpArrivalSpeed),
- *                rulon się rozwija, smugi gwiazd i ośrodka gasną;
- *   WLOT `coast` s — statek leci z prędkością wlotu i wysuwa się przed kamerę (`ahead` × pół
- *                kadru w stronę celu; kamera nigdy go nie wyprzedza, dogania w `settle` s);
+ *                smugi gwiazd gasną frontem od dziobu, ciała soczewki świata zanurzają się z nim;
+ *   WLOT `coast` s — statek leci z prędkością wlotu, bez wysunięcia przed kamerę (każdy skok ma cel albo punkt końca —
+ *                kadr przylotu K1, cameraRig.js; dawne wysunięcie swobodnego skoku `ahead` usunięte, DECYZJE-2 T2);
  *   HAMOWANIE — droga WARP_RUSH.brakeDist × L ze stałym opóźnieniem.
+ * `settle` — ile s po zatrzymaniu rampa wyjścia zostaje jeszcze w `warp.exitRamp` (zegar kamery po rampie, index.html:
+ * updateCameraWarpKick).
  */
-export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, ahead: 0.4, settle: 1.3, zoomTail: 0.9 });
+export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, settle: 1.3, zoomTail: 0.9 });
 
 /**
  * Rampa wyjścia (rozgrywka: prędkość statku gracza po wyjściu z warpa; efekt: oś wyjścia).
@@ -495,6 +498,94 @@ export function warpExitRampDistance(v0, hullLength, vEnd = 0) {
   return E.slow * (vStart + vArr) * 0.5 + E.coast * vArr + brake * (vArr + vOut) * 0.5;
 }
 
+/** Czas rampy wyjścia [s] od prędkości v0 do końca hamowania (= createWarpExitRamp(…).tHalt) — plan trasy skoku. */
+export function warpExitRampTime(v0, hullLength, vEnd = 0) {
+  const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
+  const vStart = Math.max(0, Number(v0) || 0);
+  const vArr = Math.max(1, Math.min(warpArrivalSpeed(L), vStart || 1));
+  const vOut = Math.max(0, Math.min(vArr, Number(vEnd) || 0));
+  return WARP_EXIT.slow + WARP_EXIT.coast + warpBrakeTime(L, vArr) * (1 - vOut / vArr);
+}
+
+/**
+ * SKOK AWARYJNY (DECYZJE-2 T1, krok 3 — CapsLock / 9 bez kursu w ±5° i bez celu w stożku ±20°): stała długość w dziób,
+ * bez dodatkowej ceny. Planista skraca skok przed brzegiem studni grawitacji (z zapasem `wellMargin` jak TRAVEL TO —
+ * travelNav.js: TRAVEL_TUNE.wellMargin) i przed brzegiem świata (`edgeMargin`), więc skok zawsze kończy się rampą
+ * wyjścia (nigdy hamowaniem grawitacyjnym bez rampy ani na ścianie świata). `wells` = studnie, które HAMUJĄ skok w locie
+ * (gra: słońce i baza piratów — index.html: warpEmergencyWells); studnie planet i małych ciał skok przelatuje (BRIEF-studnie
+ * pkt 2–3), więc gra ich nie podaje — planeta na kursie jest celem w stożku. Studnia, w której statek stoi (port),
+ * nie skraca (wylot z niej) — chyba że dziób celuje w jej jądro (`rIn`: strefy orbit ciała — ring, planeta): wtedy
+ * koniec przed jądrem, a ze środka jądra w głąb — odmowa. Skok krótszy niż `minDist` (TRAVEL_TUNE.minWarp) — odmowa
+ * (out.ok false, out.cut — 'well' | 'edge'): studnia albo brzeg tuż przed dziobem.
+ */
+export const WARP_EMERGENCY = Object.freeze({
+  dist: 400000,       // [j.] długość skoku awaryjnego (Mk I / II / III: ~8,0 / 7,0 / 7,0 s — analiza „warp z miejsca do miejsca”)
+  minDist: 40000,     // [j.] = TRAVEL_TUNE.minWarp — najkrótszy skok
+  wellMargin: 1100,   // [j.] = TRAVEL_TUNE.wellMargin — koniec przed brzegiem studni
+  edgeMargin: 20000   // [j.] koniec przed brzegiem świata
+});
+
+/**
+ * Plan skoku awaryjnego z `pos` w kierunku (dirX, dirY). wells: [{ x, y, r, rIn? }] (studnie — r bez zapasu; rIn —
+ * jądro studni startu: strefa orbit ciała, opcjonalnie),
+ * bounds: { w, h } świata (0…w, 0…h) albo null. Wynik w `out`: { ok, x, y, dist, cut: 'none' | 'well' | 'edge',
+ * well (studnia, która skróciła, albo null) } — (x, y) = koniec skoku (koniec ślizgu wyjścia).
+ */
+export function planWarpEmergency(pos, dirX, dirY, wells, bounds, tune = WARP_EMERGENCY, out = {}) {
+  const dl = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+  const ux = dirX / dl;
+  const uy = dirY / dl;
+  const px = Number(pos?.x) || 0;
+  const py = Number(pos?.y) || 0;
+  let t = Math.max(0, Number(tune.dist) || 0);
+  let cut = 'none';
+  let well = null;
+  const n = Array.isArray(wells) ? wells.length : 0;
+  const margin = Number(tune.wellMargin) || 0;
+  for (let i = 0; i < n; i++) {
+    const w = wells[i];
+    if (!w) continue;
+    const R = (Number(w.r) || 0) + margin;
+    if (!(R > 0)) continue;
+    const fx = px - w.x;
+    const fy = py - w.y;
+    const c = fx * fx + fy * fy - R * R;
+    const b = fx * ux + fy * uy;
+    if (c <= 0) {
+      // Start w tej studni — wylot jej nie skraca, ale JĄDRO studni (`rIn` — strefy orbit źródła; recenzja T, ust. 8)
+      // przed dziobem tak: skok w głąb przechodziłby przez źródło i hamował grawitacyjnie (bez rampy) po drugiej stronie
+      // (index.html: warpLeavingWell — tylko skok oddalający się od źródła nie hamuje na jego pasie). W grze dotyczy to już
+      // tylko studni hamujących (baza piratów; słońce — start w jego strefie zablokowany, zostaje dla narzędzi).
+      const Ri = (Number(w.rIn) || 0) > 0 ? Number(w.rIn) + margin : 0;
+      if (!(Ri > 0) || !(b < 0)) continue;
+      const ci = fx * fx + fy * fy - Ri * Ri;
+      if (ci <= 0) { t = 0; cut = 'well'; well = w; continue; }   // statek w jądrze (port przy ringu), dziób w głąb
+      const di = b * b - ci;
+      if (di < 0) continue;
+      const hitIn = -b - Math.sqrt(di);
+      if (hitIn < t) { t = Math.max(0, hitIn); cut = 'well'; well = w; }
+      continue;
+    }
+    const disc = b * b - c;
+    if (disc < 0) continue;
+    const hit = -b - Math.sqrt(disc);           // pierwsze wejście w okrąg (z zapasem)
+    if (hit > 0 && hit < t) { t = hit; cut = 'well'; well = w; }
+  }
+  if (bounds && Number(bounds.w) > 0 && Number(bounds.h) > 0) {
+    const m = Math.max(0, Number(tune.edgeMargin) || 0);
+    const lim = (p, u, max) => (u > 1e-9 ? (max - m - p) / u : (u < -1e-9 ? (m - p) / u : Infinity));
+    const te = Math.min(lim(px, ux, Number(bounds.w)), lim(py, uy, Number(bounds.h)));
+    if (te < t) { t = Math.max(0, te); cut = 'edge'; well = null; }
+  }
+  out.dist = t;
+  out.x = px + ux * t;
+  out.y = py + uy * t;
+  out.cut = cut;
+  out.well = well;
+  out.ok = t >= (Number(tune.minDist) || 0);
+  return out;
+}
+
 /**
  * Prędkość na rampie wyjścia w chwili `age` [s od wyjścia]: out.speed [j/s], out.phase
  * ('slow' | 'coast' | 'brake' | 'done'), out.tb (czas od początku hamowania). Po rampie — vEnd.
@@ -525,75 +616,27 @@ export function sampleWarpExitRamp(r, age, out = {}) {
 }
 
 /**
- * RULON (pomysł usera 2026-10-03, src/3d/warp/rulon.js): ładowanie ZWIJA rzeczywistość wokół
- * osi skoku i zawija ją do statku (lejek) — jedna faza; skok dociąga miękkim nabrzmieniem (> 1), wyjście
- * rozwija w `exitDur` s. state: 'charging' | 'active' | 'exit' | inne (0); kickAge — od skoku,
- * exitAge — od wyjścia. Lejek (field) = min(1, zwinięcie).
- * PŁYNNOŚĆ (user 2026-10-08: „upłynnij wejście i wyjście z warpa — zawijanie i rozwijanie”): zwijanie =
- * smoothstep po CAŁYM ładowaniu (dawniej smoothstep^1,4 między 5 a 95% — szczyt ~2,4/s przy końcu), nabrzmienie
- * przy skoku narasta gaussowsko (bez skoku nachylenia; dawniej +16% w 0,03 s — szarpnięcie 5/s), rozwijanie =
- * smoothstep (rusza od zera; dawniej easeOut³ — od razu 4,3/s) przez zwolnienie i wlot rampy (player.js).
+ * JEDEN WARP (sprzątanie S1 nowego warpa „podniesiony świat”, 2026-10-26; DECYZJE S1, projekt D § 6 „C1”): wybór stylu
+ * skoku usunięty — dawne style 'rulon' (zwinięcie świata w walec i lejek), 'akcent' (akcenty soczewki na przejściach)
+ * i 'soczewka' (soczewka bańki przez cały skok) zniknęły z efektu gracza (src/3d/warp/player.js) i z rigu kamery; adres
+ * `?warp=…` / `?rulon=…` niczego nie zmienia. Warp gracza = „pęd” + soczewka świata (worldLens.js). Hak wierzchołków
+ * rulonu (rulon.js, installRulonGlobal) zostaje do osobnej decyzji (C2) — nikt go już nie zwija.
+ * AGENT: API zgodne dla dawnych importów (index.html: `warpRulonEnabled(location.search)` → `w.rulon` riga kamery):
+ * `warpStyle` zawsze 'ped', `warpRulonEnabled` zawsze false, `setWarpStyle` nic nie ustawia. Nowy kod ich nie woła.
  */
-export const WARP_RULON = Object.freeze({
-  kickSwell: 0.1,   // nabrzmienie przy skoku (× zwinięcia)
-  kickRise: 0.1,    // [s] narastanie (1 − e^(−(t/τ)²))
-  kickFall: 0.5     // [s] gaśnięcie
-});
-
-export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EXIT.slow + WARP_EXIT.coast) {
-  if (state === 'charging') {
-    const c = clamp01(charge);
-    return c * c * (3 - 2 * c);
-  }
-  if (state !== 'active' && state !== 'exit') return 0;
-  const k = Number(kickAge);
-  const R = WARP_RULON;
-  const q = k / R.kickRise;
-  const swell = k > 0 ? (1 - Math.exp(-q * q)) * Math.exp(-k / R.kickFall) : 0;
-  let b = 1 + R.kickSwell * swell;
-  if (state === 'exit') {
-    const u = clamp01((Number(exitAge) || 0) / Math.max(0.05, exitDur));
-    b *= 1 - u * u * (3 - 2 * u);
-  }
-  return b;
+export const WARP_STYLES = Object.freeze(['ped']);
+export const WARP_STYLE_DEFAULT = 'ped';
+/** Zgodność: styl skoku jest jeden — zwraca null (nic nie ustawia). */
+export function setWarpStyle(_style) {
+  return null;
 }
-
-/**
- * STYL WARPA (user 2026-10-19: „przekombinowałem z zawijanym efektem warp — dodaj przełącznik rulon 0”; porównanie
- * w demie „Pęd”, dema/warp-ped.html):
- *   'rulon'    — zwinięcie świata w walec i lejek (rulon.js) — dziś domyślny w grze, do decyzji usera;
- *   'ped'      — sama prędkość: bez gięcia świata (smugi gwiazd, ośrodek, soczewka świata, kop kamery);
- *   'akcent'   — prędkość + krótkie akcenty soczewki na przejściach (naciąg przed dziobem w ładowaniu, fala
- *                w punkcie skoku, sprężenie przestrzeni przed dziobem przy wyjściu);
- *   'soczewka' — prędkość + soczewka bańki wokół statku przez cały skok (kadłub nietknięty).
- * Adres strony: `?warp=ped|akcent|soczewka|rulon`; `?rulon=0` (off / false / nie) = 'ped'. search — `location.search`
- * strony (render: RenderWorld.pageSearch — także w workerze); wynik pamiętany dla ostatniego napisu. Demo ustawia
- * styl wprost (`setWarpStyle`, null — wraca do adresu). Bez rulonu kamera trzyma zwykłe wyprzedzenie (cameraRig.js).
- */
-export const WARP_STYLES = Object.freeze(['rulon', 'ped', 'akcent', 'soczewka']);
-const RULON_OFF_RE = /[?&]rulon=(?:0|off|false|nie)(?:&|$)/i;
-const WARP_STYLE_RE = /[?&]warp=([a-z]+)(?:&|$)/i;
-let _styleSet = null;
-let _styleSearch = null;
-let _styleFromSearch = 'rulon';
-export function setWarpStyle(style) {
-  _styleSet = WARP_STYLES.includes(style) ? style : null;
-  return _styleSet;
+/** Zgodność: styl skoku jest jeden ('ped'), adres strony go nie zmienia. */
+export function warpStyle(_search) {
+  return WARP_STYLE_DEFAULT;
 }
-export function warpStyle(search) {
-  if (_styleSet) return _styleSet;
-  const s = typeof search === 'string' ? search : '';
-  if (s !== _styleSearch) {
-    _styleSearch = s;
-    const m = WARP_STYLE_RE.exec(s);
-    const v = m ? m[1].toLowerCase() : '';
-    _styleFromSearch = WARP_STYLES.includes(v) ? v : (RULON_OFF_RE.test(s) ? 'ped' : 'rulon');
-  }
-  return _styleFromSearch;
-}
-/** Czy skok zwija świat w rulon (styl 'rulon'). */
-export function warpRulonEnabled(search) {
-  return warpStyle(search) === 'rulon';
+/** Zgodność: skok nie zwija świata w rulon (styl 'rulon' usunięty) — zawsze false. */
+export function warpRulonEnabled(_search) {
+  return false;
 }
 
 
@@ -644,7 +687,14 @@ export const WARP_FLYBY_DEFAULTS = Object.freeze({
   minSize: 0.05,    // ciało widziane z kursu mniejsze niż to — bez zwolnienia
   fullSize: 0.42,   // … większe niż to — pełne zwolnienie
   width: 2.2,       // półszerokość pasa zwolnienia × (odległość środka ciała od kursu + promień)
-  minWidth: 60000   // … nie węższa niż ta [j.]
+  minWidth: 60000,  // … nie węższa niż ta [j.]
+  // … i nie węższa niż UKŁAD KSIĘŻYCÓW ciała × tyle (`reach` ciała — najdalsza orbita księżyca + 12 tys. j.; BRIEF-studnie,
+  // zespół B 2026-10-27): przelot centralny ma pas 2,2 · r (Jowisz 106 tys. j.), a księżyce sięgają 250 tys. j. — mijane
+  // tuż za studnią w pełnej prędkości wylatywały z kadru soczewki ponad P4 (symulator S10, Mk II: Europa 65 px/kl.); przy
+  // brzegu układu zwolnienie ~0,7. Przelot bokiem (2,2 · (l + r) ≥ 0,9 · zasięg — Jowisz od ~59 tys. j. z boku) bez zmian.
+  // 0,9, nie 1: przy 1 pas obejmował jeszcze przelot S8 (Jowisz 69 tys. j. z boku) i przesuwał chwile wyjścia (Mk III:
+  // mignięcie 4 px przy zanurzeniu — docs/webgpu/WARP-SOCZEWKA.md § „Studnie grawitacyjne”). 0 — bez (A/B)
+  reachWidth: 0.9
 });
 
 /**
@@ -658,23 +708,50 @@ export const WARP_FLYBY_DEFAULTS = Object.freeze({
  * gracza (index.html) i w planie prędkości (planWarpCruise); widok — soczewka świata
  * (src/3d/warp/worldLens.js, skala z NOMINALNEJ prędkości — nie przybliża się przy zwolnieniu).
  * along — ciało przed statkiem wzdłuż kursu (ujemne: za rufą), lateral —
- * odległość środka ciała od kursu, radius — promień ciała (jednostki świata).
+ * odległość środka ciała od kursu, radius — promień ciała (jednostki świata), reach — zasięg układu księżyców ciała
+ * [j.] (pas nie węższy niż reachWidth · reach; 0 — bez).
  */
-export function warpFlybySlowdown(along, lateral, radius, p = WARP_FLYBY_DEFAULTS) {
+export function warpFlybySlowdown(along, lateral, radius, p = WARP_FLYBY_DEFAULTS, reach = 0) {
   const r = Math.max(1, Number(radius) || 0);
   const lat = Math.abs(Number(lateral) || 0);
   const clear = Math.max(0, lat - r);
   const size = r / (r + clear);
   const depth = clamp01(p.depth) * smooth((size - p.minSize) / Math.max(1e-6, p.fullSize - p.minSize));
   if (!(depth > 0)) return 1;
-  const w = Math.max(Number(p.minWidth) || 1, (Number(p.width) || 0) * (lat + r));
+  const rw = Number(p.reachWidth);
+  const rr = Number(reach);
+  const w = Math.max(Number(p.minWidth) || 1, (Number(p.width) || 0) * (lat + r), rw > 0 && rr > 0 ? rw * rr : 0);
   const g = (Number(along) || 0) / w;
   return 1 - depth * Math.exp(-g * g);
 }
 
 /**
+ * PODŁOGA ŁĄCZNEGO ZWOLNIENIA SKOKU (BRIEF-studnie pkt 4, decyzja użytkownika 2026-10-26: „samo przelatywanie w warpie [nad
+ * planetą] powinno jak najbardziej być”): skok przelatuje przez studnię planety (strefa × 0,3) nad samą tarczą (przelot
+ * × 0,15) — bez podłogi łącznie × 0,045 (Mk II w skoku awaryjnym 2,7 tys. j/s: tarcza wisi pod statkiem kilkanaście
+ * sekund, a plan prędkości nadrabia to szybszym lotem gdzie indziej). Podłoga = najgłębszy sam przelot (1 − depth): nad
+ * planetą statek leci tak, jak przy najbliższym bocznym przelocie (tempo W0 tej warstwy jest zmierzone), a przy osi kursu
+ * obraz soczewki zostaje w P4 nawet przy suficie prędkości przelotowej (granica P4 ~0,39 — docs/webgpu/WARP-SOCZEWKA.md
+ * § „Studnie grawitacyjne — przelot nad planetą”). Strefa sama (bez ciała) i strefa pasa zostają jak były.
+ */
+export const WARP_SLOW_FLOOR = 0.15;
+
+/**
+ * Mnożnik prędkości skoku: strefa (`zoneMul` — pas × 0,8, studnie × 0,3) × zwolnienie przy ciałach (`flyby` —
+ * warpFlybyFactor), nie niżej niż `floor` (WARP_SLOW_FLOOR) i nie wyżej z podłogi niż sama strefa (strefa wolniejsza niż
+ * podłoga zostaje sobą). JEDNA funkcja dla fizyki skoku gracza (index.html, physicsStep), planu prędkości
+ * (planWarpCruise / warpLegTimeline) i symulatora soczewki (scripts/webgpu/warp-soczewka-sym.mjs).
+ */
+export function warpSpeedFactor(zoneMul, flyby, floor = WARP_SLOW_FLOOR) {
+  const z = Number.isFinite(zoneMul) && zoneMul >= 0 ? zoneMul : 1;
+  const f = Number.isFinite(flyby) && flyby >= 0 ? flyby : 1;
+  const fl = Math.max(0, Number(floor) || 0);
+  return Math.max(Math.min(fl, z), z * f);
+}
+
+/**
  * Zwolnienie skoku od wszystkich ciał w punkcie (x, y) przy kursie (dirX, dirY) — iloczyn
- * warpFlybySlowdown. bodies: [{ x, y, r }] (świat gry), n — ile pierwszych brać.
+ * warpFlybySlowdown. bodies: [{ x, y, r, reach? }] (świat gry; reach — zasięg układu księżyców), n — ile pierwszych brać.
  */
 export function warpFlybyFactor(x, y, dirX, dirY, bodies, n = bodies ? bodies.length : 0, p = WARP_FLYBY_DEFAULTS) {
   let f = 1;
@@ -683,9 +760,23 @@ export function warpFlybyFactor(x, y, dirX, dirY, bodies, n = bodies ? bodies.le
     if (!b) continue;
     const ox = b.x - x;
     const oy = b.y - y;
-    f *= warpFlybySlowdown(ox * dirX + oy * dirY, oy * dirX - ox * dirY, b.r, p);
+    f *= warpFlybySlowdown(ox * dirX + oy * dirY, oy * dirX - ox * dirY, b.r, p, b.reach);
   }
   return f;
+}
+
+/**
+ * Zasięg układu księżyców ciała [j.] dla pasa zwolnienia skoku (warpFlybySlowdown: reach): najdalsza orbita księżyca
+ * (`moons` — lista { orbitRadius }, np. systemMap.js: moonsOf(id)) + `margin`; bez księżyców — 0.
+ */
+export function warpMoonReach(moons, margin = 12000) {
+  let reach = 0;
+  if (!Array.isArray(moons)) return 0;
+  for (let i = 0; i < moons.length; i++) {
+    const o = Number(moons[i] && moons[i].orbitRadius) || 0;
+    if (o > 0 && o + margin > reach) reach = o + margin;
+  }
+  return reach;
 }
 
 /**
@@ -709,6 +800,17 @@ export const WARP_TRIP = Object.freeze({
   vMax: 600000
 });
 
+/**
+ * Strojenie czasu skoku dla napędu o prędkości `speed` [j/s] (napędy warp Mk I / II / III — src/data/driveModes.js,
+ * decyzja użytkownika 2026-10-22): demo „Nurt” = 260 tys. j/s; wolniejszy napęd — dłuższa podróż (człon drogi
+ * i sufit × 260 tys. / speed), sufit prędkości przelotowej w tej samej proporcji.
+ */
+export function warpTripTuneFor(speed, tune = WARP_TRIP) {
+  const k = 260000 / Math.max(1000, Number(speed) || 260000);
+  if (Math.abs(k - 1) < 1e-9) return tune;
+  return Object.freeze({ ...tune, perUnit: tune.perUnit * k, max: tune.max * k, vMax: tune.vMax / k });
+}
+
 /** Czas skoku z celem [s, od skoku do zatrzymania] dla odcinka `dist` [j.]. */
 export function warpTripTime(dist, tune = WARP_TRIP) {
   const d = Math.max(0, Number(dist) || 0);
@@ -723,6 +825,26 @@ export function warpTripTime(dist, tune = WARP_TRIP) {
  * wyjścia). Zwraca czas [s] (albo `limit`, gdy skok trwałby dłużej).
  */
 export function simulateWarpLeg(vc, o, limit = 60) {
+  return _simulateWarpLeg(vc, o, limit, null, null, null);
+}
+
+/**
+ * OŚ CZASU skoku z planu (plan trasy przy kopie — DECYZJE-2 T2): ten sam przebieg co simulateWarpLeg z prędkością
+ * przelotową `vc`; `marks` — odległości wzdłuż kursu od punktu skoku [j.], `markT` (tablica tej samej długości) dostaje
+ * czas [s od skoku], w którym statek je mija (NaN — nie dolatuje przed wyjściem). Wynik w `out`: { exitT — początek
+ * wyjścia [s], exitV — prędkość w tej chwili [j/s], exitS — droga do niej [j.] }.
+ */
+export function warpLegTimeline(vc, o, marks, markT, out = {}, limit = 60) {
+  return _simulateWarpLeg(vc, o, limit, marks, markT, out);
+}
+
+function _simulateWarpLeg(vc, o, limit, marks, markT, res) {
+  const nm = marks && markT ? Math.min(marks.length, markT.length) : 0;
+  for (let i = 0; i < nm; i++) markT[i] = marks[i] <= 0 ? 0 : NaN;   // za punktem skoku — od razu
+  const done = (t, v, s) => {
+    if (res) { res.exitT = t; res.exitV = v; res.exitS = s; }
+    return t;
+  };
   const dist = Math.max(0, Number(o.dist) || 0);
   const L = Math.max(40, Number(o.hullLength) || WARP_REF_HULL_LENGTH);
   const dt = Number(o.dt) > 0 ? o.dt : 1 / 60;
@@ -731,6 +853,7 @@ export function simulateWarpLeg(vc, o, limit = 60) {
   const bodies = Array.isArray(o.bodies) ? o.bodies : [];
   const zone = o.zone || null;
   const flyP = o.flyby || WARP_FLYBY_DEFAULTS;
+  const floor = Number.isFinite(o.floor) ? o.floor : WARP_SLOW_FLOOR;   // podłoga łącznego zwolnienia (warpSpeedFactor)
   const v0 = Math.max(0, Number(o.v0) || 0);
   let s = 0;
   let v = v0;
@@ -738,29 +861,36 @@ export function simulateWarpLeg(vc, o, limit = 60) {
   let prog = 0;
   const k = Math.min(1, lag * dt);
   while (t < limit) {
-    if (dist - s <= warpExitRampDistance(v, L)) return t;
+    if (dist - s <= warpExitRampDistance(v, L)) return done(t, v, s);
     prog = Math.min(1, prog + dt / entry);
     const ease = prog * prog * (3 - 2 * prog);
-    let f = zone ? zone(s) : 1;
+    let fb = 1;
     for (let i = 0; i < bodies.length; i++) {
       const b = bodies[i];
-      f *= warpFlybySlowdown(b.along - s, b.lateral, b.r, flyP);
+      fb *= warpFlybySlowdown(b.along - s, b.lateral, b.r, flyP, b.reach);
     }
-    const vmax = vc * f;
+    // strefa × przelot z podłogą — ta sama funkcja co fizyka skoku w grze (index.html)
+    const vmax = vc * warpSpeedFactor(zone ? zone(s) : 1, fb, floor);
     const vs = Math.min(v0, vmax);
     const target = vs + (vmax - vs) * ease;
     v += (target - v) * k;
+    const s0 = s;
     s += v * dt;
     t += dt;
+    for (let i = 0; i < nm; i++) {
+      // znacznik mijany w tym kroku (s0 < m ≤ s): czas liniowo w kroku
+      if (markT[i] !== markT[i] && marks[i] <= s) markT[i] = t - dt + dt * (marks[i] - s0) / Math.max(1e-9, s - s0);
+    }
   }
-  return limit;
+  return done(limit, v, s);
 }
 
 /**
  * Prędkość przelotowa skoku z celem: od skoku do początku wyjścia mija warpTripTime(dist) − decel.
  * o = { dist (wzdłuż kursu do końca odcinka), v0 (prędkość przy skoku), hullLength,
- *   bodies: [{ along, lateral, r }] (ciała względem punktu skoku — zwolnienie), zone: (s) → mnożnik
- *   strefy w odległości s od punktu skoku (opcjonalnie), entry, lag, dt }.
+ *   bodies: [{ along, lateral, r, reach? }] (ciała względem punktu skoku — zwolnienie; reach — zasięg księżyców), zone: (s) → mnożnik
+ *   strefy w odległości s od punktu skoku (opcjonalnie), floor (podłoga łącznego zwolnienia — warpSpeedFactor, domyślnie
+ *   WARP_SLOW_FLOOR), entry, lag, dt }.
  * Zwraca { speed, time (plan od skoku do wyjścia), target (czas docelowy) }.
  */
 export function planWarpCruise(o, tune = WARP_TRIP) {

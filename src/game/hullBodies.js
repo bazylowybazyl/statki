@@ -3,7 +3,7 @@
  *
  * Zastępuje heksowy destruktor (destructor.js) dla statków, NPC i ich wraków.
  * Kadłub powstaje z tego samego obrazu co dawniej initHexBody (sprite w rozmiarze
- * renderu), komórka = 15 px jak w demie destruktor2d.html. Rozgrywka zostaje w 2D gry:
+ * renderu), komórka = 15 px jak w demie dema/destruktor2d-webgpu.html. Rozgrywka zostaje w 2D gry:
  *  - gra całkuje ruch encji (x, y, angle, vx, vy, angVel) jak dotąd,
  *  - przed krokiem silnika ciało dostaje pozę i prędkość encji (syncIn),
  *  - silnik liczy kontakty, zgniot, rozpady i zwraca poprawkę ruchu (syncOut).
@@ -51,13 +51,13 @@ export const HULL_BODY_CONFIG = {
 
   // --- masa zderzeń ---
   // Ciało w silniku ma masę z POWIERZCHNI kadłuba przy jednej gęstości dla wszystkich (jak
-  // destruktor2d.html: Atlas 1800×806 px = 672 400 j.² = 800 tys.). Zderzenie kadłubów zależy
+  // demo destruktora 2D: Atlas 1800×806 px = 672 400 j.² = 800 tys.). Zderzenie kadłubów zależy
   // tylko od stosunków mas, a szablony gry dawały kapitałom 4–5× mniej masy na j.² niż fregatom
   // i niszczycielom (mały okręt „odbijał” Atlasa jak ciężki). Masa ENCJI zostaje masą gry
   // (ciąg dysz, separacja AI, holowanie, asteroidy) w swojej skali.
   massPerArea: 1.19,
 
-  // --- silnik (strojenie z dema destruktor2d.html) ---
+  // --- silnik (strojenie z dema destruktora 2D) ---
   crushStrength: 300000,
   // Prawo kontaktu v2 (destructorBeams3D createBeamConfig — contactV2; audyt docs/AUDYT-destruktor-3d-2026-10-14.md).
   contactV2: true,
@@ -137,6 +137,11 @@ export const HULL_BODY_CONFIG = {
   cutEdgeSpread: 0.35,
   cutEdgeCells: 2.5,
   cutEdgeWindow: 0.5,       // [s] czasu symulacji
+  // Najmniej, co odłam przy brzegu rzazu dostaje (kierunek i zwrot z pędu brzegu): duża połowa kadłuba (pancernik,
+  // lotniskowiec) z samego pędu brzegu odjeżdżała od reszty 10–20 j/s i obracała się 1–3°/s — wyglądała na
+  // przyspawaną. Małe odłamy mają więcej z pędu brzegu (próg ich nie zmienia).
+  cutEdgeMinDv: 60,         // [j/s] zmiana prędkości odłamu względem rodzica
+  cutEdgeMinDw: 0.12,       // [rad/s] ≈ 7°/s obrotu własnego
   probeReachCells: 0.8,     // sonda punktowa (podparcie gniazd broni i rdzeni)
 
   // --- zapytania powierzchni (tylko odczyt: surfaceNormal, traceThrough, spriteUvAt) ---
@@ -289,6 +294,9 @@ const _qEnd = { x: 0, y: 0 };
 // Odrost: pozycja nowego węzła (układ ciała) i lista węzłów do odświeżenia mocowań.
 const _regrowPos = { x: 0, y: 0, z: 0 };
 const _regrowTouched = [];
+// Komórki związane (bindCell / boundCell): punkt w układzie ciała, wynik domyślny.
+const _bindLocal = { x: 0, y: 0 };
+const _boundCell = { entity: null, x: 0, y: 0, dx: 0, dy: 0, vx: 0, vy: 0, angle: 0 };
 
 // Klucz mapy ran (18-C): kolejny numer kadłuba, dziedziczony przez wraki i odłamy.
 let _nextDmgKey = 0;
@@ -900,6 +908,27 @@ export const HullBodies = {
   },
 
   /**
+   * Rozpad POZA krokiem (shatter, detonacja rdzenia): ciało dzieli się na wyspy od razu (encje wraków z haka onWreck),
+   * a encja kadłuba dostaje pozę, prędkość, pivot i promień z ciała jak po kroku. Przebudowa ciała po rozpadzie
+   * przesuwa jego początek do nowego środka masy (_rebuildBody); bez syncOut encja wraku (kotwica = środek masy)
+   * zostawała w starym środku masy z nieaktualnym pivotem, a następny syncIn cofał ciało o to przesunięcie.
+   */
+  splitNow(entity) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity) return;
+    const body = hull.body;
+    if (!body || body.dead) return;
+    const planar = !hull.solid3D;
+    if (planar) syncIn(hull);
+    const queued = D.splitQueue;
+    D.splitQueue = [body];
+    body.structureDirty = true;
+    D.processSplits([body]);
+    for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
+    if (planar && !body.dead) syncOut(hull);
+  },
+
+  /**
    * Rzaz (Hexlance): niszczy żywe węzły w pasie o półszerokości `halfWidth` wokół odcinka
    * (świat gry). Zwraca liczbę zniszczonych węzłów; pierwszy punkt wejścia w `hullSweepResult`,
    * węzeł i uv wejścia w `hullImpactResult` (kind 'cut'). `opts.push` — rzaz pocisku z pędem
@@ -1285,14 +1314,7 @@ export const HullBodies = {
     // 3) Rozpad od razu (nie czekamy na krok): powstają encje wraków.
     const wrecks = typeof window !== 'undefined' && Array.isArray(window.wrecks) ? window.wrecks : null;
     const before = wrecks ? wrecks.length : 0;
-    if (!body.dead) {
-      const queued = D.splitQueue;
-      D.splitQueue = [body];
-      body.structureDirty = true;
-      const tmp = [body];
-      D.processSplits(tmp);
-      for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
-    }
+    this.splitNow(wreck);
 
     // 4) Pchnięcie od wybuchu: promieniście + stycznie + obrót (jak dawny rozpad heksów).
     const kick = typeof opts?.kick === 'function' ? (w) => { if (w && !w.dead) opts.kick(w, worldX, worldY); } : (w) => {
@@ -1512,6 +1534,87 @@ export const HullBodies = {
     return out;
   },
 
+  /**
+   * WIĄZANIE punktu świata gry z KOMÓRKĄ kadłuba encji (najbliższy żywy węzeł, nie dalej niż `reach` komórek): `out`
+   * = { body, key, ix, iy, angle0 } albo null (bez kadłuba płaskiego, za daleko). Komórka (ix, iy) to tożsamość węzła —
+   * ta sama we wraku z tego kadłuba (convertToWreck przenosi ciało) i w odłamach rodu `key` (dmgKey); rzecz gry
+   * przypięta do kadłuba (zatoki kapsuł ratunkowych) jedzie z węzłem przez śmierć, wrak i rozpad (`boundCell`,
+   * `rebindCell`). `angle0` — kąt encji w chwili wiązania (obrót kadłuba od wiązania). Tylko odczyt.
+   */
+  bindCell(entity, wx, wy, reach = Infinity, out = {}) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || hull.solid3D || !hull.body || hull.body.dead) return null;
+    const body = hull.body, s = body.nodeStore;
+    const pose = entityPose(hull, _qPose);
+    const l = toLocal(hull, pose, wx, wy, _bindLocal);
+    const r = reach * body.cellSize;
+    let best = -1, bestD2 = r * r;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const dx = s.x[i] - l.x, dy = s.y[i] - l.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = i; }
+    }
+    if (best < 0) return null;
+    out.body = body;
+    out.key = Number(hull.dmgKey) || 0;
+    out.ix = s.ix[best];
+    out.iy = s.iy[best];
+    out.angle0 = Number(entity.angle) || 0;
+    return out;
+  },
+
+  /**
+   * Bieżąca poza komórki związanej `bindCell`: out.entity (encja z tym ciałem — statek, hulk mostka, wrak, odłam),
+   * out.x / y (węzeł w świecie gry przy pozie encji — ta sama co skóra), out.dx / dy (od kotwicy encji), out.vx / vy
+   * (ruch sztywny w tym punkcie: prędkość kotwicy + ω × r), out.angle (kąt encji). false — komórka nie jest już
+   * żywym węzłem tego ciała (zniszczona, odpadła z odłamem, ciało zwolnione albo zamrożone w zimnym wraku). Bez
+   * alokacji, tylko odczyt.
+   */
+  boundCell(bind, out = _boundCell) {
+    const body = bind?.body;
+    if (!body || body.dead) return false;
+    const hull = body.hull, e = hull ? hull.entity : null;
+    if (!hull || !e || hull.body !== body || hull.solid3D || e.beamHull !== hull) return false;
+    if (!bodyCellNode(body, bind.ix, bind.iy)) return false;
+    // węzeł w świecie jak nodeWorld (ciało płaskie), bez obiektów pośrednich: θ = −(kąt + obrót sprite'a)
+    const s = body.nodeStore;
+    const theta = -((Number(e.angle) || 0) + hullSpriteRotation(e));
+    const c = Math.cos(theta), sn = Math.sin(theta);
+    const lx = s.x[_bodyCellI] - anchorLocalX(hull), ly = s.y[_bodyCellI] - anchorLocalY(hull);
+    const ex = entityPosX(e), ey = entityPosY(e);
+    const dx = c * lx - sn * ly, dy = -(sn * lx + c * ly);
+    const om = Number(e.angVel) || 0;
+    out.entity = e;
+    out.x = ex + dx;
+    out.y = ey + dy;
+    out.dx = dx;
+    out.dy = dy;
+    out.vx = entityVelX(e) - om * dy;
+    out.vy = entityVelY(e) + om * dx;
+    out.angle = Number(e.angle) || 0;
+    return true;
+  },
+
+  /**
+   * Komórka związana trafiła do innego ciała tego samego rodu (odłam z rozpadu, wrak po detonacji) — szuka jej wśród
+   * encji `entities` (żywy węzeł o tych samych ix, iy w kadłubie o tym samym `dmgKey`) i przepina wiązanie. false —
+   * nie ma jej nigdzie (zniszczona). Tylko odczyt kadłubów.
+   */
+  rebindCell(bind, entities) {
+    if (!bind || !bind.key || !entities) return false;
+    for (let k = 0; k < entities.length; k++) {
+      const e = entities[k];
+      const hull = e?.beamHull;
+      if (!hull || hull.entity !== e || hull.solid3D || (Number(hull.dmgKey) || 0) !== bind.key) continue;
+      const body = hull.body;
+      if (!body || body.dead || body === bind.body || !bodyCellNode(body, bind.ix, bind.iy)) continue;
+      bind.body = body;
+      return true;
+    }
+    return false;
+  },
+
   /** Pozycja węzła w świecie gry (y w dół; bryła 3D — także z, wysokość). */
   nodeWorld(hull, i, out = _nodeWorld) {
     const body = hull.body, s = body.nodeStore;
@@ -1652,6 +1755,25 @@ export const HullBodies = {
     out.x = pose.x + pose.c * lx - pose.s * ly;
     out.y = pose.y - (pose.s * lx + pose.c * ly);
     return out;
+  },
+
+  /**
+   * Żywe komórki kadłuba jako pary (ix, iy) siatki — plan cięcia wraku (`src/game/scrapPlan.js`). Komórka to
+   * tożsamość węzła: ta sama we wraku i w każdym odłamie, niezmienna przy przebudowie ciała; jej środek w świecie
+   * daje `cellWorld`. `out` — tablica wielokrotnego użytku [ix, iy, ix, iy, …]. Zwraca liczbę par. Tylko odczyt.
+   */
+  activeCells(entity, out) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || hull.solid3D || !hull.body || hull.body.dead) return 0;
+    const s = hull.body.nodeStore, active = s.active, ix = s.ix, iy = s.iy;
+    let n = 0;
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i]) continue;
+      out[n * 2] = ix[i];
+      out[n * 2 + 1] = iy[i];
+      n++;
+    }
+    return n;
   },
 
   // --------------------------- NAPRAWA LOKALNA ---------------------------
@@ -2282,6 +2404,19 @@ function updateComPivot(hull) {
   hull.pivot.y = (b.latticeMin.y + hull.ny * b.cellSize) / hull.scale - hull.srcHeight * 0.5;
 }
 
+// Żywy węzeł komórki (ix, iy) ciała płaskiego → indeks w _bodyCellI; false — brak.
+let _bodyCellI = -1;
+function bodyCellNode(body, ix, iy) {
+  _bodyCellI = -1;
+  if (!body || body.dead) return false;
+  const d = body.dims;
+  if (!(ix >= 0 && iy >= 0 && ix < d.x && iy < d.y)) return false;
+  const i = D._latticeIndex(body).cells[ix + iy * d.x];
+  if (!(i >= 0) || body.nodeStore.active[i] !== 1) return false;
+  _bodyCellI = i;
+  return true;
+}
+
 function bodyHasCell(body, key) {
   if (!body || body.dead || typeof key !== 'string') return false;
   const comma = key.indexOf(',');
@@ -2898,6 +3033,8 @@ function cutLocalBand(body, x0, y0, x1, y1, halfWidth, push = false) {
   }
   if (cut.mass > 0) { cut.x /= cut.mass; cut.y /= cut.mass; }
   if (killed > 0) {
+    // Wręgi i grodzie nad szczeliną (końce poza pasem) też pękają — inaczej trzymają odciętą część przy kadłubie.
+    D.breakBeamsAcross(body, x0, y0, x1, y1);
     D.wake(body, D.config.wakeHoldFrames);
     if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
   }
@@ -3115,10 +3252,14 @@ function applyCutEdgeImpulse(parentHull, wb) {
   }
   if (px === 0 && py === 0) return;
   const m = D._refreshRot(wb);
-  wb.vel.x += (m[0] * px + m[1] * py) / wb.mass;
-  wb.vel.y += (m[3] * px + m[4] * py) / wb.mass;
+  let dvx = (m[0] * px + m[1] * py) / wb.mass, dvy = (m[3] * px + m[4] * py) / wb.mass;
+  const dv = Math.sqrt(dvx * dvx + dvy * dvy);
+  if (dv > 1e-9 && dv < C.cutEdgeMinDv) { dvx *= C.cutEdgeMinDv / dv; dvy *= C.cutEdgeMinDv / dv; }
+  wb.vel.x += dvx;
+  wb.vel.y += dvy;
   const inv = wb.invInertiaLocal;
-  const dw = (inv && inv.length > 8 ? Number(inv[8]) || 0 : 0) * tq;
+  let dw = (inv && inv.length > 8 ? Number(inv[8]) || 0 : 0) * tq;
+  if (Math.abs(dw) < C.cutEdgeMinDw) dw = tq < 0 ? -C.cutEdgeMinDw : C.cutEdgeMinDw;
   wb.angVel.z += dw > C.cutPushMaxDw * 2 ? C.cutPushMaxDw * 2 : dw < -C.cutPushMaxDw * 2 ? -C.cutPushMaxDw * 2 : dw;
 }
 

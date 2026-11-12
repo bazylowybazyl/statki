@@ -1,13 +1,13 @@
 // ============================================================
 // Baza piratów (misja 1) — miejsce w grze: przejścia układ bazy ↔ gra, bryły trafień w grze (osobno na budowlę:
-// habitat, paliwo, magazyn, pomosty) i plan misji (okręty w stanowiskach z załogą i w remoncie, herszt, tor taranu,
+// habitat, dwa reaktory antygrawitacyjne, paliwo, magazyn, pomosty) i plan misji (okręty w stanowiskach z załogą i w remoncie, herszt, tor taranu,
 // zbiórka, wyjście z warpa). Czysta geometria (świat gry, y w dół).
 //
 // Układ bazy (src/3d/portBuildings/pirateBaseLayout.js): x wzdłuż osi podejścia (gracz od −x), z w poprzek → gra:
 // punkt = O + U·x + N·z, gdzie U = oś (od gracza ku bazie), N = U obrócone o +90° (w grze y w dół: w prawo od
 // kierunku lotu). Render: ramka portModuleFrame(O.x, −O.y, −axis − π/2) w scenie Core3D (place.frameAngle).
 // ============================================================
-import { createPirateBaseLayout, pointInPoly } from '../../3d/portBuildings/pirateBaseLayout.js';
+import { PIRATE_BASE_ANTIGRAVS, createPirateBaseLayout, pointInPoly } from '../../3d/portBuildings/pirateBaseLayout.js';
 
 export const PIRATE_BASE_TUNE = Object.freeze({
   // klucze wezwań (SUPPORT_SHIP_TEMPLATES) dla klas stanowisk; fregaty na zmianę PD / laser
@@ -21,15 +21,21 @@ export const PIRATE_BASE_TUNE = Object.freeze({
   // herszt: rufą z zatoki, potem wzdłuż zatoki (ku otwartemu końcowi) i na przedpole
   bossClear: 320, bossBay: 1700,
   bossLaunchDelay: 0.3,
-  // Drony piratów (hangary w bębnie habitatu) — start przy wykryciu gracza albo alarmie: eskadry po `droneSquad`
+  // Drony piratów (lądowiska na obrzeżu dysku habitatu) — start przy wykryciu gracza albo alarmie: eskadry po `droneSquad`
   // z każdego hangaru, kolejna fala po `droneWaveGap` s (decyzja użytkownika 2026-10-11: „gracz wykryty — lecą drony”).
   // Eskadry na przemian 'strike' (szybkie rakiety z dystansu, więcej punktów) i 'multirole' — 2026-10-11 pomiar: 12 dron
   // 'multirole' ginęło od obrony punktowej Atlasa w ~2 s (−17% tarczy, kadłub nietknięty), myśliwce gracza (Z) nie
   // miały nic do roboty.
   droneBays: 4, droneSquad: 4, droneWaves: 3, droneWaveGap: 35, droneRoles: ['strike', 'multirole'],
   // Punkty budowli (habitat = finał misji; pozostałe — cele dodatkowe): punkty, osłona, progi rozpadu kawałków.
+  // Habitat (decyzje użytkownika 2026-11-03): bez progów — kawałki z PULAMI (`pieces` wg rodzaju: wieżowiec miasta,
+  // podstawa wieży) pękają od trafień w nie; punkty habitatu = maks. × ułamek etapów do zrobienia (wyłom `breachNeed`
+  // wieżowców — jeden zewnętrzny i jeden wewnętrzny otwierają tor do wieży, wieża, reaktory), zero — finał. Reaktory antygrawitacyjne (2026-11-11, w miejscu dawnych wieżowców) —
+  // osobne budowle (cel finału), progi = sam wybuch w miejscu trafienia.
   hp: Object.freeze({
-    habitat: Object.freeze({ hp: 36000, shield: 4000, steps: 8 }),
+    habitat: Object.freeze({ hp: 36000, shield: 4000, steps: 0, pieces: Object.freeze({ highrise: 2500, core: 6000 }), breachNeed: 2 }),
+    antigrav1: Object.freeze({ hp: 8000, shield: 0, steps: 3 }),
+    antigrav2: Object.freeze({ hp: 8000, shield: 0, steps: 3 }),
     fuel: Object.freeze({ hp: 7000, shield: 0, steps: 3 }),
     warehouse: Object.freeze({ hp: 9000, shield: 0, steps: 4 }),
     piers: Object.freeze({ hp: 60000, shield: 0, steps: 14 })
@@ -48,7 +54,9 @@ export const PIRATE_BASE_TUNE = Object.freeze({
   supportDistance: 5000
 });
 
-const STRUCTURES = Object.freeze(['habitat', 'fuel', 'warehouse', 'piers']);
+// Kolejność = kolejność bytów stacji: reaktory przed pomostami (stoją okrakiem nad pokładem — pocisk sprawdza budowle po
+// kolei i trafia pierwszą z bryłą na torze).
+const STRUCTURES = Object.freeze(['habitat', ...PIRATE_BASE_ANTIGRAVS.map((h) => h.structure), 'fuel', 'warehouse', 'piers']);
 
 /**
  * Baza w układzie gry. center — środek obwiedni bazy w grze, axis — kierunek osi bazy (+x układu: od gracza ku bazie).
@@ -91,8 +99,6 @@ export function placePirateBase(center, axis, layout = createPirateBaseLayout())
     u: { x: ux, y: uy }, n: { x: nx, y: ny },
     toGame, toHub, headingToGame,
     hitShapes, shapesOf,
-    // zgodność z suchym dokiem: taran statyczny i hala (bazy to ciała świata w bańce gracza — taran zwykłym zderzeniem)
-    ramShapes: [], hallArea: null,
     habitat,
     dirToHub(dx, dy, out = {}) {
       out.x = dx * ux + dy * uy;
@@ -100,7 +106,6 @@ export function placePirateBase(center, axis, layout = createPirateBaseLayout())
       return out;
     },
     radius: Math.hypot(l.width, l.depth) / 2,
-    inHall: () => false,
     /** Odległość punktu gry od obwiedni bazy (0 w środku). */
     distance(gx, gy) {
       const h = toHub(gx, gy, _hub);

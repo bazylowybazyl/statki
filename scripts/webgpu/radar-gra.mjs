@@ -4,7 +4,7 @@
 //   node scripts/webgpu/radar-gra.mjs [--out .tmp/radar/gra] [--rozmiar 1600x900] [--sceny ziemia,pas,dok]
 //
 // Sceny: ziemia — start gry swobodnej (port Ziemi, ring, K-7) + piraci przed dziobem; pas — teleport do rdzenia
-// pola pasa głównego; dok — misja 1, faza `defences` (suchy dok piratów). Każda: kopuła, Alt (pełny radar,
+// pola pasa głównego; dok — misja 1, faza `defences` (baza piratów). Każda: kopuła, Alt (pełny radar,
 // kursor nad śladem), impuls X (fala, ramki i podpisy w świecie). Raport: czasy tarczy i zbieracza, ślady, błędy.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

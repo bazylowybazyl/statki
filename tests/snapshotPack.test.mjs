@@ -109,6 +109,32 @@ test('pakowanie nie zapisuje do obiektów gry; strona odczytana z potrójnego bu
   const h = v.head;
   assert.equal(h[HEAD.K], 1);
   assert.equal(h[HEAD.CAM_X], 5_000_000.125, 'kamera w Float64 bez zaokrąglenia');
+  // obrót kadru (hipercruise, 2026-10-23): brak pola = 0, wartość kamery klatki i kamery bez wstrząsu osobno
+  assert.equal(h[HEAD.CAM_ROLL], 0);
+  assert.equal(h[HEAD.CAMNS_ROLL], 0);
+  frame.cam.roll = 1.25; frame.camNoShake.roll = -0.5;
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.head[HEAD.CAM_ROLL], 1.25);
+  assert.equal(reader.page.head[HEAD.CAMNS_ROLL], -0.5);
+  delete frame.cam.roll; delete frame.camNoShake.roll;
+  // okręt prowadzony przez kamerę (fregata zwiadu — niebo-sfera, 2026-10-27): brak / w = 0 → LEAD_W 0, inaczej poza
+  assert.equal(reader.page.head[HEAD.LEAD_W], 0);
+  frame.cameraLead = { x: 5_000_123.25, y: -7_000_050, v: 900, w: 0.5 };
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.head[HEAD.LEAD_W], 0.5);
+  assert.equal(reader.page.head[HEAD.LEAD_X], 5_000_123.25);
+  assert.equal(reader.page.head[HEAD.LEAD_Y], -7_000_050);
+  assert.equal(reader.page.head[HEAD.LEAD_V], 900);
+  frame.cameraLead.w = 0;
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.head[HEAD.LEAD_W], 0);
+  delete frame.cameraLead;
   assert.equal(h[HEAD.FRAME_DT], 1 / 60);
   assert.ok(h[HEAD.FLAGS] & HEAD_FLAG.CULL_SET);
   assert.equal(v.listCount[LIST.RENDER], 3);
@@ -300,7 +326,7 @@ test('wzrost pojemności: nowy układ stron (generacja), dane zachowane; listy, 
 test('wieże z rekordów klatki (RW-26): te same rekordy co turretsOf, kolejność klatki, encje spoza list pominięte', () => {
   const ents = [makeShip(1, 0, 0), makeShip(2, 10, 0), makeShip(3, 20, 0)];
   const stranger = { x: 5, y: 5 };
-  const mk = (e, k, b) => ({ entity: e, key: k, uid: 'u' + k, weaponId: 'tempest', fxKey: 'T', wx: b, wy: -b, ang: b * 0.1, scale: 1, recoil: 0, shake: 0.5, spec: { r: 12 }, state: { housing: 0.1, barrel: b, flash: 0 } });
+  const mk = (e, k, b) => ({ entity: e, key: k, uid: 'u' + k, weaponId: 'tempest', fxKey: 'T', wx: b, wy: -b, ang: b * 0.1, scale: 1, recoil: 0, shake: 0.5, spec: { r: 12 }, state: { housing: 0.1, barrel: b, flash: 0 }, ready: b });
   const recs = [mk(ents[2], 'a', 1), mk(ents[2], 'b', 2), mk(stranger, 'x', 9), mk(ents[0], 'c', 3)];
   const tf = { frameCount: recs.length, recordAt: (i) => recs[i] };
   const packA = new SnapshotPacker({ shared: false });
@@ -328,6 +354,9 @@ test('wieże z rekordów klatki (RW-26): te same rekordy co turretsOf, kolejnoś
     const j = keyB.indexOf(keyA[i]);
     for (let w = 0; w < TURRET.stride.f64; w++) assert.ok(Object.is(vA.turF64[i * TURRET.stride.f64 + w], vB.turF64[j * TURRET.stride.f64 + w]));
     assert.equal(vA.turI32[i * TURRET.stride.i32 + TURRET.I32.ENT_SLOT], packA.ids.entities.peek(recs.find((r) => r.key === keyA[i]).entity));
+    // lampka gotowości wieży (src/data/turretReadyLamp.js) — kod z rekordu gry
+    assert.equal(vA.turI32[i * TURRET.stride.i32 + TURRET.I32.READY], recs.find((r) => r.key === keyA[i]).ready);
+    assert.equal(vB.turI32[j * TURRET.stride.i32 + TURRET.I32.READY], recs.find((r) => r.key === keyA[i]).ready);
   }
 });
 
@@ -343,6 +372,20 @@ test('mgła wojny: SEEN bez ukrytych; zimne wraki z ciałem w SEEN_COLD; stacje'
   assert.equal(packer._lists[LIST.SEEN_COLD].length, 3);
   assert.equal(packer._lists[LIST.STATIONS].length, 1);
   assert.equal(packer.stats.stations, 1);
+});
+
+test('soczewka skoku (E2, W3): zimny wrak zastąpiony smugą soczewki — bez dodatków (COLD_NEAR), pozostałe zostają', () => {
+  const ents = [makeShip(1, 0, 0), makeShip(2, 10, 0), makeShip(3, 20, 0)];
+  const coldDot = { isCold: true, dead: false, beamHull: ents[1].beamHull, x: 0, y: 0, __lensDot: true };
+  const coldNear = { isCold: true, dead: false, beamHull: ents[2].beamHull, x: 0, y: 0, __lensDot: false };
+  const packer = new SnapshotPacker({ shared: false });
+  const frame = baseFrame([ents[0]], { lensDots: true, hides: () => false, coldRenderList: [coldDot, coldNear] });
+  packer.begin(frame); packer.finish(frame);
+  assert.deepEqual(packer._lists[LIST.COLD_NEAR], [coldNear], 'w skoku tylko wrak bez kropki');
+  // poza skokiem flaga nie liczy się (strona zdejmuje ją i tak — withColdNearWrecks)
+  const frame2 = baseFrame([ents[0]], { lensDots: false, coldRenderList: [coldDot, coldNear] });
+  packer.begin(frame2); packer.finish(frame2);
+  assert.equal(packer._lists[LIST.COLD_NEAR].length, 2);
 });
 
 test('worker (consumeDirty: odbior): brud skóry zdejmowany dopiero po odbiorze strony — pominięta strona nie gubi węzłów', () => {

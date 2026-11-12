@@ -15,6 +15,9 @@ import {
 } from '../src/render/returnLayout.js';
 
 const WORKER = new URL('./helpers/renderBuffersWorker.mjs', import.meta.url);
+// Wspólna komórka pary wątków: start razem, znak końca pisarza, postęp czytelnika (helper — SYNC). Koniec pracy
+// wyznacza liczba klatek i odbiorów, nie okno czasu ściany — test przechodzi także na obciążonej maszynie.
+const newSync = () => new Int32Array(new SharedArrayBuffer(16));
 
 function run(workerData, transferList) {
   return new Promise((resolve, reject) => {
@@ -75,10 +78,10 @@ test('potrójny bufor: pisarz 1000 Hz, czytelnik wolny i nieregularny — żadne
   const pageBytes = 64 * 1024;
   const buffer = createTripleBuffer(pageBytes);
   assert.ok(buffer instanceof SharedArrayBuffer);
-  const durationMs = 900;
+  const sync = newSync();
   const [wr, rd] = await Promise.all([
-    run({ role: 'tripleWriter', buffer, pageBytes, durationMs, hz: 1000 }),
-    run({ role: 'tripleReader', buffer, pageBytes, durationMs, seed: 7 })
+    run({ role: 'tripleWriter', buffer, pageBytes, durationMs: 900, hz: 1000, sync, minAcquired: 21 }),
+    run({ role: 'tripleReader', buffer, pageBytes, seed: 7, sync })
   ]);
   assert.equal(rd.torn, 0, 'słowa z różnych publikacji na jednej stronie');
   assert.equal(rd.sumBad, 0, 'suma kontrolna strony');
@@ -163,10 +166,11 @@ test('pierścień: przejście na większy — stary dopijany do końca, kolejno�
 test('pierścień: pisarz 1000 Hz, czytelnik wolny — 0 zgubionych i przestawionych rekordów, wzrost w locie', async () => {
   const buffer = createEventRingBuffer(256); // mały — pisarz musi go powiększać w trakcie
   const frameCell = new Int32Array(new SharedArrayBuffer(12)); // [klatka pisarza, koniec, rekordy razem]
+  const sync = newSync();
   const { port1, port2 } = new MessageChannel();
   const [wr, rd] = await Promise.all([
-    run({ role: 'ringWriter', buffer, durationMs: 900, hz: 1000, port: port1, seed: 11, frameCell }, [port1]),
-    run({ role: 'ringReader', buffer, port: port2, seed: 13, frameCell }, [port2])
+    run({ role: 'ringWriter', buffer, durationMs: 900, hz: 1000, port: port1, seed: 11, frameCell, sync }, [port1]),
+    run({ role: 'ringReader', buffer, port: port2, seed: 13, frameCell, sync, lagFrames: 50 }, [port2])
   ]);
   assert.ok(wr.records > 10000, `rekordy: ${wr.records}`);
   assert.ok(wr.grows >= 3, `wzrosty pierścienia: ${wr.grows}`);
@@ -252,9 +256,10 @@ test('RET: przebicia tarcz — slot wolny, zapis i odczyt rekordu, bez rozdartyc
 
   const layout = createReturnLayout({ breachSlots: 4, breachWords: 128 });
   const buffer = createReturnBuffer(layout);
+  const sync = newSync();
   const [wr, rd] = await Promise.all([
-    run({ role: 'breachWriter', buffer, layout, durationMs: 300 }),
-    run({ role: 'breachReader', buffer, layout, durationMs: 300 })
+    run({ role: 'breachWriter', buffer, layout, durationMs: 300, sync, minEpochs: 101, minReads: 101 }),
+    run({ role: 'breachReader', buffer, layout, sync })
   ]);
   assert.ok(wr.epochs > 100);
   assert.ok(rd.reads > 100);

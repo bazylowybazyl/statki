@@ -1,7 +1,7 @@
 // Ring „Halo” w grze (port do gry 2026-09-25): klej między grą (świat 2D,
 // Core3D) a modułem ringu (createHaloRing). Opis: docs/PORT-halo-ring.md.
 //
-//  - ringi Ziemi (Halo), Marsa (ECUMENE) i Jowisza (Fable) — archetyp,
+//  - ringi Ziemi (Halo), Marsa (ECUMENE) i Jowisza (BUDOWA) — archetyp,
 //    promień planety i ziarno z profilu i src/game/haloRingPlanets.js; Mars
 //    i Jowisz to inne ringi (src/3d/haloRing/arch/, decyzja użytkownika
 //    2026-09-27) z tym samym API; grupa w środku planety, obrócona tak, żeby
@@ -34,13 +34,27 @@ import { resolveRingPlanetWorldRadius } from '../ringScale.js';
 import { HALO_RING_PLANETS, haloGameToLocal } from '../../game/haloRingPlanets.js';
 import { WARP_RING_LENS } from '../warp/worldLens.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
+import { RoofCover } from '../roofCover.js';
 
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const _qRot = new THREE.Quaternion();
 
 export const HALO_GAME = Object.freeze({
   layers: Object.freeze({ default: 1, fg: 2 }),
+  // Ring w soczewce warpa (obraz planety pod płaszczyzną gry): części nad płaszczyzną (górna ściana, moduły, dach hal)
+  // też na warstwie tła — pass FG rysuje się PO kadłubach (zgłoszenie 2026-10-23: „planeta przebija się przez statek”).
+  lensLayers: Object.freeze({ default: 1, fg: 1 }),
+  // Ring w soczewce rysuje się dopiero od takiego promienia na ekranie [px bufora]: mijana planeta jest w kadrze od
+  // początku skoku (przelot z daleka, worldLens.js), a ring kosztuje ~3 ms CPU aktualizacji i ~50 rysunków także jako
+  // kreska wokół kilkupikselowej tarczy (demo „Pęd”, 2026-10-23).
+  lensMinPx: 30,
+  // Warstwy tła dla FG ringu tylko, gdy jego obraz naprawdę stoi w soczewce (udział prawdziwego widoku `real` poniżej
+  // tego progu): planeta czekająca na prawdziwym miejscu (bramka ringu, wejście −1, puszczony przylot) ma `lens.on`,
+  // ale jej ring jest prawdziwy — dachy hal K-7 i górna ściana zostają nad statkami w halach (przegląd 2026-10-23).
+  lensBgReal: 0.999,
   sunElevationDeg: 49,
+  // ring BUDOWA (Jowisz): najwięcej świateł roboczych (spawanie, maszty) w siatce świateł na klatkę
+  workLightCap: 28,
   activateDistance: 420000,   // ring powstaje, gdy środek kadru jest bliżej planety
   hallReach: 9000,            // hale K-7 wystają za krawędź ścian (płyta przed G-01)
   viewMargin: 14000,          // zapas kadru: perspektywa górnej ściany nad płaszczyzną gry
@@ -58,6 +72,34 @@ function footprintHub(owner) {
     haloXfPoint(owner.xf, x, z, q);
     return { x: q.x, z: q.z };
   });
+}
+
+// Punkt huba (hx, hz) w obrysie hali / zatoki z zamkniętym dachem (zanik < 0,5); pudło obrysu liczone raz.
+function roofFadesCover(fades, hx, hz) {
+  for (let i = 0; i < fades.length; i++) {
+    const f = fades[i];
+    if (f.fade >= 0.5) continue;
+    const poly = f.footprint;
+    let bb = f._bb;
+    if (!bb) {
+      bb = f._bb = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
+      for (const p of poly) {
+        if (p.x < bb.x0) bb.x0 = p.x;
+        if (p.x > bb.x1) bb.x1 = p.x;
+        if (p.z < bb.z0) bb.z0 = p.z;
+        if (p.z > bb.z1) bb.z1 = p.z;
+      }
+    }
+    if (hx < bb.x0 || hx > bb.x1 || hz < bb.z0 || hz > bb.z1) continue;
+    let inside = false;
+    for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+      const pa = poly[a];
+      const pb = poly[b];
+      if ((pa.z > hz) !== (pb.z > hz) && hx < (pb.x - pa.x) * (hz - pa.z) / (pb.z - pa.z) + pa.x) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
 }
 
 export class HaloRingGame {
@@ -79,14 +121,16 @@ export class HaloRingGame {
     this._hubC = { x: 0, y: 0 };
     this._cut0 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
     this._cut1 = { x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 };
-    this._hallOpts = { poses: null, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
+    this._hallOpts = { poses: null, berths: null, roofFade: 0, daylight: 1, clock: 0, gameDt: 0, hull: null };
     // obrys kadłuba gracza w hubie rysowanej hali (przewody paliwowe kładą się na kadłubie) — bufor bez alokacji
     this._hallHull = [];
     // Fabuła: { key: 'earth', hall: 0, roofFade: 0..1 (1 = dachu nie ma), cut: 0..1 } albo null (dach z kadłuba gracza).
     this.hallRoofOverride = null;
     this.stats = { rings: 0, visible: 0, updateMs: 0 };
     this._rollHalf = { hw: 0, hh: 0 };
+    this._roofP = { x: 0, y: 0 };
     this.syncEntries();
+    RoofCover.add(this);
   }
 
   /** Zegar migania świateł hal K-7 (świat ringów gry — ten sam dostaje wejście pyłu hal). */
@@ -142,7 +186,7 @@ export class HaloRingGame {
     // (update() spróbuje w następnej klatce).
     if (!this.renderer) return null;
     const spec = HALO_RING_PLANETS[e.key];
-    // Mars = ECUMENE, Jowisz = ring Fable (arch/): inne ringi niż Ziemia,
+    // Mars = ECUMENE, Jowisz = BUDOWA (arch/): inne ringi niż Ziemia,
     // to samo API, geometria przekroju z profilu (jak kolizje i ruch v2)
     const archetype = resolveHaloProfile(spec.profile).archetype || 'halo';
     const ring = (archetype === 'halo' ? createHaloRing : createArchRing)({
@@ -162,6 +206,7 @@ export class HaloRingGame {
       buildInBackground: true
     });
     ring.setLayers(HALO_GAME.layers);
+    e.lensLayers = false;
     ring.group.rotation.z = e.place.rot;
     ring.group.position.set(e.place.x, -e.place.y, 0);
     ring.group.visible = false;
@@ -210,13 +255,15 @@ export class HaloRingGame {
   }
 
   // Słońce gry w układzie ringu (jak _applySun): { az, el } [rad].
-  gameSunLocal(key, sun) {
+  gameSunLocal(key, sun, out = {}) {
     const e = this.entries.find((v) => v.key === key);
     if (!e) return null;
     const sx = Number(sun?.x);
     const sy = Number(sun?.y);
     const world = Number.isFinite(sx) && Number.isFinite(sy) ? Math.atan2(-(sy - e.place.y), sx - e.place.x) : 0;
-    return { az: world - e.place.rot, el: HALO_GAME.sunElevationDeg * Math.PI / 180 };
+    out.az = world - e.place.rot;
+    out.el = HALO_GAME.sunElevationDeg * Math.PI / 180;
+    return out;
   }
 
   _setHallCut(ring, o, strength, inHall) {
@@ -242,6 +289,7 @@ export class HaloRingGame {
     const e = this.entries.find((v) => v.key === key);
     if (!e?.ring) return;
     e.ring.setLayers(HALO_GAME.layers);
+    e.lensLayers = false;
     e.ring.setCutaway(0, null);
     e.ring.setCutaway(1, null);
     e.ring.group.visible = false;
@@ -342,8 +390,10 @@ export class HaloRingGame {
       if (e.shadowReady && shadowK > 0.001) {
         Core3D.setShaftRingOccluder?.(e.occluderKey, e.place.x, e.place.y, ringMid, ringMid * HALO_GAME.occluderReachMul, shadowK);
       } else Core3D.removeShaftRingOccluder?.(e.occluderKey);
+      // Ring w soczewce mniejszy niż lensMinPx (mijana planeta z daleka — kilka px) ani się nie rysuje, ani nie buduje.
+      const lensSmall = lensOn && L.radii.max * ks * zoom < HALO_GAME.lensMinPx;
       // budowa: kadr blisko planety albo jej obraz w soczewce w kadrze (przelot, cel przy krawędzi)
-      if (!e.ring && (Math.hypot(e.place.x - cx, e.place.y - cy) < HALO_GAME.activateDistance || (lensOn && lens.vis))) this._ensureRing(e);
+      if (!e.ring && (Math.hypot(e.place.x - cx, e.place.y - cy) < HALO_GAME.activateDistance || (lensOn && lens.vis && !lensSmall))) this._ensureRing(e);
       const ring = e.ring;
       if (!ring) continue;
       // budowa ringu-archetypu w tle: kroki co klatkę, także poza kadrem (archRing.js, ARCH_BUILD_BUDGET)
@@ -354,11 +404,21 @@ export class HaloRingGame {
       // środka ringu; resztę (bryła widzenia, LOD) liczy ring sam z kamery.
       const inView = !opts.splitScreen && (free3d
         ? Math.hypot(eye.x - ox, eye.y + oy, eye.z) < reach + HALO_GAME.activateDistance
-        : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach);
+        : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach)
+        && !lensSmall;
       ring.group.visible = inView;
       e.visible = inView;
       if (!inView) continue;
       visible++;
+      // W soczewce ring jest tłem jak jego planeta: części FG na warstwie tła (kadłub zawsze nad nim) — tylko gdy jego
+      // obraz naprawdę jest przesunięty (real < lensBgReal); prawdziwy ring (też przy włączonej soczewce) — zwykłe
+      // warstwy (pass FG nad statkiem w hali). Przełączenie tylko przy zmianie (ta sama kamera perspektywy — pipeline'y
+      // bez zmian).
+      const lensBg = lensOn && (Number(lens.real) || 0) < HALO_GAME.lensBgReal;
+      if (!!e.lensLayers !== lensBg) {
+        e.lensLayers = lensBg;
+        ring.setLayers(lensBg ? HALO_GAME.lensLayers : HALO_GAME.layers);
+      }
       ring.group.position.set(ox, -oy, 0);
       ring.group.scale.setScalar(ks);
       // obrót: port pod kątem stacji (place.rot), w soczewce poprzedzony obrotem przelotu bryły planety
@@ -368,9 +428,43 @@ export class HaloRingGame {
       ring.update(dt, { camera: this.camera, viewportHeight: vh, gameView: !free3d });
       this._applySun(e, opts.sun);
       this._portVisuals(e, dt, opts.ship || null, gameDt);
+      if (!lensOn) this._workLights(e, cx, cy, halfW, halfH);
     }
     this.stats.visible = visible;
     this.stats.updateMs = performance.now() - t0;
+  }
+
+  // Ring BUDOWA (Jowisz): spawanie i maszty świateł roboczych w siatce świateł gry (Core3D.fx.lights — oświetlają pył
+  // i gaz ringu oraz kadłuby): przy kadrze, do HALO_GAME.workLightCap; spawanie migocze z zegara ringu w rytmie
+  // sprite'ów spawania (~19 Hz, archTSL), maszty świecą stale. Wysokość przycięta do ±260 j. — pasy kręgosłupa stoją
+  // ~1,3 tys. j. od płaszczyzny, a gaz i pył leżą w niej (światło ma sięgnąć chmury przy kratownicy).
+  _workLights(e, cx, cy, halfW, halfH) {
+    const W = e.ring.workLights;
+    const L = Core3D.fx?.lights;
+    if (!W || !L) return;
+    const c = Math.cos(e.place.rot);
+    const s = Math.sin(e.place.rot);
+    const t = Math.floor((Number(e.ring.uniforms?.uTime?.value) || 0) * 19);
+    const mx = halfW + 800;
+    const my = halfH + 800;
+    let n = 0;
+    for (let i = 0; i < W.length && n < HALO_GAME.workLightCap; i += 4) {
+      const lx = W[i];
+      const ly = W[i + 1];
+      const gx = e.place.x + lx * c - ly * s;
+      const gy = e.place.y - (lx * s + ly * c);
+      if (Math.abs(gx - cx) > mx || Math.abs(gy - cy) > my) continue;
+      const ph = W[i + 3];
+      const z = Math.max(-260, Math.min(260, W[i + 2]));
+      if (ph < 0) {
+        if (L.point(gx, gy, 1.0, 0.88, 0.7, 0.9, 900, z)) n++;
+        continue;
+      }
+      const hv = Math.sin(t * 12.9898 + ph * 7607.3) * 43758.5453;
+      const f = hv - Math.floor(hv);
+      if (f < 0.45) continue;
+      if (L.point(gx, gy, 0.55, 0.72, 1.0, f < 0.85 ? 1.9 : 4.0, 650, z)) n++;
+    }
   }
 
   _applySun(e, sun) {
@@ -465,6 +559,8 @@ export class HaloRingGame {
       // stanowisk obsługiwanych przez automat — z niego
       const owner = reg.halls[i];
       opts.poses = owner?.poses || null;
+      // stanowiska hali w rejestrze: poziom reflektorów podejścia (`approachLight` — automat obsługi stanowisk)
+      opts.berths = owner?.layout?.berths || null;
       // ramiona i przewody w czasie gry (pauza i sceny fabuły — stoją), obrys kadłuba gracza w hubie TEJ hali
       opts.gameDt = gameDt;
       opts.hull = hull && owner?.inv ? this._hullInHall(hull, owner.inv) : null;
@@ -510,7 +606,29 @@ export class HaloRingGame {
     return out;
   }
 
+  /**
+   * Zamknięty dach hali K-7 albo zatoki (zanik < 0,5 — gracza w niej nie ma) nad punktem świata gry (E17,
+   * src/3d/roofCover.js): dach zasłania kadłuby pod sobą, ale nie emitery warstwy FG — billboardy lamp proxy statków
+   * ruchu na padach hal pytają tutaj. Ring w kadrze (`visible`); punkt → hub jak obrys gracza (`collider.hubOutline`).
+   */
+  roofCovers(x, y) {
+    for (let k = 0; k < this.entries.length; k++) {
+      const e = this.entries[k];
+      if (!e.visible) continue;
+      const col = e.collider;
+      const f = col.frame;
+      const p = haloGameToLocal(col.place, x, y, this._roofP);
+      const dx = p.x - f.origin.x;
+      const dy = p.y - f.origin.y;
+      const hx = dx * f.tx + dy * f.ty;
+      const hz = dx * f.rx + dy * f.ry;
+      if (roofFadesCover(e.hallFades, hx, hz) || roofFadesCover(e.bayFades, hx, hz)) return true;
+    }
+    return false;
+  }
+
   dispose() {
+    RoofCover.remove(this);
     for (const e of this.entries) {
       Core3D.removeShaftRingOccluder?.(e.occluderKey);
       e.shadowReady = false;

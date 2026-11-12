@@ -34,16 +34,52 @@ import {
   setWorldCapacityFromGame, destroyWorldStation
 } from './trafficWorld.js';
 import {
+  addMarket, addMarketBuilding, setMarketOwner, removeMarket, describeMarket
+} from './markets.js';
+import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
-  COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber
+  COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
+import { BELT_MSG, SALVAGE_MSG } from './trafficProtocol.js';
+import { ferryPodPassengers, landFerryPassengers } from './escapePodTransit.js';
+import { reportGameWrecks, forgetGameWrecks, holdGameWrecks, collectSalvageTaken } from './scrapperFleets.js';
+import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
+import { takeHoleUpdates } from './miningFields.js';
+import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
+import { summarizeTrade, portOfferFromQuote, crewContractOffer, passengerFlow, hostagesByNest } from './tradeSummary.js';
+import { inboundUnits } from './marketBook.js';
+import { isDerelict } from '../../data/factions.js';
+import {
+  createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
+  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
+  collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity,
+  refreshWorkSites, collectWorkChanges, describeWorkSites
+} from './workerBubble.js';
+import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
 const WRECK_LOG_LIMIT = 256;
 /** O jaki ułamek promienia bańki musi przesunąć się fokus, żeby przebudować bańkę. */
 const FOCUS_REPUBLISH_FRACTION = 0.25;
+/**
+ * Rozgrzewka (E15): kawałek liczenia [ms] przed oddaniem sterowania — wiadomości gry (`market`, `berth-hold`,
+ * zapis) czekają najwyżej tyle plus jeden krok świata (do ~45 ms).
+ */
+const WARMUP_SLICE_MS = 12;
+/** Rynek w trakcie rozgrzewki idzie do gry najwyżej tak często [ms] — nie po każdym kawałku. */
+const WARMUP_PUBLISH_MS = 250;
+/** Fokus przeskoczył dalej niż tyle [j.] od ostatniego rozstawienia postoju (E15) — rozstawienie od razu. */
+const PARKED_REFRESH_JUMP = 30_000;
+
+/** Oddanie sterowania poza workerem (testy, Node): następne zadanie pętli zdarzeń. */
+function defaultSchedule(fn) {
+  setTimeout(fn, 0);
+}
 
 const KINDS = Object.freeze(Object.values(COURSE_KIND));
+/** Indeks towaru w `ready.resources` (kontrakt przeładunku E12 — `actors.cargo`). */
+const RESOURCE_INDEX = new Map(RESOURCE_KEYS.map((key, index) => [key, index]));
+const resourceIndexOf = (id) => RESOURCE_INDEX.get(id) ?? -1;
 
 function defaultNow() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -62,11 +98,15 @@ function finite(value, fallback = 0) {
 export function createTrafficCore(post, options = {}) {
   const now = typeof options.now === 'function' ? options.now : defaultNow;
   const send = typeof post === 'function' ? post : () => {};
+  // `schedule(fn)` — następny kawałek rozgrzewki po wiadomościach, które już czekają (worker: kanał wiadomości).
+  const schedule = typeof options.schedule === 'function' ? options.schedule : defaultSchedule;
 
   const core = {
     world: null,
     focus: { x: 0, y: 0, r: 0, active: false },
     published: { x: NaN, y: NaN, r: 0 },
+    /** Fokus ostatniego rozstawienia postoju (E15) — skok dalej niż `PARKED_REFRESH_JUMP` rozstawia od razu. */
+    parkedAt: { x: NaN, y: NaN },
     /** Ostatnia zastosowana zmiana zapasu z gry — gra odrzuca na jej podstawie potwierdzone. */
     stockSeq: 0,
     hulls: [],
@@ -78,12 +118,48 @@ export function createTrafficCore(post, options = {}) {
     berthIndex: new WeakMap(),
     /** Numer kursu → id, dla wiadomości z gry (`attach`, `destroyed`…). */
     courseIds: new Map(),
+    /** Numer kursu zniszczonego w grze → id (E24): zgłoszenie wraku gry przychodzi po `destroyed`, gdy `courseIds` już go nie zna. */
+    destroyedIds: new Map(),
     wreckCursor: 0,
     warWreckSeq: 0,
     stationFactionsDirty: false,
+    /** `world.marketsVersion` ostatniej tabeli stacji wysłanej do gry. */
+    marketsVersion: 0,
+    marketsDirty: false,
     scratch: new Float64Array(COURSE_STRIDE * 256),
     segment: { x0: 0, y0: 0, x1: 0, y1: 0, t0: 0, dur: 0, dwell: false, mode: null },
-    stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0 }
+    /** Bańka w workerze (E6, `workerBubble.js`) — null przy `init { bubble: false }`. */
+    bubble: null,
+    /** Kursy wybrane przez `buildBubble` — kandydaci do materializacji. */
+    candidates: [],
+    /** id stanowiska → { port, index } (`PORT` / `BERTH` w buforach). */
+    berthById: new Map(),
+    actorHullsSent: 0,
+    actorsSent: 0,
+    stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 },
+    // Kapsuły ratunkowe (E22 K4): numer kursu gry → id kursu promu, którego ludzie lecą w kapsułach.
+    podCourses: new Map(),
+    /** Zapis ekonomii czekający na rynki dokładane po starcie (E7, `economySave.js`). */
+    pendingRestore: null,
+    /**
+     * Rozgrzewka świata w tle (E15, `startWarmup`): `total` / `seconds` [s świata], `ms` CPU, `steps`;
+     * `restores` — `economy-restore`, które przyszły w trakcie (nakładane po końcu, magazyny = zapis).
+     */
+    warmup: { total: 0, seconds: 0, active: false, ms: 0, steps: 0, publishedAt: -Infinity, restores: [] },
+    /** Bufory oferty portu w `buildMarket` — bez alokacji na stację × towar. */
+    offerScratch: { sell: 0, buy: 0, wanted: false },
+    quoteScratch: { capacity: 0, stored: 0, room: 0, offerFloor: 0, wanted: false, demandRate: 0, restockFloor: 0 },
+    /** Bufory obsady w `buildCrew` (W5): kurs z ludźmi, zakładnicy po kryjówkach. */
+    flowScratch: { from: '', to: '', people: 0, returning: false },
+    hostageScratch: new Map()
+  };
+
+  /** Tabele bufora encji — te same co bufora kursów. */
+  const actorIndex = {
+    hull: (unitClass) => hullIndexOf(unitClass),
+    faction: (id) => core.factionIndex.get(id) ?? -1,
+    berthById: (id) => core.berthById.get(id) || null,
+    courseId: (num, id) => { core.courseIds.set(num, id); }
   };
 
   function handle(message) {
@@ -103,6 +179,21 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.STATION: return station(message);
         case TRAFFIC_MSG.CONFIG: return config(message);
         case TRAFFIC_MSG.SNAPSHOT: return snapshot(message);
+        case TRAFFIC_MSG.MARKET_ADD: return marketAdd(message);
+        case TRAFFIC_MSG.MARKET_BUILDING: return marketBuilding(message);
+        case TRAFFIC_MSG.MARKET_OWNER: return marketOwner(message);
+        case TRAFFIC_MSG.MARKET_REMOVE: return marketRemove(message);
+        case TRAFFIC_MSG.BERTH_HOLD: return berthHold(message);
+        case TRAFFIC_MSG.ENTITY_HOLD: return entityHold(message);
+        case TRAFFIC_MSG.ENTITY_LOST: return entityLost(message);
+        case TRAFFIC_MSG.ECONOMY_SAVE: return economySave(message);
+        case TRAFFIC_MSG.ECONOMY_RESTORE: return economyRestore(message);
+        case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
+        case TRAFFIC_MSG.PODS_LANDED: return podsLanded(message);
+        case BELT_MSG.MINED: return beltMined(message);
+        case SALVAGE_MSG.WRECK_REPORT: return wreckReport(message);
+        case SALVAGE_MSG.WRECK_GONE: return wreckGone(message);
+        case SALVAGE_MSG.WRECK_HOLD: return wreckHold(message);
         default: return undefined;
       }
     } catch (error) {
@@ -140,13 +231,26 @@ export function createTrafficCore(post, options = {}) {
       }
     });
     core.world = world;
-    core.stationIndex = new Map(world.stations.map((entry, index) => [entry.id, index]));
     core.berthIndex = new WeakMap();
-    for (const layout of world.docks.values()) {
-      layout.berths.forEach((berth, index) => core.berthIndex.set(berth, index));
-    }
+    indexMarkets();
+    // Zapis ekonomii (E7) — przed bańką, bo zapas floty w portach bierze się z przywróconej floty.
+    const restored = message.restore ? restoreEconomyState(world, message.restore) : null;
+    core.pendingRestore = restored?.pending.size ? restored : null;
+    // Księga rynku od startu: pierwszy bufor rynku niesie już ofertę portu (skup), nie dopiero po pierwszym kroku.
+    openDirectorMarket(world.director, world.stations);
+    // Stanowisko domowe gracza (C-01 hali Atlasa) — zajęte, zanim zapas floty pierwszy raz stanie na padach.
+    if (Array.isArray(message.homeBerths) && message.homeBerths.length) setPlayerHomeBerths(world.director, message.homeBerths);
+    core.bubble = message.bubble === false ? null : createWorldBubble(world);
+    if (core.bubble) refreshFleetStock(core.bubble);
     if (message.focus) setFocus(message.focus);
     const buildMs = now() - t0;
+    const warmup = core.warmup;
+    warmup.total = warmupSeconds(message.warmup, world.config.step);
+    warmup.seconds = 0;
+    warmup.ms = 0;
+    warmup.steps = 0;
+    warmup.active = warmup.total > 0;
+    warmup.restores.length = 0;
 
     send({
       type: TRAFFIC_MSG.READY,
@@ -156,34 +260,26 @@ export function createTrafficCore(post, options = {}) {
       seed: message.seed ?? null,
       economyScale: world.config.economyScale,
       capacityMultiplier: world.config.capacityMultiplier,
-      stations: world.stations.map(entry => {
-        const node = getNode(world.network, entry.id);
-        return {
-          id: entry.id,
-          name: entry.name,
-          factionId: entry.factionId || null,
-          x: entry.x,
-          y: entry.y,
-          moon: !!node?.moon,
-          outpost: !!node?.outpost,
-          derelict: !entry.factionId,
-          parentId: node?.parentId || null,
-          hasPort: world.docks.has(entry.id)
-        };
-      }),
+      stations: stationTable(),
       resources: [...RESOURCE_KEYS],
       factions: [...FACTION_IDS],
       kinds: [...KINDS],
       // `BERTH` w rekordzie kursu to indeks w tej liście — id stanowisk są te
       // same co w układach gry (`earth:K7-1:…` z haloPortTraffic), więc bańka
       // wie, do którego padu i hali leci statek, bez własnej kopii doków.
-      berths: Object.fromEntries([...world.docks].map(([stationId, layout]) =>
-        [stationId, layout.berths.map(berth => berth.id)])),
-      buildMs
+      berths: berthTable(),
+      bubblePorts: bubblePortTable(),
+      bubbleDocks: bubbleDockTable(),
+      restored: restoredCounts(restored),
+      buildMs,
+      warmup: warmupInfo()
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu
     // w grze ma co pokazać, zanim świat zrobi pierwszy krok.
     publishTick(0, 0);
+    // Wyrwy z zapisu (E7) — też od razu, nie po pierwszym kroku świata.
+    publishBeltHoles();
+    if (warmup.active) schedule(warmupSlice);
   }
 
   function advance(message) {
@@ -193,18 +289,250 @@ export function createTrafficCore(post, options = {}) {
     if (!(dt > 0)) return;
     const t0 = now();
     const steps = advanceTrafficWorld(world, dt);
-    if (!steps) return;
+    if (steps) {
+      const ms = now() - t0;
+      core.stats.steps += steps;
+      core.stats.stepMs = ms / steps;
+      core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
+      publishTick(steps, ms);
+      publishBeltHoles();
+      // Zapas floty na padach K-7 i postój statków bez kursu (E15) — po kroku świata (stocznie, wojna, firmy
+      // zmieniają liczby); statek z redy, który dostał w tym kroku kurs, oddaje mu pozę przed krokiem bańki.
+      if (!core.warmup.active) refreshStanding();
+      // Miejsca pracy górników i złomiarzy (E24) — bańka żyje przy nich także z dala od portów.
+      if (core.bubble) refreshWorkSites(core.bubble);
+    }
+    stepBubble(dt);
+    publishSalvageTaken();
+  }
+
+  // ============================================================
+  // Złomiarze i wraki gry (E24) — `scrapperFleets.js`
+  // ============================================================
+
+  /** Źródło zgłoszenia z gry ('course:N' — numer kursu, 'entity:N') → klucz straty garnizonu ('course:<id>'). */
+  function lossSourceKey(source) {
+    const text = String(source || '');
+    if (!text.startsWith('course:')) return text || null;
+    const num = finite(Number(text.slice(7)), NaN);
+    const id = core.destroyedIds.get(num) || resolveCourse(num)?.id || null;
+    return id ? `course:${id}` : null;
+  }
+
+  /** Wraki gry w bańce gracza → rejestr złomiarzy (`war.wrecks`); okręt garnizonu — wrak jego straty. */
+  function wreckReport(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.wrecks)) return;
+    const visits = world.war.garrison?.visits || null;
+    const list = message.wrecks.map(w => ({ ...w, source: w?.source ? lossSourceKey(w.source) : null }));
+    reportGameWrecks(world.scrappers, world.war, list, {
+      now: world.registry.clock,
+      // Kurs garnizonu zniszczony w grze: stratę rozliczy `tickGarrison` w następnym kroku świata.
+      isLossSource: (key) => key.startsWith('course:') && !!visits?.some(v => `course:${v.courseId}` === key)
+    });
+  }
+
+  /** Gracz pracuje przy wraku gry (`wreck-hold`) — złomiarze go pomijają, holownik w drodze wraca pusty. */
+  function wreckHold(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.gids)) return;
+    holdGameWrecks(world.scrappers, world.war, message.gids, message.on !== false);
+  }
+
+  function wreckGone(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.gids)) return;
+    forgetGameWrecks(world.scrappers, world.war, message.gids);
+  }
+
+  /** Złomiarze, którzy skończyli pracę przy wraku gry — gra usuwa wrak (`salvage-taken`). */
+  function publishSalvageTaken() {
+    const world = core.world;
+    if (!world?.scrappers) return;
+    const taken = collectSalvageTaken(world.scrappers, world.registry);
+    if (taken) send({ type: SALVAGE_MSG.TAKEN, taken });
+  }
+
+  // ============================================================
+  // Rozgrzewka świata (E15) — `TRAFFIC_WARMUP_SECONDS`
+  // ============================================================
+
+  /** `init.warmup` → sekundy świata w pełnych krokach (`true` = stała protokołu, brak = 0). */
+  function warmupSeconds(spec, step) {
+    const seconds = spec === true ? TRAFFIC_WARMUP_SECONDS : Math.max(0, finite(spec));
+    return step > 0 ? Math.floor(seconds / step + 1e-9) * step : 0;
+  }
+
+  function warmupInfo() {
+    const w = core.warmup;
+    return { total: w.total, seconds: w.seconds, active: w.active, ms: w.ms };
+  }
+
+  /**
+   * Kawałek rozgrzewki: pełne kroki świata do `WARMUP_SLICE_MS`, potem oddanie sterowania (`schedule`) —
+   * wiadomości gry przechodzą między kawałkami. Czas gry (`advance`) w tym czasie dokłada się do świata
+   * normalnie: oba idą przez `world.pending`, więc kolejność kroków świata nie zależy od podziału na kawałki
+   * (to samo ziarno = ten sam świat). Bańka stoi do końca rozgrzewki (`stepBubble`): encje startują
+   * w świecie po godzinie ruchu, a nie w połowie rozgrzewki, która przesuwa zegar o setki sekund naraz.
+   */
+  function warmupSlice() {
+    const w = core.warmup;
+    const world = core.world;
+    if (!w.active || !world) return;
+    const step = world.config.step;
+    const t0 = now();
+    let steps = 0;
+    while (w.seconds < w.total) {
+      steps += advanceTrafficWorld(world, step);
+      w.seconds += step;
+      if (now() - t0 >= WARMUP_SLICE_MS) break;
+    }
     const ms = now() - t0;
-    core.stats.steps += steps;
-    core.stats.stepMs = ms / steps;
-    core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
+    w.ms += ms;
+    w.steps += steps;
+    if (w.seconds >= w.total) {
+      finishWarmup(steps, ms);
+      return;
+    }
+    const t = now();
+    if (t - w.publishedAt >= WARMUP_PUBLISH_MS) {
+      w.publishedAt = t;
+      publishTick(steps, ms);
+      publishBeltHoles();
+    }
+    schedule(warmupSlice);
+  }
+
+  /** Koniec rozgrzewki: zapis wybrany w jej trakcie, zapas floty i reda bańki, rynek z zegarem rozgrzewki. */
+  function finishWarmup(steps, ms) {
+    const w = core.warmup;
+    w.active = false;
+    // Zapis ekonomii z menu nakłada się na KONIEC rozgrzewki: magazyny, flota i stacje gracza są wtedy dokładnie
+    // takie jak w zapisie (rozgrzewka nie postarza ich o resztę godziny).
+    const restores = w.restores.splice(0);
+    for (const message of restores) economyRestore(message);
+    refreshStanding();
     publishTick(steps, ms);
+    publishBeltHoles();
+  }
+
+  // ============================================================
+  // Bańka w workerze (E6) — `workerBubble.js`
+  // ============================================================
+
+  /**
+   * Krok lekkich statków o ten sam `dt`, który dostał świat (po jego kroku —
+   * jak w teście integracyjnym bańki), i bufor póz do gry. Zdarzenia kursów
+   * rozlicza dyspozytor od razu; nowe kursy (odlot po rozładunku) wchodzą
+   * do kandydatów w tym samym `advance`.
+   */
+  function stepBubble(dt) {
+    const state = core.bubble;
+    // W trakcie rozgrzewki (E15) bańka stoi: pusta, gra nie dostaje `actors`.
+    if (!state || core.warmup.active) return;
+    const wasActive = state.active;
+    // Odlot statku, który dostał już nowy kurs, oddaje mu pozę przed krokiem (E15).
+    handoffDepartures(state);
+    if (stepWorldBubble(state, core.focus, dt, now) > 0) selectBubbleCourses(null);
+    // Bańka weszła w port albo fokus przeskoczył (teleport, warp do innego portu): postój od razu w tym buforze,
+    // nie po następnym kroku świata.
+    const f = core.focus;
+    const p = core.parkedAt;
+    if (state.active && (!wasActive || (f.x - p.x) ** 2 + (f.y - p.y) ** 2 > PARKED_REFRESH_JUMP ** 2)) {
+      refreshParkedShips(state, f);
+      p.x = f.x;
+      p.y = f.y;
+    }
+    core.stats.actorMs = state.stats.ms;
+    if (!state.active && !wasActive && core.actorsSent === 0) return;
+    publishActors();
+  }
+
+  /** Encje bez kursu bańki (E15): zapas floty i postój przy portach fokusu. */
+  function refreshStanding() {
+    const state = core.bubble;
+    if (!state) return;
+    refreshFleetStock(state);
+    refreshParkedShips(state, core.focus);
+    core.parkedAt.x = core.focus.x;
+    core.parkedAt.y = core.focus.y;
+  }
+
+  function publishActors() {
+    const state = core.bubble;
+    const packed = packWorldBubble(state, actorIndex, core.kindIndex, core.focus);
+    core.stats.actors = packed.count;
+    // Pusta bańka idzie raz (gra gasi encje), potem cisza do następnej.
+    core.actorsSent = packed.count;
+    const time = trafficWorldTime(core.world);
+    const message = {
+      type: TRAFFIC_MSG.ACTORS,
+      time,
+      count: packed.count,
+      data: packed.data,
+      ms: state.stats.ms
+    };
+    // Postoje przy stanowisku (kontrakt E12) — tylko zmiany.
+    const docks = collectDockChanges(state, time, resolveTrafficHullId);
+    if (docks) {
+      if (docks.docks) message.docks = docks.docks;
+      if (docks.undocked) message.undocked = docks.undocked;
+    }
+    // Manifesty ładunku encji (kontenery-łup K1) — tylko zmiany; zrzut przy zniszczeniu bez czekania na krok świata.
+    const manifests = collectManifestChanges(state);
+    if (manifests) {
+      if (manifests.manifests) message.manifests = manifests.manifests;
+      if (manifests.unmanifested) message.unmanifested = manifests.unmanifested;
+    }
+    // Praca górników i złomiarzy (E24) — tylko zmiany.
+    const works = collectWorkChanges(state, time);
+    if (works) {
+      if (works.works) message.works = works.works;
+      if (works.unworked) message.unworked = works.unworked;
+    }
+    if (core.hulls.length !== core.actorHullsSent) {
+      message.hulls = [...core.hulls];
+      core.actorHullsSent = core.hulls.length;
+    }
+    // Przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`) — co wiadomość, null bez rekordów.
+    const cargo = packBubbleCargo(state, resourceIndexOf);
+    message.cargo = cargo;
+    send(message, cargo ? [packed.data.buffer, cargo.buffer] : [packed.data.buffer]);
+  }
+
+  /** Stanowiska gracza (pełny zbiór) — dyspozytor ich nie przydziela, kurs w podejściu leci na inne. */
+  function berthHold(message) {
+    const director = core.world?.director;
+    if (!director) return;
+    const ids = Array.isArray(message.berths) ? message.berths : [];
+    const state = core.bubble;
+    setPlayerBerthHolds(director, ids, state ? (course) => courseCanLeaveBerth(state, course) : null);
+  }
+
+  // ============================================================
+  // Pas w ekonomii (E3): urobek gracza → rejestr uszczuplenia, wyrwy → gra
+  // ============================================================
+
+  function beltMined(message) {
+    const director = core.world?.director;
+    if (!director) return;
+    recordPlayerMining(director, finite(message.x, NaN), finite(message.y, NaN), finite(message.tons));
+    // Wyrwa po urobku gracza idzie od razu, nie dopiero po kroku świata.
+    publishBeltHoles();
+  }
+
+  function publishBeltHoles() {
+    const holes = takeHoleUpdates(core.world?.director?.mining);
+    if (holes) send({ type: BELT_MSG.HOLES, holes, full: false });
   }
 
   function setFocus(spec) {
-    const r = Math.max(0, finite(spec?.r));
-    core.focus.x = finite(spec?.x);
-    core.focus.y = finite(spec?.y);
+    const x = finite(spec?.x);
+    const y = finite(spec?.y);
+    // Przy porcie i w studni planety bańka jest szersza niż promień gry (E15, `BUBBLE_PORT_FOCUS_RADIUS`).
+    const r = core.bubble ? bubbleFocusRadius(core.bubble, x, y, finite(spec?.r)) : Math.max(0, finite(spec?.r));
+    core.focus.x = x;
+    core.focus.y = y;
     core.focus.r = r;
     core.focus.active = r > 0;
   }
@@ -212,6 +540,10 @@ export function createTrafficCore(post, options = {}) {
   function focus(message) {
     setFocus(message);
     if (!core.world) return;
+    // Bańka jeszcze nie weszła w port, a gra nie wysyła `advance` (sceny fabuły — odprawa w doku K-7, pauza): krok 0
+    // otwiera ją bez upływu czasu (`updateBubble` z dt = 0 tylko materializuje) — zapas floty w hali, postój i statki
+    // przy stanowiskach widać od pierwszego kadru sceny, nie naraz po jej końcu. W biegu bańkę otwiera `advance`.
+    if (core.bubble && !core.bubble.active) stepBubble(0);
     const f = core.focus;
     const p = core.published;
     const moved = Math.hypot(f.x - p.x, f.y - p.y);
@@ -248,14 +580,26 @@ export function createTrafficCore(post, options = {}) {
 
   function attach(message) {
     const course = resolveCourse(message.course);
-    if (course) attachActor(course, `game:${courseNumber(course.id)}`);
+    if (!course) return;
+    // Kurs prowadzony przez bańkę workera (E6) — gra go przejmuje: encja wraca do rekordu z postępem.
+    if (core.bubble && String(course.actorId || '').startsWith('bubble:')) releaseWorldBubbleCourse(core.bubble, course);
+    attachActor(course, `game:${courseNumber(course.id)}`);
   }
 
   function detach(message) {
     const course = resolveCourse(message.course);
     if (!course) return;
-    const value = Number(message.progress);
-    detachActor(course, Number.isFinite(value) ? { stageProgress: value } : null);
+    const value = message.progress == null ? NaN : Number(message.progress);
+    const snapshot = Number.isFinite(value) ? { stageProgress: value } : {};
+    // Poza z gry (E6: NPC wraca do bańki) — bańka materializuje kurs w tym miejscu (`viewState.handoff`).
+    const pose = message.pose;
+    if (pose && Number.isFinite(Number(pose.x)) && Number.isFinite(Number(pose.y))) {
+      Object.assign(snapshot, {
+        x: Number(pose.x), y: Number(pose.y), angle: Number(pose.angle) || 0,
+        speed: Number(pose.speed) || 0, handoff: true, stageIndex: course.stageIndex
+      });
+    }
+    detachActor(course, Object.keys(snapshot).length ? snapshot : null);
   }
 
   function progress(message) {
@@ -278,12 +622,51 @@ export function createTrafficCore(post, options = {}) {
     const world = core.world;
     const course = resolveCourse(message.course);
     if (!world || !course) return;
+    core.destroyedIds.set(finite(message.course, NaN), course.id);
+    if (core.destroyedIds.size > 64) core.destroyedIds.delete(core.destroyedIds.keys().next().value);
     destroyCourse(world.director, course, {
       reason: message.reason || 'destroyed',
       byPirates: message.byPirates,
       x: Number(message.x),
       y: Number(message.y)
     });
+    replyFerryPods(world, course, message.course);
+  }
+
+  /**
+   * Kapsuły ratunkowe (E22 K4): prom z ludźmi zniszczony w grze — ludzie czekają na dolot kapsuł (`holdFerryPassengers`
+   * w `destroyCourse`). Gra dostaje cel (port nadania) i liczbę ludzi; numer kursu gry → id kursu na czas lotu (kurs
+   * jest już zamknięty — `resolveCourse` może go nie znaleźć).
+   */
+  function replyFerryPods(world, course, number) {
+    const rec = ferryPodPassengers(world.director, course.id);
+    if (!rec) return;
+    core.podCourses.set(finite(number, NaN), String(course.id));
+    send({ type: TRAFFIC_MSG.PODS_TARGET, course: number, stationId: rec.originId, people: rec.units });
+  }
+
+  /** Kapsuła z ludźmi promu doleciała w grze (w obrazie albo bez) — magazyn stacji dolotu (`landFerryPassengers`). */
+  function podsLanded(message) {
+    const world = core.world;
+    if (!world) return;
+    const num = finite(message.course, NaN);
+    const id = core.podCourses.get(num) ?? core.courseIds.get(num) ?? null;
+    if (!id) return;
+    landFerryPassengers(world.director, id, String(message.stationId || ''), message.people);
+    if (!ferryPodPassengers(world.director, id)) core.podCourses.delete(num);
+  }
+
+  /** Encja bez kursu przejęta przez grę jako NPC (`on`) albo oddana — `holdBubbleEntity` (E6, taran i ogień). */
+  function entityHold(message) {
+    if (!core.bubble) return;
+    holdBubbleEntity(core.bubble, message.id, message.on !== false);
+  }
+
+  /** Encja bez kursu zniszczona w grze — strata zapasu frakcji albo statku firmy (`loseBubbleEntity`). */
+  function entityLost(message) {
+    if (!core.bubble) return;
+    const lost = loseBubbleEntity(core.bubble, message.id, { x: message.x, y: message.y, reason: message.reason || 'player' });
+    if (lost) core.stats.entitiesLost = (core.stats.entitiesLost || 0) + 1;
   }
 
   function station(message) {
@@ -295,12 +678,179 @@ export function createTrafficCore(post, options = {}) {
     }
   }
 
+  // ============================================================
+  // Rynki (E1) — `markets.js`
+  // ============================================================
+
+  /** Indeksy stacji i stanowisk po zmianie listy rynków. */
+  function indexMarkets() {
+    const world = core.world;
+    core.stationIndex = new Map(world.stations.map((entry, index) => [entry.id, index]));
+    core.berthById.clear();
+    for (const [stationId, layout] of world.docks) {
+      const port = core.stationIndex.get(stationId) ?? -1;
+      layout.berths.forEach((berth, index) => {
+        core.berthIndex.set(berth, index);
+        core.berthById.set(berth.id, { port, index });
+      });
+    }
+    core.marketsVersion = world.marketsVersion;
+  }
+
+  function stationTable() {
+    const world = core.world;
+    return world.stations.map(entry => describeMarket(world, entry));
+  }
+
+  function berthTable() {
+    return Object.fromEntries([...core.world.docks].map(([stationId, layout]) =>
+      [stationId, layout.berths.map(berth => berth.id)]));
+  }
+
+  /**
+   * Geometria stanowisk portów bańki (E6) w układzie gry — gra wyznacza z niej, na którym stanowisku stoi
+   * gracz (`berth-hold`), i znajduje stanowisko w rejestrze ringu (lampki). Te same liczby, które ma bańka.
+   */
+  function bubblePortTable() {
+    const out = {};
+    if (!core.bubble) return out;
+    for (const stationId of bubblePortIds(core.bubble)) {
+      const layout = core.world.docks.get(stationId);
+      if (!layout) continue;
+      out[stationId] = layout.berths.map(b => ({
+        id: b.id, stationId, x: b.x, y: b.y, angle: b.angle, length: b.length, width: b.width,
+        maxLength: b.maxLength ?? null, maxBeam: b.maxBeam ?? null, complex: b.complex ?? null,
+        hall: b.hall ?? null, bayId: b.bayId ?? null, k7BerthId: b.k7BerthId ?? null
+      }));
+    }
+    return out;
+  }
+
+  /**
+   * Budowle doków portów bez ringu (E14): `stationId` → `{ kind, mix, repeats, dockCount, x, y, angle, keepR, style }`
+   * — z tych liczb gra (kolizje) i obraz (model) liczą tę samą geometrię co bańka (`portDockLayout.js`).
+   */
+  function bubbleDockTable() {
+    const out = {};
+    if (!core.world) return out;
+    for (const [stationId, layout] of core.world.docks) {
+      const m = layout?.model;
+      if (!m) continue;
+      out[stationId] = {
+        kind: m.kind, mix: m.mix, repeats: m.repeats, dockCount: m.dockCount,
+        x: m.x, y: m.y, angle: m.angle, keepR: m.keepR, style: m.style
+      };
+    }
+    return out;
+  }
+
+  /** Zmiana listy rynków dociera do gry od razu, nie po kroku świata. */
+  function marketsChanged() {
+    indexMarkets();
+    if (core.bubble) refreshWorldBubblePorts(core.bubble);
+    core.marketsDirty = true;
+    publishTick(0, 0);
+  }
+
+  function marketAdd(message) {
+    const world = core.world;
+    if (!world || !message.def) return;
+    if (!addMarket(world, message.def)) return;
+    // Magazyn z zapisu dla rynku dokładanego po starcie (stacja gracza) — E7.
+    const id = String(message.def.id || '');
+    const pending = core.pendingRestore;
+    if (pending?.pending.has(id)) {
+      restoreStationEconomy(world, id, pending.pending.get(id), pending.keys, pending.ratio);
+      pending.pending.delete(id);
+      if (!pending.pending.size) core.pendingRestore = null;
+    }
+    marketsChanged();
+  }
+
+  // ============================================================
+  // Gracz na rynku i zapis (E7)
+  // ============================================================
+
+  /** Liczby przywróconego zapisu dla gry (`ready.restored`, `economy-restore-result`). */
+  function restoredCounts(restored) {
+    return restored
+      ? { stations: restored.applied, pending: restored.pending.size, mining: restored.mining, fleets: restored.fleets }
+      : null;
+  }
+
+  /**
+   * Zapis wybrany w menu na świat zbudowany przy starcie strony (gra: przed pierwszym krokiem). To samo co
+   * `init.restore`, potem księga, zapas floty bańki, rynek i wyrwy od razu — jak po `ready`.
+   */
+  function economyRestore(message) {
+    // W trakcie rozgrzewki (E15): zapis czeka do jej końca (`finishWarmup`) — odpowiedź też.
+    if (core.warmup.active) {
+      core.warmup.restores.push(message);
+      return;
+    }
+    const world = core.world;
+    const restored = world && message.state ? restoreEconomyState(world, message.state) : null;
+    if (restored) {
+      core.pendingRestore = restored.pending.size ? restored : null;
+      openDirectorMarket(world.director, world.stations);
+      if (core.bubble) refreshFleetStock(core.bubble);
+    }
+    send({ type: TRAFFIC_MSG.ECONOMY_RESTORE_RESULT, requestId: message.requestId ?? null, restored: restoredCounts(restored) });
+    if (!restored) return;
+    publishTick(0, 0);
+    publishBeltHoles();
+  }
+
+  function economySave(message) {
+    const world = core.world;
+    send({ type: TRAFFIC_MSG.ECONOMY_SAVE_RESULT, requestId: message.requestId ?? null, state: world ? exportEconomyState(world) : null });
+  }
+
+  function tradeSummary(message) {
+    const world = core.world;
+    send({ type: TRAFFIC_MSG.TRADE_SUMMARY_RESULT, requestId: message.requestId ?? null, summary: world ? summarizeTrade(world) : null });
+  }
+
+  function marketBuilding(message) {
+    const world = core.world;
+    if (!world) return;
+    if (addMarketBuilding(world, String(message.stationId || ''), String(message.role || ''))) marketsChanged();
+  }
+
+  function marketOwner(message) {
+    const world = core.world;
+    if (!world) return;
+    if (setMarketOwner(world, String(message.stationId || ''), message.factionId || null)) marketsChanged();
+  }
+
+  function marketRemove(message) {
+    const world = core.world;
+    if (!world) return;
+    if (removeMarket(world, String(message.stationId || ''))) marketsChanged();
+  }
+
   function config(message) {
     const director = core.world?.director;
     if (!director) return;
     if (Number.isFinite(message.piracyPressure)) director.config.piracyPressure = message.piracyPressure;
     if (typeof message.piracyEnabled === 'boolean') director.config.piracyEnabled = message.piracyEnabled;
     if (typeof message.protectObserved === 'boolean') director.config.protectObserved = message.protectObserved;
+    // Narzędzia i scena holowania (E24): krótszy postój złomiarzy, bez pierwszeństwa gracza, każdy wrak gry wart lotu
+    // (`minProfit` może być ujemny) — tylko narzędzia i `?scena=holowanie`.
+    const sc = message.scrappers;
+    const cfg = core.world?.scrappers?.config;
+    if (sc && cfg) {
+      for (const key of ['cutSeconds', 'hookSeconds', 'gameReserve', 'gameWreckDelay']) if (Number.isFinite(sc[key]) && sc[key] >= 0) cfg[key] = sc[key];
+      if (Number.isFinite(sc.minProfit)) cfg.minProfit = sc.minProfit;
+    }
+    // Prędkość holu w bańce (`?hol=` gry): 0 — bez limitu (prędkość trybu), liczba — sufit [j./s], `'model'` — prędkość,
+    // z której rekord kursu liczy przelot z wrakiem (`cruiseSpeed / towSpeedPenalty` złomiarzy świata).
+    const bc = message.bubble;
+    const flight = core.bubble?.bubble?.config;
+    if (bc && flight) {
+      if (bc.towHaulSpeed === 'model' && cfg) flight.towHaulSpeed = cfg.cruiseSpeed / Math.max(1, cfg.towSpeedPenalty);
+      else if (Number.isFinite(bc.towHaulSpeed) && bc.towHaulSpeed >= 0) flight.towHaulSpeed = bc.towHaulSpeed;
+    }
   }
 
   function snapshot(message) {
@@ -318,7 +868,12 @@ export function createTrafficCore(post, options = {}) {
         scrappers: summarizeScrappers(world.scrappers),
         agents: summarizeAgents(world.agents),
         log: world.director.log.slice(-30),
-        core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size }
+        // Górnicy i złomiarze przy pracy (E24) — narzędzia (`zlomiarze-gra.mjs`).
+        work: core.bubble ? describeWorkSites(core.bubble) : null,
+        core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size },
+        // Kapsuły ratunkowe bez obrazu (E22): statki z kapsułami, w drodze, doloty.
+        escapePods: world.podTransit ? { ...world.podTransit.stats, pending: world.podTransit.pending.length } : null,
+        warmup: { ...warmupInfo(), steps: core.warmup.steps }
       } : null
     });
   }
@@ -330,6 +885,7 @@ export function createTrafficCore(post, options = {}) {
   function publishTick(steps, ms) {
     const world = core.world;
     const market = buildMarket();
+    const crew = buildCrew();
     const bubble = buildBubble();
     const director = world.director;
     const message = {
@@ -344,6 +900,9 @@ export function createTrafficCore(post, options = {}) {
         queued: core.stats.queued,
         berthed: core.stats.berthed,
         bubble: bubble.count,
+        actors: core.stats.actors,
+        actorMs: core.stats.actorMs,
+        bubbleStats: core.bubble ? { ...core.bubble.bubble.stats } : null,
         hauls: director.stats.hauls,
         mining: director.stats.mining,
         delivered: director.stats.delivered,
@@ -354,19 +913,30 @@ export function createTrafficCore(post, options = {}) {
         totalSteps: core.stats.steps
       },
       market,
+      crew,
       bubble,
       wrecks: collectWrecks(),
-      warWrecks: collectWarWrecks()
+      warWrecks: collectWarWrecks(),
+      warmup: warmupInfo()
     };
     if (core.stationFactionsDirty) {
       core.stationFactionsDirty = false;
       message.stationFactions = world.stations.map(entry => entry.factionId || null);
     }
-    send(message, [market.buffer, bubble.data.buffer]);
+    if (core.marketsDirty || core.marketsVersion !== world.marketsVersion) {
+      // Tabela rynków przed `market` — bufor rynku ma już jej układ.
+      if (core.marketsVersion !== world.marketsVersion) indexMarkets();
+      core.marketsDirty = false;
+      message.stations = stationTable();
+      message.berths = berthTable();
+      message.bubblePorts = bubblePortTable();
+      message.bubbleDocks = bubbleDockTable();
+    }
+    send(message, [market.buffer, crew.buffer, bubble.data.buffer]);
   }
 
   /**
-   * Rynek: stacje × surowce × [zapas, pojemność, głód, bid, ask]. Nowy bufor
+   * Rynek: stacje × surowce × [zapas, pojemność, głód, bid, ask, oferta sprzedaży, skup]. Nowy bufor
    * na każdy krok, bo odchodzi do gry jako transferable (w workerze po
    * wysłaniu jest odłączony) — 35 KB co pięć sekund gry.
    */
@@ -374,9 +944,14 @@ export function createTrafficCore(post, options = {}) {
     const world = core.world;
     const resourceCount = RESOURCE_KEYS.length;
     const data = new Float64Array(world.stations.length * resourceCount * MARKET_STRIDE);
+    const book = world.director?.book;
+    const offer = core.offerScratch;
+    const quoteFields = core.quoteScratch;
     world.stations.forEach((entry, stationIndex) => {
       const econ = world.getEconomy(entry.id);
       if (!econ) return;
+      const quote = book?.quotes?.get(entry.id) || null;
+      const derelict = isDerelict(entry);
       for (let r = 0; r < resourceCount; r++) {
         const key = RESOURCE_KEYS[r];
         const offset = (stationIndex * resourceCount + r) * MARKET_STRIDE;
@@ -386,7 +961,62 @@ export function createTrafficCore(post, options = {}) {
         const price = resourcePrice(entry, econ, key);
         data[offset + MARKET_FIELD.BID] = finite(price?.bid);
         data[offset + MARKET_FIELD.ASK] = finite(price?.ask);
+        // Oferta dla kupca na świeżym zapasie; popyt i towar w drodze z notowań księgi (E7).
+        // Opuszczona stacja oddaje wszystko, co zostało, i niczego nie skupuje.
+        if (derelict || !price) {
+          data[offset + MARKET_FIELD.SELL] = derelict ? Math.floor(finite(econ.resources?.[key])) : 0;
+          data[offset + MARKET_FIELD.BUY] = -1;
+          continue;
+        }
+        const q = quote?.prices.get(key);
+        quoteFields.capacity = price.capacity;
+        quoteFields.stored = price.stored;
+        quoteFields.room = price.room;
+        quoteFields.offerFloor = price.offerFloor;
+        quoteFields.wanted = q ? q.wanted : false;
+        quoteFields.demandRate = q?.demandRate || 0;
+        quoteFields.restockFloor = q?.restockFloor || 0;
+        portOfferFromQuote(quoteFields, book ? inboundUnits(book, entry.id, key) : 0, offer);
+        // Kontrakty obsady (W5): ludzi wydaje tylko ośrodek ludności.
+        if (key === 'workforce') crewContractOffer(entry, offer);
+        data[offset + MARKET_FIELD.SELL] = offer.sell;
+        data[offset + MARKET_FIELD.BUY] = offer.wanted ? offer.buy : -1;
       }
+    });
+    return data;
+  }
+
+  /**
+   * Obsada portów (workforce, W5): stacje × `CREW_FIELD` w osobach świata — ludzie w drodze na kontraktach
+   * (do portu i z portu), powroty po kontrakcie, czekający na prom do domu, wydajność zakładów, zakładnicy
+   * w kryjówkach. Jeden przegląd aktywnych kursów na tick (odczyt — gospodarka bez zmian). Nowy bufor na krok,
+   * bo odchodzi jako transferable (~2 KB).
+   */
+  function buildCrew() {
+    const world = core.world;
+    const data = new Float64Array(world.stations.length * CREW_STRIDE);
+    // Indeks stacji z bieżącej tabeli; `indexMarkets` zostaje dla `tick` (ono wysyła nową tabelę `stations`).
+    const index = core.marketsVersion === world.marketsVersion && core.stationIndex
+      ? core.stationIndex : new Map(world.stations.map((entry, i) => [entry.id, i]));
+    const flow = core.flowScratch;
+    for (const course of world.registry.active) {
+      if (!course.payload?.passengers || !passengerFlow(course, flow)) continue;
+      const to = index.get(flow.to);
+      if (flow.returning) {
+        if (to !== undefined) data[to * CREW_STRIDE + CREW_FIELD.RETURNING] += flow.people;
+        continue;
+      }
+      const from = index.get(flow.from);
+      if (to !== undefined) data[to * CREW_STRIDE + CREW_FIELD.INBOUND] += flow.people;
+      if (from !== undefined) data[from * CREW_STRIDE + CREW_FIELD.OUTBOUND] += flow.people;
+    }
+    const hostages = hostagesByNest(world.piracy, core.hostageScratch);
+    world.stations.forEach((entry, stationIndex) => {
+      const econ = world.getEconomy(entry.id);
+      const offset = stationIndex * CREW_STRIDE;
+      data[offset + CREW_FIELD.LEAVING] = finite(econ?.workforceLeaving);
+      data[offset + CREW_FIELD.EFFICIENCY] = Number.isFinite(econ?.workforceEfficiency) ? econ.workforceEfficiency : 1;
+      data[offset + CREW_FIELD.HOSTAGES] = hostages.get(entry.id) || 0;
     });
     return data;
   }
@@ -399,15 +1029,50 @@ export function createTrafficCore(post, options = {}) {
    */
   function buildBubble() {
     const world = core.world;
-    const { registry, network, director } = world;
+    const { registry, director } = world;
+    const f = core.focus;
+    const time = trafficWorldTime(world);
+    const clock = registry.clock;
+    const hullsBefore = core.hulls.length;
+    const count = selectBubbleCourses((course, seg, index) => {
+      let buffer = core.scratch;
+      if ((index + 1) * COURSE_STRIDE > buffer.length) {
+        const bigger = new Float64Array(buffer.length * 2);
+        bigger.set(buffer);
+        buffer = core.scratch = bigger;
+      }
+      writeCourse(buffer, index * COURSE_STRIDE, course, seg, director);
+    });
+    core.published.x = f.x;
+    core.published.y = f.y;
+    core.published.r = f.r;
+    pruneCourseIds(registry);
+
+    const bubble = { clock, time, count, data: core.scratch.slice(0, count * COURSE_STRIDE) };
+    if (core.hulls.length !== core.hullsSent || hullsBefore !== core.hulls.length) {
+      bubble.hulls = [...core.hulls];
+      core.hullsSent = core.hulls.length;
+    }
+    return bubble;
+  }
+
+  /**
+   * Kursy w bańce: przypięte do encji i te, których odcinek w horyzoncie kroku
+   * świata zbliża się do fokusu. `write(course, seg, index)` — zapis do bufora
+   * kursów (`buildBubble`); te same kursy to kandydaci bańki workera (E6).
+   * Zwraca ich liczbę.
+   */
+  function selectBubbleCourses(write) {
+    const world = core.world;
+    const { registry, network } = world;
     const f = core.focus;
     const time = trafficWorldTime(world);
     const clock = registry.clock;
     const horizon = world.config.step;
     const r2 = f.r * f.r;
     const seg = core.segment;
-    const hullsBefore = core.hulls.length;
-    let buffer = core.scratch;
+    const list = core.candidates;
+    list.length = 0;
     let count = 0;
     let queued = 0;
     let berthed = 0;
@@ -420,30 +1085,16 @@ export function createTrafficCore(post, options = {}) {
       if (!attached && !f.active) continue;
       if (!segmentOf(network, course, clock, seg)) continue;
       if (!attached && !segmentNear(seg, time, time + horizon, f.x, f.y, r2)) continue;
-
-      if ((count + 1) * COURSE_STRIDE > buffer.length) {
-        const bigger = new Float64Array(buffer.length * 2);
-        bigger.set(buffer);
-        buffer = core.scratch = bigger;
-      }
-      writeCourse(buffer, count * COURSE_STRIDE, course, seg, director);
+      list.push(course);
+      if (write) write(course, seg, count);
       count++;
     }
 
     core.stats.bubble = count;
     core.stats.queued = queued;
     core.stats.berthed = berthed;
-    core.published.x = f.x;
-    core.published.y = f.y;
-    core.published.r = f.r;
-    pruneCourseIds(registry);
-
-    const bubble = { clock, time, count, data: buffer.slice(0, count * COURSE_STRIDE) };
-    if (core.hulls.length !== core.hullsSent || hullsBefore !== core.hulls.length) {
-      bubble.hulls = [...core.hulls];
-      core.hullsSent = core.hulls.length;
-    }
-    return bubble;
+    if (core.bubble) setBubbleCandidates(core.bubble, list);
+    return count;
   }
 
   function writeCourse(buffer, offset, course, seg, director) {
@@ -551,6 +1202,8 @@ export function createTrafficCore(post, options = {}) {
     handle,
     /** Świat — dla testów i trybu awaryjnego; gra rozmawia przez `handle`. */
     get world() { return core.world; },
+    /** Bańka workera (E6) — dla testów i diagnostyki (`workerBubble.js`). */
+    get bubble() { return core.bubble; },
     get stats() { return { ...core.stats }; }
   };
 }

@@ -1,11 +1,14 @@
-// Mostki w PRAWDZIWEJ grze (kadłuby belkowe — src/game/shipBridgeBeams.js, docs/PORT-mostki.md § 9):
-// nowa gra (tryb swobodny), pirat-pancernik obok Atlasa, stan mostków na belkach, model 3D (Bridge3D),
-// zniszczenie mostka kraterami w komórkach strefy (jak ciężka broń) → utrata dowodzenia → agonia hulka
-// (wyrzut atmosfery, przepięcia, okna i dysze gasną) → wrak bez wybuchu z modelem mostka; mostki
-// Atlasa gracza (rufowy pada — dowodzi zapasowy). Zrzuty, statystyki, pipeline'y tworzone w klatkach
-// (rozgrzewka ma je wykluczyć — oczekiwane 0) i błędy konsoli / WebGPU.
+// Mostki w PRAWDZIWEJ grze (kadłuby belkowe — src/game/shipBridgeBeams.js, docs/PORT-mostki.md § 9–10):
+// nowa gra (tryb swobodny); flota Terra Novy w szeregu (Custos I, Hasta II, Bellator IV, Citadella V, Colossus VI —
+// mostki na poziomy klas, strefa = obrys modelu poziomu) — zbliżenie na mostek i cały okręt, zniszczenie mostka
+// Bellatora; pirat-pancernik obok Atlasa, stan mostków na belkach, model 3D (Bridge3D), zniszczenie mostka
+// kraterami w komórkach strefy (jak ciężka broń) → utrata dowodzenia → agonia hulka (wyrzut atmosfery,
+// przepięcia, okna i dysze gasną) → wrak bez wybuchu z modelem mostka; mostki Atlasa gracza (rufowy pada —
+// dowodzi zapasowy). Zrzuty, statystyki, pipeline'y tworzone w klatkach (strona: __harness.pipes; worker:
+// dziennik „[render.worker] pipeline sync”) — oczekiwane 0, błędy konsoli / WebGPU.
 //
 //   node scripts/webgpu/mostki-gra.mjs [--out .tmp/webgpu/mostki-gra] [--port 5351] [--zoom 0.9]
+//        [--query renderWorker=1] [--bez-floty 1]
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startChrome, attachLogs, waitFor, evaluate, screenshotPng, osobneLosowanieUuid, repo } from './wspolne.mjs';
@@ -13,6 +16,7 @@ import { parseArgs, startChrome, attachLogs, waitFor, evaluate, screenshotPng, o
 const args = parseArgs();
 const port = Number(args.port || 5351);
 const zoom = Number(args.zoom || 0.9);
+const query = args.query ? `&${args.query}` : '';
 const out = resolve(repo, args.out || '.tmp/webgpu/mostki-gra');
 mkdirSync(out, { recursive: true });
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
@@ -26,20 +30,46 @@ const chrome = await startChrome({ width: 1920, height: 1080 });
 const logs = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 180000) => evaluate(cdp, e, t);
-const result = { zrzuty: [], etapy: {} };
+// konsola workera renderu (pipeline'y sync w klatkach) — wzór reaktory-gra.mjs
+const workerLogs = [];
+let msgId = 900000;
+cdp.on((msg) => {
+  if (msg.method === 'Target.attachedToTarget') {
+    for (const method of ['Runtime.enable', 'Runtime.runIfWaitingForDebugger']) cdp.ws.send(JSON.stringify({ id: ++msgId, method, sessionId: msg.params.sessionId }));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.consoleAPICalled') {
+    workerLogs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 2000));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.exceptionThrown') {
+    workerLogs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`.slice(0, 2000));
+  }
+});
+await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+
+const result = { tryb: args.query || 'off', zrzuty: [], etapy: {} };
 const shot = async (name) => {
   await ev('window.__harness.frames(2)');
   await screenshotPng(cdp, join(out, `${name}.png`));
-  const st = await ev('JSON.stringify({ b3: { ...window.Bridge3D.stats, instances: undefined }, fx: { ...window.__bridgeFxStats() } })');
+  // statystyki modułów strony (tryb worker: rysuje worker — liczniki strony puste)
+  const st = await ev('JSON.stringify({ b3: window.Bridge3D ? { ...window.Bridge3D.stats, instances: undefined } : null, fx: window.__bridgeFxStats ? { ...window.__bridgeFxStats() } : null })');
   result.zrzuty.push({ name, ...JSON.parse(st) });
   console.log(name, st);
 };
+// flota TN: klucz wezwania, zoom zbliżenia na mostek i całego okrętu
+const TN = [
+  { name: 'custos', key: 'frigate_pd', zoom: 6.5, whole: 1.6 },
+  { name: 'hasta', key: 'destroyer', zoom: 5.0, whole: 1.1 },
+  { name: 'bellator', key: 'battleship', zoom: 3.4, whole: 0.55 },
+  { name: 'citadella', key: 'carrier', zoom: 2.6, whole: 0.33 },
+  { name: 'colossus', key: 'supercapital', zoom: 1.9, whole: 0.24 }
+];
 try {
   await osobneLosowanieUuid(cdp);
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
-  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
-  await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 500);
+  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1${query}` });
+  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
+  await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready) || !!window.RenderWorkerHost', 240000, 500);
+  await new Promise((r) => setTimeout(r, 1500));
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 900));
   await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
@@ -69,6 +99,67 @@ try {
     return true;
   })()`);
 
+  // FLOTA TN: szereg okrętów w głębokim kosmosie (dummy — stoją), gracz z boku; mostek poziomu klasy na strefie.
+  const kStart0 = await ev('window.__harness.frameLog.n');
+  const workerStart = workerLogs.length;
+  if (!args['bez-floty']) {
+    result.etapy.flota = await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; H.reseed(0x7e11); S.hideHud(true);
+      DevScene.teleport(${DEEP.x}, ${DEEP.y} + 9000, 0);
+      if (window.fireControl) window.fireControl.posture = 'hold';
+      const list = ${JSON.stringify(TN)};
+      const placed = {};
+      let x = ${DEEP.x} - 6000;
+      for (const s of list) {
+        const before = new Set(npcs);
+        spawnCallInShip(s.key, { mode: 'dummy', pos: { x, y: ${DEEP.y} }, spawnPos: { x, y: ${DEEP.y} }, spawnAngle: 0 });
+        const e = npcs.find((n) => !before.has(n));
+        if (e) { e.__harnessName = s.name; placed[s.name] = e; }
+        x += s.name === 'colossus' ? 3200 : s.name === 'citadella' ? 2400 : 1600;
+      }
+      for (let it = 0; it < 400 && !S.hullsReady(); it++) await H.frames(2);
+      await H.step(20);
+      window.__TN = placed;
+      const rep = {};
+      for (const [name, e] of Object.entries(placed)) {
+        const st = e.bridgeState, b = st?.bridges?.[0];
+        const rec = window.Bridge3D?.recordsOf?.(e)?.[0];
+        rep[name] = b ? { strefa: { x: b.def.x, y: b.def.y, w: b.def.w, h: b.def.h, poziom: b.def.level }, komorek: b.total, model3D: st.model3D === true, rodzaj: rec?.kind?.name || null } : { brak: true };
+      }
+      return rep;
+    })()`, 300000);
+    console.log('flota', JSON.stringify(result.etapy.flota, null, 1));
+    for (const s of TN) {
+      const ok = await ev(`(async () => { const e = window.__TN[${JSON.stringify(s.name)}]; if (!e?.bridgeState) return false;
+        const d = e.bridgeState.bridges[0].def; const c = __SB.bridgePngToWorld(e, d.x, d.y, {});
+        window.__harness.scene.cam(c.x, c.y, ${s.zoom}); await window.__harness.frames(3); return true; })()`);
+      if (!ok) { console.log('brak mostka', s.name); continue; }
+      await shot(`tn-${s.name}-a-mostek`);
+      await ev(`(async () => { const e = window.__TN[${JSON.stringify(s.name)}]; window.__harness.scene.cam(e.x, e.y, ${s.whole}); await window.__harness.frames(3); return true; })()`);
+      await shot(`tn-${s.name}-b-okret`);
+    }
+    // Zabicie mostka IV Bellatora: utrata dowodzenia → agonia → wrak z modelem mostka
+    result.etapy.flotaUtrata = await ev(`(async () => { const e = window.__TN.bellator, H = window.__harness;
+      const d = e.bridgeState.bridges[0].def; const c = __SB.bridgePngToWorld(e, d.x, d.y, {});
+      window.__harness.scene.cam(c.x, c.y, 2.4);
+      __killCells(e, 0, 0.5);
+      let f = 0;
+      for (; f < 60 && !__RT.isBridgeHulk(e); f++) await H.step(1);
+      return { klatek: f, hulk: __RT.isBridgeHulk(e), wyrwa: e.bridgeState?.vent ? { exit: Math.round(e.bridgeState.vent.exitDist) } : null };
+    })()`);
+    console.log('bellator utrata', JSON.stringify(result.etapy.flotaUtrata));
+    await ev('window.__harness.step(18)');
+    await shot('tn-bellator-c-agonia-0.3s');
+    result.etapy.flotaWrak = await ev(`(async () => { const e = window.__TN.bellator, H = window.__harness, key = e.beamHull?.dmgKey;
+      let f = 0;
+      for (; f < 360 && !e.dead; f++) await H.step(1);
+      await H.step(6);
+      const w = (window.wrecks || []).find((x) => x && !x.dead && x.beamHull && x.beamHull.dmgKey === key);
+      return { klatek: f, martwy: !!e.dead, wrak: !!w, rekordyWraku: w && window.Bridge3D?.recordsOf ? window.Bridge3D.recordsOf(w).length : null };
+    })()`);
+    console.log('bellator wrak', JSON.stringify(result.etapy.flotaWrak));
+    await shot('tn-bellator-d-wrak');
+  }
+
   // Atlas gracza: dwa mostki na belkach (rufowy + zapasowy), model 3D.
   result.etapy.gracz = await ev(`(() => { const st = ship.bridgeState; return st ? { backend: st.backend?.kind || 'heks', mostki: st.bridges.map((b) => b.id + ':' + b.total), model3D: st.model3D === true } : null; })()`);
   console.log('gracz', JSON.stringify(result.etapy.gracz));
@@ -81,14 +172,14 @@ try {
     for (let it = 0; it < 400 && !S.hullsReady(); it++) await H.frames(2);
     H.reseed(0xb21e);
     await H.step(40);
-    const e = npcs.filter((n) => !n.dead && !n.friendly && n.beamHull).sort((a, b) => (b.radius || 0) - (a.radius || 0))[0];
+    const e = npcs.filter((n) => !n.dead && n.isPirate && n.beamHull).sort((a, b) => (b.radius || 0) - (a.radius || 0))[0];
     if (!e) return { blad: 'brak pirata' };
     window.__cel = e;
     const st = e.bridgeState;
     const c = __SB.bridgePngToWorld(e, st.bridges[0].def.x, st.bridges[0].def.y, {});
     S.cam(c.x, c.y, ${zoom});
     await H.frames(4);
-    return { typ: e.type, ramka: e.shipFrame, backend: st?.backend?.kind || null, mostki: st?.bridges.map((b) => b.id + ':' + b.total), model3D: st?.model3D === true, rekordy: window.Bridge3D.recordsOf(e).length };
+    return { typ: e.type, ramka: e.shipFrame, backend: st?.backend?.kind || null, mostki: st?.bridges.map((b) => b.id + ':' + b.total), model3D: st?.model3D === true, rekordy: window.Bridge3D?.recordsOf ? window.Bridge3D.recordsOf(e).length : null };
   })()`, 300000);
   console.log('scena', JSON.stringify(result.etapy.scena));
   await shot('a-mostek-pirata');
@@ -112,7 +203,7 @@ try {
     for (; f < 360 && !e.dead; f++) await H.step(1);
     await H.step(6);
     const w = (window.wrecks || []).find((x) => x && !x.dead && x.beamHull && x.beamHull.dmgKey === key);
-    return { klatek: f, martwy: !!e.dead, wrak: !!w, wezly: w?.beamHull?.body.activeNodes || 0, rekordyWraku: w ? window.Bridge3D.recordsOf(w).length : 0 };
+    return { klatek: f, martwy: !!e.dead, wrak: !!w, wezly: w?.beamHull?.body.activeNodes || 0, rekordyWraku: w && window.Bridge3D?.recordsOf ? window.Bridge3D.recordsOf(w).length : null };
   })()`);
   console.log('wrak', JSON.stringify(result.etapy.wrak));
   await shot('c-wrak');
@@ -129,13 +220,20 @@ try {
   console.log('atlas', JSON.stringify(result.etapy.atlas));
   await shot('d-atlas-rufowy');
 
-  result.etapy.kompilacjeWKlatce = JSON.parse(await ev(`JSON.stringify(window.__harness.pipes.list.filter((p) => p.k >= ${kStart} && (p.budowa ? !p.poza : (p.sync || p.compute))).map((p) => (p.budowa ? 'budowa ' : p.compute ? '' : 'sync ') + p.nazwa + (p.ms ? ' ' + p.ms + ' ms' : '')))`));
-  console.log('kompilacje w klatkach:', result.etapy.kompilacjeWKlatce.length, result.etapy.kompilacjeWKlatce.slice(0, 12));
+  result.etapy.kompilacjeWKlatce = JSON.parse(await ev(`JSON.stringify(window.__harness.pipes.list.filter((p) => p.k >= ${kStart0} && (p.budowa ? !p.poza : (p.sync || p.compute))).map((p) => (p.budowa ? 'budowa ' : p.compute ? '' : 'sync ') + p.nazwa + (p.ms ? ' ' + p.ms + ' ms' : '')))`));
+  result.etapy.syncStronaCalosc = JSON.parse(await ev(`JSON.stringify((window.__harness?.pipes?.list || []).filter((p) => p.sync && !p.compute && !p.budowa).map((p) => p.nazwa))`));
+  result.etapy.syncWorker = workerLogs.filter((l) => l.includes('pipeline sync')).map((l) => l.replace(/^.*pipeline sync #\d+ k=\d+: /, ''));
+  result.etapy.syncWorkerPoStarcie = workerLogs.slice(workerStart).filter((l) => l.includes('pipeline sync')).length;
+  console.log('kompilacje w klatkach (strona, od floty):', result.etapy.kompilacjeWKlatce.length, result.etapy.kompilacjeWKlatce.slice(0, 12));
+  console.log('pipeline sync strona (cała sesja):', result.etapy.syncStronaCalosc.length, result.etapy.syncStronaCalosc.slice(0, 12));
+  console.log('pipeline sync worker (cała sesja):', result.etapy.syncWorker.length, result.etapy.syncWorker.slice(0, 12));
 } finally {
   result.bledy = logs.errors().slice(0, 40);
-  console.log('błędy konsoli:', result.bledy.length);
-  for (const e of result.bledy.slice(0, 8)) console.log('  ', e.slice(0, 300));
+  result.bledyWorkera = workerLogs.filter((l) => l.startsWith('[exception]') || l.startsWith('[error]')).slice(0, 20);
+  console.log('błędy konsoli:', result.bledy.length, 'workera:', result.bledyWorkera.length);
+  for (const e of [...result.bledy, ...result.bledyWorkera].slice(0, 10)) console.log('  ', e.slice(0, 300));
   writeFileSync(join(out, 'wyniki.json'), JSON.stringify(result, null, 2));
+  writeFileSync(join(out, 'worker.log'), workerLogs.join('\n'));
   await chrome.close();
   await server.close();
 }

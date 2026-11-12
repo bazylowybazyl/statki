@@ -51,6 +51,24 @@ export const HD_EMBLEMS = Object.freeze({
   ] }),
   bolt: Object.freeze({ label: 'Błyskawica', paths: [[[58, 4], [22, 56], [46, 56], [36, 96], [78, 40], [54, 40], [66, 4]]] }),
   gear: Object.freeze({ label: 'Koło zębate', paths: [gear(50, 50, 36, 46, 10), circle(50, 50, 18)] }),
+  // Znak piratów (BEZ czaszek — decyzja użytkownika): dwa skrzyżowane kordelasy z jelcami nad poszarpanym proporcem
+  raider: Object.freeze({ label: 'Znak piratów', paths: [
+    [[18, 16], [24, 12], [72, 66], [66, 72]],
+    [[60, 74], [76, 58], [80, 62], [64, 78]],
+    [[66, 74], [74, 66], [88, 82], [82, 88]],
+    [[82, 16], [76, 12], [28, 66], [34, 72]],
+    [[40, 74], [24, 58], [20, 62], [36, 78]],
+    [[34, 74], [26, 66], [12, 82], [18, 88]],
+    [[30, 90], [70, 90], [64, 96], [58, 92], [50, 98], [42, 92], [36, 96]]
+  ] }),
+  // Słońce Konsorcjum Wewnętrznego: tarcza z dwunastoma promieniami
+  sun: Object.freeze({ label: 'Słońce', paths: [star(50, 50, 47, 30, 12, 0), circle(50, 50, 22, 36)] }),
+  // Skała Unii Pasa: bryła asteroidy z kraterem i pierścieniem toru
+  rock: Object.freeze({ label: 'Skała', paths: [
+    [[30, 22], [52, 14], [72, 22], [84, 42], [80, 66], [62, 84], [38, 86], [20, 70], [14, 46]],
+    circle(56, 40, 10, 24),
+    [[4, 60], [96, 36], [97, 41], [5, 65]]
+  ] }),
   // Orzeł Terra Novy (własny rysunek w duchu znaku z sprite'ów): korpus, głowa, po trzy lotki skrzydeł, ogon — części
   // rozłączne (wypełnienie parzysto-nieparzyste).
   eagle: Object.freeze({ label: 'Orzeł Terra Novy', paths: [

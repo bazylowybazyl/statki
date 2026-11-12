@@ -29,7 +29,16 @@
 
 import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 
-export const SNAPSHOT_LAYOUT_VERSION = 1;
+// 2 (2026-10-25): WORLD — warp gracza w pełnym kształcie (warpWorldMirror.js: rampa, ślizg, kurs x / y, ciała, zegary,
+// kotwica kadru); dawne WARP_DIR (obiekt pakowany jako liczba — zawsze NaN) zniknęło.
+// 3 (2026-10-26): WORLD — oś β soczewki świata (WARP_LENS_*: rekord stepWarpLensPhase strony gry).
+// 4 (2026-10-26, DECYZJE-2 T2): WORLD — plan trasy skoku gracza (WARP_ROUTE_*: warp.route z planPlayerWarp);
+//   HEAD — okręt prowadzony przez kamerę (LEAD_*: niebo-sfera, 2026-10-27).
+// 5 (2026-11-11): ENT — stan zasilania okrętu (PWR_STATE, PWR_T — src/game/shipPower.js), migotanie świateł po trafieniu
+//   (PWR_FLICK), reflektor dziobowy (SPOT_ANG), alarm (ALARM); FLAGS2 — światło bojowe floty (BATTLE_LIGHTS).
+// 6 (2026-11-11): TURRETS — kod lampki gotowości wieży (READY, na końcu i32 rekordu: zielona / bursztynowa / czerwona /
+//   okręt bez zasilania — src/data/turretReadyLamp.js).
+export const SNAPSHOT_LAYOUT_VERSION = 6;
 
 function fields(names) {
   const o = {};
@@ -70,7 +79,12 @@ export const HEAD = fields([
   'N_ENT', 'N_BODY', 'N_NOZZLES', 'N_SHOTS', 'N_TURRETS', 'N_STATIONS', 'N_CORES',
   'NODE_F64_USED', 'NODE_U8_USED', 'N_BODIES_PACKED', 'N_NODES_PACKED',
   // pierścień rozkazów: numer ostatniego rekordu klatki (RW-21)
-  'EVENT_LAST'
+  'EVENT_LAST',
+  // obrót kadru kamery klatki i kamery bez wstrząsu (`cam.roll` [rad] — hipercruise, src/3d/viewRoll.js; 2026-10-23)
+  'CAM_ROLL', 'CAMNS_ROLL',
+  // okręt prowadzony przez kamerę zamiast statku (fregata zwiadu — RenderWorld.cameraLead: poza, prędkość, waga
+  // przejazdu kamery; LEAD_W = 0 — kamera prowadzi statek gracza; niebo-sfera sky3D.js, 2026-10-27)
+  'LEAD_X', 'LEAD_Y', 'LEAD_V', 'LEAD_W'
 ]);
 
 /** Bity HEAD.FLAGS. */
@@ -111,7 +125,10 @@ export const ENT = record({
     // poziom B: wymiary sprite'a (koło zapasowe tarczy), obraz sprite'a renderu (width, height, natural*)
     'SPRITE_W', 'SPRITE_H', 'RS_W', 'RS_H', 'RS_NW', 'RS_NH',
     // zimny wrak: smuga z migawki (_coldSnapshot.impostor)
-    'CI_X', 'CI_Y', 'CI_ROT', 'CI_HALF_W', 'CI_HALF_H', 'CI_R', 'CI_G', 'CI_B', 'CI_WX', 'CI_WY', 'CI_REACH', 'CI_OPACITY'
+    'CI_X', 'CI_Y', 'CI_ROT', 'CI_HALF_W', 'CI_HALF_H', 'CI_R', 'CI_G', 'CI_B', 'CI_WX', 'CI_WY', 'CI_REACH', 'CI_OPACITY',
+    // stan zasilania (czas fazy shipPower.t; NaN — encja bez stanu), migotanie świateł 0..1, kąt reflektora dziobowego
+    // (świat gry, rad; NaN — zgaszony)
+    'PWR_T', 'PWR_FLICK', 'SPOT_ANG'
   ],
   i32: [
     'SLOT', 'GEN', 'FLAGS', 'FLAGS2', 'BODY_SLOT', 'BODY_GEN',
@@ -125,15 +142,21 @@ export const ENT = record({
     // migawki i ród (A)
     'MODEL3D', 'WEAPON_TIER', 'FACTION', 'FACTION_ID', 'HULL_ID', 'SHIP_ID', 'COLD_KIND', 'COLD_DMG_KEY',
     // wersje konfiguracji statycznej (rosną przy zmianie tożsamości źródła)
-    'V_VISUAL', 'V_HULL', 'V_NOZZLES', 'V_LIGHTS', 'V_BRIDGE', 'V_SHIELD'
+    'V_VISUAL', 'V_HULL', 'V_NOZZLES', 'V_LIGHTS', 'V_BRIDGE', 'V_SHIELD',
+    // stan zasilania (POWER_*; −1 — encja bez stanu = PRACA), kod alarmu okrętu (0 — brak; src/game/shipAlarms.js)
+    'PWR_STATE', 'ALARM'
   ]
 });
 
-/** Bity ENT.FLAGS. 131072 i 524288 wolne (dawne HAS_HEXGRID i ASTEROID_HEX — kadłuby heksowe, usunięte 2026-10-19). */
+/**
+ * Bity ENT.FLAGS. 524288 wolne (dawne ASTEROID_HEX — kadłuby heksowe, usunięte 2026-10-19). LENS_DOT (131072, dawne
+ * HAS_HEXGRID) — encję zastępuje w skoku gracza kropka soczewki świata (index.html: stampWarpLensDots; FOG_HIDDEN też
+ * ustawione — skóra i dodatki schowane, mgła wojny ma pierwszeństwo: ukryta mgłą nie ma LENS_DOT).
+ */
 export const ENT_FLAG = Object.freeze({
   DEAD: 1, WRECK: 2, FRAGMENT: 4, PLAYER: 8, P2: 16, FOG_HIDDEN: 32, BRIDGE_HULK: 64, LIGHTS_OFF: 128,
   ROAD_LIGHTS_OFF: 256, COLD: 512, HAS_POS: 1024, HAS_SHIELD: 2048, HAS_CLOAK: 4096, PIRATE: 8192,
-  FRIENDLY: 16384, HIDE_HEX: 32768, HAS_VEL: 65536, RING_SEGMENT: 262144,
+  FRIENDLY: 16384, HIDE_HEX: 32768, HAS_VEL: 65536, LENS_DOT: 131072, RING_SEGMENT: 262144,
   LIGHTS_HIDDEN: 1048576, ENGINES_HIDDEN: 2097152, TURRETS_HIDDEN: 4194304,
   EDITOR_BOOST: 8388608, FSYS_BOOST: 16777216, WARP_PREVIEW: 33554432, IGN_HOT: 67108864
 });
@@ -141,7 +164,12 @@ export const ENT_FLAG = Object.freeze({
 /** Bity ENT.FLAGS2. */
 export const ENT_FLAG2 = Object.freeze({
   IS_PLAYER_FIELD: 1, CAPITAL: 2, SLEEPING: 4, CLOAK_FORCED: 8, FIGHTER: 16, SH_FORCE_OFF: 32, SH_FORCED_OFF: 64,
-  HAS_RS: 128, HAS_COLD_SNAP: 256
+  HAS_RS: 128, HAS_COLD_SNAP: 256,
+  // hipercruise encji (`__hyperMode` 'charging' / 'active' / 'drop' — plazma WARP na dyszach MAIN: żar, ogień,
+  // dogasanie — engineVfxSystem.js)
+  HYPER_CHARGING: 512, HYPER_ACTIVE: 1024, HYPER_DROP: 2048,
+  // światło bojowe (strona w szyku bojowym — fleetCoordinator; gracz w walce): lampy pokładowe i okna mostka na czerwono
+  BATTLE_LIGHTS: 4096
 });
 
 /** Wyrzut atmosfery mostka (obiekt `vent` gry; ID = numer obiektu — tożsamość dla prepareEmitterDelays). */
@@ -204,7 +232,8 @@ export const SHOT_FLAG = Object.freeze({ FORCE_CANVAS: 1, PLAYER: 2 });
 // ── TURRETS (rekord na wieżę tej klatki — rekordy Turret2D) ──────────────────────────────────────────────────
 export const TURRET = record({
   f64: ['WX', 'WY', 'ANG', 'SCALE', 'RECOIL', 'SHAKE', 'R', 'HOUSING', 'BARREL', 'FLASH'],
-  i32: ['ENT_SLOT', 'ENT_GEN', 'KEY', 'UID', 'WEAPON', 'FX_KEY']
+  // READY — kod lampki gotowości wieży (TURRET_LAMP, src/data/turretReadyLamp.js; liczy gra w Turret2D.sync)
+  i32: ['ENT_SLOT', 'ENT_GEN', 'KEY', 'UID', 'WEAPON', 'FX_KEY', 'READY']
 });
 
 // ── STATIONS ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -226,9 +255,44 @@ export const CORE = record({
 // ── WORLD (Float64, skalary) ─────────────────────────────────────────────────────────────────────────────────
 export const WORLD = fields([
   'SUN_X', 'SUN_Y', 'SUN_R', 'SKY_ZONE',
-  // warp gracza (GameState.warp) i dopalacz (GameState.boost)
-  'WARP_STATE', 'WARP_CHARGE', 'WARP_CHARGE_TIME', 'WARP_GEAR', 'WARP_DIR', 'WARP_FLYBY', 'WARP_CRUISE', 'WARP_SPEED',
-  'WARP_EXIT_ACTIVE', 'WARP_EXIT_AGE', 'WARP_EXIT_TBRAKE', 'WARP_TARGET_BODY', 'BOOST_STATE',
+  // warp gracza (GameState.warp) i dopalacz (GameState.boost) — pakuje i rozpakowuje src/render/warpWorldMirror.js
+  // (układ 2, 2026-10-25: pełna rampa wyjścia, ślizg, kurs x / y, ciała celu i startu, znaczniki zegara, kotwica kadru)
+  'WARP_STATE', 'WARP_CHARGE', 'WARP_CHARGE_TIME', 'WARP_GEAR', 'WARP_DIR_X', 'WARP_DIR_Y', 'WARP_FLYBY', 'WARP_CRUISE',
+  'WARP_SPEED', 'WARP_ENTRY',
+  // ciało celu / startu skoku: indeks na liście planet (i), małe ciała za nimi (planets.length + j); −1 — brak
+  'WARP_TARGET_BODY', 'WARP_ORIGIN_BODY',
+  // SimClock.sim w chwili skoku (engageWarp) i zegar efektu warpa strony (suma dt klatek „Nurtu” — 0 w pauzie)
+  'WARP_KICK_SIM', 'WARP_FX_CLOCK',
+  // rampa wyjścia (warp.exitRamp — createWarpExitRamp): ACTIVE −1 = brak rampy (null), 0 / 1 = active
+  'WARP_EXIT_ACTIVE', 'WARP_EXIT_AGE', 'WARP_EXIT_T0', 'WARP_EXIT_SLOW', 'WARP_EXIT_COAST', 'WARP_EXIT_BRAKE',
+  'WARP_EXIT_TSLOW', 'WARP_EXIT_TBRAKE', 'WARP_EXIT_THALT', 'WARP_EXIT_V0', 'WARP_EXIT_VARR', 'WARP_EXIT_VEND',
+  'WARP_EXIT_DIST', 'WARP_EXIT_DIR_X', 'WARP_EXIT_DIR_Y', 'WARP_EXIT_HULL',
+  // ślizg po wyjściu z pędem (warp.exitSlide): ACTIVE −1 = brak obiektu
+  'WARP_SLIDE_ACTIVE', 'WARP_SLIDE_SPEED', 'WARP_SLIDE_VMIN', 'WARP_SLIDE_DECEL', 'WARP_SLIDE_DIR_X', 'WARP_SLIDE_DIR_Y',
+  // hamowanie grawitacyjne (exitWarp({ abrupt }) — warp.gravityBrake.active)
+  'WARP_ABRUPT',
+  // kotwica kadru skoku (DECYZJE M3): nominalne miejsce statku w kadrze — sprężyna riga BEZ impulsu kopu i BEZ
+  // wysunięcia przy wyjściu (cameraRig.nominalX / Y), px ekranu CSS od środka kadru, osie ekranu (po obrocie), y w dół;
+  // NaN — kamera nie prowadzi statku (RTS, fokus)
+  'WARP_ANCHOR_SX', 'WARP_ANCHOR_SY',
+  // oś β soczewki świata (układ 3, etap integracji — src/render/warpLensPhase.js: stepWarpLensPhase strony gry; worker
+  // liczy warpLensBeta z tych samych pól): stan (słownik; −1 — brak rekordu), ładowanie, wieki kopu / wyjścia /
+  // przerwania z zegara gry, rampa (koniec zwolnienia, zatrzymanie), β wyjścia i przerwania, hipercruise, dolot (ślizg),
+  // kadr soczewki z kamery gry (zoom odniesienia i kadr skoku [px CSS / j.], ułamek kadru przylotu), β klatki strony
+  'WARP_LENS_STATE', 'WARP_LENS_CHARGE', 'WARP_LENS_KICK_AGE', 'WARP_LENS_EXIT_AGE', 'WARP_LENS_EXIT_SLOW',
+  'WARP_LENS_EXIT_HALT', 'WARP_LENS_EXIT_BETA', 'WARP_LENS_ABORT_AGE', 'WARP_LENS_ABORT_BETA', 'WARP_LENS_HYPER',
+  'WARP_LENS_ARRIVING', 'WARP_LENS_ZOOM_REF', 'WARP_LENS_ZOOM_JUMP', 'WARP_LENS_ARRIVAL_FILL', 'WARP_LENS_BETA',
+  // plan trasy skoku (układ 4, DECYZJE-2 T2 — warp.route, warpWorldMirror.js: WARP_ROUTE_FIELDS): rodzaj i przylot
+  // (słownik; −1 — brak / poza skokiem), punkt skoku, miejsce zatrzymania, droga, czasy (początek wyjścia, zatrzymanie),
+  // prędkość przelotowa, mijane ciało (indeks jak WARP_TARGET_BODY, miejsce względem punktu skoku, chwila trawersu),
+  // pierwszy przelot przez pas (drogi i chwile)
+  'WARP_ROUTE_KIND', 'WARP_ROUTE_ARRIVE', 'WARP_ROUTE_X0', 'WARP_ROUTE_Y0', 'WARP_ROUTE_X1', 'WARP_ROUTE_Y1',
+  'WARP_ROUTE_DIST', 'WARP_ROUTE_EXIT_T', 'WARP_ROUTE_TIME', 'WARP_ROUTE_CRUISE', 'WARP_ROUTE_FLY_BODY',
+  'WARP_ROUTE_FLY_ALONG', 'WARP_ROUTE_FLY_LATERAL', 'WARP_ROUTE_FLY_T', 'WARP_ROUTE_BELT_IN', 'WARP_ROUTE_BELT_OUT',
+  'WARP_ROUTE_BELT_T_IN', 'WARP_ROUTE_BELT_T_OUT',
+  'BOOST_STATE',
+  // hipercruise gracza w kształcie warpa (GameState.hyper — efekt „silnika warp” w hipercruisie, E5 2026-10-22)
+  'HYPER_STATE', 'HYPER_CHARGE', 'HYPER_CHARGE_TIME', 'HYPER_SPEED', 'HYPER_VMAX', 'HYPER_DIR',
   // słownik napisów: liczba wpisów (nowe — kanałem bocznym)
   'DICT_N'
 ]);

@@ -2761,6 +2761,50 @@ export const DestructorBeams3D = {
     return broke;
   },
 
+  /**
+   * Rzaz przecina belki (płaszczyzna XY układu ciała): żywa belka między żywymi węzłami, której odcinek przecina
+   * odcinek (x0, y0)–(x1, y1), pęka. Wręgi (do maxFrameSpan komórek) i grodzie łączą węzły przez wnętrze kadłuba —
+   * rzaz, który zabija tylko węzły w swoim pasie, zostawiał je nad szczeliną i odcięta część trzymała się reszty
+   * kadłuba („przyspawana”, 2026-11-08). Belka przecinająca oś rzazu z oboma końcami poza pasem ma długość > 2 ×
+   * półszerokość pasa, więc zwykłe poszycie i wnętrze (≤ 1,41 komórki) tu nie pęka. Zwraca liczbę zerwanych belek.
+   */
+  breakBeamsAcross(body, x0, y0, x1, y1) {
+    if (!body || body.dead) return 0;
+    const s = body.nodeStore, e = body.beamStore;
+    const x = s.x, y = s.y, active = s.active, ea = e.a, eb = e.b, broken = e.broken, n = e.count;
+    const dx = x1 - x0, dy = y1 - y0;
+    if (!(dx * dx + dy * dy > 1e-12)) return 0;
+    const minX = Math.min(x0, x1), maxX = Math.max(x0, x1), minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    const local = !!this.config?.localSolver;
+    let broke = 0;
+    for (let bi = 0; bi < n; bi++) {
+      if (broken[bi]) continue;
+      const a = ea[bi], b = eb[bi];
+      const ax = x[a], bx = x[b];
+      if ((ax < minX && bx < minX) || (ax > maxX && bx > maxX)) continue;
+      const ay = y[a], by = y[b];
+      if ((ay < minY && by < minY) || (ay > maxY && by > maxY)) continue;
+      if (!active[a] || !active[b]) continue;
+      // końce belki po przeciwnych stronach prostej rzazu, końce rzazu nie po tej samej stronie prostej belki
+      const sa = (ax - x0) * dy - (ay - y0) * dx, sb = (bx - x0) * dy - (by - y0) * dx;
+      if (!(sa * sb < 0)) continue;
+      const ex = bx - ax, ey = by - ay;
+      const s0 = (x0 - ax) * ey - (y0 - ay) * ex, s1 = (x1 - ax) * ey - (y1 - ay) * ex;
+      if (s0 * s1 > 0) continue;
+      broken[bi] = 1;
+      broke++;
+      if (local) { activateNode(body, a); activateNode(body, b); }
+    }
+    if (broke > 0) {
+      body.liveBeams = Math.max(0, body.liveBeams - broke);
+      body.structureDirty = true;
+      body.meshDirty = true;
+      this.perf.beamsBroken += broke;
+      if (!body.noSplit && !this.splitQueue.includes(body)) this.splitQueue.push(body);
+    }
+    return broke;
+  },
+
   _ncList: new Int32Array(1024),
 
   /**

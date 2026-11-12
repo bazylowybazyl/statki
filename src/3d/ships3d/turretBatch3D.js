@@ -39,13 +39,17 @@ export const TURRET_PART = Object.freeze({ RING: 0, HOUSING: 1, BARREL: 2, SPIN:
  *   iTurRot    [4..7]   cos α, sin α (kurs lufy w świecie), cos θ, sin θ (kurs kadłuba — pierścień)
  *   iTurBarrel [8..11]  cos p, sin p (pochylenie lufy), odrzut (j. lokalne wieży), kąt wirnika
  *   iTurSlab   [12..15] warstwa głębi (modelSlabDepth.js): zb, zt (z świata bryły), lo, hi
+ *   iTurLook   [16..19] mnożnik świecących akcentów (pasy E_* — przy wyłączonym okręcie gasną: lampki gotowości,
+ *                       src/data/turretReadyLamp.js), zapas (0)
+ * Ten sam przepleciony bufor — piąty vec4 nie dokłada bufora wierzchołków (6 geometrii + 1 instancji ≤ 8).
  */
-export const TURRET_INST_STRIDE = 16;
+export const TURRET_INST_STRIDE = 20;
 export const TURRET_INST_ATTRS = Object.freeze([
   Object.freeze({ name: 'iTurPos', offset: 0 }),
   Object.freeze({ name: 'iTurRot', offset: 4 }),
   Object.freeze({ name: 'iTurBarrel', offset: 8 }),
-  Object.freeze({ name: 'iTurSlab', offset: 12 })
+  Object.freeze({ name: 'iTurSlab', offset: 12 }),
+  Object.freeze({ name: 'iTurLook', offset: 16 })
 ]);
 
 /** Rekord wieży z pól obiektu `t` (bez wywołań z liczbami double — gorąca pętla klatki). */
@@ -54,13 +58,14 @@ export function writeTurretInstance(data, o, t) {
   data[o + 4] = t.yawCos; data[o + 5] = t.yawSin; data[o + 6] = t.hullCos; data[o + 7] = t.hullSin;
   data[o + 8] = t.pitchCos; data[o + 9] = t.pitchSin; data[o + 10] = t.back; data[o + 11] = t.spin;
   data[o + 12] = t.zb; data[o + 13] = t.zt; data[o + 14] = t.lo; data[o + 15] = t.hi;
+  data[o + 16] = t.glow; data[o + 17] = 0; data[o + 18] = 0; data[o + 19] = 0;
 }
 
 /** Pusty obiekt pól rekordu (writeTurretInstance). */
 export function turretInstanceScratch() {
   return {
     x: 0, y: 0, z: 0, scale: 1, yawCos: 1, yawSin: 0, hullCos: 1, hullSin: 0,
-    pitchCos: 1, pitchSin: 0, back: 0, spin: 0, zb: 0, zt: 1, lo: 0, hi: 1
+    pitchCos: 1, pitchSin: 0, back: 0, spin: 0, zb: 0, zt: 1, lo: 0, hi: 1, glow: 1
   };
 }
 
@@ -197,7 +202,9 @@ function turretGraph() {
   const slab = varying(attribute('iTurSlab', 'vec4'), 'vTurSlab').setInterpolation('flat');
   // AO z wierzchołków (GLB z Blendera; budowniczy — 1)
   const ao = clamp(attribute('aAO', 'float'), 0.0, 1.0);
-  _graph = { position, normal, slab, ao };
+  // Mnożnik świecących akcentów z rekordu (wyłączony okręt — przygaszone), stały na instancję
+  const glow = clamp(varying(attribute('iTurLook', 'vec4'), 'vTurLook').setInterpolation('flat').x, 0.0, 1.0);
+  _graph = { position, normal, slab, ao, glow };
   return _graph;
 }
 
@@ -219,7 +226,9 @@ export class TurretBatchNodeMaterial extends THREE.MeshStandardNodeMaterial {
 
 /** Materiał wież (bez mapy otoczenia i maski słońca — dokłada je gra, shipModels3DGame.js). */
 export function createTurretBatchMaterial() {
-  const mat = createShipMaterial({ panelW: 7, panelH: 3.5, name: 'broń 3D (partie)', materialClass: TurretBatchNodeMaterial });
+  const mat = createShipMaterial({
+    panelW: 7, panelH: 3.5, name: 'broń 3D (partie)', materialClass: TurretBatchNodeMaterial, emissiveScaleNode: turretGraph().glow
+  });
   applyModelSlabDepth(mat, turretGraph().slab);
   mat.aoNode = turretGraph().ao;
   return mat;

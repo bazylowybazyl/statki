@@ -84,8 +84,11 @@ function stanMulti(attr) {
   return s;
 }
 
-/** Dopisuje zakres [start, start + count) do listy wysyłki atrybutu (osobny zakres, gdy się nie styka). */
-export function zbierzZakresy(attr, start, count) {
+/**
+ * Dopisuje zakres [start, start + count) do listy wysyłki atrybutu (osobny zakres, gdy się nie styka).
+ * `bezWersji` — bez `needsUpdate` (wersję podbija wołający raz na klatkę, np. `HullLightStore.commit`).
+ */
+export function zbierzZakresy(attr, start, count, bezWersji = false) {
   if (!(count > 0)) return;
   const s = stanMulti(attr);
   const list = attr.updateRanges;
@@ -102,7 +105,7 @@ export function zbierzZakresy(attr, start, count) {
     r.count = count;
     list.push(r);
   }
-  attr.needsUpdate = true;
+  if (!bezWersji) attr.needsUpdate = true;
 }
 
 /** Cały atrybut do wysłania (lista zakresów zastąpiona jednym). */
@@ -111,4 +114,40 @@ export function zbierzZakresyCaly(attr) {
   attr.updateRanges.length = 0;
   s.used = 0;
   zbierzZakresy(attr, 0, attr.array.length);
+}
+
+const porownajStart = (a, b) => a.start - b.start;
+
+/** A/B pomiarów (`--wkAb` w workerze): `scal = false` — każdy zakres osobnym writeBuffer jak dawniej. */
+export const ZAKRESY_AB = { scal: true };
+
+/**
+ * Scala listę zakresów atrybutu (zbierzZakresy) przed wysyłką: po posortowaniu zakresy oddalone o nie więcej niż
+ * `maxGap` liczb idą jako jeden — three wysyła każdy zakres osobnym `writeBuffer`, a każde wywołanie kosztuje tyle,
+ * co kopia kilkudziesięciu KB (klatka workera 2026-11-02: ~130 zakresów slotów lamp kadłubów i ~60 skór na klatkę
+ * w bitwie — ~240 wywołań writeBuffer na klatkę). Wołać raz na klatkę, po wszystkich zapisach; obiekty zakresów
+ * wypadające z listy wracają do puli przy następnym zbieraniu. Zwraca liczbę zakresów po scaleniu.
+ */
+export function scalZakresy(attr, maxGap) {
+  const s = attr.__zakresy;
+  if (!s) return 0;
+  const list = attr.updateRanges;
+  const n = list.length;
+  if (n < 2 || ZAKRESY_AB.scal === false) return n;
+  list.sort(porownajStart);
+  let m = 0;
+  let cur = list[0];
+  for (let i = 1; i < n; i++) {
+    const r = list[i];
+    if (r.start - (cur.start + cur.count) <= maxGap) {
+      const end = Math.max(cur.start + cur.count, r.start + r.count);
+      cur.count = end - cur.start;
+    } else {
+      list[m++] = cur;
+      cur = r;
+    }
+  }
+  list[m++] = cur;
+  list.length = m;
+  return m;
 }

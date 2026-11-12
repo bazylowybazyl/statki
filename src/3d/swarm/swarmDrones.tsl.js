@@ -30,6 +30,7 @@ import { SWARM_DRONE, SWARM_DRONE_VEC4 } from '../../game/swarm/swarmPort.js';
 import { SWARM_ARM_ROWS, SWARM_CLASS_ROW, SWARM_CLASS_ROWS, SWARM_LIGHT_SLOT, swarmClassTable } from './swarmClassTable.js';
 import { SWARM_DRONE_MAT } from './swarmDroneModel.js';
 import { SWARM_DRONE_CLASS_LIST, SWARM_MAX_ARMS } from '../../data/swarmDrones.js';
+import { slotFrameApply, slotFrameRotate, slotFrameRow } from './swarmSlotFrame.js';
 
 export const SWARM_DRONE_RENDER_ORDER = 12.5;
 export const SWARM_LIGHTS_PER_DRONE = 12 + SWARM_MAX_ARMS;
@@ -120,8 +121,12 @@ export const SWARM_LOOK = Object.freeze({
   time: uniform(0)
 });
 
-/** Szablon materiału bryły dronów dla bufora dronów (węzeł instancedArray symulacji). */
-export function swarmDroneMaterial(dronesNode) {
+/**
+ * Szablon materiału bryły dronów dla bufora dronów (węzeł instancedArray symulacji). frame (opcjonalnie) — rama
+ * slotów stanowisk (swarmSlotFrame.js: gra — wiele stanowisk w jednej symulacji); bez niej przestrzeń symulacji
+ * = świat sceny (demo).
+ */
+export function swarmDroneMaterial(dronesNode, frame = null) {
   const CT = swarmClassTable();
   const PAL = paletteNode();
   const STC = statusNode();
@@ -141,7 +146,8 @@ export function swarmDroneMaterial(dronesNode) {
   const vI = varyingProperty('vec4', 'vRjI');     // klasa, ziarno, ładownia, materiał
   const vU = varyingProperty('vec3', 'vRjU');     // pozycja lokalna (wzór paneli)
   m.positionNode = Fn(() => {
-    const idx = uBase.add(instanceIndex);
+    // Gra (pula stanowisk): drony klasy nie leżą ciągiem — indeks z mapy klasy (frame.remap); demo — wprost.
+    const idx = frame && frame.remap ? frame.remap.element(uBase.add(instanceIndex)) : uBase.add(instanceIndex);
     const b = idx.mul(uint(DV));
     const pose = dronesNode.element(b.add(uint(DR.POSE)));
     const look = dronesNode.element(b.add(uint(DR.LOOK)));
@@ -200,7 +206,14 @@ export function swarmDroneMaterial(dronesNode) {
     const wp = pose.xyz.add(rotZ(lp, c, s)).toVar();
     // Niewidoczny dron (INFO.w = 0): trójkąty zwinięte w punkt.
     If(info.w.lessThan(0.5), () => { wp.assign(pose.xyz); });
-    vN.assign(rotZ(nl, c, s));
+    const nw = rotZ(nl, c, s).toVar();
+    if (frame) {
+      // Slot stanowiska → świat (względem początku przy kamerze).
+      const fr = slotFrameRow(frame, idx, frame.dronesPerSlot);
+      wp.assign(slotFrameApply(fr, wp));
+      nw.assign(slotFrameRotate(fr, nw));
+    }
+    vN.assign(nw);
     vW.assign(wp);
     vL.assign(look);
     vI.assign(vec4(info.x, info.y, info.z, attribute('aMat', 'float')));
@@ -271,8 +284,8 @@ export function swarmDroneMaterial(dronesNode) {
  * rozmiaru kontenera klasy na ekranie.
  */
 export class SwarmDroneMeshes {
-  constructor(scene, dronesNode, geometries) {
-    this.template = swarmDroneMaterial(dronesNode);
+  constructor(scene, dronesNode, geometries, frame = null) {
+    this.template = swarmDroneMaterial(dronesNode, frame);
     this.meshes = [];
     for (const cls of SWARM_DRONE_CLASS_LIST) {
       const g = geometries[cls.id];
@@ -340,7 +353,7 @@ export class SwarmDroneMeshes {
  * 4 bloki RCS (błysk przy przyspieszaniu w bok / hamowaniu), do 10 lampek chwytaków (przy
  * rozłożonych ramionach). Nieaktywne światło — kwad zwinięty.
  */
-export function swarmLightMaterial(dronesNode) {
+export function swarmLightMaterial(dronesNode, frame = null) {
   const CT = swarmClassTable();
   const STC = statusNode();
   const V = CARGO_LIGHT_VIEW;
@@ -430,7 +443,8 @@ export function swarmLightMaterial(dronesNode) {
       radius.assign(rPay.w.mul(0.55));
       color.assign(mix(vec3(1.0, 0.55, 0.1), vec3(0.25, 1.0, 0.42), look.y).mul(on.mul(2.6)));
     });
-    const center = pose.xyz.add(rotZ(lp, c, s));
+    const center0 = pose.xyz.add(rotZ(lp, c, s));
+    const center = frame ? slotFrameApply(slotFrameRow(frame, di, frame.dronesPerSlot), center0) : center0;
     const q = positionGeometry.xy.mul(2.0);
     vQ.assign(q);
     vC.assign(vec4(color, shape));
@@ -453,9 +467,9 @@ export function swarmLightMaterial(dronesNode) {
 function clamp01(x) { return min(max(x, 0.0), 1.0); }
 
 export class SwarmDroneLights {
-  constructor(scene, dronesNode) {
+  constructor(scene, dronesNode, frame = null) {
     const plane = new THREE.PlaneGeometry(1, 1);
-    this.template = swarmLightMaterial(dronesNode);
+    this.template = swarmLightMaterial(dronesNode, frame);
     this.meshes = [];
     for (const cls of SWARM_DRONE_CLASS_LIST) {
       const geo = new THREE.InstancedBufferGeometry();
