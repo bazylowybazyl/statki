@@ -15,6 +15,7 @@ import { OPCJE_PYLU } from './pyl.js';
 import { PARAMETRY } from './budowa.js';
 import { POJEMNOSC_BAZY, kolaHabitatu } from './scenaBazy.js';
 import { createGrupyGry, UPADEK_FALA } from './grupyGry.js';
+import { createLinyObraz, ileWidocznych } from './linyObraz.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { sunShadowUniforms } from '../sunShadowMask.js';
 import { createPirateBaseLayout } from '../portBuildings/pirateBaseLayout.js';
@@ -42,6 +43,7 @@ const KRATEROW_MAX = 300;
 const KRATER_WZROST = 1.2; // uderzenie w istniejący krater dosypuje masę, a stempel idzie dopiero, gdy promień urósł o tyle
 const FALA_START_S = UPADEK_FALA.start; // kotwice zaczynają puszczać tyle po HP 0, od habitatu na zewnątrz
 const FALA_J_S = UPADEK_FALA.v; // części puszczają całe, po kolei według odległości ich środka od osi habitatu (kPuscCzesc): węzeł po węźle bryła pękała w locie
+const LINY_POJ = 512; // pojemność lin solvera (scenaBazy.js, planLin: dziś ~160)
 const ZGAS_PO_S = 44; // po tylu sekundach od upadku ruiny leżą: solver stoi, a siatki rysują je dalej w ostatniej pozie
 const LATA_KRATEROW = 14000; // połowa boku mapy kraterów [j.]: pole rozbieżne rozrzuca gruz szerzej niż pole ku środkowi skały
 const WYS_POL_J = 16000; // połowa boku mapy kształtu skały [j.]: dalej kształt z brzegu mapy
@@ -93,7 +95,8 @@ export function createWokseleGry({ Core3D }) {
     if (!renderer) throw new Error('woksele: Core3D bez urządzenia');
     if (!(Core3D.scene instanceof THREE.Scene)) throw new Error('woksele: inna instancja three niż Core3D, węzły TSL się nie skleją');
     const poj = POJEMNOSC_BAZY[DX];
-    const solver = createWokseleSolver({ maxNodes: poj.maxWez, par: { ...PARAMETRY, nKom: poj.nKom } });
+    // liny: więzy środek–boki i spoiny części boków (scenaBazy.js, planLin; kernel kLiny), dziś ~160 w bazie.
+    const solver = createWokseleSolver({ maxNodes: poj.maxWez, par: { ...PARAMETRY, nKom: poj.nKom }, liny: LINY_POJ });
     const cp = Core3D.cameraPersp;
     const kamLok = new THREE.PerspectiveCamera(cp.fov, cp.aspect, cp.near, cp.far);
     kamLok.matrixAutoUpdate = false;
@@ -101,6 +104,7 @@ export function createWokseleGry({ Core3D }) {
     const obraz = createWokseleObraz({ solver, camera: kamLok, wGrze: true });
     const dane = await wypiekB1(DX);
     const { w, g, rDysk, poklad, miasto } = dane;
+    const liny = dane.liny ?? [];
     const l = createPirateBaseLayout({ id: 'B1' });
     const grupy = createGrupyGry({ w, l, dx: DX });
 
@@ -146,6 +150,12 @@ export function createWokseleGry({ Core3D }) {
     }
     kwadPyl.visible = false;
     root.add(kwadPyl);
+    // Liny widoczne (linyObraz.js): pod płaszczyzną gry, w passie tła jak bryły pod przekrojem. Schowane do końca rozgrzewki.
+    const linyObraz = createLinyObraz({ solver });
+    const meshLiny = linyObraz.mesh;
+    meshLiny.layers.set(WARSTWA_TLO);
+    meshLiny.visible = false;
+    root.add(meshLiny);
 
     // Prostokąt wypieku i zakres wysokości: kwadrat, żeby piksel był równy w obu osiach. Z zapasem na kolce i maszty, których węzły nie niosą.
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -175,10 +185,12 @@ export function createWokseleGry({ Core3D }) {
 
     // Części bazy (zakresy węzłów z wypieku) z czasem puszczenia: od osi habitatu na zewnątrz, cała część naraz; boki spoza miasta ciągnięte przez środek
     // (prędkość startowa obrotu ku osi, grupyGry.czesciUpadku, UPADEK_ZWIN). Te same rekordy szuka voxBreak (zgniot, przewrót) po nazwie części.
-    const czesci = grupy.czesciUpadku(miasto?.budynki, { start: FALA_START_S, v: FALA_J_S });
+    const czesci = grupy.czesciUpadku(miasto?.budynki, { start: FALA_START_S, v: FALA_J_S, zLinami: liny.length > 0 });
 
     const zaladuj = () => {
       solver.wczytaj(w);
+      solver.liny?.wczytaj(liny);
+      linyObraz.ustaw(ileWidocznych(liny));
       solver.uniformy.uFalaWzgl.value = 1;
       // Stojąca konstrukcja albo stoi, albo pęka: ruch połączony z kotwicami wolniejszy niż próg fali łamiącej jest tłumiony (lepkość), szybszy łamie. Bez tego zgięta konstrukcja sprężynowała i kołysała się jak galareta.
       const uU = solver.uniformy;
@@ -210,7 +222,7 @@ export function createWokseleGry({ Core3D }) {
       try { return compileAsyncNaCelu(renderer, co, kam); } finally { renderer.setRenderTarget(prev); }
     };
 
-    s = { renderer, solver, obraz, w, g, grupy, czesci, kamLok, cp, zaladuj, ustawKamere, naCelu, meshFg, gruzFg, meshTlo, gruzTlo, kwadPyl, kamSkora, skoraUklad };
+    s = { renderer, solver, obraz, w, g, grupy, czesci, kamLok, cp, zaladuj, ustawKamere, naCelu, meshFg, gruzFg, meshTlo, gruzTlo, kwadPyl, meshLiny, linyObraz, kamSkora, skoraUklad };
 
     let obWarm = null;
     Core3D.addFxStep({
@@ -228,7 +240,7 @@ export function createWokseleGry({ Core3D }) {
     await naCelu(obraz.rtSsao, obraz.kwadSsao, obraz.kwadSsao.camera);
     await naCelu(obraz.pyl.rt, obraz.pyl.scena, kamLok);
     await Core3D.warmup.now([meshFg, gruzFg], { name: 'woksele: bryły FG', layer: WARSTWA_FG });
-    await Core3D.warmup.now([meshTlo, gruzTlo, kwadPyl], { name: 'woksele: bryły tła', layer: WARSTWA_TLO });
+    await Core3D.warmup.now([meshTlo, gruzTlo, kwadPyl, meshLiny], { name: 'woksele: bryły tła', layer: WARSTWA_TLO });
     return s;
   }
 
@@ -415,6 +427,7 @@ export function createWokseleGry({ Core3D }) {
     // Ruiny po zamrożeniu leżą na skale: pass FG nie ma co rysować, a odłamki dawno zgasły. Dwa rysunki po 85 tys. węzłów mniej przez resztę misji.
     const zywe = kadr && !stan.zgaszony;
     meshFg.visible = zywe; gruzFg.visible = zywe; meshTlo.visible = kadr; gruzTlo.visible = zywe;
+    s.meshLiny.visible = kadr && s.linyObraz.n > 0;
     // Upadek liczy się do końca także poza kadrem, najwyżej ZGAS_PO_S raz na grę: gracz, który odleciał, wraca do ruin na skale, a nie do bazy wiszącej bez kolizji.
     const liczy = (blisko || stan.upadekT >= 0) && !stan.zgaszony;
     kwadPyl.visible = kadr && liczy && stan.aktywny && !stan.soczewka;
@@ -583,7 +596,7 @@ export function createWokseleGry({ Core3D }) {
       stan.aktywny = false;
       if (stan.skoraCzeka) { const { base, koniec } = stan.skoraCzeka; stan.skoraCzeka = null; Core3D.scene.add(base.root); koniec(); }
       if (stan.cullingWypieku) { for (const o of stan.cullingWypieku) o.frustumCulled = true; stan.cullingWypieku = null; }
-      if (s) for (const m of [s.meshFg, s.gruzFg, s.meshTlo, s.gruzTlo, s.kwadPyl]) m.visible = false;
+      if (s) for (const m of [s.meshFg, s.gruzFg, s.meshTlo, s.gruzTlo, s.kwadPyl, s.meshLiny]) m.visible = false;
       hity.length = 0;
       root.removeFromParent();
     },

@@ -16,7 +16,7 @@ self.onmessage = ({ data: { id, ziarno, lodS1, miasto, kawalki, kruchosc, sztywn
     // Ciągliwość betonu (budowa.js, par.ciagliwosc): droga mięknięcia klas 0–3 × c. Bez pola beton jak dotąd.
     if (ciagliwosc > 1) plan.nakladka = { ...(plan.nakladka ?? {}), ciagliwosc };
     const { w, g } = zbudujPlan(plan, { pamiecStatyki });
-    const wynik = { id, w, g, zdarzeniaOd: plan.zdarzeniaOd, miasto: plan.miasto ?? null, rDysk: plan.scena.meta?.dysk ? (plan.scena.meta.dysk.R ?? 900) : 0, poklad: plan.s3 && id !== 'S3poza' ? { z: plan.s3.zGora + 11, rOtwor: 190 } : null }; // AGENT: otwór w obrazie liczony od środka dysku, a S3poza przebija dysk obok niego, więc ta scena jest bez gruzu na pokładzie
+    const wynik = { id, w, g, liny: plan.liny ?? null, zdarzeniaOd: plan.zdarzeniaOd, miasto: plan.miasto ?? null, rDysk: plan.scena.meta?.dysk ? (plan.scena.meta.dysk.R ?? 900) : 0, poklad: plan.s3 && id !== 'S3poza' ? { z: plan.s3.zGora + 11, rOtwor: 190 } : null }; // AGENT: otwór w obrazie liczony od środka dysku, a S3poza przebija dysk obok niego, więc ta scena jest bez gruzu na pokładzie
     const przenies = [];
     if (kawalki) {
       // Dysk sceny (S3, S5): wieniec po okręgu jak w obraz.js (rDysk).

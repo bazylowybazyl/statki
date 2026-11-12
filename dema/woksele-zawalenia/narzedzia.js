@@ -144,7 +144,7 @@ export function createNarzedzia({ solver, obraz, camera, kanwa, budynki = () => 
       const { lista } = stan.grupy.upadek(0, -1);
       if (lista.length) solver.dodajKratery(lista);
       // Części bazy z wypieku (miasto.budynki) z czasem puszczenia i bokami ciągniętymi przez środek: ten sam plan co gra (grupyGry.czesciUpadku).
-      const czesci = stan.grupy.czesciUpadku(budynki(), { start: FALA_START, v: FALA_V, zwin: ZWIN });
+      const czesci = stan.grupy.czesciUpadku(budynki(), { start: FALA_START, v: FALA_V, zwin: ZWIN, zLinami: (solver.liny?.n ?? 0) > 0 });
       stan.upadek = { f0: solver.fKlatka, czesci, idx: 0 };
       return true;
     }

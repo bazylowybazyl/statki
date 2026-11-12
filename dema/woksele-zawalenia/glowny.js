@@ -91,7 +91,8 @@ async function start() {
   // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd. ?nKom=2^k: komórki siatki kontaktów, miasto przy dx = 5 ma więcej zajętych komórek niż domyślne 65 536.
   const nKomAdresu = Number(parametryAdresu.get('nKom')) || 0;
   const parSolvera = nKomAdresu || PLANETA_ATM ? { ...PARAMETRY, ...(nKomAdresu ? { nKom: nKomAdresu } : {}), ...(PLANETA_ATM ? { vMax: 12000 } : {}) } : PARAMETRY;
-  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: parSolvera, ciagliwe: KAWALKI, limityF0: LIMITY_F0, statek: ATLAS, falaPion: FALA_PION });
+  // liny: więzy środek–boki i spoiny części bazy (kernel kLiny, scenaBazy.js planLin). W demie kawałków, sceny bez lin mają pustą listę.
+  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: parSolvera, ciagliwe: KAWALKI, limityF0: LIMITY_F0, statek: ATLAS, falaPion: FALA_PION, liny: KAWALKI ? 512 : 0 });
   await solver.rozgrzej(renderer);
 
   const pamiecStatyki = new Map();

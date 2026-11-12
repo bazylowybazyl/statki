@@ -21,6 +21,13 @@ export const UPADEK_FALA = Object.freeze({ start: 3, v: 1500 });
  * Swobodny spadek sam niczego nie ciągnie (ciężkie i lekkie spada tak samo): pociągnięcie bierze się z tego, że boki puszczają później.
  */
 export const UPADEK_ZWIN = Object.freeze({ om: 0.06, zOsi: -2500 });
+/**
+ * Boki przy upadku z linami (scenaBazy.js, planLin; prośba użytkownika 2026-11-12: „pusta przestrzeń ciągnie w dół — trzeba dodać coś, co trzyma, jakieś druty”).
+ * Liny od pomostów do dysku i spoiny między częściami boków ciągną boki naprawdę, więc boki puszczają kolejno w oknie [po, po + rozrzut] s od startu fali (bliżej osi
+ * wcześniej), a nie falą 1500 j./s: część trzymana kotwicą jeszcze kilka sekund rozciągnęłaby linę do zerwania. Sąsiednie części dzieli 0,2–0,6 s, a środek w tym czasie
+ * ściąga łańcuch po kolei: boki składają się w „V” ku osi i lecą za środkiem (pomiar GPU 2026-11-12, demo B1R, U). Obrót startowy (UPADEK_ZWIN) przy linach wyłączony.
+ */
+export const UPADEK_BOKI_LINY = Object.freeze({ po: 0.4, rozrzut: 1.6 });
 
 /** w: { n, pos } wypieku, l: createPirateBaseLayout, dx: bok komórki, ziarno: los miejsc, tylko wygląd. */
 export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
@@ -125,7 +132,7 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
    * Plan upadku bazy: części z wypieku (budynki: start, n, nazwa) z czasem puszczenia t (fala od osi habitatu, środek części) i dla części spoza miasta
    * (pomosty, reaktory, zbiorniki, magazyn) prędkością startową piv, om dla solver.puscCzesc (UPADEK_ZWIN). Posortowane po t. Wspólne dla gry (wGrze) i dema (U).
    */
-  function czesciUpadku(budynki, { start = UPADEK_FALA.start, v = UPADEK_FALA.v, zwin = UPADEK_ZWIN } = {}) {
+  function czesciUpadku(budynki, { start = UPADEK_FALA.start, v = UPADEK_FALA.v, zwin = UPADEK_ZWIN, zLinami = false } = {}) {
     const p = w.pos;
     let rDal2 = 0;
     const lista = (budynki || []).map((c) => {
@@ -141,7 +148,8 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     const rDal = Math.sqrt(rDal2);
     for (const c of lista) {
       const r = Math.sqrt(c.x * c.x + c.y * c.y);
-      if (zwin?.om > 0 && r > Hs.drumR) {
+      if (zLinami && r > Hs.drumR) c.t = start + UPADEK_BOKI_LINY.po + (UPADEK_BOKI_LINY.rozrzut * (r - Hs.drumR)) / Math.max(1, rDal - Hs.drumR);
+      if (!zLinami && zwin?.om > 0 && r > Hs.drumR) {
         const ux = c.x / r, uy = c.y / r;
         c.piv = [rDal * ux, rDal * uy, zwin.zOsi];
         c.om = [zwin.om * uy, -zwin.om * ux, 0];

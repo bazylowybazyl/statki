@@ -59,7 +59,7 @@ export const STATEK_SDF = Object.freeze({ szer: 256, wys: 128 });
 // AGENT: `falaPion` (demo, druga opinia Fable 2026-11-11, U4): w konstrukcji połączonej z kotwicami fala łamiąca liczy tylko składową prędkości wzdłuż grawitacji
 // stałej (w dół). Szczyt wieży 1400 j. nad zawiasem przekracza próg 60 j./s już przy obrocie 2,5°/s, więc sztywny przewrót sam kruszył głowę; zawalenie to ruch w dół
 // i dalej łamie (S1 miażdży się co do liczb tak samo). Bez flagi WGSL kF bez zmian (gra).
-export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false, statek = false, falaPion = false } = {}) {
+export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false, limityF0 = false, statek = false, falaPion = false, liny = 0 } = {}) {
   const MAX = maxNodes;
   const ILE_T = ciagliwe ? ILE_TAB + 6 : ILE_TAB;
   const N_KOM = par.nKom;
@@ -1105,10 +1105,48 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     atomicAdd(wStatekA.element(uint(4)), uint(1));
   })().compute(MAX).setName('wokStatek') : null;
 
+  // ── Liny (baza piratów, prośba użytkownika 2026-11-12: „pusta przestrzeń ciągnie w dół — trzeba dodać coś, co trzyma, jakieś druty”) ──
+  // Więzy między węzłami RÓŻNYCH części: części nie mają wspólnych wiązań, więc środek bazy nie mógł ciągnąć boków. Rekord: wLinyE [a, b], wLinyP [L0, rozcMax, k, stan].
+  // a to koniec „ciężki” (od strony środka, tylko czytany), b — ciągnięty. Napięta lina (L > L0) przyciąga b o (L − L0) · k, najwyżej pół dx na podkrok, i zdejmuje b
+  // prędkość oddalania się od a; L > L0 · (1 + rozcMax) albo martwy koniec: lina pęka (stan 0). Kotwica b (bit 0 flag) się nie rusza, lina rozciąga się, aż pęknie.
+  // Każdy węzeł b jest w najwyżej jednej linie (pisze go jeden wątek). Kernel po kI (i po kadłubie) w każdym podkroku. Bez opcji liny kernela, buforów i wpisu w liście nie ma.
+  const LINY_MAX = Math.max(0, liny | 0);
+  const aLinyE = LINY_MAX ? new THREE.StorageInstancedBufferAttribute(new Uint32Array(2 * LINY_MAX), 2) : null;
+  const aLinyP = LINY_MAX ? new THREE.StorageInstancedBufferAttribute(new Float32Array(4 * LINY_MAX), 4) : null;
+  const uLinyN = uniform(0, 'uint').setName('uLinyN');
+  const kLiny = LINY_MAX ? Fn(() => {
+    const wLinyE = storage(aLinyE, 'uvec2', LINY_MAX).setName('wokLinyE').toReadOnly();
+    const wLinyP = storage(aLinyP, 'vec4', LINY_MAX).setName('wokLinyP');
+    const q = instanceIndex;
+    If(q.greaterThanEqual(uLinyN), () => { Return(); });
+    const P = v4(wLinyP.element(q));
+    If(P.w.lessThan(0.5), () => { Return(); });
+    const ab = wLinyE.element(q);
+    const a3 = uv(uint(3).mul(ab.x));
+    const b3 = uv(uint(3).mul(ab.y));
+    const pa = v4(wWez.element(a3));
+    const pb = v4(wWez.element(b3));
+    If(pa.w.lessThan(0).or(pb.w.lessThan(0)), () => { wLinyP.element(q).w.assign(0); Return(); });
+    const d = v3(pb.xyz.sub(pa.xyz));
+    const L = fv(length(d));
+    If(L.greaterThan(P.x.mul(P.y.add(1))), () => { wLinyP.element(q).w.assign(0); Return(); });
+    If(L.lessThanEqual(P.x), () => { Return(); });
+    const iFl = uv(uN.mul(uint(2)).add(uint(2).mul(ab.y)).add(uint(1)));
+    If(uint(wStan.element(iFl).w).bitAnd(uint(1)).notEqual(uint(0)), () => { Return(); });
+    const n = v3(d.div(L));
+    const va = v3(wWez.element(a3.add(uint(1))).xyz);
+    const vbW = v4(wWez.element(b3.add(uint(1))));
+    const vb = v3(vbW.xyz);
+    const vr = fv(dot(vb.sub(va), n));
+    If(vr.greaterThan(0), () => { vb.subAssign(n.mul(vr)); });
+    wWez.element(b3).assign(vec4(pb.xyz.sub(n.mul(min(L.sub(P.x).mul(P.z), uDxP))), pb.w));
+    wWez.element(b3.add(uint(1))).assign(vec4(vb, vbW.w));
+  })().compute(LINY_MAX).setName('wokLiny') : null;
+
   const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, kGinieZeruj, kGinieLicz, kPusc, kPuscCzesc,
-    ...(statek ? { kStatekTakt, kStatek, kStatekZeruj } : {}) };
+    ...(statek ? { kStatekTakt, kStatek, kStatekZeruj } : {}), ...(LINY_MAX ? { kLiny } : {}) };
   // Kernele o stałej liczbie wywołań: nie po węzłach, więc wczytanie sceny nie zmienia im liczby.
-  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch, kGinieZeruj, ...(statek ? [kStatekTakt, kStatekZeruj] : [])]);
+  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch, kGinieZeruj, ...(statek ? [kStatekTakt, kStatekZeruj] : []), ...(LINY_MAX ? [kLiny] : [])]);
 
   // ── Listy § 2.4, zbudowane raz ── Na krok: lista kontaktów co RYTM podkroków, reszta F + I.
   // AGENT: lista zależy tylko od podkroków i rytmu sceny (dx, materiał), a kernele są te same: nowa kombinacja to tablica w JS, bez nowego pipeline'u. Wczytanie sceny wybiera listę.
@@ -1122,6 +1160,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
         if (s % rytm === 0) sek.push(['kWstaw', kWstaw], ['kLista', kLista], ['kZerujPo', kZerujPo]);
         sek.push(['kF', kF], ['kI', kI]);
         if (statek) sek.push(['kStatekTakt', kStatekTakt], ['kStatek', kStatek]);
+        if (LINY_MAX) sek.push(['kLiny', kLiny]);
       }
       l = { sekwencja: sek, lista: sek.map((e) => e[1]) };
       listyKroku.set(klucz, l);
@@ -1604,6 +1643,23 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     };
   }
 
+  /** Liny sceny (kLiny): lista [{ a, b, L0, rozcMax, k }] na bufory, wszystkie całe. Ponad LINY_MAX — reszta pominięta. Nowa scena: nowa lista (albo pusta). */
+  function wczytajLiny(lista = []) {
+    if (!LINY_MAX) return 0;
+    const n = Math.min(LINY_MAX, lista?.length ?? 0);
+    const e = aLinyE.array, p = aLinyP.array;
+    e.fill(0); p.fill(0);
+    for (let q = 0; q < n; q++) {
+      const l = lista[q];
+      e[2 * q] = l.a; e[2 * q + 1] = l.b;
+      p[4 * q] = l.L0; p[4 * q + 1] = l.rozcMax ?? 0.5; p[4 * q + 2] = l.k ?? 0.15; p[4 * q + 3] = 1;
+    }
+    aLinyE.needsUpdate = true;
+    aLinyP.needsUpdate = true;
+    uLinyN.value = n;
+    return n;
+  }
+
   /** Odczyt do metryk sceny, w teście (§ 8): tylko pozycje, prędkości i maski. Wiązania zostają na GPU, więc odczyt co klatkę nie wstrzymuje biegu. */
   async function odczytLekki(renderer) {
     const n = wypiek.n;
@@ -1624,6 +1680,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, puscCzesc, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     gPole: gNaWezle, // pole grawitacji w punkcie, dla gruzu obrazu (wklejane, woła się tylko w Fn)
     statek: statek ? { ustaw: ustawStatek, ksztalt: ustawKsztaltStatku, ...odczytStatku } : null,
+    liny: LINY_MAX ? { max: LINY_MAX, wczytaj: wczytajLiny, atrybuty: { e: aLinyE, p: aLinyP }, uLinyN, get n() { return uLinyN.value; } } : null,
     get wypiek() { return wypiek; },
     get strzalCzeka() { return strzalCzeka !== null; },
     get fKlatka() { return fKlatka; },

@@ -325,6 +325,191 @@ function zloz(b, czDysk, l) {
 }
 
 /** Sektory dysku po kącie bazy z zakrzywioną granicą i podsekcje Voronoi: odpowiednik sekcjeS5, ale D-1…8 jak w grze, nie 17 komórek. Tablice na węzeł dysku. */
+/** Części środka bazy: wieża z podstawą, trzon, dysk i wieżowce miasta. Reszta (pomosty, reaktory, zbiorniki, magazyn) to boki. */
+const czescSrodka = (nazwa) => nazwa === 'H-C + H-T' || nazwa === 'trzon' || nazwa === 'dysk D-1…8' || /^B-\d+$/.test(nazwa);
+
+/** Liny i spoiny (LINY_B1). */
+export const LINY_B1 = Object.freeze({
+  // Spoiny: między stykającymi się częściami boków (wspólna ściana komórki), najwyżej tyle na parę części, rozłożone po styku.
+  spoinNaPare: 12, spoinaRozc: 2, spoinaK: 0.3,
+  // Mosty: część boku bez styku z innym bokiem (zbiorniki, magazyn) łączy się liną przez szczelinę z najbliższym bokiem, promieniem po osiach do mostDl komórek.
+  mostNaCzesc: 6, mostDl: 10,
+  // Liny widoczne: od pomostów przy krawędzi miasta do dysku pod spodem. Dwa rzędy (r krawędzi miasta + rzad) po naPomost / 2 w poprzek pomostu, koniec przy dysku cofnięty ku osi o wglab.
+  naPomost: 10, rzad: [60, 320], wglab: 220, linaRozc: 0.6, linaK: 0.12, zwis: 1.03,
+  // Wzmocnienie wiązań węzła ciągniętego (koniec b): zaczep nie wyrywa się z części przy pierwszym szarpnięciu.
+  mocZaczepu: 10,
+});
+
+/**
+ * Liny bazy (prośba użytkownika 2026-11-12: „widzę szpary, pusta przestrzeń ciągnie w dół — trzeba dodać coś, co trzyma, jakieś druty”). Części nie mają między sobą wiązań, więc środek
+ * nie mógł pociągnąć boków przy upadku. Spoiny: krótkie, niewidoczne, między stykającymi się częściami boków (pomost–reaktor, pomost–pomost, pomost–zbiornik). Liny widoczne: od
+ * spodu pomostów przy krawędzi miasta do dysku pod nimi (krótkie skośne do tarasu, długie pionowe do wieńca). Wynik: [{ a, b, L0, rozcMax, k, widac }]: a — koniec od strony środka
+ * (solver go nie rusza), b — ciągnięty, każdy b raz. Węzły po indeksach sceny, położenie komórki: x = I·dx, y = J·dx, z = (K + 0,5)·dx.
+ */
+function planLin(sc, czesci, Hs, dx, o = LINY_B1) {
+  const pos = sc.pos, n = sc.n;
+  const czesc = new Int32Array(n).fill(-1);
+  const rCz = czesci.map((c, k) => {
+    let sx = 0, sy = 0;
+    for (let i = c.start; i < c.start + c.n; i++) { czesc[i] = k; sx += pos[3 * i]; sy += pos[3 * i + 1]; }
+    return Math.sqrt((sx / Math.max(1, c.n)) ** 2 + (sy / Math.max(1, c.n)) ** 2);
+  });
+  const bok = czesci.map((c) => !czescSrodka(c.nazwa));
+  const klucz = (I, J, K) => ((K + 2048) * 8192 + (J + 4096)) * 8192 + (I + 4096);
+  const siatka = new Map();
+  const ijk = (i) => [Math.round(pos[3 * i] / dx), Math.round(pos[3 * i + 1] / dx), Math.round(pos[3 * i + 2] / dx - 0.5)];
+  for (let i = 0; i < n; i++) { const [I, J, K] = ijk(i); siatka.set(klucz(I, J, K), i); }
+  const dl = (a, b) => Math.sqrt((pos[3 * a] - pos[3 * b]) ** 2 + (pos[3 * a + 1] - pos[3 * b + 1]) ** 2 + (pos[3 * a + 2] - pos[3 * b + 2]) ** 2);
+  const liny = [], uzyteB = new Set();
+  const dodaj = (a, b, rozcMax, k, widac, zwis = 1) => {
+    if (uzyteB.has(b) || a === b) return false;
+    uzyteB.add(b);
+    liny.push({ a, b, L0: dl(a, b) * zwis, rozcMax, k, widac });
+    return true;
+  };
+
+  // Spoiny: pary węzłów sąsiednich komórek (6 ścian) z dwóch różnych części boków.
+  const pary = new Map();
+  const SCIANY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let i = 0; i < n; i++) {
+    const p = czesc[i];
+    if (p < 0 || !bok[p]) continue;
+    const [I, J, K] = ijk(i);
+    for (const [di, dj, dk] of SCIANY) {
+      const j = siatka.get(klucz(I + di, J + dj, K + dk));
+      if (j === undefined) continue;
+      const q = czesc[j];
+      if (q < 0 || q === p || !bok[q]) continue;
+      const kl = Math.min(p, q) * 4096 + Math.max(p, q);
+      let l = pary.get(kl);
+      if (!l) pary.set(kl, (l = []));
+      l.push([i, j]);
+    }
+  }
+  for (const l of pary.values()) {
+    const krok = Math.max(1, l.length / o.spoinNaPare);
+    for (let e = 0; e < l.length && liny.length < 100000; e += krok) {
+      const [i, j] = l[Math.floor(e)];
+      // a od strony środka: część bliżej osi habitatu ciągnie dalszą.
+      const [a, b] = rCz[czesc[i]] <= rCz[czesc[j]] ? [i, j] : [j, i];
+      dodaj(a, b, o.spoinaRozc, o.spoinaK, false);
+    }
+  }
+
+  // Liny widoczne: pomosty, które dochodzą do krawędzi miasta, do dysku pod nimi.
+  const dysk = czesci.findIndex((c) => c.nazwa === 'dysk D-1…8');
+  const najblizszyDysku = (x, y, z) => {
+    let best = -1, bd = Infinity;
+    const [I0, J0, K0] = [Math.round(x / dx), Math.round(y / dx), Math.round(z / dx - 0.5)];
+    for (let dk = -4; dk <= 4; dk++) for (let dj = -4; dj <= 4; dj++) for (let di = -4; di <= 4; di++) {
+      const j = siatka.get(klucz(I0 + di, J0 + dj, K0 + dk));
+      if (j === undefined || czesc[j] !== dysk) continue;
+      const d = (pos[3 * j] - x) ** 2 + (pos[3 * j + 1] - y) ** 2 + (pos[3 * j + 2] - z) ** 2;
+      if (d < bd) { bd = d; best = j; }
+    }
+    return best;
+  };
+  // Najwyższy węzeł dysku pod punktem (x, y): wierzch tarasu albo wieńca.
+  const wierzchDysku = (x, y) => {
+    const [I0, J0] = [Math.round(x / dx), Math.round(y / dx)];
+    let best = -1, bz = -Infinity;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) for (let K = -60; K <= 10; K++) {
+      const j = siatka.get(klucz(I0 + di, J0 + dj, K));
+      if (j === undefined || czesc[j] !== dysk) continue;
+      if (pos[3 * j + 2] > bz) { bz = pos[3 * j + 2]; best = j; }
+    }
+    return best;
+  };
+  if (dysk >= 0) czesci.forEach((c, k) => {
+    if (!bok[k]) return;
+    // Węzły spodu części przy krawędzi miasta: r w rzędzie, najniższa warstwa w kolumnie.
+    let rMin = Infinity;
+    for (let i = c.start; i < c.start + c.n; i++) rMin = Math.min(rMin, Math.hypot(pos[3 * i], pos[3 * i + 1]));
+    if (rMin > Hs.drumR + 2 * dx) return;
+    for (const dr of o.rzad) {
+      const kand = [];
+      for (let i = c.start; i < c.start + c.n; i++) {
+        const r = Math.hypot(pos[3 * i], pos[3 * i + 1]);
+        if (Math.abs(r - (Hs.drumR + dr)) > 0.6 * dx) continue;
+        const [I, J, K] = ijk(i);
+        const pod = siatka.get(klucz(I, J, K - 1));
+        if (pod !== undefined && czesc[pod] === k) continue; // nie spód
+        kand.push(i);
+      }
+      // W poprzek pomostu: po kącie wokół osi habitatu.
+      kand.sort((x, y) => Math.atan2(pos[3 * x + 1], pos[3 * x]) - Math.atan2(pos[3 * y + 1], pos[3 * y]));
+      const ile = Math.min(kand.length, Math.round(o.naPomost / o.rzad.length));
+      for (let e = 0; e < ile; e++) {
+        const b = kand[Math.round(((e + 0.5) * kand.length) / ile - 0.5)];
+        const x = pos[3 * b], y = pos[3 * b + 1], r = Math.hypot(x, y);
+        const f = (r - o.wglab) / r;
+        const w = wierzchDysku(x * f, y * f);
+        const a = w >= 0 ? w : najblizszyDysku(x * f, y * f, pos[3 * b + 2] - 400);
+        if (a >= 0) dodaj(a, b, o.linaRozc, o.linaK, true, o.zwis);
+      }
+    }
+  });
+  // Mosty: sieć lin rośnie od środka. Część boku, której nie łączy z siecią żadna spoina ani lina (zbiorniki, magazyn), dostaje liny przez szczelinę do najbliższej
+  // części, która już jest w sieci (promień po osiach siatki do mostDl komórek). Widoczne, bo inaczej szczelinę ciągnęłaby „pusta przestrzeń”. a po stronie sieci.
+  const OSIE = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  // Pary przez szczeliny, raz dla wszystkich boków i w obu kierunkach: promień z węzła boku po osi do pierwszego napotkanego węzła innej części boku.
+  const przezSzczeline = new Map();
+  for (let i = 0; i < n; i++) {
+    const p = czesc[i];
+    if (p < 0 || !bok[p]) continue;
+    const [I, J, K] = ijk(i);
+    for (const [di, dj, dk] of OSIE) for (let t = 2; t <= o.mostDl; t++) {
+      const j = siatka.get(klucz(I + t * di, J + t * dj, K + t * dk));
+      if (j === undefined) continue;
+      const q = czesc[j];
+      if (q !== p && bok[q]) {
+        const kl = p * 4096 + q;
+        let l = przezSzczeline.get(kl);
+        if (!l) przezSzczeline.set(kl, (l = []));
+        l.push([i, j, t]);
+      }
+      break;
+    }
+  }
+  const sasiedzi = czesci.map(() => new Set());
+  const polacz = (l) => { const p = czesc[l.a], q = czesc[l.b]; sasiedzi[p].add(q); sasiedzi[q].add(p); };
+  liny.forEach(polacz);
+  const wSieci = new Set();
+  const rozlej = () => {
+    wSieci.clear();
+    const stos = czesci.map((c, k) => k).filter((k) => !bok[k] && sasiedzi[k].size);
+    for (const k of stos) wSieci.add(k);
+    while (stos.length) for (const q of sasiedzi[stos.pop()]) if (!wSieci.has(q)) { wSieci.add(q); stos.push(q); }
+  };
+  rozlej();
+  for (let przebieg = 0; przebieg < czesci.length; przebieg++) {
+    let dodane = 0;
+    czesci.forEach((c, k) => {
+      if (!bok[k] || wSieci.has(k)) return;
+      // Najbliższa część w sieci: pary z tej części do niej i z niej do tej części (b zawsze po stronie k).
+      let kand = [];
+      for (const q of wSieci) {
+        if (!bok[q]) continue;
+        for (const [i, j, t] of przezSzczeline.get(k * 4096 + q) ?? []) kand.push([j, i, t]);
+        for (const [i, j, t] of przezSzczeline.get(q * 4096 + k) ?? []) kand.push([i, j, t]);
+      }
+      if (!kand.length) return;
+      kand.sort((x, y) => x[2] - y[2]);
+      kand = kand.filter((e) => e[2] <= kand[0][2] + 2);
+      const ile = Math.min(kand.length, o.mostNaCzesc);
+      for (let e = 0; e < ile; e++) {
+        const [a, b] = kand[Math.round(((e + 0.5) * kand.length) / ile - 0.5)];
+        if (dodaj(a, b, o.linaRozc, o.linaK, true, o.zwis)) { polacz(liny[liny.length - 1]); dodane++; }
+      }
+    });
+    if (!dodane) break;
+    rozlej();
+  }
+
+  // Widoczne pierwsze: obraz rysuje liny 0 … nWidocznych − 1 (linyObraz.js), solver liczy wszystkie.
+  return [...liny.filter((l) => l.widac), ...liny.filter((l) => !l.widac)];
+}
+
 function sektoryDysku(sc, nW, nD, o, ileSek, los) {
   const n1 = szum2(los), n2 = szum2(los), n3 = szum2(los), n4 = szum2(los);
   const seg = new Int32Array(nD), pod = new Int32Array(nD), wewnSek = new Float32Array(ileSek);
@@ -544,6 +729,8 @@ export function scenaB1(oo = {}) {
   const dane = { nW, nD, seg, nSeg, pod, nPod, wewnSek, kotwiceWsp, o: { ...o, nSekcji: nSeg, R: czDysk.dysk.R }, u: [0, -1, 0], wOs: [1, 0, 0], pX: 0, pY: -500, prozn: false };
   const pl = o.stoi ? { kratery: [], puscKotwiceF: -1 } : planSekwencji(sc, cz, l, o, los);
   const czesci = b.czesci.map((c) => ({ nazwa: c.nazwa, n: c.n }));
+  // Liny i spoiny (planLin, LINY_B1): przy upadku środek ciągnie boki, a części boków się nie rozjeżdżają. o.liny false: bez nich (A/B).
+  const liny = o.liny === false ? [] : planLin(sc, b.czesci, Hs, dx);
   const wz = cz.get('H-C + H-T');
   let wSzyb = 0;
   for (let q = 0; q < wz.K.length; q++) if ((wz.K[q] + 0.5) * dx <= wz.zSzyb[1]) wSzyb++;
@@ -556,6 +743,18 @@ export function scenaB1(oo = {}) {
   // Bez zapasu zostaje tylko zewnętrzny pierścień talerza: on rozbija się przy uderzeniu.
   const mocny = (w, i) => w.pos[3 * i] ** 2 + w.pos[3 * i + 1] ** 2 < rP2;
   const poWypieku = (w) => {
+    // Zaczep liny (koniec b): wiązania węzła × mocZaczepu i klasa wnętrza ziarna, żeby pierwsze szarpnięcie nie wyrwało go z części. Każde wiązanie raz.
+    const zrobione = new Set();
+    for (const li of liny) for (let d = 0; d < ND; d++) {
+      const ox = STRONA * li.b + d, j = w.nbr[ox];
+      if (j < 0) continue;
+      const oy = STRONA * j + (d ^ 1);
+      if (zrobione.has(Math.min(ox, oy))) continue;
+      zrobione.add(Math.min(ox, oy));
+      w.Ft[ox] *= LINY_B1.mocZaczepu; w.Ft[oy] = w.Ft[ox];
+      w.Fc[ox] *= LINY_B1.mocZaczepu; w.Fc[oy] = w.Fc[ox];
+      if (w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
+    }
     // Podest wieżowca: pomost liczy się tylko na własny ciężar, a ma przyjąć gruz. Bez tego góra przebija go i spada na planetoidę zamiast składać się na pomost.
     for (const c of [...new Set(podesty.map((d) => d.pomost))].map((id) => cz.get(id))) for (let i = c.start; i < c.start + c.n; i++) {
       const naPodescie = (q) => podesty.some((d) => Math.abs(w.pos[3 * q] - d.x) <= d.pw && Math.abs(w.pos[3 * q + 1] - d.y) <= d.pd);
@@ -585,6 +784,7 @@ export function scenaB1(oo = {}) {
   return {
     poWypieku,
     id: 'B1',
+    liny,
     opis: `Baza piratów, dx = ${dx}, ${sc.n} węzłów, ${b.czesci.length} części, ${pl.kratery.length} kraterów`,
     scena: sc,
     g: G,

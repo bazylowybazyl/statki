@@ -12,6 +12,7 @@ import { PLANETY_ATM, planetaZAdresu } from '../../src/3d/woksele/atmosfera.js';
 import { createSpalanie } from '../../src/3d/woksele/spalanie.js';
 import { createPowierzchniaAtm } from './powierzchniaAtm.js';
 import { createAtlas } from './atlas.js';
+import { createLinyObraz, ileWidocznych } from '../../src/3d/woksele/linyObraz.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -118,6 +119,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
   // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
   const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa, budynki: () => stan.miasto?.budynki ?? null }) : null;
+  // Liny bazy (src/3d/woksele/linyObraz.js, kernel kLiny): widoczne liny od pomostów do dysku i mosty do zbiorników i magazynu. W scenie obrazu przed rozgrzewką.
+  const linyObraz = solver.liny ? createLinyObraz({ solver }) : null;
+  if (linyObraz) obraz.scene.add(linyObraz.mesh);
   // ?kruchosc=1|2: beton kruchszy w wypieku (granice gięcia, kawalki.js KRUCHOSC). Zmiana przeładowuje stronę, bo wypiek idzie od nowa.
   // Bez parametru: kruchość sceny z adresu (B1R: 1, propozycja użytkownika 2026-11-09 „beton kruchy, sztywność ×2 lub ×3”), reszta 0.
   const KRUCH = KAWALKI ? Math.max(0, Math.min(KRUCHOSC.length - 1, adres.has('kruchosc') ? Number(adres.get('kruchosc')) || 0 : SCENY[adres.get('scena')]?.kruchosc ?? 0)) : 0;
@@ -243,6 +247,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     if (bU) bU.style.display = opis.baza ? '' : 'none';
     for (const n of Object.keys(KAM_MIASTA)) przyciski.get(`k:${n}`).style.display = !!KAM_MIASTA[n].baza === !!opis.baza ? '' : 'none';
     solver.wczytaj(w);
+    // Liny sceny z wypieku (baza: planLin w scenaBazy.js), inne sceny bez lin. ?liny=0: bez lin (A/B).
+    const linySceny = adres.get('liny') === '0' ? [] : (wypieki.get(id).liny ?? []);
+    solver.liny?.wczytaj(linySceny);
+    if (linyObraz) { linyObraz.ustaw(ileWidocznych(linySceny)); linyObraz.mesh.visible = linyObraz.n > 0; }
     // Baza jak w grze (wGrze.zaladuj): w locie nic się nie łamie od samej prędkości, a ruch połączony z kotwicami wolniejszy niż próg fali gaśnie (stoi albo pęka).
     const jakWGrze = !!opis.jakWGrze && adres.get('jakWGrze') !== '0';
     const uS = solver.uniformy;
