@@ -322,8 +322,12 @@ function budujSasiadow(s) {
   for (let i = 0; i < n; i++) s.iN0[i] = 1 / Math.max(1, popcnt(maska[i]));
 }
 
-/** Etykieta BFS: odległość w skokach od węzłów z etykietą 0 (po wszystkich wiązaniach). Zwraca największą. */
-function rozlejEtykiete(etyk, nbr, wezly) {
+/**
+ * Etykieta BFS: odległość w skokach od węzłów z etykietą 0 (po wszystkich wiązaniach). Zwraca największą etykietę ODWIEDZONEGO węzła i sieroty
+ * (węzły bez drogi do kotwicy, etykieta ≥ nieodwiedzony). Sieroty nie wchodzą do maksimum: jedna wyspa bez kotwicy podbijała limit oderwania
+ * do 90008 i odcięte bryły były „połączone” przez 375 s (wyspy pokładu w obudowach reaktorów, raport FABLE-3 2026-11-12).
+ */
+function rozlejEtykiete(etyk, nbr, wezly, nieodwiedzony) {
   let zm = true;
   while (zm) {
     zm = false;
@@ -338,8 +342,13 @@ function rozlejEtykiete(etyk, nbr, wezly) {
     }
   }
   let mx = 0;
-  for (let q = 0; q < wezly.length; q++) if (etyk[wezly[q]] > mx) mx = etyk[wezly[q]];
-  return mx;
+  const sieroty = [];
+  for (let q = 0; q < wezly.length; q++) {
+    const e = etyk[wezly[q]];
+    if (e >= nieodwiedzony) sieroty.push(wezly[q]);
+    else if (e > mx) mx = e;
+  }
+  return { mx, sieroty };
 }
 
 /** Voronoi ważony na siatce komórek ijk grupy, przy budowie, więc obrót budynku nic nie zmienia (§ 2.3, krok 6). */
@@ -515,6 +524,7 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
   const etyk = new Uint16Array(n);
   let capEtyk = 0;
   const NIEODWIEDZONY = 60000;
+  const sierotyEtyk = [];
   if (gd) {
     const wDysku = new Int32Array(gd.n);
     for (let q = 0; q < gd.n; q++) {
@@ -524,18 +534,23 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
       etyk[i] = kind[i] === 5 ? 0 : NIEODWIEDZONY;
       if (kind[i] === 5) nieruchomy[i] = 1;
     }
-    const mx = rozlejEtykiete(etyk, nbr, wDysku);
+    const { mx, sieroty } = rozlejEtykiete(etyk, nbr, wDysku, NIEODWIEDZONY);
     capEtyk = Math.ceil(mx * 1.5) + 8;
-    info.grupy.dysk = { maxEtykieta: mx, cap: capEtyk };
+    info.grupy.dysk = { maxEtykieta: mx, cap: capEtyk, sieroty: sieroty.length };
+    sierotyEtyk.push(...sieroty);
   }
   if (gw) {
     for (const i of wWiezy) etyk[i] = nieruchomy[i] ? 0 : NIEODWIEDZONY;
     if (!swobodna) {
-      const mx = rozlejEtykiete(etyk, nbr, wWiezy);
+      const { mx, sieroty } = rozlejEtykiete(etyk, nbr, wWiezy, NIEODWIEDZONY);
       capEtyk = Math.max(capEtyk, Math.ceil(mx * 1.5) + 8);
       info.grupy.wieza.maxEtykieta = mx;
+      info.grupy.wieza.sieroty = sieroty.length;
+      sierotyEtyk.push(...sieroty);
     }
   }
+  // Sieroty (bez drogi do kotwicy) od początku oderwane: etykieta = limit, jak część puszczona przez puscCzesc. Bez sierot wypiek jak dotąd.
+  for (const i of sierotyEtyk) etyk[i] = capEtyk;
 
   // Wytrzymałości: każda para raz, kopie na obu końcach. Rozrzut z PRNG (§ 2.3, krok 7).
   const los = prng(par.ziarno);

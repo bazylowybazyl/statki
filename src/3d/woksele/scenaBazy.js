@@ -171,7 +171,7 @@ function budujTrzon(b, Hs, zamkniety = false) {
 }
 
 function budujPomosty(b, l, podesty) {
-  const Ps = l.spec.pier, Hs = l.habitat;
+  const Ps = l.spec.pier, Hs = l.habitat, dx = b.dx;
   const z0 = k7HeightToZ(Ps.deckY0), z1 = k7HeightToZ(Ps.deckY1);
   for (const p of l.piers) {
     const c = b.nowa(p.id, TON.pomost);
@@ -182,6 +182,10 @@ function budujPomosty(b, l, podesty) {
       const bz = -y, ex = x - p.ax, ez = bz - p.az;
       const s = ex * p.ux + ez * p.uz, q = Math.abs(ex * p.nx + ez * p.nz);
       if (x * x + y * y < Hs.drumR * Hs.drumR) return -1;
+      // Pokład wewnątrz obudowy reaktora to wyspa bez drogi do kotwicy (ściany obudowy są inną częścią, reaktory powstają przed pomostami). Jej etykieta
+      // 60000 podbijała limit oderwania capEtyk do 90008, a bryła odcięta kraterami była przez 375 s „połączona z kotwicami” i opadała w tłumieniu 40 j./s
+      // (wieżowce miasta w grze, raport FABLE-3 2026-11-12). Test w tests/wokseleBaza.test.mjs.
+      for (const d of podesty) if (Math.abs(x - d.x) < d.pw - 0.5 * dx && Math.abs(y - d.y) < d.pd - 0.5 * dx) return -1;
       if (s >= 0 && s <= p.len && q <= p.halfW) return KIND.STROP;
       for (const d of podesty) if (d.pomost === p.id && s >= 0 && s <= p.len && Math.abs(x - d.x) <= d.pw && Math.abs(y - d.y) <= d.pd) return KIND.STROP;
       return -1;

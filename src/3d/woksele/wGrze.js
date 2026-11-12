@@ -616,7 +616,7 @@ export function createWokseleGry({ Core3D }) {
       }
     },
 
-    /** Zdarzenia z gry: voxHit (x, y, obrażenia), voxBreak (id kawałka, 1 = zgniot pod wieżą, 2 = przecięty taranem), voxNeck (kierunek upadku), voxFall (kierunek upadku albo nic). */
+    /** Zdarzenia z gry: voxHit (x, y, obrażenia), voxBreak (id kawałka, 1 = zgniot pod wieżą, 2 = przecięty taranem, kąt upadku w układzie gry albo NaN), voxNeck (kierunek upadku), voxFall (kierunek upadku albo nic). */
     zdarzenie(typ, a, b, c) {
       if (!stan.gotowe) return;
       if (stan.zgaszony) return;
@@ -644,11 +644,17 @@ export function createWokseleGry({ Core3D }) {
         // b > 0: zgniot. Wieża położyła się na wieżowcu (index.html, _neckCtx.onImpact): wieżowiec traci kotwice i leci z wieżą przez wycięte sektory dysku.
         // Bez tego ich dolne warstwy zostają w powietrzu jako nieruchome płyty i wieża na nich leży (prośba użytkownika 2026-11-11: „przebije dolną warstwę”).
         // b = 2: taran. Statek właśnie przeciął wieżowiec, więc przekrój idzie od razu (grupyGry.budynek, szybko).
-        const tryb = Number(b) | 0, zgniot = tryb === 1;
-        const lista = s.grupy.kawalek(String(a), tryb);
-        const nazwy = zgniot ? s.grupy.czesciZgniotu(String(a)) : [];
-        if (!lista.length && !nazwy.length) return;
+        const tryb = Number(b) | 0, zgniot = tryb === 1, id = String(a);
+        const lista = s.grupy.kawalek(id, tryb);
+        const nazwy = zgniot ? s.grupy.czesciZgniotu(id) : [];
+        // Wieżowiec miasta po ostrzale albo taranie przewraca się w całości (grupyGry.przewrot, raport FABLE-3 2026-11-12). c: kąt w układzie gry od punktu
+        // trafienia ku środkowi kawałka (index.html, storyBaseBreak), czyli pada od strzelającego albo wzdłuż taranu; bez kąta (NaN) na zewnątrz od osi habitatu.
+        const kat = Number(c);
+        const przew = zgniot ? null : s.grupy.przewrot(id, Number.isFinite(kat) ? naLokalny(Math.cos(kat), -Math.sin(kat)) : s.grupy.naZewnatrz(id));
+        const czP = przew ? s.czesci.find((q) => q.nazwa === id) : null;
+        if (!lista.length && !nazwy.length && !czP) return;
         aktywuj();
+        if (czP) stan.puscCzesci.push({ od: czP.od, n: czP.n, ...przew });
         for (const nazwa of nazwy) {
           const cz = s.czesci.find((c) => c.nazwa === nazwa);
           if (cz) stan.puscCzesci.push(cz);

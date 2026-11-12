@@ -5,7 +5,8 @@ import { scenaB1, POJEMNOSC_BAZY } from '../src/3d/woksele/scenaBazy.js';
 import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
 import { KIND } from '../src/3d/woksele/scena.js';
 import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
-import { createGrupyGry } from '../src/3d/woksele/grupyGry.js';
+import { createGrupyGry, PRZEWROT_OM } from '../src/3d/woksele/grupyGry.js';
+import { k7HeightToZ } from '../src/3d/haloRing/haloPortK7Layout.js';
 
 const L0 = createPirateBaseLayout({ id: 'B1' });
 
@@ -123,17 +124,18 @@ test('wnętrze szyi i szybu (szyjaWnetrze): 0 pusta rura, 1 stropy, 2 pełne —
   assert.equal(scenaB1({ dx: 80 }).scena.n, scenaB1({ dx: 80, szyjaWnetrze: 1 }).scena.n);
 });
 
-test('kratery misji (grupyGry): wieżowiec miasta pęka sam (kratery tylko w jego części), zgniot pod wieżą puszcza jego część bez kraterów, reaktor pęka jak budynek', () => {
+test('kratery misji (grupyGry): wieżowiec miasta pęka sam (salwy tylko w jego części, przewrót bez kul przekroju), zgniot pod wieżą puszcza jego część bez kraterów, reaktor pęka jak budynek', () => {
   const plan = plany[80];
   const grupy = createGrupyGry({ w: plan.scena, l: L0, dx: 80 });
   const nazwy = new Set(plan.miasto.budynki.map((b) => b.nazwa));
   const czesc = (i) => plan.miasto.budynki.find((b) => i >= b.start && i < b.start + b.n)?.nazwa;
   for (const id of ['B-03', 'B-16']) {
-    // kawałek gry = wieżowiec = część wokseli o tym samym id: salwy po obwodzie i przekrój przez oś, jak dawny wieżowiec na pomoście
+    // kawałek gry = wieżowiec = część wokseli o tym samym id: krótkie salwy po obwodzie (ozdoba), upada przez przewrot (wGrze), bez kul przekroju (raport FABLE-3)
     const lista = grupy.kawalek(id);
-    assert.ok(lista.length >= 12, `${id}: kraterów ${lista.length}`);
+    assert.ok(lista.length >= 6, `${id}: kraterów ${lista.length}`);
     for (const k of lista) assert.equal(czesc(k.nos), id, `${id}: krater w ${czesc(k.nos)}`);
-    assert.ok(lista.some((k) => k.rodz === 'wieza'), `${id}: przekrój przez oś`);
+    assert.ok(!lista.some((k) => k.rodz === 'wieza'), `${id}: bez kul przekroju`);
+    assert.ok(grupy.przewrot(id, { x: 0, y: -1 }), `${id}: przewrót`);
     // zgniot pod wieżą: bez kraterów, sama część do puszczenia kotwic
     assert.deepEqual(grupy.kawalek(id, true), []);
     assert.deepEqual(grupy.czesciZgniotu(id), [id]);
@@ -151,19 +153,32 @@ test('kratery misji (grupyGry): wieżowiec miasta pęka sam (kratery tylko w jeg
   assert.equal(grupy.szyjaR, L0.habitat.neckR);
 });
 
-test('taran: wieżowiec przecięty statkiem dostaje przekrój od razu i na wysokości kadłuba (voxBreak z flagą 2), ostrzał — po salwach', () => {
+test('przewrót wieżowca (FABLE-3): cięcie dwie warstwy nad podstawą, oś na krawędzi rzutu po stronie upadku, dach leci w stronę upadku; salwy krótkie, przy taranie krótsze', () => {
   const plan = plany[80];
   const grupy = createGrupyGry({ w: plan.scena, l: L0, dx: 80 });
+  const h = L0.habitat.buildings.find((q) => q.id === 'B-16');
+  const wx = h.ux ? h.w : h.d, wy = h.ux ? h.d : h.w;
+  const cx = h.x, cy = -h.z;
+  for (const f of [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: Math.SQRT1_2, y: Math.SQRT1_2 }]) {
+    const p = grupy.przewrot('B-16', f);
+    assert.ok(Math.abs(p.zMin - (k7HeightToZ(h.baseY) + 2 * 80)) < 1e-9, 'cięcie dwie warstwy nad podstawą, nie od pokładu pomostu');
+    // oś na krawędzi prostokąta rzutu w kierunku f
+    const ex = Math.abs(p.piv[0] - cx) / (0.5 * wx), ey = Math.abs(p.piv[1] - cy) / (0.5 * wy);
+    assert.ok(Math.abs(Math.max(ex, ey) - 1) < 1e-9, `oś na krawędzi rzutu (${ex}, ${ey})`);
+    assert.ok((p.piv[0] - cx) * f.x + (p.piv[1] - cy) * f.y > 0, 'oś po stronie upadku');
+    // prędkość startowa dachu (om × (dach − oś)) w poziomie zgodna z f
+    const r = [cx - p.piv[0], cy - p.piv[1], 1000];
+    const v = [p.om[1] * r[2] - p.om[2] * r[1], p.om[2] * r[0] - p.om[0] * r[2], p.om[0] * r[1] - p.om[1] * r[0]];
+    assert.ok(v[0] * f.x + v[1] * f.y > 0, 'dach leci w stronę upadku');
+    assert.ok(Math.abs(Math.hypot(...p.om) - PRZEWROT_OM) < 1e-9);
+  }
+  assert.equal(grupy.przewrot('AG-1', { x: 1, y: 0 }), null, 'reaktor nie jest wieżowcem miasta');
+  // bez kierunku z gry: na zewnątrz od osi habitatu
+  const n = grupy.naZewnatrz('B-16');
+  assert.ok(n.x * cx + n.y * cy > 0 && Math.abs(Math.hypot(n.x, n.y) - 1) < 1e-9);
   const zwykle = grupy.kawalek('B-16'), szybko = grupy.kawalek('B-16', 2);
-  const ciecie = (lista) => lista.filter((k) => k.rodz === 'wieza');
-  assert.equal(ciecie(zwykle).length, 2);
-  assert.equal(ciecie(szybko).length, 2);
-  assert.ok(Math.min(...ciecie(zwykle).map((k) => k.f)) >= 120, 'ostrzał: przekrój po ~2,4 s nadgryzania');
-  assert.ok(Math.max(...ciecie(szybko).map((k) => k.f)) <= 12, 'taran: przekrój w pierwszych klatkach');
-  assert.ok(Math.max(...szybko.map((k) => k.f)) <= 30, 'taran: wszystkie kratery w pół sekundy');
-  // przekrój taranu niżej (wysokość kadłuba w płaszczyźnie gry) niż przekrój po ostrzale
-  const z = (k) => plan.scena.pos[3 * k.nos + 2];
-  assert.ok(Math.min(...ciecie(szybko).map(z)) < Math.min(...ciecie(zwykle).map(z)));
+  assert.ok(Math.max(...zwykle.map((k) => k.f)) <= 36, 'ostrzał: salwy w 0,6 s');
+  assert.ok(Math.max(...szybko.map((k) => k.f)) <= 21, 'taran: salwy w 0,35 s');
   assert.deepEqual(grupy.kawalek('B-16', 1), [], 'zgniot dalej bez kraterów');
 });
 
@@ -188,5 +203,16 @@ test('reaktory: pierścień pola wisi na ramionach z wiązaniami osiowymi także
     for (let i = c.start; i < c.start + c.n; i++) if (pas(i) && Math.abs(r(i) - a.ringR) <= 30) { pier++; if (odw.has(i)) osiagniety++; }
     assert.ok(pier > 50, `${a.id}: pierścień ${pier} węzłów`);
     assert.equal(osiagniety, pier, `${a.id}: ${pier - osiagniety} węzłów pierścienia bez drogi wiązaniami osiowymi do kolumny`);
+  }
+});
+
+test('limit oderwania (capEtyk): bez wysp pokładu w obudowach reaktorów, sieroty bez kotwicy nie podbijają limitu (gra i demo B1R)', () => {
+  // Raport FABLE-3 (2026-11-12): pokład pomostu wewnątrz obudów AG-1 i AG-2 był wyspą bez drogi do kotwicy (106 węzłów, etykieta 60000), limit wychodził
+  // 90008 zamiast ~100 i bryła odcięta kraterami była przez 375 s „połączona z kotwicami”: w grze opadała w tłumieniu 40 j./s (dach nad statkiem).
+  for (const [nazwa, o] of [['gra', { dx: 40, wGrze: true }], ['B1R', { dx: 40, mocSzyi: 3, giecieSzyi: 1, szyjaWnetrze: 1, stoi: true }]]) {
+    const { w } = zbudujPlan(scenaB1(o));
+    assert.ok(w.capEtyk > 0 && w.capEtyk < 400, `${nazwa}: capEtyk ${w.capEtyk}`);
+    assert.equal(w.info.grupy.wieza.sieroty, 0, `${nazwa}: węzły wieży bez drogi do kotwicy`);
+    assert.equal(w.info.grupy.dysk.sieroty, 0, `${nazwa}: węzły dysku bez drogi do kotwicy`);
   }
 });

@@ -8,6 +8,8 @@ const TAU = Math.PI * 2;
 const KUBELEK = 160;
 const F = (t) => Math.round(60 * t);
 const krater = (o) => ({ rdzen: 0.4, rS: 1, tau: 0.03, dz: 0, usunStojace: true, ...o });
+/** Obrót startowy przewracanego wieżowca miasta [rad/s] (przewrot): 0,3 jak wieża przy zerwaniu szyi (WIEZA_OM w wGrze.js), 0,5 kładzie go szybciej. */
+export const PRZEWROT_OM = 0.3;
 
 /** w: { n, pos } wypieku, l: createPirateBaseLayout, dx: bok komórki, ziarno: los miejsc, tylko wygląd. */
 export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
@@ -72,11 +74,48 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     return budynek([], h.x, -h.z, wzdluzX ? h.w : h.d, wzdluzX ? h.d : h.w, 0, 6, 3);
   }
 
-  /** Wieżowiec miasta pęka (pula do zera, taran, rozpad): salwy po obwodzie tuż nad płaszczyzną gry i przekrój przez oś, jak dawny wieżowiec na pomoście. Kawałek gry = jeden wieżowiec = jedna część wokseli o tym samym id. */
+  /**
+   * Wieżowiec miasta pęka (pula do zera, taran, rozpad): same krótkie salwy po obwodzie tuż nad płaszczyzną gry (ozdoba: błysk i odłamki tam, gdzie strzelał gracz).
+   * Upada przez przewrot() (wGrze, voxBreak), nie przez kule przekroju: dawny przekrój był symetryczny (budynek siadał pionowo między sąsiadami), liczony od
+   * pokładu pomostu (kikut 30–50 % wysokości nad tarasem), zależał od żywego nosiciela i żarzył naraz 13–17 pięter (raport FABLE-3 2026-11-12). Kawałek gry =
+   * jeden wieżowiec = jedna część wokseli o tym samym id.
+   */
   function wiezowiec(id, szybko = false) {
     const h = (Hs.buildings || []).find((q) => q.id === id);
     if (!h) return [];
-    return budynek([], h.x, -h.z, h.ux ? h.w : h.d, h.ux ? h.d : h.w, 0, szybko ? 2 : 6, 3, szybko);
+    const wx = h.ux ? h.w : h.d, wy = h.ux ? h.d : h.w;
+    const lista = [], zNad = k7HeightToZ(l.spec.pier.deckY1), serie = szybko ? 2 : 3, tSalw = szybko ? 0.3 : 0.5;
+    for (let s = 0; s < serie; s++) {
+      for (let q = 0; q < 3; q++) {
+        const a = TAU * los();
+        const ax = Math.cos(a), ay = Math.sin(a), sk = 0.5 / Math.max(Math.abs(ax) / wx, Math.abs(ay) / wy);
+        dodaj(lista, (tSalw * s) / serie + 0.05 * los(), h.x + ax * sk, -h.z + ay * sk, zNad + 100 + 160 * los(), { r: rMin, J: 120, rP: 170, rodz: q === 0 ? 'glowna' : 'mala' });
+      }
+    }
+    return lista;
+  }
+
+  /**
+   * Przewrót wieżowca miasta (raport FABLE-3 § 4.3, 2026-11-12): rekord dla solver.puscCzesc (bez od i n — dokłada wGrze z tabeli części). Cięcie płaszczyzną
+   * dwie warstwy nad podstawą (zMin), obrót om ku stronie upadku wokół krawędzi rzutu po tej stronie (piv). Puszczona część dostaje etykietę oderwania od razu,
+   * więc nie wisi w tłumieniu „stoi albo pęka”. f: kierunek upadku w układzie węzłów (jednostkowy), om w rad/s. Pomiar w Node: B-13 na zewnątrz 8° / 24° / 49°
+   * po 0,5 / 1,5 / 2,5 s i przelatuje nad krawędzią dysku, B-01 kładzie się na sąsiada i o niego rozbija. Null: to nie wieżowiec miasta.
+   */
+  function przewrot(id, f, om = PRZEWROT_OM) {
+    const h = (Hs.buildings || []).find((q) => q.id === id);
+    if (!h) return null;
+    const wx = h.ux ? h.w : h.d, wy = h.ux ? h.d : h.w;
+    const zMin = k7HeightToZ(h.baseY) + 2 * dx;
+    const sk = 0.5 / Math.max(Math.abs(f.x) / wx, Math.abs(f.y) / wy, 1e-9);
+    return { zMin, piv: [h.x + f.x * sk, -h.z + f.y * sk, zMin], om: [-f.y * om, f.x * om, 0] };
+  }
+
+  /** Kierunek upadku wieżowca bez danych z gry: na zewnątrz od osi habitatu (układ węzłów). */
+  function naZewnatrz(id) {
+    const h = (Hs.buildings || []).find((q) => q.id === id);
+    if (!h) return { x: 0, y: -1 };
+    const r = Math.sqrt(h.x * h.x + h.z * h.z) || 1;
+    return { x: h.x / r, y: -h.z / r };
   }
 
   const szyjaZ = k7HeightToZ(Hs.coreTop) + 2 * dx + 130;
@@ -172,5 +211,5 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
   /** Nazwy części wokseli, które przy zgniocie kawałka tracą kotwice: wieżowiec miasta (część o tym samym id). Inne kawałki: nic. */
   const czesciZgniotu = (id) => (l.chunkById?.get(id)?.kind === 'highrise' ? [id] : []);
 
-  return { szukaj, kawalek, czesciZgniotu, szyja, kikut, upadek, szyjaZ, szyjaR: Hs.neckR };
+  return { szukaj, kawalek, czesciZgniotu, przewrot, naZewnatrz, szyja, kikut, upadek, szyjaZ, szyjaR: Hs.neckR };
 }

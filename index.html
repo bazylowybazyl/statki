@@ -36935,11 +36935,12 @@
       // rozpadu nie łamie go drugi raz i nie animuje schowanej bryły
       if (wPiece?.lost) return true;
       // opts.crush — wieża położyła się na wieżowcu: w obrazie traci on kotwice i leci z wieżą (wGrze, voxBreak z flagą 1);
-      // opts.fast — kawałek przecięty taranem: przekrój w obrazie od razu (flaga 2)
-      pirateBaseVoxEvent('voxBreak', id, opts.crush ? 1 : opts.fast ? 2 : 0);
+      // opts.fast — kawałek przecięty taranem (flaga 2). Czwarty argument: kąt upadku wieżowca miasta w obrazie, od punktu trafienia
+      // ku środkowi kawałka (pada od strzelającego albo wzdłuż taranu — grupyGry.przewrot); bez punktu NaN — na zewnątrz od osi habitatu
+      const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
+      pirateBaseVoxEvent('voxBreak', id, opts.crush ? 1 : opts.fast ? 2 : 0, opts.at ? Math.atan2(p.y - opts.at.y, p.x - opts.at.x) : NaN);
       // Upadek na wokselach: ciał już nie ma, a kawałek tylko dostaje kratery w obrazie (bez wyrw powietrza i dryfu w miejscu, z którego baza spada).
       if (_baseFall.voxFall) return true;
-      const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       const at = opts.at || p;
       const hc = place.habitat;
       let ox = p.x - hc.x;
