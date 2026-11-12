@@ -52,8 +52,10 @@ const SCENY = {
   // tlumienie: false (decyzja użytkownika 2026-11-09): tłumienie „stoi albo pęka” gasiło powolny początek przewracania wieży podciętej klinem.
   // skora: wygląd z gry (prośba użytkownika 2026-11-09: „nałóż na demo skórkę”): skóra z wypieku starej bryły, wnętrza, okna fasad (skoraDema.js, obraz.js). ?skora=0: barwy dema.
   // planeta: planetoida Hidalgo pod bazą jak w grze (prośba użytkownika 2026-11-09; planetaDema.js): skała, pole ku niej, kontakt, kratery. ?planeta=0: płaska podłoga dema.
-  // ciagliwosc: 3 (decyzja użytkownika 2026-11-11, po drugiej opinii Fable): beton ciągliwy, wieża z klinem kładzie się w całości z głową. Fala tylko w dół: glowny.js (FALA_PION).
-  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, ciagliwosc: 3, jakWGrze: true, tlumienie: false, skora: true, planeta: true },
+  // Ciągliwość ×1 (od 2026-11-12, zgłoszenie użytkownika: „wieżowce na środku walą się bardzo powoli albo wcale, nie lecą na boki”): przy ×3 z 11-11 wieżowiec
+  // podcięty klinem stoi (B-16 i dawny W-1: dach 75 i 34 j. w bok po 14 s, przy ×1 pada w 2,5–5 s i leci ~1 km w bok), a nowa grubsza wieża nie przewraca się
+  // od klina ani przy ×1, ani przy ×3 (te same liczby). ?ciagliwosc=3 dalej działa. Fala tylko w dół zostaje: glowny.js (FALA_PION), wieżowcom nie przeszkadza.
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1', sztywnosc: 2, kruchosc: 1, jakWGrze: true, tlumienie: false, skora: true, planeta: true },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
@@ -123,8 +125,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   // Bez parametru: sztywność sceny z adresu (B1R: 2, reszta 1).
   const SZTYW = KAWALKI ? Math.max(1, Math.min(4, Number(adres.get('sztywnosc')) || SCENY[adres.get('scena')]?.sztywnosc || 1)) : 1;
   // ?ciagliwosc=3|8 (druga opinia Fable 2026-11-11): beton ciągliwy, droga mięknięcia klas 0–3 × c (budowa.js). Przy 8 i szyi ×3 wieża z klinem kładzie się z głową. Też przeładowanie.
-  // ?falaPion=1|0 (glowny.js): fala łamiąca w konstrukcji z kotwicami tylko z prędkości w dół, żeby przewrót nie kruszył głowy. Na B1R oba domyślnie włączone (ciągliwość 3,
-  // decyzja użytkownika 2026-11-11), na innych scenach wyłączone.
+  // ?falaPion=1|0 (glowny.js): fala łamiąca w konstrukcji z kotwicami tylko z prędkości w dół, żeby przewrót nie kruszył głowy. Na B1R fala w dół domyślnie włączona,
+  // ciągliwość ×1 (od 2026-11-12: ×3 z 11-11 zatrzymywało wieżowce podcięte klinem, opis przy SCENY.B1R), na innych scenach oba wyłączone.
   const CIAGL = KAWALKI ? Math.max(1, Math.min(16, Number(adres.get('ciagliwosc')) || SCENY[adres.get('scena')]?.ciagliwosc || 1)) : 1;
   const opcjeKawalkow =KAWALKI ? { kawalki: adres.has('kawOp') ? JSON.parse(adres.get('kawOp')) : {}, zbrojenie: adres.has('zbrojenie') ? JSON.parse(adres.get('zbrojenie')) : {} } : null;
   // AGENT: miasto dalekie tylko na stronie, która je pokazuje: nowy materiał i kernel, a stare sceny mają zostać bez zmian co do pipeline'u.

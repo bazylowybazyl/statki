@@ -108,7 +108,9 @@ function budujReaktory(b, l) {
       if (r <= 0.62 * h.coreR) return KIND.RDZEN;
       if (Math.abs(z - zRing) <= dx) {
         if (Math.abs(r - h.ringR) <= 0.75 * dx) return KIND.KOLUMNA;
-        if (r < h.ringR && Math.abs(ax - ay) < 0.75 * dx) return KIND.KOLUMNA;
+        // Ramię po przekątnej: schodek co najmniej dwóch komórek (≤ dx). Przy < 0,75 dx środek reaktora na siatce (AG-1) dawał łańcuch pojedynczych komórek
+        // połączonych tylko wiązaniami ukośnymi i pierścień pola (≈110 węzłów) odpadał sam w pierwszej sekundzie (pomiar 2026-11-12, --scenariusz stoi).
+        if (r < h.ringR && Math.abs(ax - ay) <= dx) return KIND.KOLUMNA;
       }
       return -1;
     });

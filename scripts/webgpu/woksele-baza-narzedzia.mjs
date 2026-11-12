@@ -8,6 +8,10 @@
 // --scenariusz spalanie --planeta ziemia|mars [--spalT '6,14,18,21,24,30']: baza nad planetą z atmosferą, U (upadek), kadry z góry jak w misji 1 i z boku
 //   na słup atmosfery, liczba żywych węzłów (spalone i rozbite o grunt giną), drobin gruzu i odcinków smug (2026-11-09).
 // --scenariusz klin: klin kraterami od +y u podstawy szyi, przesunięcie środka głowy w bok i w dół (czy wieża przewraca się jak wieżowiec, 2026-11-09).
+//   Przy mieście (od 2026-11-11) promienie od y = 4000 trafiają wieżowce: --klinY 600 (start promieni w mieście, przed trzonem), --glowaZ 1400 (sama korona).
+// --scenariusz miasto --cel B-nn --narz atlas|taran|dzialo|ciezkie|klin [--miastoT '…'] [--rKlina 110]: jeden wieżowiec miasta, przesunięcie jego góry
+//   (węzły nad płaszczyzną gry) i dachu w bok i w dół, zerwane wiązania, kadry z boku i z góry (zgłoszenie 2026-11-12: wieżowce walą się bardzo powoli
+//   albo wcale; klin od −y przez całą szerokość ściany pokazał, że winna była ciągliwość ×3 z 11-11). Stare wersje: kopia skryptu w worktree tagu, --cel W-1.
 import os from 'node:os';
 os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -77,12 +81,15 @@ try {
   const N = 'window.__wok.pokaz.narzedzia';
   if (args.scenariusz === 'stoi') {
     // Baza bez strzałów: ile wiązań puszcza samo (stabilność przy innej sztywności, kruchości).
-    const ZERW = `(async () => { const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt(); let z = 0, zyw = 0, nan = 0; for (let i = 0; i < w.n; i++) { const a = r.poz[3 * i]; if (a !== a) nan++; const m0 = w.maska[i], m = r.maskaW[i]; for (let d = 0; d < 18; d++) if ((m0 >>> d) & 1) { if ((m >>> d) & 1) zyw++; else z++; } } return { zerwanych: z, zywych: zyw, nan }; })()`;
+    // Po częściach (miasto.budynki): gdzie puszczają wiązania, z wysokością (z) najniższego i najwyższego zerwanego, i ile węzłów zeszło ponad 100 j.
+    const ZERW = `(async () => { const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt(); let z = 0, zyw = 0, nan = 0; const cz = (window.__wok.pokaz.stan.miasto?.budynki ?? []).map((b) => ({ nazwa: b.nazwa, start: b.start, n: b.n, z: 0, zMin: 1e9, zMax: -1e9, zeszlo: 0 })); const czI = new Int32Array(w.n).fill(-1); cz.forEach((c, k) => { for (let i = c.start; i < c.start + c.n; i++) czI[i] = k; }); for (let i = 0; i < w.n; i++) { const a = r.poz[3 * i]; if (a !== a) nan++; const c = czI[i] >= 0 ? cz[czI[i]] : null; if (c && r.aktywny[i] && w.pos[3 * i + 2] - r.poz[3 * i + 2] > 100) c.zeszlo++; const m0 = w.maska[i], m = r.maskaW[i]; for (let d = 0; d < 18; d++) if ((m0 >>> d) & 1) { if ((m >>> d) & 1) zyw++; else { z++; if (c) { c.z++; c.zMin = Math.min(c.zMin, w.pos[3 * i + 2]); c.zMax = Math.max(c.zMax, w.pos[3 * i + 2]); } } } } return { zerwanych: z, zywych: zyw, nan, czesci: cz.filter((c) => c.z || c.zeszlo).sort((a, b) => b.z - a.z).slice(0, 10).map((c) => ({ nazwa: c.nazwa, zerw: c.z / 2, zMin: Math.round(c.zMin), zMax: Math.round(c.zMax), zeszlo: c.zeszlo })) }; })()`;
     for (const t of [1, 3, 6]) {
       await ev(`window.__wok.pokaz.doChwili(${t})`);
       const a = await ev(ZERW);
       const st = await ev('window.__wok.pokaz.statKawalki()');
+      (raport.stoi ??= []).push({ t, ...a });
       console.log(`stoi t = ${t}: zerwanych wiązań ${a.zerwanych} z ${a.zerwanych + a.zywych}, NaN ${a.nan}, pękło L0 ${st.peklo[0]}/${st.K0}`);
+      for (const c of a.czesci) console.log(`   ${c.nazwa}: zerwanych ${c.zerw} (z ${c.zMin}…${c.zMax}), zeszło > 100 j.: ${c.zeszlo}`);
       await kadr('stoi', t);
     }
   } else if (args.scenariusz === 'spalanie') {
@@ -149,7 +156,7 @@ try {
     await kadrBok('s0', 0.5);
     // Kratery z boku (+y) u podstawy szyi, dwa na różnych wysokościach. Od +x stoi W-2 i promień trafiał w niego.
     for (const [z, x] of [[330, 40], [450, -40]]) {
-      await ev(`${N}.stan.rKratera = 130; ${N}.uzyj('krater', { o: [${x}, 4000, ${z}], dir: [0, -1, 0] }); true`);
+      await ev(`${N}.stan.rKratera = 130; ${N}.uzyj('krater', { o: [${x}, ${Number(args.klinY ?? 4000)}, ${z}], dir: [0, -1, 0] }); true`);
       await ev(`window.__wok.pokaz.doChwili(window.__wok.pokaz.stan.krok / 60 + 2 / 60)`);
     }
     // Analiza wiązań szyi z GPU: rozciągnięcie żywych wiązań względem długości z wypieku (R0), sprężenie (F0), uszkodzenie (D), wydłużenie plastyczne (L − R0).
@@ -202,7 +209,7 @@ try {
       let n = 0, x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
       for (let i = cz.start; i < cz.start + cz.n; i++) {
         const x = w.pos[3 * i], y = w.pos[3 * i + 1];
-        if (x * x + y * y < 300 * 300 || !r.aktywny[i]) continue;
+        if (x * x + y * y < 300 * 300 || w.pos[3 * i + 2] < ${Number(args.glowaZ ?? -1e9)} || !r.aktywny[i]) continue; // --glowaZ 1000: sama korona nowej wieży (szyb ma r 340)
         n++; x0 += x; y0 += y; z0 += w.pos[3 * i + 2]; x1 += r.poz[3 * i]; y1 += r.poz[3 * i + 1]; z1 += r.poz[3 * i + 2];
       }
       return { n, dx: (x1 - x0) / n, dy: (y1 - y0) / n, dz: (z1 - z0) / n };
@@ -221,7 +228,7 @@ try {
     await kadrBok('k0', 0.5);
     await ev(`${N}.stan.rKratera = 130; true`);
     for (const z of [300, 380]) for (const x of [-160, -80, 0, 80, 160]) {
-      await ev(`${N}.uzyj('krater', { o: [${x}, 4000, ${z}], dir: [0, -1, 0] }); true`);
+      await ev(`${N}.uzyj('krater', { o: [${x}, ${Number(args.klinY ?? 4000)}, ${z}], dir: [0, -1, 0] }); true`);
       await ev(`window.__wok.pokaz.doChwili(window.__wok.pokaz.stan.krok / 60 + 2 / 60)`);
     }
     for (const t of String(args.klinT || '1.5,2.5,3.5,5,7,10').split(',').map(Number)) { // --klinT '2,5,10,15,20': chwile kadrów
@@ -295,6 +302,75 @@ try {
     for (const t of String(args.planetaT || '6,12,18,24,32').split(',').map(Number)) {
       await ev(`window.__wok.pokaz.doChwili(${t})`);
       await kadrP('p', t);
+    }
+  } else if (args.scenariusz === 'miasto') {
+    // Wieżowiec miasta habitatu (zgłoszenie użytkownika 2026-11-12: wieżowce na środku walą się bardzo powoli albo wcale, nie lecą na boki).
+    // --cel B-nn (domyślnie B-16, pierścień zewnętrzny od −y), --narz atlas|taran|dzialo|ciezkie (atlas: pełny ciąg od −y ku +y przez cel).
+    // Pomiar części: góra (węzły z wypieku nad płaszczyzną gry) i dach (górne 15 % wysokości): przesunięcie średnie w bok i w dół, ile węzłów góry
+    // spadło ponad 300 j., zerwane wiązania, żywe węzły. Kadry z boku (−x, upadek ku +y w poprzek kadru) i z góry.
+    const cel = String(args.cel || 'B-16');
+    const narz = String(args.narz || 'atlas');
+    const A = 'window.__wok.pokaz.atlas';
+    const CZ = `window.__wok.pokaz.stan.miasto.budynki.find((b) => b.nazwa === ${JSON.stringify(cel)})`;
+    const info = await ev(`(() => { const w = window.__wok.pokaz.solver.wypiek, cz = ${CZ}; let x = 0, y = 0, z0 = 1e9, z1 = -1e9, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (let i = cz.start; i < cz.start + cz.n; i++) { const px = w.pos[3 * i], py = w.pos[3 * i + 1]; x += px; y += py; x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py); z0 = Math.min(z0, w.pos[3 * i + 2]); z1 = Math.max(z1, w.pos[3 * i + 2]); } return { x: x / cz.n, y: y / cz.n, z0, z1, x0, x1, y0, y1, n: cz.n }; })()`);
+    raport.cel = { cel, narz, ...info };
+    console.log(`cel ${cel}: środek ${info.x.toFixed(0)}, ${info.y.toFixed(0)}, z ${info.z0.toFixed(0)}…${info.z1.toFixed(0)}, węzłów ${info.n}, narzędzie ${narz}`);
+    const POMIAR = `(async () => {
+      const s = window.__wok.pokaz.solver, w = s.wypiek, r = await window.__wok.odczyt(), cz = ${CZ};
+      const zDach = ${info.z1} - 0.15 * (${info.z1} - ${info.z0});
+      const g = { n: 0, x: 0, y: 0, z: 0, s: 0 }, d = { n: 0, x: 0, y: 0, z: 0 };
+      let zyw = 0, zerw = 0, wiaz = 0, zDachTeraz = -1e9;
+      for (let i = cz.start; i < cz.start + cz.n; i++) {
+        const m0 = w.maska[i], m = r.maskaW[i];
+        for (let k = 0; k < 18; k++) if ((m0 >>> k) & 1) { wiaz++; if (!((m >>> k) & 1)) zerw++; }
+        if (!r.aktywny[i]) continue;
+        zyw++;
+        const z0 = w.pos[3 * i + 2];
+        if (z0 <= 150) continue;
+        const ex = r.poz[3 * i] - w.pos[3 * i], ey = r.poz[3 * i + 1] - w.pos[3 * i + 1], ez = r.poz[3 * i + 2] - z0;
+        g.n++; g.x += ex; g.y += ey; g.z += ez; if (ez < -300) g.s++;
+        if (z0 >= zDach) { d.n++; d.x += ex; d.y += ey; d.z += ez; if (r.poz[3 * i + 2] > zDachTeraz) zDachTeraz = r.poz[3 * i + 2]; }
+      }
+      const sr = (o) => (o.n ? { dx: Math.round(o.x / o.n), dy: Math.round(o.y / o.n), dol: Math.round(-o.z / o.n) } : {});
+      return { zywych: zyw, wiazan: wiaz / 2, zerwanych: zerw / 2, gora: { n: g.n, ...sr(g), spadlo300: g.s }, dach: { n: d.n, ...sr(d) }, zDachTeraz: Math.round(zDachTeraz) };
+    })()`;
+    const zSr = 0.5 * (info.z0 + info.z1);
+    const KAM = { bok: { az: -90, el: 12, cel: [info.x, info.y + 300, zSr], odl: 4600 }, gora: { az: 0, el: 88, cel: [info.x, info.y + 400, 0], odl: 6500 } };
+    const kadrM = async (nazwa, t) => {
+      for (const [kam, k] of Object.entries(KAM)) {
+        await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+        await ev('window.__wok.pokaz.przerysuj()');
+        const plik = `${nazwa}_t${t.toFixed(1)}_${kam}.png`;
+        await screenshotPng(cdp, join(wyDir, plik));
+        raport.kadry.push(plik);
+      }
+      const p = await ev(POMIAR);
+      const a = narz === 'atlas' ? await ev(`${A}.stan()`) : null;
+      (raport.miasto ??= []).push({ t, ...p, atlas: a });
+      console.log(`${nazwa} t = ${t}: góra (${p.gora.n}) w bok ${p.gora.dx}, ${p.gora.dy}, w dół ${p.gora.dol}, spadło > 300: ${p.gora.spadlo300}; dach w bok ${p.dach.dx}, ${p.dach.dy}, w dół ${p.dach.dol} (z ${p.zDachTeraz}); zerwanych ${p.zerwanych}/${p.wiazan}, żywych ${p.zywych}${a ? `; Atlas y ${a.y}, v ${a.v}, styki ${a.styki}` : ''}`);
+    };
+    await ev('window.__wok.pokaz.doChwili(0.5)');
+    await kadrM('m0', 0.5);
+    await ev(`window.__wok.pokaz.kamera(${JSON.stringify(KAM.gora)}); true`); // ekran w górę = +y: taran i pociski lecą od −y
+    if (narz === 'atlas') {
+      if (!await ev(`!!${A}`)) throw new Error('strona bez Atlasa (?atlas=1)');
+      await ev(`${A}.ustaw({ x: ${info.x}, y: ${info.y - 2600}, kurs: Math.PI / 2, v: 1500 }); ${A}.sterowanie({ w: true, dop: true }); true`);
+    } else if (narz === 'taran') {
+      await ev(`${N}.uzyj('taran', { x: ${info.x}, y: ${info.y} })`);
+    } else if (narz === 'klin') {
+      // Klin narzędziem Krater z boku (od −y, jak użytkownik podcina wieżowiec): dwa rzędy kraterów nisko, przez całą szerokość ściany.
+      await ev(`${N}.stan.rKratera = ${Number(args.rKlina || 110)}; true`);
+      const H = info.z1 - info.z0, sz = info.x1 - info.x0;
+      for (const fz of [0.12, 0.2]) for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+        await ev(`${N}.uzyj('krater', { o: [${info.x0 + fx * sz}, ${info.y0 - 3000}, ${info.z0 + fz * H}], dir: [0, 1, 0] }); true`);
+        await ev(`window.__wok.pokaz.doChwili(window.__wok.pokaz.stan.krok / 60 + 2 / 60)`);
+      }
+    } else {
+      for (const ox of [-120, -60, 0, 60, 120]) await ev(`${N}.uzyj(${JSON.stringify(narz === 'ciezkie' ? 'ciezkie' : 'dzialo')}, { x: ${info.x + ox}, y: ${info.y} })`);
+    }
+    for (const t of String(args.miastoT || '1.2,1.6,2,3,4,6,9,12').split(',').map(Number)) {
+      await ev(`window.__wok.pokaz.doChwili(${t})`);
+      await kadrM('m', t);
     }
   } else {
   await ev('window.__wok.pokaz.doChwili(1)');

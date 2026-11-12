@@ -199,6 +199,30 @@ Decyzja użytkownika (2026-11-11): w B1R domyślnie ciągliwość 3 i fala tylko
 
 Pipeline'y synchroniczne: 0.
 
+### Miasto w demie i ciągliwość (2026-11-12)
+
+Zgłoszenie użytkownika po przebudowie środka bazy (miasto 24 wieżowców wokół wieży, 2026-11-11): „wieżowce na środku mają zupełnie inny feel, walą się bardzo powoli albo wcale, nie lecą na boki”. Pomiar nowym scenariuszem `woksele-baza-narzedzia.mjs --scenariusz miasto` (jeden wieżowiec, przesunięcie dachu, czyli górnych 15 % wysokości, w bok i w dół). Klin: 10 kraterów r 110 od −y w dwóch rzędach nisko, przez całą szerokość ściany. Stary układ: worktree `111e708e`, `--cel W-1`.
+
+| Klin, po 14 s | Dach w bok | Dach w dół | Co widać |
+|---|---|---|---|
+| B-16, ciągliwość 3 i fala w dół (domyślne z 11-11) | 75 | 18 | stoi, przechyla się kilka j./s |
+| B-16, ciągliwość 3, bez fali w dół | 75 | 18 | stoi (czyli winna jest ciągliwość) |
+| B-16, ciągliwość 1, fala w dół (nowe domyślne) | 1069 | 10 531 | pada od 2,5 s, przez krawędź dysku |
+| B-16, ciągliwość 1, bez fali w dół | 1353 | 10 897 | pada od 2,5 s |
+| dawny W-1, ciągliwość 3 i fala w dół | 34 | 7 | stoi |
+| dawny W-1, ciągliwość 1, bez fali w dół | 978 | 4624 | pada od 5–7 s, z pomostu |
+| B-03 (wewnętrzny pierścień), nowe domyślne | 110 | 997 | siada w 1,5–3,5 s, w bok mało: za nim stoją B-15 i B-16 |
+
+Przyczyna: ciągliwość ×3 z 11-11, nie przebudowa. Ciągliwy beton nie rozpina przekroju od ostrza klina, więc wieżowiec z klinem na jedną trzecią głębokości stoi. Tak samo dawny W-1, którego użytkownik po włączeniu ciągliwości już nie podcinał. Przy pełnym przekroju (Atlas, pięć strzałów z ciężkiego działa) ciągliwość prawie nic nie zmienia: B-03 po ciężkim dziale siada w 2,5–3,5 s przy ×1 i przy ×3, a B-16 po Atlasie przy ×1 i ×3 w 3–4 s.
+
+Nowa wieża (trzon r 240, korona r 340–560) od klina z miasta (`--scenariusz klin --klinY 600 --glowaZ 1400`) się nie przewraca. Korona przesuwa się o 52 j. w 14 s przy ciągliwości 1 i 3, z falą w dół i bez niej, ze wzmocnieniem całej wieży i bez niego: liczby są identyczne. Klin nie przeciąża trzonu (szyja ×3 i wnętrze ziarna w promieniu 340), więc ciągliwość nie ma tu nic do roboty.
+
+Zmiana w demie B1R: ciągliwość ×1 (fala w dół zostaje, wieżowcom nie przeszkadza). Przełącznik w panelu i `?ciagliwosc=3` działają jak dotąd.
+
+Przy okazji, baza bez strzałów (`--scenariusz stoi`, teraz z rozbiciem na części): reaktor AG-1 tracił w pierwszej sekundzie pierścień pola (≈110 węzłów, 670 wiązań; przy ciągliwości 3 tak samo). Środek AG-1 leży na siatce (x = −3440), więc warunek ramienia |ax − ay| < 0,75 dx dawał łańcuch pojedynczych komórek po przekątnej, połączonych tylko wiązaniami ukośnymi (8 węzłów ramion na warstwę wobec 20 w AG-2, który leży poza siatką). Ramię ≤ dx daje schodek z wiązaniami osiowymi (AG-1: 24 na warstwę, AG-2 bez zmian). Po poprawce baza stoi: 170 zerwanych wiązań z 1 475 708, wszystkie w trzonie pod wieżą (z −180…−140, żaden węzeł się nie ruszył, tylko przy ciągliwości 1). Poprawka zmienia też węzły AG-1 w grze (ta sama scena), WGSL bez zmian. Test `tests/wokseleBaza.test.mjs` („reaktory: pierścień pola…”) pada na dawnym warunku.
+
+Otwarte: gruz wieżowca miasta schodzi pod dysk. Po ciężkim dziale góra B-03 jest po 14 s średnio 3,4–4,1 km niżej, po Atlasie góra B-16 1,4–3,7 km niżej. Taras to pusta skrzynia ~600 j. z jednowarstwowym pokładem i żebrami co 40°. Dawny W-1 stał na pomoście wzmocnionym ×30, a jego gruz spadał z boków pomostu, więc było go widać na boki. Próba z kotwicami w pokładzie tarasu pod wieżowcem (rzut + 2 komórki) nic nie dała (B-03 po ciężkim dziale 4,1 km w dół). Gruz rozjeżdża się poza łatę, a statek i kratery wbijają go w dół z dużą prędkością. Opcję usunięto. Pipeline'y synchroniczne: 0 we wszystkich przebiegach.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

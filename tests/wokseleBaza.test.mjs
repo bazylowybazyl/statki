@@ -166,3 +166,27 @@ test('taran: wieżowiec przecięty statkiem dostaje przekrój od razu i na wysok
   assert.ok(Math.min(...ciecie(szybko).map(z)) < Math.min(...ciecie(zwykle).map(z)));
   assert.deepEqual(grupy.kawalek('B-16', 1), [], 'zgniot dalej bez kraterów');
 });
+
+test('reaktory: pierścień pola wisi na ramionach z wiązaniami osiowymi także przy środku na siatce (AG-1)', async () => {
+  // Zgłoszenie 2026-11-12 (demo B1R, --scenariusz stoi): przy ramieniu |ax − ay| < 0,75 dx środek AG-1 na siatce (x = −3440) dawał łańcuch pojedynczych
+  // komórek połączonych tylko wiązaniami ukośnymi, a pierścień (≈110 węzłów) odpadał sam w pierwszej sekundzie. AG-2 leży poza siatką i stał.
+  const { k7HeightToZ } = await import('../src/3d/haloRing/haloPortK7Layout.js');
+  const plan = scenaB1({ dx: 40, mocSzyi: 3, giecieSzyi: 1, szyjaWnetrze: 1, stoi: true });
+  const { w } = zbudujPlan(plan);
+  for (const a of L0.antigravs) {
+    const c = plan.miasto.budynki.find((b) => b.nazwa === a.id);
+    const cx = a.x, cy = -a.z, zR = k7HeightToZ(a.ringY);
+    const pas = (i) => Math.abs(w.pos[3 * i + 2] - zR) <= 40;
+    const r = (i) => Math.hypot(w.pos[3 * i] - cx, w.pos[3 * i + 1] - cy);
+    const odw = new Set(), stos = [];
+    for (let i = c.start; i < c.start + c.n; i++) if (pas(i) && r(i) <= 0.62 * a.coreR + 1) { odw.add(i); stos.push(i); }
+    while (stos.length) {
+      const i = stos.pop();
+      for (let d = 0; d < 6; d++) { const j = w.nbr[STRONA * i + d]; if (j >= c.start && j < c.start + c.n && pas(j) && !odw.has(j)) { odw.add(j); stos.push(j); } }
+    }
+    let pier = 0, osiagniety = 0;
+    for (let i = c.start; i < c.start + c.n; i++) if (pas(i) && Math.abs(r(i) - a.ringR) <= 30) { pier++; if (odw.has(i)) osiagniety++; }
+    assert.ok(pier > 50, `${a.id}: pierścień ${pier} węzłów`);
+    assert.equal(osiagniety, pier, `${a.id}: ${pier - osiagniety} węzłów pierścienia bez drogi wiązaniami osiowymi do kolumny`);
+  }
+});
