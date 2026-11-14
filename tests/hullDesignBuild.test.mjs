@@ -86,3 +86,46 @@ test('budowniczy: przerwanie na granicy etapu (wynik null), podgląd z siecią p
   const full = await b.run(d, { full: true });
   assert.equal(full.pipesStale, false, 'pełna budowa liczy prawdziwe trasy');
 });
+
+test('budowniczy: etap UKŁAD — klucz (wariant, ziarno; bez świecenia i barw), pakiet bit w bit jak z pola, przeciąganie', async () => {
+  const { packHullBoardTextures } = await import('../src/game/hullDesign/hullDesignBoard.js');
+  const b = createHullDesignBuilder();
+  const d = hullDesignPreset('custos');
+  const a = await b.run(d, { full: true });
+  assert.ok(a.keys.board && a.field.packed.board?.on, 'układ domyślnie włączony (wariant A)');
+  // pakiet z budowy = pakiet z pola buildHullField (ścieżka setDesign bez pakietów)
+  const ref = packHullBoardTextures(buildHullField(d).board);
+  const pb = a.field.packed.board;
+  assert.deepEqual([pb.w, pb.h, pb.eW, pb.eH, pb.n, pb.x0, pb.cell], [ref.w, ref.h, ref.eW, ref.eH, ref.n, ref.x0, ref.cell]);
+  assert.deepEqual(Buffer.from(pb.a), Buffer.from(ref.a));
+  assert.deepEqual(Buffer.from(pb.b), Buffer.from(ref.b));
+  assert.deepEqual(Buffer.from(pb.e.buffer), Buffer.from(ref.e.buffer));
+  // świecenie i barwy: ten sam układ z pamięci
+  d.board = { ...d.board, glow: 0.5 };
+  d.palette = 'pirate';
+  const g = await b.run(d, { full: true });
+  assert.equal(g.keys.board, a.keys.board);
+  assert.equal(g.field.packed.board.a, a.field.packed.board.a, 'pakiet układu z pamięci');
+  // wariant i ziarno: nowy układ; 'off' — bez układu (dzisiejsze komórki)
+  d.board = { ...d.board, variant: 'B' };
+  const v = await b.run(d, { full: true });
+  assert.notEqual(v.keys.board, a.keys.board);
+  d.board = { ...d.board, variant: 'A', seed: 77 };
+  const s = await b.run(d, { full: true });
+  assert.notEqual(s.keys.board, a.keys.board);
+  d.board = { ...d.board, variant: 'off' };
+  const o = await b.run(d, { full: true });
+  assert.equal(o.keys.board, null);
+  assert.equal(o.field.packed.board, null);
+  // przeciąganie: układ ostatniej pełnej budowy (bez liczenia), pełna budowa — prawdziwy
+  d.board = { variant: 'A' };
+  await b.run(d, { full: true });
+  const bl = d.shapes.find((q) => q.kind === 'block' && q.level >= 1);
+  bl.x += d.grid;
+  const f = await b.run(d, { fast: true });
+  assert.equal(f.boardStale, true);
+  assert.ok(f.field.packed.board?.on);
+  const full = await b.run(d, { full: true });
+  assert.equal(full.boardStale, false);
+  assert.notEqual(full.keys.board, f.keys.board);
+});

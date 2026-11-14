@@ -514,8 +514,22 @@ export function normalizeHullDesign(design = {}) {
       density: Math.max(0, Math.min(2, num(design.pipeNet?.density, 0))),
       seed: clampInt(design.pipeNet?.seed, 0, 1e6)
     },
-    panels: Math.max(0, Math.min(1, num(design.panels, 1)))
+    panels: Math.max(0, Math.min(1, num(design.panels, 1))),
+    // UKŁAD MASZYNOWNI „jak płytka drukowana” (src/game/hullDesign/hullDesignBoard.js): wariant zasady, ziarno, świecenie
+    board: normBoard(design.board, design.npc === true)
   };
+}
+
+/** Warianty układu maszynowni (HD_BOARD_VARIANTS w hullDesignBoard.js) i 'off' — dzisiejsze komórki maszynowni. */
+export const HD_BOARD_VARIANT_KEYS = Object.freeze(['A', 'B', 'C', 'off']);
+
+/**
+ * Pole `board`: { variant ('A' domyślnie — decyzja 2026-11-14, odczytanie orkiestratora), seed (0 — z ziarna projektu),
+ * glow (0–1: świecenie rzadkich odcinków szyn przez mapę emisji; domyślnie 0, projekt NPC — 0,35: drednoty słabo) }.
+ */
+function normBoard(b, npc) {
+  const variant = HD_BOARD_VARIANT_KEYS.includes(b?.variant) ? b.variant : 'A';
+  return { variant, seed: clampInt(b?.seed, 0, 1e6), glow: Math.max(0, Math.min(1, num(b?.glow, npc ? 0.35 : 0))) };
 }
 
 /** Paleta projektu: barwy palety frakcji nadpisane polami `paint`. */

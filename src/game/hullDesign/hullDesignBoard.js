@@ -25,33 +25,40 @@
 import { pipeModuleSdf } from './hullDesignPipes.js';
 import { serviceChannel, serviceChannelSdf } from './hullDesignSystems.js';
 
-/** Warianty ZASADY układu (do wyboru przez użytkownika; różnią się zasadą, nie barwą). Wymiary w jd. */
+/**
+ * Warianty ZASADY układu (pole projektu `board.variant`; różnią się zasadą, nie barwą). Wymiary w jd.
+ * Szyny: izolinie D = r_k = ringR0 + k · ringPitch tam, gdzie T ≥ ringT · r_k + ringRoom (A: pas szyn przy ścianie
+ * ≤ 1/5 grubości — szeroki rów dostaje szeroki pas zagnieżdżonych obrysów, wąski żaden). Dzielnice (districtJd): rodzaj
+ * i ton elementów klas 24–6 jd wybiera dzielnica, nie komórka; mergeMax — ile sąsiednich komórek łączy się wzdłuż osi
+ * okrętu w jedną dłuższą bryłę.
+ */
 export const HD_BOARD_VARIANTS = Object.freeze({
-  // A — HIERARCHIA: kręgosłup na osi, duże kwartały w głębi i przy rdzeniach, 3 szyny przy ścianach, ścieżki pod 90°
+  // A — HIERARCHIA: kręgosłup na osi (tylko szeroki rów), duże kwartały w głębi i przy rdzeniach, pas do 6 szyn przy
+  // ścianach i wokół modułów (szerokość z grubości rowu), ścieżki pod 90°
   A: Object.freeze({
     label: 'A · hierarchia (kręgosłup + kwartały)',
-    rings: 3, ringR0: 3, ringPitch: 4.5, ringW: 1.6, ringRoom: 10,
-    sizes: Object.freeze([96, 48, 24, 12, 6]), wantK: 0.42, axisBoost: 0.8, coreBoost: 1.0, coreReach: 90,
-    spine: true, spineLevels: Object.freeze([0, 1, 2]), spineH: 0.62, spineLen: 2,
-    gap: 3.0, wideP: 0.45, stubs: Object.freeze([4, 2, 2, 1, 0]), stubP: 0.75, diagFirst: false, traceW: 1.3
+    rings: 6, ringR0: 3, ringPitch: 4, ringW: 1.4, ringRoom: 10, ringT: 5,
+    sizes: Object.freeze([96, 48, 24, 12, 6]), wantK: 0.42, axisBoost: 1.2, coreBoost: 1.0, coreReach: 90,
+    spine: true, spineLevels: Object.freeze([0, 1, 2]), spineH: 0.62, spineLen: 2, spineMinT: 150, bigMinT: 120,
+    gap: 3.0, mergeMax: 3, districtJd: 160, stubs: Object.freeze([4, 2, 2, 1, 0]), stubP: 0.75, diagFirst: false, traceW: 1.3
   }),
   // B — MAGISTRALE: rów wypełniony zagnieżdżonymi obrysami (szyny co 5 jd aż do środka), elementy drobne między
   // szynami, bez kręgosłupa — struktura z samych równoległych do brzegu linii
   B: Object.freeze({
     label: 'B · magistrale (zagnieżdżone obrysy)',
-    rings: 12, ringR0: 3, ringPitch: 5, ringW: 1.6, ringRoom: 9,
+    rings: 12, ringR0: 3, ringPitch: 5, ringW: 1.4, ringRoom: 9, ringT: 2,
     sizes: Object.freeze([24, 12, 6]), wantK: 0.5, axisBoost: 0, coreBoost: 0.4, coreReach: 60,
-    spine: false, spineLevels: Object.freeze([]), spineH: 0.6, spineLen: 2,
-    gap: 3.0, wideP: 0.7, stubs: Object.freeze([2, 1, 0]), stubP: 0.6, diagFirst: true, traceW: 1.3
+    spine: false, spineLevels: Object.freeze([]), spineH: 0.6, spineLen: 2, spineMinT: 0,
+    gap: 3.0, mergeMax: 2, districtJd: 120, stubs: Object.freeze([2, 1, 0]), stubP: 0.6, diagFirst: true, traceW: 1.3
   }),
   // C — PŁASKA SIATKA: jednolita gęstość (trzy bliskie klasy wszędzie, bez wzmocnienia osi i rdzeni), jedna szyna,
   // ścieżki zaczynają się skosem — kontrprzykład dla A: porządek z samej siatki, bez hierarchii
   C: Object.freeze({
     label: 'C · płaska siatka (bez hierarchii)',
-    rings: 1, ringR0: 3, ringPitch: 4, ringW: 1.6, ringRoom: 10,
+    rings: 1, ringR0: 3, ringPitch: 4, ringW: 1.4, ringRoom: 10, ringT: 2,
     sizes: Object.freeze([32, 16, 8]), wantK: 0.3, axisBoost: 0, coreBoost: 0, coreReach: 60,
-    spine: false, spineLevels: Object.freeze([]), spineH: 0.6, spineLen: 2,
-    gap: 3.2, wideP: 0.25, stubs: Object.freeze([3, 3, 2]), stubP: 0.95, diagFirst: true, traceW: 1.3
+    spine: false, spineLevels: Object.freeze([]), spineH: 0.6, spineLen: 2, spineMinT: 0,
+    gap: 3.2, mergeMax: 1, districtJd: 96, stubs: Object.freeze([3, 3, 2]), stubP: 0.95, diagFirst: true, traceW: 1.3
   })
 });
 
@@ -65,8 +72,15 @@ export const HD_BOARD_TUNE = Object.freeze({
   runClearJd: 0.4,    // wiązka sieci = ściana: oś ± (pół-szerokość + luz)
   traceRJd: 3,        // zasięg pola odległości ścieżek [jd]
   stubMaxJd: 90,      // najdłuższa ścieżka [jd]
-  maxElems: 65535     // numer elementu 16-bitowy w rastrze (B + 256 · A) — jak osprzęt sieci
+  maxElems: 65534,    // numer elementu 16-bitowy w rastrze (R + 256 · G, 0 — brak) — jak osprzęt sieci
+  texW: 512           // szerokość tabeli elementów (2 teksele RGBA32F na element)
 });
+
+/**
+ * KLASA WYSOKOŚCI elementu (tabela elementów, kanał dla zabudowy — temat 3 „miasto”): 0 — płaski detal, 1 — moduł,
+ * 2 — blok kwartału, 3 — kapsuła kręgosłupa. Dziś tylko wysokość reliefu w kompozytorze.
+ */
+export const HD_BOARD_HEIGHT_CLASSES = Object.freeze({ flat: 0, module: 1, block: 2, spine: 3 });
 
 /** Rodzaje elementów (kod w rastrze / tabeli elementów). */
 export const HD_BOARD_KINDS = Object.freeze({ pod: 1, block: 2, module: 3, chip: 4, box: 5, cyl: 6, grate: 7, twin: 8, pad: 9, via: 10 });
@@ -164,11 +178,14 @@ export function buildHullBoard(field, opts = {}) {
     return (arr[o] * (1 - tx) + arr[o + 1] * tx) * (1 - ty) + (arr[o + grid.w] * (1 - tx) + arr[o + grid.w + 1] * tx) * ty;
   };
   const edgeIn = 0.6 * Du;                                   // pół jd od sylwetki i od ściany płyty
+  // projekt bez lustra: maszynownia odsłonięta po OBU burtach (część wspólna) — reszta zostaje dzisiejszymi komórkami
+  const both = design.mirror === false;
   for (let j = 0; j < h; j++) {
     const y = cy(j);
     for (let i = 0; i < w; i++) {
       const x = cx(i);
-      if (sampleLv(L0, x, y) < -edgeIn && sampleLv(L1, x, y) > edgeIn) dom[j * w + i] = 1;
+      if (sampleLv(L0, x, y) < -edgeIn && sampleLv(L1, x, y) > edgeIn
+        && (!both || (sampleLv(L0, x, -y) < -edgeIn && sampleLv(L1, x, -y) > edgeIn))) dom[j * w + i] = 1;
     }
   }
   const stampOut = (bx0, by0, bx1, by1, sdf) => {
@@ -279,7 +296,7 @@ export function buildHullBoard(field, opts = {}) {
   const rings = [];
   for (let k = 0; k < V.rings; k++) {
     const r = V.ringR0 + k * V.ringPitch;
-    rings.push({ r, t: 2 * r + V.ringRoom });
+    rings.push({ r, t: (V.ringT || 2) * r + V.ringRoom });
   }
   const zoneD = (Tv) => {
     let kk = -1;
@@ -339,6 +356,13 @@ export function buildHullBoard(field, opts = {}) {
   };
   const elems = [];
   const KIND = HD_BOARD_KINDS;
+  const HC = HD_BOARD_HEIGHT_CLASSES;
+  // DZIELNICE: rodzaj (0 — chipy, 1 — zbiorniki, 2 — skrzynie, 3 — kraty i wentylatory) i ton z hasza dzielnicy
+  const dSz = (V.districtJd || 160) * Du;
+  const district = (x, y) => {
+    const dI = Math.floor(x / dSz), dJ = Math.floor(-y / (dSz * 0.6));
+    return { type: Math.floor(hash3(dI, dJ, seed + 99) * 4), tone: hash3(dI, dJ, seed + 101), merge: Math.floor(hash3(dI, dJ, seed + 103) * ((V.mergeMax || 0) + 1)) };
+  };
   const add = (e, ax, bx, ya, yb) => {
     if (elems.length >= TN.maxElems) return false;
     const eid = elems.length;
@@ -358,7 +382,9 @@ export function buildHullBoard(field, opts = {}) {
         const ax = i * s + g, bx = i * s + len - g;
         if (!fits(ax, bx, -hh - g, 0) || !free(ax, bx, -hh, 0)) continue;
         if (want((ax + bx) / 2, -hh * 0.5) < V.sizes[L] * 0.8) continue;
-        add({ x: (ax + bx) / 2, y: 0, hw: (bx - ax) / 2, hh, L, kind: KIND.pod, axis: true, seed: hash3(i, 7, seed), ch: hh * 0.9 }, ax, bx, -hh, 0);
+        if (Tat((ax + bx) / 2, -c * 0.5) < (V.spineMinT || 0)) continue;   // wąski rów (Bellator): bez kapsuł
+        add({ x: (ax + bx) / 2, y: 0, hw: (bx - ax) / 2, hh, L, kind: KIND.pod, axis: true, seed: hash3(i, 7, seed), ch: hh * 0.9,
+          hc: HC.spine, tone: 0.5 + hash3(i, 9, seed) * 0.2, dist: 0 }, ax, bx, -hh, 0);
       }
     }
   }
@@ -379,19 +405,39 @@ export function buildHullBoard(field, opts = {}) {
         if (!fits(ax + g, bx - g, ya + g, yb - g) || !free(ax + g, bx - g, ya + g, yb - g)) continue;
         const wv = want((ax + bx) / 2, (ya + yb) / 2);
         if (!last && wv < sJd) continue;
-        // 2 : 1 wzdłuż osi okrętu, gdy sąsiad też wolny i pasuje
-        if (!ox && !oy && hash3(ii, jj, seed + L * 131) < V.wideP && fits(bx + g, bx + s - g, ya + g, yb - g) && free(bx + g, bx + s - g, ya + g, yb - g)
-          && (last || want(bx + s / 2, (ya + yb) / 2) >= sJd)) bx += s;
+        // klasy ≥ 48 jd tylko w szerokim rowie (wąski rów małego okrętu: drobny detal, bez obramowanych bloków)
+        if (sJd >= 36 && Tat((ax + bx) / 2, (ya + yb) / 2) < (V.bigMinT || 0)) continue;
+        const dc = district((ax + bx) / 2, (ya + yb) / 2);
+        // łączenie sąsiadów wzdłuż osi okrętu w dłuższą bryłę (ile — dzielnica), gdy wolne i pasują
+        if (!ox && !oy) {
+          const extra = Math.min(dc.merge, Math.floor(hash3(ii, jj, seed + L * 131) * (dc.merge + 1.5)));
+          for (let q = 0; q < extra; q++) {
+            if (!(fits(bx + g, bx + s - g, ya + g, yb - g) && free(bx + g, bx + s - g, ya + g, yb - g) && (last || want(bx + s / 2, (ya + yb) / 2) >= sJd))) break;
+            bx += s;
+          }
+        }
         const r = hash3(ii * 2 + (ox ? 1 : 0), jj * 2 + (oy ? 1 : 0), seed + L * 977 + 5);
+        const long = (bx - ax) > s * 1.5;
         let kind;
         if (sJd >= 72) kind = KIND.block;
-        else if (sJd >= 36) kind = r < 0.6 ? KIND.module : KIND.block;
-        else if (sJd >= 16) kind = r < 0.55 ? KIND.chip : (r < 0.8 ? KIND.module : KIND.grate);
-        else if (sJd >= 8) kind = r < 0.3 ? KIND.box : (r < 0.55 ? KIND.cyl : (r < 0.75 ? KIND.chip : (r < 0.88 ? KIND.twin : KIND.grate)));
-        else kind = r < 0.55 ? KIND.pad : (r < 0.8 ? KIND.box : KIND.cyl);
+        else if (sJd >= 36) kind = (dc.type === 1 || dc.type === 3) ? (r < 0.75 ? KIND.module : KIND.block) : (r < 0.75 ? KIND.block : KIND.module);
+        else {
+          // dzielnica wybiera rodzinę; komórka — tylko odmianę w niej (rzadko obcy rodzaj)
+          const fam = [
+            [KIND.chip, KIND.chip, KIND.module, KIND.pad],     // chipy
+            [KIND.cyl, KIND.cyl, KIND.twin, KIND.box],         // zbiorniki
+            [KIND.box, KIND.box, KIND.module, KIND.twin],      // skrzynie
+            [KIND.grate, KIND.grate, KIND.module, KIND.box]    // kraty i wentylatory
+          ][dc.type];
+          kind = r < 0.85 ? fam[Math.floor(r / 0.85 * (long ? 2 : 3))] : fam[3];
+          if (sJd < 8 && kind !== KIND.cyl && kind !== KIND.box) kind = r < 0.6 ? KIND.pad : KIND.box;
+          if (kind === KIND.module && sJd < 16) kind = KIND.box;
+        }
+        const hc = sJd >= 72 ? HC.block : (sJd >= 36 ? HC.module : HC.flat);
         const ex0 = ax + g, ex1 = bx - g, ey0 = ya + g, ey1 = yb - g;
         add({ x: (ex0 + ex1) / 2, y: (ey0 + ey1) / 2, hw: (ex1 - ex0) / 2, hh: (ey1 - ey0) / 2, L: Math.round(Math.log2(96 / sJd)), kind, axis: false,
-          seed: hash3(ii * 2 + (ox ? 1 : 0), jj * 2 + (oy ? 1 : 0), seed + 31 * L), ch: Math.min(ex1 - ex0, ey1 - ey0) * (sJd >= 36 ? 0.18 : 0.1) }, ex0, ex1, ey0, ey1);
+          seed: hash3(ii * 2 + (ox ? 1 : 0), jj * 2 + (oy ? 1 : 0), seed + 31 * L), ch: Math.min(ex1 - ex0, ey1 - ey0) * (sJd >= 36 ? 0.18 : 0.1),
+          hc, tone: Math.min(1, Math.max(0, dc.tone + (r - 0.5) * 0.12)), dist: dc.type }, ex0, ex1, ey0, ey1);
       }
     }
   }
@@ -495,7 +541,7 @@ export function buildHullBoard(field, opts = {}) {
     const [px, py] = tc.pts[tc.pts.length - 1];
     const r = 1.1 * Du, eid = elems.length;
     if (eid >= TN.maxElems) break;
-    elems.push({ x: px, y: Math.min(py, -r), hw: r, hh: r, L: 9, kind: KIND.via, axis: false, seed: 0, ch: r * 0.6 });
+    elems.push({ x: px, y: Math.min(py, -r), hw: r, hh: r, L: 9, kind: KIND.via, axis: false, seed: 0, ch: r * 0.6, hc: HC.flat, tone: 0.5, dist: 0 });
     const [i0, i1, j0, j1] = cellsOf(px - r - c * 0.5, px + r + c * 0.5, py - r - c * 0.5, Math.min(0, py + r + c * 0.5));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (id[j * w + i] < 0) id[j * w + i] = eid;
   }
@@ -549,4 +595,48 @@ export function hullBoardSample(board, x, y, out = {}) {
   }
   out.D = dSum; out.tr = rSum; out.dom = mSum; out.E = eSum;
   return out;
+}
+
+/**
+ * Stałe rysunku dla kompozytora (uniformy): szyny r_k = r0 + k · pitch (k < count) tam, gdzie T ≥ ringT · r_k + room;
+ * szerokości [jd]: szyny, ścieżki, ulica (gap).
+ */
+export function hullBoardParams(board) {
+  const V = board.variant;
+  return { r0: V.ringR0, pitch: V.ringPitch, count: V.rings, ringT: V.ringT || 2, room: V.ringRoom, ringW: V.ringW, traceW: V.traceW, gap: V.gap };
+}
+
+/**
+ * PAKIET TEKSTUR układu dla kompozytora (siatka pół-kadłuba, wiersz 0 = oś; kompozytor próbkuje w (x, −|y|)):
+ *   a — RGBA8, filtr liniowy: R = D / 63,75 jd, G = E / 15,94 jd, B = odległość od ścieżki / 3,98 jd, A = T / 255 jd;
+ *   b — RGBA8, bez filtra (textureLoad): R + 256 · G = numer elementu + 1 (0 — brak), B = 255 w dziedzinie układu;
+ *   e — RGBA32F, szerokość HD_BOARD_TUNE.texW, 2 teksele na element: (x, y, pół-szer., pół-wys.) [j.],
+ *       (rodzaj + 16 · klasa wysokości, klasa wielkości, ton 0–1, faza narożnika [j.]).
+ * Zwraca { on, w, h, x0, cell, a, b, e, eW, eH, n, params } — ta sama funkcja w workerze i w kompozytorze (bez pakietu),
+ * więc obie ścieżki dają te same bity.
+ */
+export function packHullBoardTextures(board) {
+  if (!board) return { on: false, w: 1, h: 1, x0: 0, cell: 1, a: new Uint8Array(4), b: new Uint8Array(4), e: new Float32Array(4), eW: 1, eH: 1, n: 0, params: null };
+  const { w, h, x0, cell } = board.grid;
+  const n = w * h;
+  const a = new Uint8Array(n * 4), b = new Uint8Array(n * 4);
+  const q = (v, k) => { const x = Math.round(v * k); return x < 0 ? 0 : (x > 255 ? 255 : x); };
+  for (let k = 0; k < n; k++) {
+    const o = k * 4;
+    a[o] = q(board.D[k], 4);
+    a[o + 1] = q(board.E[k], 16);
+    a[o + 2] = q(board.tr[k], 64);
+    a[o + 3] = q(board.T[k], 1);
+    const id = board.id[k] + 1;
+    b[o] = id & 255; b[o + 1] = (id >> 8) & 255; b[o + 2] = board.dom[k] ? 255 : 0; b[o + 3] = 255;
+  }
+  const ne = board.elems.length;
+  const eW = HD_BOARD_TUNE.texW, eH = Math.max(1, Math.ceil(ne * 2 / eW));
+  const e = new Float32Array(eW * eH * 4);
+  board.elems.forEach((el, i) => {
+    const o = i * 8;
+    e[o] = el.x; e[o + 1] = el.y; e[o + 2] = el.hw; e[o + 3] = el.hh;
+    e[o + 4] = el.kind + 16 * (el.hc || 0); e[o + 5] = el.L; e[o + 6] = el.tone ?? 0.5; e[o + 7] = el.ch || 0;
+  });
+  return { on: true, w, h, x0, cell, a, b, e, eW, eH, n: ne, params: hullBoardParams(board) };
 }

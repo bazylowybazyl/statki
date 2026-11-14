@@ -5,8 +5,8 @@
 // etapami z pamięcią wyników po kluczu wejścia etapu:
 //
 //   rozwinięcie (zawsze, tanie) → GEOMETRIA (bryły, styl, detal, rozdzielczość: pola poziomów, metryka ośmiokątna,
-//   kopuła) → ROWKI → SIEĆ (moduły, rury ręczne, ustawienia sieci + geometria) → MOC (martwe kable z bilansu klasy)
-//   → klasa, receptura, mocowania → PAKIETY tekstur kompozytora (float16, ten sam wynik co setDesign) → przy pełnej
+//   kopuła) → ROWKI → SIEĆ (moduły, rury ręczne, ustawienia sieci + geometria) → UKŁAD maszynowni (sieć + `board`:
+//   wariant, ziarno — hullDesignBoard.js) → MOC (martwe kable z bilansu klasy) → klasa, receptura, mocowania → PAKIETY tekstur kompozytora (float16, ten sam wynik co setDesign) → przy pełnej
 //   budowie: kontrola sieci, systemy, spójność ramy, alfa fizyki (ciało gry).
 //
 // Zmiana barw, naklejek albo klasy nie rusza geometrii ani sieci; przesunięcie modułu (bez bryły) — tylko sieć.
@@ -23,6 +23,7 @@ import { hullDesignSystems } from './hullDesignSystems.js';
 import { pipeNetworkCheck } from './hullDesignPipes.js';
 import { packHalfChannel, toHalfBits, halfFromF32Bits } from './hullDesignHalf.js';
 import { hullPaintLayer } from './hullDesignPaint.js';
+import { buildHullBoard, packHullBoardTextures } from './hullDesignBoard.js';
 
 // Pola obiektów rozwiniętych, które nie wpływają na wynik etapów (odwołania do części / kasztelu, znacznik kopii
 // lustra) — poza kluczem (inaczej klucz niósłby całe definicje części).
@@ -99,7 +100,7 @@ export function packHullPipeTextures(pipeNet, pipeTex, grid) {
  * pełnej budowy — osobno, `checks()`.
  */
 export function createHullDesignBuilder() {
-  const C = { geo: lru(2), groove: lru(2), pipes: lru(2), power: lru(3), packGeo: lru(2), packGroove: lru(2), packPipes: lru(3), full: lru(2) };
+  const C = { geo: lru(2), groove: lru(2), pipes: lru(2), board: lru(2), power: lru(3), packGeo: lru(2), packGroove: lru(2), packPipes: lru(3), packBoard: lru(2), full: lru(2) };
   async function run(design, opts = {}, yieldFn = null) {
     const T = {};
     let t = performance.now();
@@ -140,10 +141,29 @@ export function createHullDesignBuilder() {
     if (opts.fast) lastFastPipes = { gridKey, modules: expanded.modules.length, net0, kPipes: pipesStale ? lastFastPipes.kPipes : kPipes };
     const kNet = pipesStale ? lastFastPipes.kPipes : kPipes;
     lap('siec');
+    // UKŁAD maszynowni: z pola pełnej rozdzielczości i prawdziwych tras — przy przeciąganiu tylko z pamięci (ten sam
+    // klucz) albo układ ostatniej pełnej budowy (`boardStale`, jak sieć z podglądu); bez nich kompozytor rysuje
+    // dzisiejsze komórki. `board.glow` nie wchodzi do klucza (tylko kompozytor).
+    const bd = d.board || { variant: 'A', seed: 0 };
+    let board = null, kBoard = null, boardStale = false;
+    if (bd.variant !== 'off') {
+      kBoard = `${kNet}|${keyOf([bd.variant, bd.seed || 0])}`;
+      board = C.board.get(kBoard);
+      if (!board && opts.fast) {
+        if (lastBoard && lastBoard.variant === bd.variant) { board = lastBoard.board; kBoard = lastBoard.key; boardStale = true; }
+        else kBoard = null;
+      } else if (!board && !pipesStale) {
+        if (!await step()) return null;
+        board = C.board.set(kBoard, buildHullBoard({ expanded, grid: geo.grid, levels: geo.levels, bounds: geo.bounds, band: geo.band, pipeNet: net0.pipeNet },
+          { variant: bd.variant, seed: bd.seed > 0 ? bd.seed : undefined }));
+      } else if (!board) kBoard = null;
+      if (board && !opts.fast) lastBoard = { board, key: kBoard, variant: bd.variant };
+    }
+    lap('uklad');
     const field = {
       expanded, style: geo.style, scale: geo.scale, grid: geo.grid, levels: geo.levels, oct: geo.oct, loops: geo.loops,
       bounds: geo.bounds, image: geo.image, band: geo.band, dome: geo.dome, domeSigma: geo.domeSigma,
-      groove: gr.groove, grooveBand: gr.grooveBand, pipeNet: net0.pipeNet, pipeTex: net0.pipeTex, area: geo.area
+      groove: gr.groove, grooveBand: gr.grooveBand, pipeNet: net0.pipeNet, pipeTex: net0.pipeTex, area: geo.area, board
     };
     // KLASA i MOC (martwe kable — raster sieci od nowa tylko przy zmianie zbioru martwych urządzeń)
     const cls = hullDesignClass(field);
@@ -167,14 +187,17 @@ export function createHullDesignBuilder() {
     if (!pgr) pgr = C.packGroove.set(kGroove, packHullGrooveTexture(gr.groove, gr.grooveBand, n));
     let pp = C.packPipes.get(kPower);
     if (!pp) pp = C.packPipes.set(kPower, packHullPipeTextures(pw.pipeNet, pw.pipeTex, geo.grid));
+    let pb = kBoard ? C.packBoard.get(kBoard) : null;
+    if (kBoard && !pb) pb = C.packBoard.set(kBoard, packHullBoardTextures(board));
     // pędzel (warstwa barw): raster pomalowanych klocków i kaszteli na siatce pola
     const paint = hullPaintLayer(d, geo.grid);
     field.packed = {
       field: { key: kGeo, data: pg.field }, aux: { key: kGeo, data: pg.aux }, groove: { key: kGroove, data: pgr },
-      pipes: { key: kPower, ...pp }, paint: paint.data ? paint : null
+      pipes: { key: kPower, ...pp }, paint: paint.data ? paint : null,
+      board: pb ? { key: kBoard, ...pb } : null
     };
     lap('pakiety');
-    const out = { field, keys: { geo: kGeo, groove: kGroove, pipes: kNet, power: kPower }, cls, recipe, mounts, timing: T, fast: !!opts.fast, pipesStale };
+    const out = { field, keys: { geo: kGeo, groove: kGroove, pipes: kNet, power: kPower, board: kBoard }, cls, recipe, mounts, timing: T, fast: !!opts.fast, pipesStale, boardStale };
     if (opts.full) {
       if (!await step()) return null;
       out.physics = rasterHullAlpha(field, 1);
@@ -204,5 +227,6 @@ export function createHullDesignBuilder() {
   }
   let lastFull = null;
   let lastFastPipes = null;
-  return { run, checks, clear() { lastFull = null; lastFastPipes = null; for (const c of Object.values(C)) c.clear(); } };
+  let lastBoard = null;
+  return { run, checks, clear() { lastFull = null; lastFastPipes = null; lastBoard = null; for (const c of Object.values(C)) c.clear(); } };
 }
