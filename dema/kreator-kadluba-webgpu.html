@@ -267,6 +267,20 @@
   <div class="row"><span id="lbl-pipenet" style="flex:0 0 112px;color:var(--muted)">sieć rur</span><input id="inp-pipenet" type="range" min="0" max="2" step="0.05" style="min-width:0"><button id="btn-pipeseed" style="flex:0 0 44px;text-align:center" title="inny układ sieci (ziarno)">⟳</button></div>
   <div class="btns" style="margin-top:4px"><button id="btn-windows">okna tarasów</button><button id="btn-underlay">podkład: sprite<kbd>U</kbd></button></div>
 
+  <h2>Pancerz z obrysu</h2>
+  <div class="hint">Jedna ciągła skorupa za całą sylwetką (klocki poziomu Pancerz = sama sylwetka). Odsłonięte miejsca (bez pancerza): wycięcie (X) na poziomie Pancerz albo „odsłoń środek”.</div>
+  <div class="row"><button id="btn-shell" style="flex:0 0 112px">pancerz z obrysu</button><select id="sel-shell-rhythm" title="rytm pancerza"></select></div>
+  <div class="row"><span id="lbl-shell-rim" style="flex:0 0 112px;color:var(--muted)">obwódka</span><input id="inp-shell-rim" type="range" style="min-width:0"></div>
+  <div class="row"><span id="lbl-shell-bands" style="flex:0 0 112px;color:var(--muted)">pasy</span><input id="inp-shell-bands" type="range" style="min-width:0"></div>
+  <div class="row"><span id="lbl-shell-ribStep" style="flex:0 0 112px;color:var(--muted)">żebra</span><input id="inp-shell-ribStep" type="range" style="min-width:0"></div>
+  <div class="row"><span id="lbl-shell-inset" style="flex:0 0 112px;color:var(--muted)">wpusty</span><input id="inp-shell-inset" type="range" style="min-width:0"></div>
+  <div class="btns" style="margin-top:4px"><button id="btn-shell-trench" title="wzdłuż osi okrętu pancerz znika — widać wnętrze (klocki-wycięcia poziomu Pancerz, dopasowane do kadłuba)">+ odsłoń środek (bez pancerza)</button><button id="btn-shell-trench-del" title="pancerz znów zakrywa środek okrętu">− zakryj środek</button></div>
+
+  <h2>Wnętrze pod pancerzem</h2>
+  <div class="hint">Widać je tam, gdzie nie ma płyt pancerza.</div>
+  <div class="row"><select id="sel-board" title="układ wnętrza pod pancerzem (jak płytka drukowana) — widać go tam, gdzie nie ma płyt"></select></div>
+  <div class="row"><span id="lbl-board-glow" style="flex:0 0 112px;color:var(--muted)">świecenie</span><input id="inp-board-glow" type="range" min="0" max="1" step="0.01" style="min-width:0"></div>
+
   <h2>Klasa okrętu</h2>
   <div class="row"><select id="sel-bridge" title="mostek — klasa: twarde limity powierzchni, gniazd i rozmiaru broni"></select></div>
   <div class="row"><select id="sel-core" title="rdzeń — moc; najwyżej poziom ponad mostek"></select></div>

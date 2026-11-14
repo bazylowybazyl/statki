@@ -757,6 +757,61 @@ Zrzuty: `node scripts/webgpu/kreator-robocze.mjs --out .tmp/kreator/robocze` —
 5. Paszcza i rampowiec nie mają własnych obrotnic (wrak wciągają wiązki albo wpychają holowniki / drony) — do
    dołożenia jednym modułem, jeśli mają też ciąć.
 
+### Szczegóły modułów, kontraktu, presetów i kadłubów gry (przeniesione z reguły 2026-11-14)
+
+- Stan: sześć presetów w demie kreatora (grupa `work` — „Statki robocze” w `HD_PRESET_GROUPS`). W GRZE są jako
+  zwykłe kadłuby ze sprite'a (punkt „KADŁUBY GRY” niżej) — sam kreator dalej nie jest wpięty (gra nie buduje kadłuba
+  z projektu).
+  RUCHOME części (wysięgnik, dźwig, szczęki, walce, klapa rampy, podpora dampera) NIE są kadłubem — to modele gry na
+  mocowaniach; kreator daje statyczny kadłub z GNIAZDAMI pod nie i wygląd „zamknięty”.
+- MODUŁY-GNIAZDA (`HD_MODULES`, kody 16–20, każdy z gałęzią w kompozytorze i kablem w `HD_POWER_LOAD`; bez `lock`):
+  `rig` — OBROTNICA (okrągła, r): v 0 wysięgnik z laserem tnącym, v 1 dźwig (pas ostrzegawczy, szersze jarzmo). To
+  ZWYKŁE GNIAZDO BRONI — wpis w `HD_MOUNT_MODULES` (główne, `size`, domyślnie M), więc liczy się do limitów mostka
+  i bilansu mocy, a w mocowaniach wychodzi jako `hardpoints` typu `main`; `maw` — PASZCZA (dwie zamknięte szczęki
+  z zębatą linią podziału, otwiera się ku +x modułu); `mill` — GARDZIEL MŁYNA (n walców tnących, osie w poprzek osi
+  x modułu; `B.z` = n); `ramp` — RAMPA (zawias po −x modułu, klapa opada ku +x; rufowa: rot π); `damper` — GNIAZDO
+  DAMPERA (schowana stopa, wysuw ku +x). Kierunek gniazda = oś +x modułu (`rot`), jak dysza SIDE.
+- KOSZ — `cargo` v 4: ładownia OTWARTA OD GÓRY (dźwig wkłada z góry), widać złom; zasyp rośnie z `cargoLoad` (wygląd —
+  jak stelaż), ładowność liczona jak stelaż (`hullCargoGrid`), `isTopCargo`. Wrota / klapa (v 0 / v 1) to ładownia
+  ZAMKNIĘTA — wnętrze, do którego wchodzi się paszczą albo rampą (komora paszczy, tunel rampowca). `v` modułu: 0–4.
+- Detal gniazd skaluje się z ROZMIAREM MODUŁU (zęby paszczy, tarcze walców, listwy rampy, kawałki złomu), nie tylko
+  z jd — gniazdo ma 20–300 j.; stały krok w jd dawał na dużym module jednolitą fakturę. Obrotnica stoi NA płycie:
+  dokłada `PN_SLAB` (pod modułem kompozytor nie rysuje grubej płyty — bez tego wyglądała jak wnęka).
+- KONTRAKT DLA GRY — `hullDesignWorkRig(field)` (`hullDesignWorkRig.js`): osprzęt w UŁAMKACH DŁUGOŚCI kadłuba L,
+  początek w środku sylwetki, x — dziób, y — prawa burta (w kreatorze y > 0) — ten sam układ co zestaw złomiarza NPC
+  gry. Pola (tylko te, które statek ma): `front`, `maw` + `mawR` + `mawLen`, `mounts` + `mountR` (obrotnice
+  wysięgników), `cranes` + `craneR`, `hold` + `holdSize` + `holdTop` (+ `holds`), `ramp` + `rampSize` + `rampDir`,
+  `mill` + `millSize` + `millRolls`, `dampers` + `damperDir`, `ports` (złącza przeładunku = pierścienie `well` v 0).
+  Liczy się z POZYCJI MODUŁÓW (nie z ręcznych liczb), wymiary w osiach OKRĘTU; długość z `hullSilhouetteBox`
+  (przejście pola ramy przez zero — `field.bounds` to pudło komórek siatki z zapasem teksela, ~0,2% za długie); oś
+  okrętu z lustrem to y = 0. Nowe gniazdo ruchomej części → typ modułu + pole w `hullDesignWorkRig` + test.
+- PRESETY: plik na statek w `workships/` (`export default { key, label, cls, make }`, rejestr `index.js` →
+  `HD_WORKSHIP_PRESETS` / `HD_WORKSHIP_CLASS`; `hullDesignPreset` bierze klasę presetów z plików z jednej mapy), zestaw
+  `workKit.js` (eksportuje dalej zestaw frachtowców; `workship()` — rola cywilna, paleta „Roboczy”; `boom`, `crane`,
+  `maw`, `mill`, `ramp`, `damper`, `bin`, `coupling`). Każdy o INNEJ sylwetce (test: proporcje i zestaw osprzętu
+  różne parami): złomiarz III — widły z zatoką roboczą, 4 wysięgniki, kosz, 2 dźwigi; paszcza IV — wieloryb, komora
+  na cały niszczyciel (Hasta); młyn III — lej z gardzielą, 2 kosze, złącza na burtach; rafineria IV — grzebień
+  z pomostami zbiorników i złączami po obu burtach; frachtowiec z rampą VI — tunel na cały pancernik (Bellator),
+  gondole na wysięgnikach poza rampą; dźwig IV — ponton z obrotnicą L i 4 damperami. Wymiary komór pilnuje test na
+  pudłach presetów TN — zmiana obrysu Hasty albo Bellatora może wymagać powiększenia komory.
+- KADŁUBY GRY (`work_<klucz>`, 2026-11-11): sprite piecze kompozytor — `node scripts/webgpu/kreator-kadluby-gry.mjs`
+  → `assets/ships/work/<klucz>.png` (cały obraz projektu, dłuższy bok 1774 px), a tabele kadłuba liczy
+  `hullDesignGameHull.js` z mocowań projektu i zapisuje `src/data/workHulls.js` (plik GENEROWANY:
+  `node scripts/kreator-kadluby-tabele.mjs --zapisz`; test `tests/workHulls.test.mjs` porównuje go z rachunkiem).
+  Tabele gry biorą wpisy przez `workHullRows(...)`: profil renderu (długość = obraz projektu / 0,6), `TRAFFIC_HULLS`
+  (URL sprite'a jako literał), wpis edytora (dysze MAIN i SIDE), `ENGINE_FX_DEFAULTS`, rdzeń, zbiornik paliwa, strefa
+  mostka (obrys modelu poziomu klasy), lampy (para dziobowa i rufowa nie szersza niż „najszersza”), pancerz, rama
+  cywilna NPC, `DEV_HULL_SPAWNS`, model 3D z automatu (obrysy: `node scripts/webgpu/obrysy-floty.mjs`) i osprzęt
+  złomiarski `SCRAP_RIGS` (`rig` — ułamki SZEROKOŚCI PŁÓTNA od środka płótna, bo kotwica statku w grze = środek
+  sprite'a; `hullDesignWorkRig` liczy od środka sylwetki). Zmiana presetu statku roboczego albo wyglądu kompozytora →
+  wypiek + tabele + obrysy (trzy polecenia wyżej), inaczej test tabeli pada. Klasa `tug` świata ruchu = `work_zlomiarz`
+  (reguła `zlomowanie`); pozostałe pięć stoi w scenie `?scena=holowanie` na postoju (`TOW_SCENE.props`).
+- Stocznia: karty „Osprzęt roboczy” w zakładce Systemy (`WORK` w `dema/kreator-kadluba-stocznia.js`), „Kosz na złom”
+  w Ładunku, paleta „Roboczy” w barwach cywilnych; Warsztat: warianty obrotnicy i liczba walców w `MOD_VARIANTS`.
+- Do decyzji użytkownika (tabele i lista: `docs/KREATOR-KADLUBA.md` § „Statki robocze złomowania”): czy obrotnica
+  zostaje gniazdem głównym (limity i pobór jak działo), kosz zamiast zasobników u młyna, złącze przeładunku jako
+  pierścień `well`, nazwy i klasy statków.
+
 ## Superkapitał Hyperion — linia Atlasa (2026-10-27)
 
 Prośba użytkownika: „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa (czerń / szary)”; w trakcie
@@ -781,6 +836,21 @@ Wpięty jest B (`src/game/hullDesign/warships/hyperion.js`, klucz `hyperion`, gr
 48%): 20 głównych, 4 specjalne, 2 rakietowe, 18 obrony punktowej, 4 wrota hangarowe w wcięciach szyi (pola siłowe — drony
 i myśliwce wylatują bokiem), luk dziobowy na fregatę zwiadu, 5 gondol MAIN, 4 dysze SIDE, mostek v 2 VI na nadbudówce,
 rdzeń v 2 przed nią. Zrzuty z kompozytora: 0 pipeline'ów synchronicznych, 0 błędów strony.
+
+### Szczegóły (przeniesione z reguły 2026-11-14)
+
+- `src/game/hullDesign/warships/hyperion.js` (klucz `hyperion`, grupa 'tn', klasa VI w `HD_PRESET_CLASS`): 2428 × 488 j.
+  (~5 : 1), ~873 tys. j² (w drabinie — limit VI 900 tys.), paleta `atlasDark`. Od rufy, jak szkic Atlasa
+  (`scripts/blender/atlas/szkic-uzytkownika-v2.jpg`): 5 gondol MAIN, szeroki blok rufowy z nadbudówką (mostek v 2 VI,
+  4 specjalne 2 × 2, 6 głównych), rdzeń v 2 przed nadbudówką, DŁUGA szyja z wcięciami (wrota `hangar` + pola siłowe —
+  paski bez niebieskiego ponad maskę), sekcja dziobowa z luku (`cargo` v 0), widły z zaokrąglonymi końcami; 44 gniazda
+  (20 głównych, 4 specjalne, 2 rakietowe, 18 obrony punktowej), ciężkich 28 z 32.
+- Dodatkowa długość idzie w szyję i sekcję dziobową; okrągłe rzeczy (gondole, wieże, rdzeń, końce wideł) zostają
+  okrągłe. Pliki z `warships/` używają zestawu klocków frachtowców (`freighterKit.js`), ale same budują obiekt projektu
+  (rola wojskowa, wygląd TN: `windows` 0, `bevel` 1,9).
+- Podkład do odwzorowania sylwetki: maska szkicu `scripts/blender/atlas/szkic-maska.png` (biały = wnętrze; skala Atlasa
+  1,19 j./px, oś = wiersz 493, x 0 = kolumna 946,5), rozciągana wzdłuż / w poprzek (`--skala sx,sy` w
+  `kreator-sprawdz-preset.mjs` — IoU i czerwony obrys na podglądzie). Hyperion: `--skala 1.580,0.790`, IoU ~0,83.
 
 ## Układ maszynowni „jak płytka drukowana” (2026-11-14)
 
@@ -811,6 +881,45 @@ Budowa grafu kompozytora w Node (NodeBuilder, minimum z 3; pułapka 40): geo / b
 
 Generator w Node (`node scripts/kreator-plytka-makieta.mjs --pomiar`, CPU, minimum z 7; makieta, przed poprawkami
 dzielnic): drednot 250–330 ms, Colossus / Citadella / Bellator ≤ 31 ms (krok zegara CPU Windows ~15,6 ms).
+
+## Pancerz z obrysu — ciągła skorupa (2026-11-14, temat 2)
+
+Ocena użytkownika makiety płytki: „pancerz wciąż jest modułowy i spójrz na dziub - generator musi mieć możliwość
+narysowania ciągłego kadłuba bez przerwań. Jednolity.” Propozycja i makieta: `docs/PROPOZYCJA-kreator-pancerz.md`
+(przyczyny łaty: każdy klocek to osobna płyta z własną fazą, poduszką, linią przy krawędzi i rowem wokół; siatka
+paneli wzdłuż osi zamiast wzdłuż burt; rytm równych kafli). Stan i zasady — reguła `kreator-kadlubow` § „Pancerz
+z obrysu”. Prototyp w kreatorze (etapy 1–3):
+
+- pole projektu `shell` (`hullDesignShell.js`, rozwijane w `expandHullDesign`), rytmy A / B / C, otwarcia z klocków-wycięć
+  poziomu 1, wnęki przy przyłączach paliwa z kanałów serwisowych (+6 jd — przy 2 jd dwie dysze SIDE drednota i zbiornik
+  miały przyłącza widoczne w 5–7 z 12 próbek), strażnik `shellViolations`;
+- drednot na skorupie z rowem osi (`axisTrench` ze stacji (−2 896, 0) … (−1 500, 440) … (2 480, 0)), kręgosłup
+  nadbudówek w rowie, napisy i orły na pancerzu; flota TN bez skorupy;
+- panele w demie (Stocznia, Warsztat) — także wariant i świecenie układu maszynowni (`board`);
+- wpusty „płyta w płycie”: stopień 1,8 jd z fazą 2,4 jd i ton ±13% (cztery stopnie: 0,6 / −0,5 / 0,25 / −1) przez
+  trzeci kanał tekstury rowków. Przy 1,3 jd i ±7% z daleka nie było ich widać.
+- `grooveField` rasteryzuje teraz tylko pas ±cap wokół odcinka w każdym wierszu (długie skośne rowki skorupy miały
+  pudło setki razy większe od pasa).
+
+Pomiary (2026-11-14):
+
+| co | wynik |
+|---|---|
+| rozwinięcie ze skorupą (Node, CPU, minimum z 7, bez pamięci LRU) | drednot A 140 ms, B 218 ms, C 172 ms; Bellator A 47 ms |
+| rowki | drednot A 38 (z lustrem), B 44, C 180; siatka odległości 3 204 × 766 (burta y ≤ 0, 2,5 j.) |
+| budowa w demie (headless, `S.timing.total`, pierwsza budowa) | drednot stary 4,36–6,54 s, nowy 4,45–5,67 s (dwa przebiegi; worker: rozwinięcie +0,16–0,26 s, układ maszynowni +0,2–0,3 s — rów większy) |
+| rytm B / C po A (geometria z pamięci) | 1,6–2,1 s (rozwinięcie 0,16–0,4 s, rowki ~40 ms) |
+| sieć systemów | `pipeNetworkCheck` 0 (drednot A / B / C, Colossus, Bellator), przyłącza paliwa 4/4, 6/6, 2/2 |
+| pipeline'y synchroniczne w klatkach / błędy konsoli | 0 / 0 (`kreator-pancerz-ab.mjs`, cały przebieg) |
+
+A/B z kompozytora: `node scripts/webgpu/kreator-pancerz-ab.mjs --out .tmp/kreator/pancerz-prototyp` — `a1-caly.png`,
+`b1-dziob.png`, `b2-skrzydlo.png`, `b3-rufa.png`, `c1-row.png` (u góry stary drednot z `4b1478ca`, na dole nowy),
+`d0-rytmy-caly.png`, `d0-rytmy-dziob.png` (A / B / C od góry), `e1-colossus-colossus.png`, `e2-bellator-bellator.png`
+(bez skorupy — kod kompozytora poza wpustami nie zmienia obrazu: kod wpustu 0 daje mnożnik tonu 1 i stopień 0).
+
+Ryzyka i otwarte sprawy: rytm B owija pasy wokół małych wnęk przy dyszach (gęste zakrętasy przy rufie); duże pola
+skorupy z bliska nadal spokojniejsze niż wzór (ton wpustów subtelny z daleka); przeciąganie klocka drednota przelicza
+skorupę (~0,15–0,25 s na podgląd).
 
 ## Demo — narzędzia
 
@@ -853,6 +962,44 @@ linii płyt), **rura** (W — łamana wiązki; liczba rur i materiał w panelu, 
 emblemat (E), napis (T); poziomy 1–4 (rama, pancerz, nadbudówka, mostek); suwaki detalu, fazy płyt, łuku, widoczności
 paneli i **gęstości sieci** (⟳ — inne ziarno wiązek); **graf sieci** (I); podkład ze sprite'a (U) do odrysowania; A/B (A).
 Systemy presetu (🔒) nie dają się przesunąć, przeskalować ani usunąć.
+
+### Polecenia sprawdzania (przeniesione z reguły 2026-11-14)
+
+- `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
+  tests/hullDesignClass.test.mjs tests/hullDesignDreadnought.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
+- Drednoty: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy drednot --tylko dreadnought --out .tmp/kreator/drednot
+  [--detale 1,1.25,3.2]` (cały okręt, A/B z Colossusem, dziób, rufa, burta, sponson, sieć, panel klasy; czasy wypieku
+  i pamięć w `raport.json` → `drednot`). Szybki podgląd układu bez GPU (poziomy, moduły, sieć) — wystarczy
+  `buildHullField` + `pipeNetworkCheck`; preset drednota liczy się w Node ~0,5 s (z siecią ~0,8 s).
+- Układ maszynowni: `node --test tests/hullDesignBoard.test.mjs tests/hullDesignBuild.test.mjs`; A/B z kompozytora —
+  `node scripts/webgpu/kreator-plytka-ab.mjs --out .tmp/kreator/plytka-prototyp [--tylko bellator]`.
+- Testy budowy i barw: `node --test tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`; statki cywilne
+  i ładunek: `node --test tests/hullDesignCargo.test.mjs`; statki robocze i kontrakt osprzętu:
+  `node --test tests/hullDesignWorkships.test.mjs`.
+- Statki robocze: jeden preset — `node scripts/kreator-sprawdz-preset.mjs --plik src/game/hullDesign/workships/<klucz>.js
+  --png .tmp/kreator/robocze`; zrzuty z kompozytora, zbliżenia gniazd, Stocznia i PLANSZA wszystkich w jednej skali
+  z tabelami osprzętu — `node scripts/webgpu/kreator-robocze.mjs --out .tmp/kreator/robocze [--tylko k1,k2]`
+  (`plansza.png`, `osprzet.json`, `raport.json`).
+- Frachtowce: jeden preset — `node scripts/kreator-sprawdz-preset.mjs <klucz> --png .tmp/kreator/plan` (bez przeglądarki;
+  z podkładem: `--maska <png> --skala sx[,sy] --x0 <px> --y0 <px>`); zrzuty z kompozytora —
+  `node scripts/webgpu/kreator-frachtowce.mjs --out .tmp/kreator/frachtowce [--tylko k1,k2] [--projekt plik.json]
+  [--kadry "x,y,zoom;…"]` (cały okręt, dodatkowe kadry, zbliżenie ładunku, załadunek 0,5 i 0; `--projekt` — każdy
+  projekt, także wojskowy, np. `--tylko hyperion --kadry "-860,0,1.5;900,0,1.5"`).
+- Płynność: `node scripts/webgpu/kreator-plynnosc.mjs --out .tmp/kreator-plynnosc/<katalog> [--tylko custos,bellator,colossus]
+  [--profil suwak]` (długie zadania strony — 0, przerwa klatek, czas do obrazu, hash albedo; A/B — ten sam skrypt
+  w worktree drugiej wersji, przebiegi na przemian); barwy nacji i pędzel:
+  `node scripts/webgpu/kreator-barwy.mjs --out .tmp/kreator/barwy [--tylko bellator,colossus]` (czas zmiany barw do GPU,
+  zrzuty nacji, pędzel prawdziwą myszą, zgodność ścieżki barw z pełną przebudową).
+- Klasy: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` (panel klasy, gniazda
+  Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
+- Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
+  [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`), gniazdo obudowy
+  reaktora z modelem 3D (`reaktor`), gniazdo mostka z modelem 3D poziomu i galeria I–VI (`mostek`); raport `raport.json`
+  (pipeline'y synchroniczne w klatkach — ma być 0, błędy konsoli).
+- Stocznia: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy stocznia --tylko stocznia --out .tmp/kreator/stocznia`
+  (prawdziwa mysz przez CDP: karta → okręt, stempel z rzędem, Ctrl+D, usunięcie na paletę, moduł poza kadłubem,
+  Shift+przeciągnij, od zera; liczniki w `raport.json` → `stocznia`).
+- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki` (`&ui=warsztat` — pełny panel).
 
 ## Co trzeba zmienić w grze, żeby przyjęła projekt z kreatora
 

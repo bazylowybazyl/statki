@@ -42,6 +42,10 @@ import {
 } from '../src/data/shipClasses.js';
 import { hullDesignLimitBreach } from '../src/game/hullDesign/hullDesignClass.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import {
+  SHELL_SLIDERS, SHELL_RHYTHM_LABELS, BOARD_VARIANT_LABELS, HD_SHELL_RHYTHM_KEYS, HD_BOARD_VARIANT_KEYS,
+  shellOf, shellToggle, shellSetRhythm, shellSetSlider, addAxisTrench, removeAxisTrench, boardOf, boardSet
+} from './kreator-kadluba-pancerz.js';
 
 const ACCENT = '#ffb54a';
 const BAD = '#ff6a5e';
@@ -1457,12 +1461,27 @@ export function installShipyard(api) {
     renderCards();
     scheduleThumbs();
   }
+  // PANCERZ Z OBRYSU i UKŁAD MASZYNOWNI (operacje wspólne z Warsztatem — dema/kreator-kadluba-pancerz.js)
+  const isLiveSlider = (k) => !!k && (k.startsWith('shell:') || k === 'board:glow');
+  const shellSliderText = (k, v) => (k === 'bands' ? String(Math.round(v)) : (v > 0 ? `${Math.round(v)} jd` : 'brak'));
+  function shellOptsHtml() {
+    const d = design();
+    const sh = shellOf(d), shown = sh || shellOf({ ...d, shell: { ...(d?.shell || {}), on: true } });
+    const b = boardOf(d);
+    return `<div class="yoptl">Pancerz z obrysu <span class="ydim">· jedna skorupa bez szwów; odsłonięte miejsca — ✂ Wycięcie na warstwie Pancerz</span></div>
+      <div class="ychips"><button class="ychip${sh ? ' on' : ''}" data-shell="1" title="klocki warstwy Pancerz stają się samą sylwetką, pancerz to jedna płyta">Pancerz z obrysu</button>${HD_SHELL_RHYTHM_KEYS.map((k) => `<button class="ychip${sh && shown.rhythm === k ? ' on' : ''}" data-shellr="${k}">${SHELL_RHYTHM_LABELS[k]}</button>`).join('')}</div>
+      ${SHELL_SLIDERS.map((sl) => { const v = sl.get(shown); return `<label class="yslider"><span>${sl.label} <b data-v="shell:${sl.k}">${shellSliderText(sl.k, v)}</b></span><input type="range" data-k="shell:${sl.k}" min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${v}"></label>`; }).join('')}
+      <div class="ychips"><button class="ychip" data-trench="add" title="wzdłuż osi okrętu pancerz znika — widać wnętrze (klocki-wycięcia warstwy Pancerz, dopasowane do kadłuba)">＋ Odsłoń środek (bez pancerza)</button><button class="ychip" data-trench="del" title="pancerz znów zakrywa środek okrętu">− Zakryj środek</button></div>
+      <div class="yoptl">Wnętrze pod pancerzem <span class="ydim">· widać je tam, gdzie nie ma płyt</span></div>
+      <div class="ychips">${HD_BOARD_VARIANT_KEYS.map((k) => `<button class="ychip${b.variant === k ? ' on' : ''}" data-board="${k}">${BOARD_VARIANT_LABELS[k]}</button>`).join('')}</div>
+      <label class="yslider"><span>Świecenie <b data-v="board:glow">${b.glow.toFixed(2)}</b></span><input type="range" data-k="board:glow" min="0" max="1" step="0.01" value="${b.glow}"></label>`;
+  }
   function renderOpts() {
     let h = '';
     if (U.cat === 'ksztalty') {
       h = `<div class="yoptl">Warstwa nowych klocków</div><div class="ychips">${LEVELS.map((L, i) => `<button class="ychip${U.level === i ? ' on' : ''}" data-level="${i}" title="${L.hint} (${i + 1})"><i style="background:${L.swatch}"></i>${L.label}</button>`).join('')}
         <button class="ychip cut${U.cut ? ' on' : ''}" data-cut="1" title="Klocek wycina kadłub pod sobą (X)">✂ Wycięcie</button></div>
-        <div class="yoptl">Rozmiar nowych klocków <span class="ydim">· kółko w trakcie stawiania</span></div><div class="ychips">${[1, 2, 3, 4].map((n) => `<button class="ychip${U.size === n ? ' on' : ''}" data-size="${n}">×${n}</button>`).join('')}</div>`;
+        <div class="yoptl">Rozmiar nowych klocków <span class="ydim">· kółko w trakcie stawiania</span></div><div class="ychips">${[1, 2, 3, 4].map((n) => `<button class="ychip${U.size === n ? ' on' : ''}" data-size="${n}">×${n}</button>`).join('')}</div>` + shellOptsHtml();
     } else if (U.cat === 'bron') {
       const cls = shipClass(S.cls?.levels.bridge || 1);
       h = `<div class="yoptl">Rozmiar nowych gniazd (mostek ${cls.roman}: do ${cls.weaponSize})</div><div class="ychips"><button class="ychip${!U.mountSize ? ' on' : ''}" data-msize="">jak klasa</button>${MOUNT_SIZES.map((s) => `<button class="ychip${U.mountSize === s ? ' on' : ''}" data-msize="${s}" ${sizeRank(s) > sizeRank(cls.weaponSize) ? 'disabled' : ''}>${s}</button>`).join('')}</div>`;
@@ -1492,6 +1511,10 @@ export function installShipyard(api) {
       else if (b.dataset.cut) cutSel();
       else if (b.dataset.msize !== undefined) U.mountSize = b.dataset.msize || null;
       else if (b.dataset.color) setColor(b.dataset.color);
+      else if (b.dataset.shell) { shellToggle(design()); commit(); }
+      else if (b.dataset.shellr) { shellSetRhythm(design(), b.dataset.shellr); commit(); }
+      else if (b.dataset.trench) { if ((b.dataset.trench === 'add' ? addAxisTrench(design(), S.field?.bounds) : removeAxisTrench(design())) > 0) commit(); }
+      else if (b.dataset.board) { boardSet(design(), { variant: b.dataset.board }); commit(); }
       else if (b.dataset.k === 'windows') { design().windows = (design().windows ?? 1) > 0.5 ? 0 : 1; commit(); }
       else if (b.dataset.k === 'round') { design().round = (design().round ?? 0) > 0.5 ? 0 : 1; commit(); }
       renderOpts();
@@ -1500,6 +1523,18 @@ export function installShipyard(api) {
       const t = e.target;
       if (t.classList.contains('ycolor')) { setColor(t.value, false); return; }
       if (t.classList.contains('ytext')) { U.text = t.value; return; }
+      if (t.dataset.k?.startsWith('shell:')) {
+        shellSetSlider(design(), t.dataset.k.slice(6), t.value);
+        const lb = el.opts.querySelector(`[data-v="${t.dataset.k}"]`);
+        if (lb) lb.textContent = shellSliderText(t.dataset.k.slice(6), Number(t.value));
+        S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true);
+      }
+      if (t.dataset.k === 'board:glow') {
+        boardSet(design(), { glow: t.value });
+        const lb = el.opts.querySelector('[data-v="board:glow"]');
+        if (lb) lb.textContent = Number(t.value).toFixed(2);
+        S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true);
+      }
       if (t.dataset.k === 'detail') { design().detail = Number(t.value); S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true); }
       if (t.dataset.k === 'pipes') { design().pipeNet = { ...(design().pipeNet || {}), density: Number(t.value) }; S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true); }
       if (t.dataset.k === 'load') {
@@ -1512,12 +1547,12 @@ export function installShipyard(api) {
     el.opts.addEventListener('change', (e) => {
       const k = e.target.dataset.k;
       // koniec przeciągania (myszą zamyka je już pointerup niżej — wtedy bez drugiej budowy)
-      if ((k === 'detail' || k === 'pipes' || k === 'load') && S.drag) { S.drag = null; commit(); }
+      if ((k === 'detail' || k === 'pipes' || k === 'load' || isLiveSlider(k)) && S.drag) { S.drag = null; commit(); }
     });
     // suwak puszczony na wartości początkowej nie wysyła `change` — przeciąganie suwaka kończy też puszczenie wskaźnika
     el.opts.addEventListener('pointerup', (e) => {
       const k = e.target.dataset?.k;
-      if ((k === 'detail' || k === 'pipes' || k === 'load') && (S.drag?.kind === 'stocznia-suwak' || S.drag?.kind === 'stocznia-zaladunek')) {
+      if ((k === 'detail' || k === 'pipes' || k === 'load' || isLiveSlider(k)) && (S.drag?.kind === 'stocznia-suwak' || S.drag?.kind === 'stocznia-zaladunek')) {
         S.drag = null; commit();
       }
     });

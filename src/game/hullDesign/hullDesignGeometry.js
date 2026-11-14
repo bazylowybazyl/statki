@@ -684,7 +684,8 @@ export function hullFieldPipes(expanded, geo, pipeTune) {
 
 /**
  * Odległość od łamanych rowków na siatce pola [j.], obcięta do `cap` (bez rowków — cała siatka = cap), i szerokość
- * najbliższego rowku [jd] (`f.width`, Float32Array).
+ * najbliższego rowku [jd] (`f.width`, Float32Array). Rowek z polem `fill` (wpust skorupy — pętla zamknięta, ton
+ * −1…1) wypełnia swoje wnętrze kodem wpustu `f.inset` = 1,5 + ½ · ton (0 — poza wpustem; Float32Array albo brak).
  */
 export function grooveField(grooves, grid, cap) {
   const { x0, y0, w, h, res } = grid;
@@ -701,12 +702,51 @@ export function grooveField(grooves, grid, cap) {
       const ix1 = Math.min(w - 1, Math.ceil((Math.max(a[0], b[0]) + cap - x0) * res));
       const iy0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - cap - y0) * res));
       const iy1 = Math.min(h - 1, Math.ceil((Math.max(a[1], b[1]) + cap - y0) * res));
+      // wiersz: tylko kolumny w pasie ±cap wokół odcinka (część odcinka w paśmie y ± cap), nie całe pudło — skośne
+      // długie odcinki (rowki skorupy) miały pudło setki razy większe od pasa
+      const dy = b[1] - a[1];
       for (let j = iy0; j <= iy1; j++) {
         const py = y0 + (j + 0.5) * inv;
         const row = j * w;
-        for (let i = ix0; i <= ix1; i++) {
+        let ri0 = ix0, ri1 = ix1;
+        if (Math.abs(dy) > 1e-9) {
+          let t0 = (py - cap - a[1]) / dy, t1 = (py + cap - a[1]) / dy;
+          if (t0 > t1) { const t = t0; t0 = t1; t1 = t; }
+          t0 = t0 < 0 ? 0 : (t0 > 1 ? 1 : t0); t1 = t1 < 0 ? 0 : (t1 > 1 ? 1 : t1);
+          const xa = a[0] + (b[0] - a[0]) * t0, xb = a[0] + (b[0] - a[0]) * t1;
+          ri0 = Math.max(ix0, Math.floor((Math.min(xa, xb) - cap - x0) * res));
+          ri1 = Math.min(ix1, Math.ceil((Math.max(xa, xb) + cap - x0) * res));
+        }
+        for (let i = ri0; i <= ri1; i++) {
           const d = segDist(x0 + (i + 0.5) * inv, py, a[0], a[1], b[0], b[1]);
           if (d < f[row + i]) { f[row + i] = d; width[row + i] = gw; }
+        }
+      }
+    }
+  }
+  // wpusty „płyta w płycie” (pętle z `fill`): wnętrze parzysto-nieparzyście w środkach tekseli
+  const fills = (grooves || []).filter((g) => Number.isFinite(g.fill) && g.pts.length >= 4);
+  if (fills.length) {
+    const ins = new Float32Array(w * h);
+    f.inset = ins;
+    const xs = [];
+    for (const g of fills) {
+      const code = 1.5 + 0.5 * Math.max(-1, Math.min(1, g.fill));
+      const P = g.pts;
+      let y0g = Infinity, y1g = -Infinity;
+      for (const [, y] of P) { if (y < y0g) y0g = y; if (y > y1g) y1g = y; }
+      const j0 = Math.max(0, Math.ceil((y0g - y0) * res - 0.5)), j1 = Math.min(h - 1, Math.floor((y1g - y0) * res - 0.5));
+      for (let j = j0; j <= j1; j++) {
+        const py = y0 + (j + 0.5) * inv;
+        xs.length = 0;
+        for (let s = 0; s + 1 < P.length; s++) {
+          const a = P[s], b = P[s + 1];
+          if ((a[1] <= py) !== (b[1] <= py)) xs.push(a[0] + (py - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
+        }
+        xs.sort((p, q) => p - q);
+        for (let k = 0; k + 1 < xs.length; k += 2) {
+          const i0 = Math.max(0, Math.ceil((xs[k] - x0) * res - 0.5)), i1 = Math.min(w - 1, Math.floor((xs[k + 1] - x0) * res - 0.5));
+          for (let i = i0; i <= i1; i++) ins[j * w + i] = code;
         }
       }
     }

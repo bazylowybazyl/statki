@@ -3,27 +3,31 @@
 // DREDNOT TERRA NOVY (klasa VII, tylko NPC — docs/BRIEF-drednot.md), 8 000 × 3 816 j. Sylwetka ze wzoru użytkownika
 // (2026-11-12: grot z „zębami” — długie ostrze, skrzydła z kolanem, dwa zęby wygięte ku rufie, kolec rufy, silniki
 // w wycięciach między nimi, długi rów maszynowni wzdłuż osi) w skali 8 km (decyzja użytkownika 2026-11-13; kanon
-// wzoru — 17 km — to 45% promienia Ziemi gry i 8× limit klasy VII). Styl TN: białe płyty nad ciemną maszynownią.
+// wzoru — 17 km — to 45% promienia Ziemi gry i 8× limit klasy VII). Styl TN: biały pancerz nad ciemną maszynownią.
 //
-// Od dziobu: szpic z wyrzutniami torped i emiterem superlasera na osi, ostrze (burta 1 : 4) z pasem burtowym płyt
-// (6 ciężkich baterii na burtę) i pasem wewnętrznym schodkowym nad rowem (6 średnich), w rowie grzbiet z rakietami,
-// generator tarczy dziobu i projektor studni, dalej pokład-klin (drugi projektor, oba rdzenie R7), za nim grzbiet
-// rufowy z mostkiem głównym (poziom VI) i kolec rufy. Skrzydła: zasobnik z bateriami jonowymi i mostkiem pomocniczym
+// PANCERZ Z OBRYSU (pole `shell`, src/game/hullDesign/hullDesignShell.js; ocena użytkownika 2026-11-14: „pancerz wciąż
+// jest modułowy … generator musi mieć możliwość narysowania ciągłego kadłuba bez przerwań. Jednolity.”): klocki to
+// sama sylwetka (rama), pancerz to JEDNA skorupa bez szwów, otwarta rowem wzdłuż osi jak we wzorze (klocki-wycięcia
+// poziomu 1); rytm (obwódka i wpusty — A) rysuje generator skorupy, wnęki przy przyłączach paliwa też.
+//
+// Od dziobu: szpic z wyrzutniami torped i emiterem superlasera na osi, ostrze (burta 1 : 4) z ciężkimi bateriami
+// przy burcie (6 na burtę) i średnimi przy rowie (6), w rowie wyrzutnia rakiet, generator tarczy dziobu i projektor
+// studni, dalej pokład-klin (drugi projektor, oba rdzenie R7), za nim mostek główny (poziom VI) i kolec rufy. Skrzydła: zasobnik z bateriami jonowymi i mostkiem pomocniczym
 // (V), nasada z generatorem tarczy burty i promieniem ściągającym; tył: wrota hangarów w burtach, zbiorniki przy
 // wycięciach, 4 gondole MAIN w każdym wycięciu, zęby z bateriami w rufę.
-// Korytarze sieci: rów osi (od grzbietu dziobu do kolca rufy), rowy poprzeczne ostrza, rów nasady skrzydła, rowy tyłu.
+// Sieć systemów: w rowie osi i pod pancerzem (trasy pod płytą); widać ją w rowie i we wnękach przy przyłączach paliwa.
 // DETAL 1,5 j./jd: obraz kompozytora 8 192 px (1,02 teksela/j.) daje ~1,5 teksela/jd jak Colossus; długość / 1700
 // (4,7) to „powiększony Colossus” (płyty, nity, rury 3×).
 
 import { blk, frameBlk, engine, fuelTank, side, vent, grate, port, hatch, castle, TO_BOW } from '../freighters/freighterKit.js';
 import { HD_MOUNT_RADIUS_DU } from '../hullDesignSchema.js';
+import { axisTrench } from '../hullDesignShell.js';
 
 const D = 1.5;
 const R90 = Math.PI / 2;
 const SEAM = 4;
 const TN_TEXT = '#3b3a37';
 const TN_EMBLEM = '#34332f';
-const g4 = (v) => Math.round(v / 4) * 4;
 
 /**
  * Trapez obrócony o ±90° z pudła: x0..x1 wzdłuż osi, yo (zewnętrzna) … yi (wewnętrzna) — krawędź PODSTAWY klocka
@@ -33,16 +37,6 @@ const g4 = (v) => Math.round(v / 4) * 4;
 const trapX = (x0, x1, yo, yi, rot, a, b, level = 1, o = {}) => ({
   kind: 'block', shape: 'trap', x: (x0 + x1) / 2, y: (yo + yi) / 2, w: yi - yo, h: x1 - x0, rot, a, b, level, gap: SEAM, ...o
 });
-/** Płyta między dwiema krawędziami (funkcje y(x)), podstawa od rufy (rot +90°): zewnętrzna `out`, wewnętrzna `inn`. */
-const plateAft = (x0, x1, out, inn, level = 1, o = {}) => {
-  const yo = g4(out(x0)), yi = g4(inn(x0));
-  return trapX(x0, x1, yo, yi, R90, g4(out(x1)) - yo, yi - g4(inn(x1)), level, o);
-};
-/** … podstawa od dziobu (rot −90°): zwęża się ku rufie (zęby, kolec rufy). */
-const plateFwd = (x0, x1, out, inn, level = 1, o = {}) => {
-  const yo = g4(out(x1)), yi = g4(inn(x1));
-  return trapX(x0, x1, yo, yi, -R90, yi - g4(inn(x0)), g4(out(x0)) - yo, level, o);
-};
 
 // ── KRAWĘDZIE (burta y < 0) ─────────────────────────────────────────────────────────────────────────────────────
 /** Burta ostrza 1 : 4: szpic x 4 000, nasada skrzydła (−656, −1 164); x ≡ 4 000 (mod 16) → na siatce 4 j. */
@@ -96,56 +90,24 @@ function make() {
     { kind: 'block', shape: 'tri', x: -3898, y: 0, w: 376, h: 204, rot: -R90, a: 188, level: 0 }
   );
 
-  // ── SZPIC I DZIÓB (płyty od burty do burty) ─────────────────────────────────────────────────────────────────
+  // ── PANCERZ Z OBRYSU (pole `shell`): jedna ciągła skorupa za całą sylwetką, otwarta rowem wzdłuż osi jak we wzorze.
+  // Rów = klocki-wycięcia poziomu 1 (`axisTrench`): szpic za emiterem, najszerszy przy rdzeniach, zwęża się ku kolcowi
+  // rufy; w rowie maszynownia (układ „płytka”), rdzenie, mostek główny i kręgosłup nadbudówek. Wnęki przy przyłączach
+  // paliwa (gondole, dysze SIDE, zbiorniki) wycina generator skorupy.
+  shapes.push(...axisTrench([[-2896, 0], [-2696, 120], [-2200, 296], [-1500, 440], [-200, 416], [704, 296], [1600, 144], [2480, 0]]));
+
+  // ── NADBUDÓWKI NA SKORUPIE: emiter na dziobie, nadbudówka skrzydła (poziom 2) ───────────────────────────────────
   shapes.push(
-    { kind: 'block', shape: 'tri', x: 3696, y: 0, w: 304, h: 608, rot: R90, a: 152, level: 1, gap: SEAM },
-    trapX(2944, 3360, -264, 264, R90, 104, 104),
-    trapX(2496, 2912, -376, 376, R90, 104, 104),
-    trapX(2560, 2848, -176, 176, R90, 72, 72, 2)                                                             // nadbudówka emitera
+    trapX(2560, 2848, -176, 176, R90, 72, 72, 2),                                                             // nadbudówka emitera
+    blk('rect', -1660, -1612, -1000, -1468, 2, { c: [24, 24, 24, 24] })                                      // nadbudówka skrzydła
   );
 
-  // ── OSTRZE: pas burtowy (0…288 od burty, równoległoboki 1 : 4) i pas wewnętrzny schodkowy nad rowem ──────────
-  const bandO = (x0, x1) => trapX(x0, x1, E(x0), E(x0) + 288, R90, (x1 - x0) / 4, -(x1 - x0) / 4);
-  const bandI = (x0, x1, yIn, level = 1) => trapX(x0, x1, E(x0) + 320, yIn, R90, (x1 - x0) / 4, 0, level);
+  // ── KRĘGOSŁUP W ROWIE (poziom 2): grzbiety dziobowe, pokład-klin (rdzenie, projektor), wieża mostka głównego ────
   shapes.push(
-    bandO(2048, 2464), bandO(1600, 2016), bandO(1152, 1568), bandO(704, 1120), bandO(256, 672), bandO(-192, 224), bandO(-656, -224),
-    bandI(1824, 2240, -100), bandI(1376, 1792, -140, 2), bandI(928, 1344, -180), bandI(480, 896, -320, 2), bandI(32, 448, -380),
-    bandI(-416, 0, -480, 2), bandI(-656, -448, -540)
-  );
-
-  // ── RÓW OSI: grzbiet dziobu, pokład-klin (rdzenie, projektor), grzbiet rufowy (mostek główny) ─────────────────
-  shapes.push(
-    blk('rect', 1856, -56, 2400, 56),
-    blk('rect', 1264, -64, 1824, 64), blk('rect', 1336, -36, 1752, 36, 2, { c: [8, 8, 8, 8] }),
-    blk('rect', 720, -96, 1232, 96), blk('rect', 784, -56, 1168, 56, 2, { c: [12, 12, 12, 12] }),
-    blk('rect', 256, -128, 688, 128),
-    trapX(-1480, -48, -560, 560, R90, 440, 440),                                                             // pokład-klin
+    blk('rect', 1336, -36, 1752, 36, 2, { c: [8, 8, 8, 8] }),
+    blk('rect', 784, -56, 1168, 56, 2, { c: [12, 12, 12, 12] }),
     trapX(-1400, -248, -420, 420, R90, 316, 316, 2),                                                          // nadbudówka pokładu
-    trapX(-2660, -1512, -220, 220, -R90, 140, 140),                                                           // grzbiet rufowy
-    blk('rect', -2100, -112, -1700, 112, 2, { c: [16, 0, 0, 16] }),                                          // wieża mostka głównego
-    plateFwd(-3764, -2692, tailEdge, (x) => -tailEdge(x), 1, {}),                                             // kolec rufy
-    { kind: 'block', shape: 'tri', x: -3890, y: 0, w: 344, h: 188, rot: -R90, a: 172, level: 1, gap: SEAM }
-  );
-
-  // ── SKRZYDŁA: nasada (W1), zasobnik (W2 + W3) z nadbudówką ──────────────────────────────────────────────────
-  shapes.push(
-    blk('trap', -1764, -1404, -688, -1196, 1, { a: 0, b: 132 }),
-    blk('trap', -1780, -1636, -844, -1436, 1, { a: 116, b: 112 }),
-    blk('tri', -1664, -1908, -956, -1636, 1, { a: 180 }),
-    blk('rect', -1660, -1612, -1000, -1468, 2, { c: [24, 24, 24, 24] })
-  );
-
-  // ── TYŁ: płyty między rowem osi a burtą, pas za skrzydłem, zęby ─────────────────────────────────────────────
-  shapes.push(
-    blk('rect', -1232, -1132, -688, -680),
-    blk('rect', -1764, -1132, -1264, -604),
-    blk('rect', -2400, -1132, -1796, -436),
-    // pas za skrzydłem i ząb — z poprzecznym rowem przy dyszy SIDE (rura paliwa dochodzi rowem, widać ją)
-    plateAft(-2404, -2132, aftEdge, () => -1196), plateAft(-2068, -1828, aftEdge, () => -1196),
-    plateFwd(-2536, -2464, (x) => aftEdge(x) + 8, (x) => prongIn(x) - 8),
-    plateFwd(-3244, -2996, (x) => aftEdge(x) + 8, (x) => prongIn(x) - 8), plateFwd(-2932, -2568, (x) => aftEdge(x) + 8, (x) => prongIn(x) - 8),
-    plateFwd(-3196, -3028, (x) => aftEdge(x) + 92, (x) => prongIn(x) - 92, 2), plateFwd(-2900, -2640, (x) => aftEdge(x) + 92, (x) => prongIn(x) - 92, 2),
-    plateFwd(-3360, -3276, (x) => aftEdge(x) + 8, (x) => prongIn(x) - 8)
+    blk('rect', -2100, -112, -1700, 112, 2, { c: [16, 0, 0, 16] })                                           // wieża mostka głównego
   );
 
   // ── KASZTEL za wieżą mostka głównego ───────────────────────────────────────────────────────────────────────
@@ -190,16 +152,18 @@ function make() {
   // ── DETALE: radiatory i kraty w rowach, iluminatory grzbietu, napisy, orły ──────────────────────────────────
   modules.push(
     grate(2160, -240, 48, 30), vent(1590, -380, 70, 16), vent(690, -600, 70, 16), vent(-200, -840, 70, 16),
-    vent(-1100, -740, 60, 16), port(820, 0, 30, 2), port(-2500, 0, 30, 2), hatch(3200, 0, 30, 18)
+    vent(-1100, -740, 60, 16), port(820, 0, 30, 2), hatch(3200, 0, 30, 18)
   );
   decals.push(
-    text(1040, 0, 250, 32), text(-860, 0, 320, 42), text(-1370, -1300, 150, 20),
-    eagle(-1080, 0, 110, 92), eagle(2200, 0, 70, 58), eagle(-3000, 0, 90, 75)
+    // napisy i orły na pancerzu (skorupa obok rowu i nadbudówki), nie na dnie rowu
+    text(1160, -500, 300, 38), text(-1050, 0, 300, 40), text(-1370, -1300, 150, 20),
+    eagle(-1310, 0, 100, 84), eagle(2960, 0, 70, 58), eagle(-3000, 0, 90, 75), eagle(440, -640, 80, 66)
   );
 
   return {
     v: 2, name: 'Drednot Terra Novy (klasa VII)', role: 'military', npc: true, style: 'chamfer', mirror: true, palette: 'terra',
-    seed: 83, detail: D, grid: 4, windows: 0, bevel: 1.9, round: 1, panels: 1, pipeNet: { density: 1, seed: 0 },
+    seed: 83, detail: D, grid: 4, windows: 0, bevel: 1.9, round: 1, panels: 0, pipeNet: { density: 1, seed: 0 },
+    shell: { rhythm: 'wzor' },
     blocks: [], shapes, modules, decals, castles, parts: []
   };
 }

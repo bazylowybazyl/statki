@@ -71,7 +71,8 @@ export const HD_LOOK = {
     rivetLine: 3.6, rivetStep: 11.0, rivetR: 1.05,
     bevel: 2.4, pillow: 0.85, raised: 0.55,    // zaokrąglona faza brzegu panelu (jak sprite'y), podniesione panele
     slab: 1.6, slabBevel: 1.8,                 // gruba płyta: wnętrze szerokiej płyty wyżej o slab jd
-    cushW: 9.0, cushH: 2.2                     // PODUSZKA: wierzch płyty / panelu wznosi się łukiem od krawędzi przez cushW
+    cushW: 9.0, cushH: 2.2,                    // PODUSZKA: wierzch płyty / panelu wznosi się łukiem od krawędzi przez cushW
+    insetH: 1.8, insetBevel: 2.4, insetTone: 0.13   // WPUST skorupy: stopień [jd], faza od rowka [jd], ton ±
   },
   detail: { vent: 0.22, hatch: 0.1, box: 0.08, sub: 0.22, slit: 0.08 },
   ao: [[1.5, 1.0], [4.0, 0.8], [9.0, 0.6]],
@@ -2005,6 +2006,13 @@ export class HullComposer {
     const gw = gs.y;
     const grooveLine = float(1.0).sub(smoothstep(gw.mul(0.3), gw.mul(0.62), gd)).toVar();
     const gEdge = max(gd.sub(gw.mul(0.45)), float(0.0));
+    // WPUST skorupy („płyta w płycie”, kanał z rowków: 1,5 + ½ · ton, 0 — poza): płyta wewnątrz pętli wpustu wyżej
+    // o stopień (faza od rowka) i w swoim tonie
+    const gi = gs.z;
+    const inInset = step(0.5, gi).toVar();
+    const insetTone = clamp(gi.sub(1.5).mul(2.0), -1.0, 1.0).mul(inInset).toVar();
+    const ib = clamp(gEdge.div(PN.insetBevel), 0.0, 1.0);
+    const insetStep = sqrt(max(float(0.0), float(1.0).sub(float(1.0).sub(ib).mul(float(1.0).sub(ib))))).mul(inInset).toVar();
     // „poduszka”: brzeg panelu (losowego — wg widoczności — i płyty przy rowku) zaokrąglony w dół do szwu
     const pEdge = min(mix(float(1e3), edgeIn.sub(PN.seam * 0.4), panVis), gEdge);
     const pb = clamp(pEdge.div(PN.bevel), 0.0, 1.0);
@@ -2093,7 +2101,8 @@ export class HullComposer {
     });
     const panelK = okP.mul(freeK).toVar();
     // ton panelu: rozrzut i rzadkie ciemniejsze / jaśniejsze
-    const tone = float(1.0).add(ph1.sub(0.5).mul(0.06)).mul(select(ph2.lessThan(0.08), float(0.9), select(ph2.greaterThan(0.95), float(1.04), float(1.0))));
+    const tone = float(1.0).add(ph1.sub(0.5).mul(0.06)).mul(select(ph2.lessThan(0.08), float(0.9), select(ph2.greaterThan(0.95), float(1.04), float(1.0))))
+      .mul(float(1.0).add(insetTone.mul(PN.insetTone).mul(s1)));
     const seamTop = seamPanel.mul(smoothstep(1.6, 3.2, topD.negate())).mul(s1).mul(freeK);
     const grooveOn = grooveLine.mul(s1).mul(freeK).mul(smoothstep(0.6, 1.6, topD.negate())).toVar();
     const seam = max(max(max(seamTop.mul(0.62), grooveOn), insetLine.mul(s1).mul(freeK).mul(0.95)), max(detSeam.mul(panelK), modSeam)).toVar();
@@ -2101,7 +2110,7 @@ export class HullComposer {
 
     // ── wysokość ──
     const panelOn = s1.mul(freeK).mul(smoothstep(1.2, 2.6, topD.negate()));
-    const hTot = mix(hU, p0.mul(H[0]), engK).add(machH.mul(mach)).add(detH.mul(panelK).mul(s1)).add(panelRelief.add(cushion).mul(panelOn)).add(slab.mul(PN.slab).mul(s1).mul(freeK)).sub(seamTop.mul(0.25)).sub(grooveOn.mul(0.6))
+    const hTot = mix(hU, p0.mul(H[0]), engK).add(machH.mul(mach)).add(detH.mul(panelK).mul(s1)).add(panelRelief.add(cushion).mul(panelOn)).add(slab.mul(PN.slab).mul(s1).mul(freeK)).add(insetStep.mul(PN.insetH).mul(s1).mul(freeK)).sub(seamTop.mul(0.25)).sub(grooveOn.mul(0.6))
       .sub(insetLine.mul(s1).mul(freeK).mul(0.45)).add(rivet.mul(s1).mul(freeK).mul(0.4)).add(modH.mul(alpha)).toVar();
     // rury ręczne „na płytach”: wiązka i osprzęt leżą na płycie
     const onPl = net.over.mul(net.K).mul(s1).mul(freeK).toVar();
@@ -2388,7 +2397,7 @@ export class HullComposer {
       const gf = field.groove;
       const gcap = toHalf(field.grooveBand || 1e3);
       const g14 = toHalf(1.4);
-      for (let i = 0; i < n; i++) { gr[i * 4] = gf ? toHalf(gf[i]) : gcap; gr[i * 4 + 1] = gf?.width ? toHalf(gf.width[i]) : g14; }
+      for (let i = 0; i < n; i++) { gr[i * 4] = gf ? toHalf(gf[i]) : gcap; gr[i * 4 + 1] = gf?.width ? toHalf(gf.width[i]) : g14; if (gf?.inset) gr[i * 4 + 2] = toHalf(gf.inset[i]); }
       this._fieldTex?.dispose();
       this._auxTex?.dispose();
       this._grooveTex?.dispose();
