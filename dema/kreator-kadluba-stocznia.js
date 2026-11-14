@@ -1485,8 +1485,9 @@ export function installShipyard(api) {
     return `<div class="yoptl">Miasto 3D <span class="ydim">· zabudowa w odsłoniętym środku, bryły nad kadłubem</span></div>
       <div class="ychips"><button class="ychip${on ? ' on' : ''}" data-city="1">Miasto</button>${HD_CITY_VARIANT_KEYS.map((k) => `<button class="ychip${on && c.variant === k ? ' on' : ''}" data-cityv="${k}">${CITY_VARIANT_LABELS[k]}</button>`).join('')}<button class="ychip" data-cityseed="1" title="następne ziarno (${c.seed})">⟳ Ziarno</button><button class="ychip${c.glow ? ' on' : ''}" data-cityglow="1" title="z góry światła jako miękka poświata kanionów zamiast punktów">Z góry: poświata</button></div>
       ${CITY_SLIDERS.map((sl) => `<label class="yslider"><span>${sl.label} <b data-v="city:${sl.k}">${citySliderText(sl.k, c[sl.k])}</b></span><input type="range" data-k="city:${sl.k}" min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${c[sl.k]}"></label>`).join('')}
-      <div class="yoptl">Kamera <span class="ydim">· perspektywa z góry jak gra rysuje wysokie budowle</span></div>
-      <div class="ychips"><button class="ychip${!S.persp ? ' on' : ''}" data-cam="plaska">Płaska</button><button class="ychip${S.persp ? ' on' : ''}" data-cam="perspektywa">Perspektywa</button></div>`;
+      <div class="yoptl">Kamera <span class="ydim">· widok gry — ściany miasta pochylone jak w perspektywie gry, z przesadą</span></div>
+      <div class="ychips"><button class="ychip${S.camMode === 'plaska' ? ' on' : ''}" data-cam="plaska">Płaska</button><button class="ychip${S.camMode === 'gra' ? ' on' : ''}" data-cam="gra">Widok gry</button><button class="ychip${S.camMode === 'perspektywa' ? ' on' : ''}" data-cam="perspektywa">Perspektywa</button><button class="ychip${S.lean.byZoom ? ' on' : ''}" data-leanzoom="1" title="przesada rośnie z oddaleniem: 1× w zbliżeniu (~1 200 j.), pełna przy całym okręcie; wyłączone — stała">Przesada z oddaleniem</button></div>
+      <label class="yslider"><span>Pochylenie ścian <b data-v="view:lean">${S.lean.gain.toFixed(2)}×</b></span><input type="range" data-k="view:lean" min="0" max="8" step="0.25" value="${S.lean.gain}"></label>`;
   }
   function renderOpts() {
     let h = '';
@@ -1531,7 +1532,8 @@ export function installShipyard(api) {
       else if (b.dataset.cityv) { citySet(design(), { variant: b.dataset.cityv }); commit(); }
       else if (b.dataset.cityseed) { citySet(design(), { seed: cityShown(design()).seed + 1 }); commit(); }
       else if (b.dataset.cityglow) { citySet(design(), { glow: !cityShown(design()).glow }); commit(); }
-      else if (b.dataset.cam) { api.setPersp(b.dataset.cam === 'perspektywa'); }
+      else if (b.dataset.cam) { api.setCamMode(b.dataset.cam); }
+      else if (b.dataset.leanzoom) { api.setLean(null, !S.lean.byZoom); }
       else if (b.dataset.k === 'windows') { design().windows = (design().windows ?? 1) > 0.5 ? 0 : 1; commit(); }
       else if (b.dataset.k === 'round') { design().round = (design().round ?? 0) > 0.5 ? 0 : 1; commit(); }
       renderOpts();
@@ -1558,6 +1560,12 @@ export function installShipyard(api) {
         const lb = el.opts.querySelector('[data-v="board:glow"]');
         if (lb) lb.textContent = Number(t.value).toFixed(2);
         S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true);
+      }
+      if (t.dataset.k === 'view:lean') {
+        // widok (nie projekt): bez przebudowy i bez cofania
+        api.setLean(Number(t.value));
+        const lb = el.opts.querySelector('[data-v="view:lean"]');
+        if (lb) lb.textContent = `${Number(t.value).toFixed(2)}×`;
       }
       if (t.dataset.k === 'detail') { design().detail = Number(t.value); S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true); }
       if (t.dataset.k === 'pipes') { design().pipeNet = { ...(design().pipeNet || {}), density: Number(t.value) }; S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true); }

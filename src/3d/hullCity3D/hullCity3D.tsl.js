@@ -78,7 +78,11 @@ export function createCityNodes(heightTex) {
     uLook: shared(new THREE.Vector4(1, 0.22, 0.05, 1)),        // jasność masywu, ton z wysokością, poświata okien, widoczność
     uLights: shared(new THREE.Vector4(1, 1.4, 0.6, 0.5)),      // jasność świateł, min. rozmiar [px], zasięg poświaty, siła z góry
     uWin: shared(new THREE.Vector4(4, 3.2, 0.05, 0)),          // piętro [j.], okno [j.], udział tlących się okien, —
-    uGlow: shared(new THREE.Vector4(0, 7, 0.5, 0))             // z góry: poświata 0 / 1, mnożnik rozmiaru, siła, widok z góry 0–1 (kamera perspektywy)
+    uGlow: shared(new THREE.Vector4(0, 7, 0.5, 0)),            // z góry: poświata 0 / 1, mnożnik rozmiaru, siła, widok z góry 0–1 (kamera perspektywy)
+    // WIDOK GRY Z POCHYLENIEM (kamera ortho; docs/OPIS-miasto-3d.md § 9, wariant B): wł. 0 / 1, przesada g, przesada
+    // z oddaleniem 0 / 1, najmniejsze s; uLeanZ: Hc bliskie (przesada 1×), Hc dalekie (pełne g), tg(½ FOV kamery FG), —
+    uLean: shared(new THREE.Vector4(0, 6, 1, 0.15)),
+    uLeanZ: shared(new THREE.Vector4(1200, 7000, Math.tan(17.5 * Math.PI / 180), 0))
   };
   const pal = [];
   for (const c of CITY_MAT_PALETTE) pal.push(new THREE.Vector4(c[0], c[1], c[2], c[3]));
@@ -144,6 +148,31 @@ function cityLib(ctx) {
   return { height, shadow, occlusion };
 }
 
+/**
+ * POCHYLENIE PERSPEKTYWY FG w kamerze ortho (wołać w Fn wierzchołka). Kamera FG gry patrzy prosto w dół z wysokości
+ * Hc = (h / 2) / tg(17,5°) / zoom = górna krawędź ortho / tg — punkt na wysokości z leży na ekranie w środku kadru
+ * + odstęp · Hc / (Hc − z). Przy wyjściu clip = (c.xy, c.z · s, c.w · s), s = 1 − g · z / Hc: xy jak w perspektywie
+ * (z przesadą g), głębia bez zmian (kolejność z = kolejność perspektywy prosto w dół), varyingi poprawne perspektywicznie.
+ * Zwraca { on, hcEff } (zmienne): on = wł. × kamera ortho, hcEff = Hc / g (wysokość kamery „wirtualnej”).
+ */
+const leanParams = (U) => {
+  const ortho = step(0.5, cameraProjectionMatrix.element(3).w);
+  const on = float(0).toVar();
+  on.assign(U.uLean.x.mul(ortho));
+  // ortho: P[1][1] = 1 / górna krawędź → Hc = 1 / (P[1][1] · tg)
+  const hc = float(1).toVar();
+  hc.assign(float(1.0).div(max(cameraProjectionMatrix.element(1).y.mul(U.uLeanZ.z), 1e-6)));
+  // przesada z oddaleniem: 1× przy Hc ≤ bliskie, g przy Hc ≥ dalekie (log Hc), inaczej stałe g
+  const t = clamp(log2(max(hc, 1.0).div(U.uLeanZ.x)).div(max(log2(U.uLeanZ.y.div(U.uLeanZ.x)), 1e-3)), 0.0, 1.0);
+  const g = float(1).toVar();
+  g.assign(max(mix(U.uLean.y, float(1.0).add(U.uLean.y.sub(1.0).mul(t)), U.uLean.z), 0.0));
+  const hcEff = float(1).toVar();
+  hcEff.assign(hc.div(max(g, 1e-4)));
+  return { on, hcEff };
+};
+/** s pochylenia dla wysokości z (1 — bez pochylenia). */
+const leanS = (lean, U, z) => mix(float(1.0), max(U.uLean.w, float(1.0).sub(z.div(lean.hcEff))), lean.on);
+
 // Rozrzut startu marszu przyklejony do świata w komórkach ~1 px ekranu (potęga 2 — stały przy drobnym zoomie; wzór
 // b3Dither mostka): szum o częstotliwości piksela zamiast ziarna, nie „gotuje się” z kamerą. Wołać w jednolitym
 // przepływie (pochodne), przed gałęziami.
@@ -184,7 +213,13 @@ export function createCityBoxMaterial(ctx) {
   const vBoxA = varying(iA, 'vCityA').setInterpolation('flat');
   const vBoxB = varying(iB, 'vCityB').setInterpolation('flat');
   const vBoxC = varying(iC, 'vCityC').setInterpolation('flat');
-  const vertexNode = cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(P, 1.0));
+  const vertexNode = Fn(() => {
+    const c = vec4(0).toVar();
+    c.assign(cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(P, 1.0)));
+    const s = float(1).toVar();
+    s.assign(leanS(leanParams(U), U, z));
+    return vec4(c.xy, c.z.mul(s), c.w.mul(s));
+  })();
 
   const fragmentNode = Fn(() => {
     const L3 = cityLib(ctx);
@@ -363,6 +398,12 @@ export function createCityLightMaterial(ctx) {
     mvc.assign(modelViewMatrix.mul(vec4(lA.xyz, 1.0)));
     const ortho = float(0).toVar();
     ortho.assign(step(0.5, cameraProjectionMatrix.element(3).w));
+    // widok gry z pochyleniem: kamera ortho, ale kierunek „do kamery” od wirtualnej kamery FG nad środkiem kadru
+    const lean = leanParams(U);
+    const flat = float(0).toVar();
+    flat.assign(ortho.mul(float(1.0).sub(lean.on)));
+    const s = float(1).toVar();
+    s.assign(leanS(lean, U, lA.z));
     // j. świata na piksel w miejscu światła: ortho — stałe, perspektywa — rośnie z głębią
     const pxW = float(0).toVar();
     pxW.assign(float(2.0).mul(mix(mvc.z.negate(), float(1.0), ortho)).div(max(cameraProjectionMatrix.element(0).x.mul(screenSize.x), 1e-6)));
@@ -374,7 +415,7 @@ export function createCityLightMaterial(ctx) {
     const glow = float(0).toVar();
     // „z góry” = kamera ortho albo perspektywa prosto z góry (uGlow.w od wołającego)
     const topV = float(0).toVar();
-    topV.assign(max(ortho, U.uGlow.w));
+    topV.assign(max(flat, U.uGlow.w));
     glow.assign(U.uGlow.x.mul(topV).mul(float(1.0).sub(isBeacon)));
     const sizeEff = float(0).toVar();
     sizeEff.assign(max(lA.w.mul(mix(float(1.0), U.uGlow.y, glow)), pxW.mul(minPx)));
@@ -387,7 +428,9 @@ export function createCityLightMaterial(ctx) {
     const nView = vec3(0).toVar();
     nView.assign(modelViewMatrix.mul(vec4(lB.xyz, 0.0)).xyz.div(max(nl, 1e-4)));
     const toCam = vec3(0).toVar();
-    toCam.assign(mix(normalize(mvc.xyz).negate(), vec3(0.0, 0.0, 1.0), ortho));
+    // widok gry z pochyleniem: wirtualna kamera w (środek kadru, Hc / g) — w układzie widoku ortho (0, 0) to środek
+    const toLean = normalize(vec3(mvc.xy.negate(), max(lean.hcEff.sub(lA.z), 1.0)));
+    toCam.assign(mix(mix(normalize(mvc.xyz).negate(), vec3(0.0, 0.0, 1.0), ortho), toLean, lean.on));
     const dir = float(0).toVar();
     dir.assign(mix(smoothstep(-0.05, 0.45, dot(nView, toCam)), float(1.0), step(nl, 0.1)));
     const code = lB.w;
@@ -412,6 +455,7 @@ export function createCityLightMaterial(ctx) {
     const out = vec4(2.0, 2.0, 2.0, 1.0).toVar();
     If(I.greaterThanEqual(0.002), () => {
       out.assign(cameraProjectionMatrix.mul(vec4(mvc.xy.add(corner.mul(sizeEff).mul(spread).mul(2.0)), mvc.z, 1.0)));
+      out.assign(vec4(out.xy, out.z.mul(s), out.w.mul(s)));
     });
     return out;
   })();

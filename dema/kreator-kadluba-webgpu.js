@@ -106,13 +106,27 @@ const S = {
   cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null,
   // interfejs: 'stocznia' — przyjazny edytor przeciągnij-i-upuść (domyślny), 'warsztat' — pełny panel narzędzi
   ui: uiFromPage(),
-  // kamera widoku: płaska (ortho, jak dotąd) albo perspektywa z góry (jak pass FG gry) — `?kamera=perspektywa|plaska`
-  persp: cameraFromPage()
+  // kamera widoku (`?kamera=plaska|gra|perspektywa`, pamięta localStorage `kreator.kamera`): 'plaska' — ortho jak dotąd,
+  // 'gra' — ortho + pochylenie ścian miasta wg perspektywy gry z przesadą `lean` (próba wariantu B, docs/OPIS-miasto-3d.md
+  // § 10; kadłub, mostki, wieże i rdzenie płaskie), 'perspektywa' — cała scena kamerą passa FG gry; `persp` = ta ostatnia
+  camMode: cameraFromPage(),
+  persp: false,
+  lean: leanFromPage()
 };
+S.persp = S.camMode === 'perspektywa';
 function cameraFromPage() {
   let stored = null;
   try { stored = localStorage.getItem('kreator.kamera'); } catch { /* bez pamięci strony */ }
-  return (params.get('kamera') || stored) === 'perspektywa';
+  const m = params.get('kamera') || stored;
+  return m === 'perspektywa' || m === 'gra' ? m : 'plaska';
+}
+/** Przesada pochylenia widoku gry: `?pochylenie=4&pochylenieZoom=0`, pamięta localStorage `kreator.pochylenie`. */
+function leanFromPage() {
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem('kreator.pochylenie') || 'null'); } catch { /* bez pamięci strony */ }
+  const gain = params.has('pochylenie') ? Number(params.get('pochylenie')) : Number(stored?.gain);
+  const byZoom = params.has('pochylenieZoom') ? params.get('pochylenieZoom') !== '0' : (stored?.byZoom ?? true);
+  return { gain: Number.isFinite(gain) ? Math.max(0, Math.min(8, gain)) : HULL_CITY3D_TUNE.leanGain, byZoom: !!byZoom };
 }
 function uiFromPage() {
   let stored = null;
@@ -909,7 +923,8 @@ function render(realDt, list) {
   const cam = viewCamera();
   cullInfo.x = cam.x; cullInfo.y = cam.y;
   // perspektywa z góry: płaszczyzna jak w ortho, bryły nad nią wychodzą ku brzegom kadru — kadr z zapasem
-  const pad = S.persp ? 900 : 600, kk = S.persp ? 0.6 : 0.5;
+  const leanView = S.camMode !== 'plaska';
+  const pad = leanView ? 900 : 600, kk = leanView ? 0.6 : 0.5;
   cullInfo.drawHalfW = W * kk / cam.zoom + pad; cullInfo.drawHalfH = H * kk / cam.zoom + pad;
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   backdrop.sync(cam, W, H);
@@ -1345,8 +1360,12 @@ function syncCityPanel(d) {
     $(`lbl-city-${sl.k}`).textContent = `${sl.label.toLowerCase()} ${citySliderText(sl.k, c[sl.k])}`;
   }
   $('btn-city-glow').classList.toggle('on', !!c.glow);
-  $('btn-cam-flat').classList.toggle('on', !S.persp);
-  $('btn-cam-persp').classList.toggle('on', !!S.persp);
+  $('btn-cam-flat').classList.toggle('on', S.camMode === 'plaska');
+  $('btn-cam-game').classList.toggle('on', S.camMode === 'gra');
+  $('btn-cam-persp').classList.toggle('on', S.camMode === 'perspektywa');
+  $('inp-lean').value = String(S.lean.gain);
+  $('lbl-lean').textContent = `pochylenie ${S.lean.gain.toFixed(2)}×`;
+  $('btn-lean-zoom').classList.toggle('on', S.lean.byZoom);
 }
 function bindCityPanel() {
   const sel = $('sel-city');
@@ -1363,8 +1382,11 @@ function bindCityPanel() {
     inp.addEventListener('change', () => { citySet(design(), { [sl.k]: Number(inp.value) }); requestBuild(); syncPanel(); });
   }
   $('btn-city-glow').addEventListener('click', () => { citySet(design(), { glow: !cityShown(design()).glow }); requestBuild(); syncPanel(); });
-  $('btn-cam-flat').addEventListener('click', () => setPersp(false));
-  $('btn-cam-persp').addEventListener('click', () => setPersp(true));
+  $('btn-cam-flat').addEventListener('click', () => setCamMode('plaska'));
+  $('btn-cam-game').addEventListener('click', () => setCamMode('gra'));
+  $('btn-cam-persp').addEventListener('click', () => setCamMode('perspektywa'));
+  $('inp-lean').addEventListener('input', () => setLean(Number($('inp-lean').value)));
+  $('btn-lean-zoom').addEventListener('click', () => setLean(null, !S.lean.byZoom));
 }
 function bindShellPanel() {
   const selR = $('sel-shell-rhythm');
@@ -2589,6 +2611,10 @@ window.__kreator = {
   setBridge3D(on) { S.bridge3D = !!on; return true; },
   /** Kamera widoku: true — perspektywa z góry (jak pass FG gry), false — płaska (ortho, jak dotąd). */
   setPersp(on) { setPersp(on); return true; },
+  /** Kamera widoku 'plaska' | 'gra' | 'perspektywa'; przesada pochylenia widoku gry (g, z oddaleniem). */
+  setCamMode(mode) { return setCamMode(mode); },
+  setLean(gain, byZoom) { return setLean(gain, byZoom); },
+  get view() { return { camMode: S.camMode, lean: { ...S.lean } }; },
   /** Miasto 3D: stan i liczby; `cityIdle()` — czeka, aż worker odda miasto bieżącego projektu. */
   get city() { return { on: cityOn(S.design), key: cityDemo.key, shownKey: cityDemo.shownKey, stats: cityDemo.city3D?.stats || null, gen: cityDemo.gen }; },
   async cityIdle(timeoutMs = 60000) {
@@ -2756,7 +2782,7 @@ function cityDemoSync() {
   HULL_CITY3D_TUNE.topGlow = nd?.glow ? 1 : 0;
   C3.setSun(window.SUN.x, window.SUN.y);
   const vis = nd?.on && !previewQuad?.visible && cityDemo.shownKey !== 'off' ? 1 : 0;
-  C3.update(vis, { topView: S.persp ? 1 : 0 });
+  C3.update(vis, { topView: S.camMode !== 'plaska' ? 1 : 0, lean: { on: S.camMode === 'gra', gain: S.lean.gain, byZoom: S.lean.byZoom } });
 }
 
 // KAMERA WIDOKU: płaska (ortho passa gry — jak dotąd) albo PERSPEKTYWA Z GÓRY = Core3D.cameraPersp passa FG gry (35°,
@@ -2780,10 +2806,24 @@ function viewCamera() {
   perspCam.far = h + 60000;
   return perspCam;
 }
-function setPersp(on) {
-  S.persp = !!on;
-  try { localStorage.setItem('kreator.kamera', S.persp ? 'perspektywa' : 'plaska'); } catch { /* bez pamięci strony */ }
+/** Kamera widoku: 'plaska' | 'gra' (ortho + pochylenie miasta) | 'perspektywa'. */
+function setCamMode(mode) {
+  if (mode !== 'plaska' && mode !== 'gra' && mode !== 'perspektywa') return false;
+  S.camMode = mode;
+  S.persp = mode === 'perspektywa';
+  try { localStorage.setItem('kreator.kamera', mode); } catch { /* bez pamięci strony */ }
   syncCityPanel(S.design);
+  return true;
+}
+/** Dawny przełącznik: true — perspektywa, false — płaska. */
+function setPersp(on) { return setCamMode(on ? 'perspektywa' : 'plaska'); }
+/** Przesada pochylenia widoku gry: g 0–8 (1 = prawdziwa perspektywa gry), byZoom — 1× z bliska, g przy całym okręcie. */
+function setLean(gain, byZoom) {
+  if (Number.isFinite(gain)) S.lean.gain = Math.max(0, Math.min(8, gain));
+  if (byZoom != null) S.lean.byZoom = !!byZoom;
+  try { localStorage.setItem('kreator.pochylenie', JSON.stringify(S.lean)); } catch { /* bez pamięci strony */ }
+  syncCityPanel(S.design);
+  return true;
 
 }
 
@@ -2799,7 +2839,7 @@ function shipyardApi() {
     pick, isLocked, mirrorOn, polyLoopOf, partWorldBox, removePicked, rotateObj, scaleObj,
     paletteBlock, paletteBox, snapBlock, blkGrid, blockLabel, classModuleLabel,
     newModule, newCastle, newPart, newDecal,
-    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp
+    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp, setCamMode, setLean
   };
 }
 

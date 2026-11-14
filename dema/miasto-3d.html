@@ -52,11 +52,14 @@
       <button data-view="nisko">Nisko wzdłuż <kbd>5</kbd></button>
       <button data-view="rufa">Ukos od dziobu <kbd>6</kbd></button>
     </div>
-    <h2>Kamera (P)</h2>
+    <h2>Kamera z góry (P — po kolei)</h2>
     <div class="btns">
-      <button id="camPersp" class="on">Perspektywa</button>
-      <button id="camFlat">Płaska (ortho)</button>
+      <button id="camGame" class="on" title="kamera płaska passa gry + pochylenie ścian miasta jak w perspektywie gry (z przesadą); mostki, rdzenie i kadłub płaskie">Widok gry</button>
+      <button id="camPersp" title="cała scena kamerą perspektywy passa FG gry (35°)">Perspektywa</button>
+      <button id="camFlat" title="kamera płaska passa gry bez pochylenia">Płaska</button>
     </div>
+    <div class="row"><label>Pochylenie ścian</label><input id="lean" type="range" min="0" max="8" step="0.25" value="6"><output id="leanO"></output></div>
+    <div class="btns"><button id="leanZoom" class="on" title="przesada rośnie z oddaleniem: 1× (prawdziwa perspektywa gry) w zbliżeniu ~1 200 j., pełna przy całym okręcie; wyłączone — stała">Przesada z oddaleniem</button></div>
     <h2>Miasto</h2>
     <div class="row"><label>Kompozycja</label><select id="variant"></select></div>
     <div class="row"><label>Ziarno</label><input id="seed" type="number" value="1" step="1"><button id="seedNext">Następne</button></div>
@@ -74,7 +77,7 @@
       <button id="topDots" class="on">Punkty</button>
       <button id="topGlow">Poświata</button>
     </div>
-    <div class="hint">Widoki z góry: kamera perspektywy jak pass FG gry (budowle wychylają się ku brzegom kadru) albo płaska (ortho); przeciągnij — przesuń, kółko — zoom. Z ukosa: przeciągnij — obrót, prawy przycisk albo Shift — przesuń, kółko — odległość. „Światła z góry” zmienia tylko widok z góry (kamera gry). I — liczby.</div>
+    <div class="hint">Widoki z góry: „Widok gry” — kamera płaska gry, ściany miasta pochylone jak w perspektywie gry z przesadą (suwak; 1× = prawdziwa perspektywa gry); „Perspektywa” — cała scena kamerą FG gry; „Płaska” — bez pochylenia. Przeciągnij — przesuń, kółko — zoom. Z ukosa: przeciągnij — obrót, prawy przycisk albo Shift — przesuń, kółko — odległość. „Światła z góry” zmienia tylko widok z góry (kamera gry). I — liczby.</div>
   </div>
   <div id="info"></div>
   <div id="loading">Start WebGPU…</div>

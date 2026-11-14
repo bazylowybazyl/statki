@@ -6,9 +6,12 @@
 // (src/game/hullDesign/hullDesignCity.js, w workerze dema/miasto-3d.worker.js), bryły i światła — src/3d/hullCity3D/.
 //
 // Serwowanie: `npm run dev` → /dema/miasto-3d.html
-//   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?zgory=punkty|poswiata   ?kamera=plaska
-//   Widoki z góry (1–3) domyślnie kamerą PERSPEKTYWY znad okrętu — tą samą co pass FG gry (cameraPersp: 35°, wysokość
-//   (h / 2) / tg(17,5°) / zoom, prosto w dół; ściany i okna widać ku brzegom kadru); „płaska” — kamera ortho passa gry.
+//   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?zgory=punkty|poswiata
+//   ?kamera=gra|perspektywa|plaska   ?pochylenie=4 (przesada 0–8)   ?pochylenieZoom=0 (stała zamiast z oddaleniem)
+//   Widoki z góry (1–3), KAMERA (P — po kolei): „widok gry” (domyślny) — kamera ortho passa gry + POCHYLENIE ścian
+//   w wierzchołku miasta wg perspektywy passa FG z PRZESADĄ (docs/OPIS-miasto-3d.md § 9 i § 10; mostki, rdzenie i kadłub
+//   zostają płaskie — to moduły gry); „perspektywa” — cała scena kamerą FG gry (cameraPersp: 35°, wysokość
+//   (h / 2) / tg(17,5°) / zoom, prosto w dół) jako free3d; „płaska” — ortho bez pochylenia.
 //   ?katalog=1 — KATALOG BUDYNKÓW: wszystkie rodziny generatora wieżowców w czterech wielkościach na jasnej płycie
 //   ?clean=1 (bez panelu)   ?test=1 (klatki z __miasto.runFrames — scripts/webgpu/miasto-3d-zrzuty.mjs)
 import * as THREE from 'three/webgpu';
@@ -56,7 +59,9 @@ const S = {
   city: { variant: params.get('wariant') || 'A', seed: Number(params.get('ziarno') || 1), density: 1, height: 1, lights: 1 },
   cityOn: true, lightsOn: true, info: false,
   topGlow: params.get('zgory') === 'poswiata',   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
-  persp: params.get('kamera') !== 'plaska',      // widoki z góry: perspektywa jak pass FG gry (true) albo ortho (false)
+  // widoki z góry: 'gra' — ortho + pochylenie miasta (przesada `lean`), 'persp' — kamera FG gry (free3d), 'plaska' — ortho
+  camMode: ({ plaska: 'plaska', perspektywa: 'persp' })[params.get('kamera')] || 'gra',
+  lean: { gain: params.has('pochylenie') ? Number(params.get('pochylenie')) : HULL_CITY3D_TUNE.leanGain, byZoom: params.get('pochylenieZoom') !== '0' },
   sunAz: 25,
   frame: 0, cpuMs: 0, frameMs: 16, syncPipes: 0, syncNames: [],
   gen: null, building: false, pendingCity: false
@@ -288,7 +293,7 @@ const FLAT_FOV = 35;
 const topCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: FLAT_FOV, near: 10, far: 400000 };
 const _upY = new THREE.Vector3(0, 1, 0);
 function cameraForFrame() {
-  if (S.view !== 'ukos' && !S.persp) return { x: S.cam.x, y: S.cam.y, zoom: S.cam.zoom };
+  if (S.view !== 'ukos' && S.camMode !== 'persp') return { x: S.cam.x, y: S.cam.y, zoom: S.cam.zoom };
   if (S.view !== 'ukos') {
     const c = S.cam;
     const h = (H / 2) / Math.tan(FLAT_FOV * Math.PI / 360) / c.zoom;
@@ -358,8 +363,8 @@ function render() {
   const cam = cameraForFrame();
   if (S.view === 'ukos') {
     cullInfo.x = cam.x; cullInfo.y = cam.y; cullInfo.drawHalfW = cullInfo.drawHalfH = 2e4; cullInfo.halfW = cullInfo.halfH = 6e4;
-  } else if (S.persp) {
-    // perspektywa z góry: płaszczyzna w kadrze jak w ortho, bryły nad nią wychodzą ku brzegom — kadr z zapasem
+  } else if (S.camMode !== 'plaska') {
+    // perspektywa / pochylenie z góry: płaszczyzna w kadrze jak w ortho, bryły nad nią wychodzą ku brzegom — z zapasem
     cullInfo.x = cam.x; cullInfo.y = cam.y;
     cullInfo.drawHalfW = W * 0.6 / cam.zoom + 900; cullInfo.drawHalfH = H * 0.6 / cam.zoom + 900;
     cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
@@ -374,7 +379,11 @@ function render() {
     HULL_CITY3D_TUNE.lights = S.lightsOn ? S.city.lights : 0;
     HULL_CITY3D_TUNE.topGlow = S.topGlow ? 1 : 0;
     city3D.setSun(window.SUN.x, window.SUN.y);
-    city3D.update(S.cityOn && S.cityData ? 1 : 0, { topView: S.view !== 'ukos' && S.persp ? 1 : 0 });
+    const top = S.view !== 'ukos';
+    city3D.update(S.cityOn && S.cityData ? 1 : 0, {
+      topView: top && S.camMode !== 'plaska' ? 1 : 0,
+      lean: { on: top && S.camMode === 'gra', gain: S.lean.gain, byZoom: S.lean.byZoom }
+    });
   }
   if (reactor3D) {
     reactorOpts.origin.x = cam.x; reactorOpts.origin.y = cam.y; reactorOpts.view = cullInfo; reactorOpts.zoom = cam.zoom;
@@ -450,15 +459,28 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'm' || e.key === 'M') toggleCity();
   else if (e.key === 'l' || e.key === 'L') toggleLights();
   else if (e.key === 'g' || e.key === 'G') setTopGlow(!S.topGlow);
-  else if (e.key === 'p' || e.key === 'P') setPersp(!S.persp);
+  else if (e.key === 'p' || e.key === 'P') setCamMode(CAM_MODES[(CAM_MODES.indexOf(S.camMode) + 1) % CAM_MODES.length]);
   else if (e.key === 'i' || e.key === 'I') { S.info = !S.info; $('info').style.display = S.info ? 'block' : 'none'; }
 });
 function toggleCity(on = !S.cityOn) { S.cityOn = on; $('cityOn').classList.toggle('on', on); }
 function toggleLights(on = !S.lightsOn) { S.lightsOn = on; $('lightsOn').classList.toggle('on', on); }
-function setPersp(on) {
-  S.persp = !!on;
-  $('camPersp').classList.toggle('on', S.persp);
-  $('camFlat').classList.toggle('on', !S.persp);
+const CAM_MODES = ['gra', 'persp', 'plaska'];
+function setCamMode(mode) {
+  if (!CAM_MODES.includes(mode)) return false;
+  S.camMode = mode;
+  $('camGame').classList.toggle('on', mode === 'gra');
+  $('camPersp').classList.toggle('on', mode === 'persp');
+  $('camFlat').classList.toggle('on', mode === 'plaska');
+  return true;
+}
+/** Dawny przełącznik (narzędzia): true — perspektywa, false — płaska. */
+function setPersp(on) { return setCamMode(on ? 'persp' : 'plaska'); }
+/** Przesada pochylenia w widoku gry: g (1 = prawdziwa perspektywa gry), byZoom — 1× z bliska, g z daleka. */
+function setLean(gain, byZoom) {
+  if (Number.isFinite(gain)) S.lean.gain = Math.max(0, Math.min(8, gain));
+  if (byZoom != null) S.lean.byZoom = !!byZoom;
+  const el = $('lean'); if (el) { el.value = S.lean.gain; $('leanO').textContent = `${S.lean.gain.toFixed(2)}×`; }
+  $('leanZoom')?.classList.toggle('on', S.lean.byZoom);
   return true;
 }
 function setTopGlow(on) {
@@ -491,9 +513,13 @@ function bindPanel() {
   range('elev', () => HULL_CITY3D_TUNE.shadowElevDeg, (v) => { HULL_CITY3D_TUNE.shadowElevDeg = v; }, (v) => `${v}°`, false);
   $('cityOn').onclick = () => toggleCity();
   $('lightsOn').onclick = () => toggleLights();
-  $('camPersp').onclick = () => setPersp(true);
-  $('camFlat').onclick = () => setPersp(false);
-  setPersp(S.persp);
+  $('camGame').onclick = () => setCamMode('gra');
+  $('camPersp').onclick = () => setCamMode('persp');
+  $('camFlat').onclick = () => setCamMode('plaska');
+  setCamMode(S.camMode);
+  range('lean', () => S.lean.gain, (v) => setLean(v), (v) => `${v.toFixed(2)}×`, false);
+  $('leanZoom').onclick = () => setLean(null, !S.lean.byZoom);
+  setLean(S.lean.gain, S.lean.byZoom);
   $('topDots').onclick = () => setTopGlow(false);
   $('topGlow').onclick = () => setTopGlow(true);
   setTopGlow(S.topGlow);
@@ -537,7 +563,7 @@ window.__miasto = {
   ready: false, error: null, startup: {}, S,
   setView, setCity: async (o) => { Object.assign(S.city, o); await buildCity(); while (S.building || S.pendingCity) await new Promise((r) => setTimeout(r, 30)); return S.gen; },
   setSun(az, elev) { if (az != null) S.sunAz = az; if (elev != null) HULL_CITY3D_TUNE.shadowElevDeg = elev; placeSun(); return true; },
-  toggleCity, toggleLights, setTopGlow, setPersp, showLabels(on) { S.labels = !!on; return true; },
+  toggleCity, toggleLights, setTopGlow, setPersp, setCamMode, setLean, showLabels(on) { S.labels = !!on; return true; },
   async runFrames(n = 1) {
     for (let i = 0; i < n; i++) {
       // pułapka 44: rysunek tylko po rAF — symulacja co klatkę, obraz ostatniej

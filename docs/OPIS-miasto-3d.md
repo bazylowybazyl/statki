@@ -195,8 +195,9 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
 - Demo `dema/miasto-3d.html` (+ `.js`, worker `miasto-3d.worker.js`): drednot z pliku (bez przeróbek w demie)
   z kompozytora kreatora na skórze gry, mostki i reaktory gry w gniazdach, miasto z workera. Światła z góry: punkty /
   poświata (G, `?zgory=poswiata`). Widoki 1–6 (z góry: cały okręt, środek 3 600 j., 1 200 j.; z ukosa: jak kadr
-  odniesienia, nisko wzdłuż środka, od dziobu; przeciąganie — orbita). KAMERA widoków z góry (P, `?kamera=plaska`):
-  domyślnie PERSPEKTYWA = `cameraPersp` passa FG gry (35°, wysokość (h / 2) / tg(17,5°) / zoom, prosto w dół) podana
+  odniesienia, nisko wzdłuż środka, od dziobu; przeciąganie — orbita). KAMERA widoków z góry (P — po kolei,
+  `?kamera=gra|perspektywa|plaska`): domyślnie WIDOK GRY — ortho passa gry z pochyleniem ścian miasta (§ 10);
+  PERSPEKTYWA = `cameraPersp` passa FG gry (35°, wysokość (h / 2) / tg(17,5°) / zoom, prosto w dół) podana
   jako `free3d`, żeby całą scenę (kadłub, mostki, reaktory, miasto) rysowała ta sama kamera — budowle wychylają się ku
   brzegom kadru, widać ściany i okna („GTA style” — decyzja użytkownika 2026-11-14); PŁASKA — ortho passa gry (A/B).
   W widoku z góry poświata i przygaszanie świateł działają też w perspektywie (`update(…, { topView })`). Panel jest
@@ -306,9 +307,14 @@ gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę 
 9. Przy CAŁYM drednocie kamera gry wisi ~7 900 j. nad okrętem, a miasto ma ~166 j. — perspektywa gry (35°) pochyla je
    o ~2% odstępu od środka kadru (~15 px przy dziobie), więc „cały okręt” dalej wygląda prawie płasko (zrzut
    `a1-caly-perspektywa`). Przesadzić pochylenie (mnożnik wysokości tylko w pochyleniu, np. 3–4×) czy zostać przy
-   kamerze gry? — Rekomendacja: zostać przy kamerze gry (stacje i hale FG zgadzają się z miastem), przesadę ocenić
-   w prototypie wariantu B (jeden uniform) — w zbliżeniach (3 600 j.: ~5%, 1 200 j.: ~18%) perspektywa już niesie „GTA
-   style”.
+   kamerze gry? — Próba (§ 10): przesada „z oddaleniem” — 1× (prawdziwa perspektywa gry) w zbliżeniu, pełna przy
+   całym okręcie. Rekomendacja: 6× z oddaleniem (cały okręt ~14%, 3 600 j. ~24%, 1 200 j. ~18% jak gra); wielkość
+   dobiera użytkownik suwakiem „Pochylenie ścian”.
+10. Płaskie nadbudówki kompozytora (klin z napisem, grzbiety, plac mostka) i płaskie mostki / rdzenie obok pochylonego
+   miasta (§ 10): przy przesadzie wieżowce kładą się na nie i zasłaniają brzegi — trzymać miasto dalej od nich (ulica
+   proporcjonalna do wysokości), dać im prawdziwą wysokość w 3D, czy przyjąć? — Rekomendacja: przy przesadzie
+   z oddaleniem przyjąć (w zbliżeniu przesady nie ma, z daleka nadbudówki są drobne); mostki i rdzenie pochylić
+   w grze tym samym wzorem (§ 9, lista zmian).
 
 ## 8. Jak sprawdzić
 
@@ -388,8 +394,9 @@ kamerą perspektywy). W grze płaszczyzna okrętów idzie passem ortho, więc tr
 
 ### Lista zmian (wariant B, kolejno)
 
-1. Prototyp w demie miasta: tryb kamery „pochylenie” (ortho + pomocnik) na mieście, mostkach i rdzeniach; A/B z free3d
-   z góry (ten sam obraz xy), kolejność z pociskami i wybuchami (galeria broni na tle drednota), migotanie pasma.
+1. Prototyp w demie miasta i w generatorze: widok gry z pochyleniem samego miasta i przesadą — ZROBIONE (§ 10; A/B
+   z perspektywą: 1× daje ten sam obraz miasta). Dalej: mostki i rdzenie w prototypie, kolejność z pociskami
+   i wybuchami (galeria broni na tle drednota), migotanie pasma głębi.
 2. Pomocnik `pochylenieFg` + uniform Hc w Core3D (strona i worker, podzielony ekran), przełącznik z kamer 3D.
 3. Wspólne pasmo głębi okrętu w `modelSlabDepth.js` (miasto, mostki, rdzenie, wieże i dysze na sprite'ach); tarcza nad
    pasmem.
@@ -398,3 +405,50 @@ kamerą perspektywy). W grze płaszczyzna okrętów idzie passem ortho, więc tr
 5. Wpięcie miasta do gry (§ 6 „Do gry”: poza renderu, worker, maskowanie, mgła wojny, zasilanie, mapa ran).
 6. Narzędzia: zrzuty w grze (`scripts/webgpu/*-gra.mjs`) — drednot z miastem w trzech zbliżeniach, bitwa nad
    grzbietem, kamery 3D; koszt (PerfHUD, `Core3D.gpuFrameMs`) przy 5 120 × 1 440.
+
+## 10. Próba wariantu B: widok gry z pochyleniem (etap D — demo miasta i generator, bez zmian w grze)
+
+Powód: „»cały okręt« wszystko spłaszcza” — prawdziwa perspektywa gry pochyla miasto przy całym drednocie o ~2%.
+Próba pokazuje wariant B z PRZESADĄ, żeby użytkownik dobrał jej wielkość na żywo.
+
+- Moduł miasta (`src/3d/hullCity3D/`, gra go nie ładuje): `update(…, { lean: { on, gain, byZoom } })` — tylko przy
+  kamerze ortho. Wierzchołek brył i świateł: clip = (c.xy, c.z · s, c.w · s), s = max(0,15; 1 − g · z / Hc), Hc
+  z macierzy rzutu ortho (górna krawędź / tg 17,5° = wysokość kamery FG gry), z — wysokość nad płaszczyzną okrętu.
+  Głębia bez zmian, varyingi poprawne perspektywicznie. Światła okien świecą w stronę kamery wirtualnej (środek
+  kadru, Hc / g), więc okna na ścianach zwróconych do środka kadru są widoczne jak w perspektywie. Cień na kadłubie
+  zostaje na płaszczyźnie (jak w perspektywie: wieża pochyla się nad swoim cieniem, podstawa stoi tam, gdzie cień
+  się zaczyna). Strojenie `HULL_CITY3D_TUNE.lean*`.
+- PRZESADA g (0–8; 1 = prawdziwa perspektywa gry, 0 = płasko). „Z oddaleniem” (domyślnie): g_ef = 1 przy Hc ≤ 1 200 j.
+  (kadr ~1 200 j. szerokości na 1 600 × 900), g przy Hc ≥ 7 000 j. (cały drednot), pomiędzy po log Hc. Szczyt
+  miasta (164 j.), przesunięcie względem podstawy w ułamku odstępu od środka kadru (1 / s − 1):
+
+  | Kadr (1 600 × 900) | Hc | 1× (gra) | 4× z oddal. | 6× z oddal. | 4× stała |
+  |---|---|---|---|---|---|
+  | cały drednot | 7 929 j. | 2,1% | 9,0% | 14,2% | 9,0% |
+  | środek 3 600 j. | 3 211 j. | 5,4% | 15,8% (g_ef 2,7) | 24,0% (g_ef 3,8) | 25,7% |
+  | zbliżenie 1 200 j. | 1 070 j. | 18,1% | 18,1% (g_ef 1) | 18,1% | 158% |
+
+  Na ekranie użytkownika 5 120 × 1 440: cały drednot Hc ≈ 6 700 j. (6× z oddaleniem → g_ef 5,9, ~17%), kadr 1 200 j.
+  szerokości Hc ≈ 535 j. — już prawdziwa perspektywa daje tam ~44% (kamera niższa przy tym samym kadrze w poziomie).
+- Wynik (zrzuty `.tmp/kreator/miasto-3d-v4/`): 1× = ten sam obraz miasta co perspektywa (A/B wzoru). Cały okręt: 4–6×
+  wyciąga ściany ku brzegom kadru (przy 6× ściany wieżowców przy dziobie ~70 px zamiast ~15 px przy 1×), okna świecą
+  na ścianach. Środek 3 600 j.: 6× z oddaleniem (3,8×) — mocne pochylenie, budynki się nie kładą. Zbliżenie 1 200 j.:
+  przesada z oddaleniem = prawdziwa perspektywa; STAŁA 4× kładzie budynki (s ≈ 0,39) i zasłania nimi klin, grzbiety
+  i rdzeń — przesada stała odrzucona. Propozycja domyślna: 6× z oddaleniem.
+- Miasto pochylone obok PŁASKIEGO mostka, rdzeni i nadbudówek (zrzuty `d1`–`d4`, `b-3600-*`): klin z napisem,
+  grzbiety i plac mostka to obraz kompozytora (płaski), a mostek i rdzenie — modele gry rysowane ortho. W zbliżeniu
+  (przesada 1×) nie razi: mostek VI ma ~32 j. wysokości, w perspektywie pochyliłby się o ~3%. Przy przesadzie razi
+  w średnim kadrze: wieżowce bliżej środka kadru kładą się na rdzeń i na brzegi klina i grzbietów — rdzeń wygląda
+  jak wpuszczony, nadbudówki jak namalowane (b-3600-gra-6x-zoom, d2 przy stałej 4×). Wniosek dla gry: mostki i rdzenie
+  pochylić tym samym wzorem (§ 9, lista zmian), a nadbudówki kompozytora — decyzja 10 w § 7.
+- Koszt GPU jak perspektywa (z miastem − bez: cały +0,13 ms, 3 600 j. +0,23 ms, 1 200 j. +0,28 ms przy 1 600 × 900),
+  0 pipeline'ów synchronicznych, 0 błędów konsoli (demo i generator).
+- STEROWANIE. Demo `dema/miasto-3d.html`: panel „Kamera z góry (P — po kolei)” — przyciski „Widok gry” / „Perspektywa”
+  / „Płaska”, suwak „Pochylenie ścian” (0–8×), przycisk „Przesada z oddaleniem”; klawisz P przełącza kamery po kolei;
+  adres `?kamera=gra|perspektywa|plaska&pochylenie=6&pochylenieZoom=0`. Generator (`dema/kreator-kadluba-webgpu.html`,
+  domyślnie kamera płaska — edytor): Warsztat — sekcja „Miasto 3D”, przyciski „płaska” / „widok gry” / „perspektywa”,
+  suwak „pochylenie”, przycisk „przesada z oddaleniem”; Stocznia — zakładka Kształty, na dole „Kamera”: przyciski
+  „Płaska” / „Widok gry” / „Perspektywa” / „Przesada z oddaleniem” i suwak „Pochylenie ścian”; bez klawisza; adres jak
+  w demie, wybór pamięta `localStorage` (`kreator.kamera`, `kreator.pochylenie`).
+- Zrzuty: `node scripts/webgpu/miasto-3d-zrzuty.mjs --zestaw v4` (demo), `node scripts/webgpu/miasto-3d-kreator.mjs
+  --kamery perspektywa,gra --pochylenie 6 --out .tmp/kreator/miasto-3d-v4/generator` (generator).

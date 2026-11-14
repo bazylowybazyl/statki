@@ -42,7 +42,15 @@ export const HULL_CITY3D_TUNE = {
   topGlow: 0,            // z góry: 0 — punkty, 1 — miękka poświata kanionów (szerokie słabe plamy zamiast punktów)
   glowSize: 5,           // poświata: mnożnik rozmiaru świateł podstaw (dno kanionów)
   glowGain: 0.28,        // poświata: siła (plamy nakładają się w pas wzdłuż kanionu)
-  receiverZ: -0.6
+  receiverZ: -0.6,
+  // WIDOK GRY Z POCHYLENIEM (kamera ortho + pochylenie perspektywy FG w wierzchołku; update(…, { lean: { on, gain,
+  // byZoom } })): przesada g (1 = prawdziwa perspektywa gry), z oddaleniem — 1× przy Hc ≤ leanNearHc (zbliżenie
+  // ~1 200 j. na ekranie 1 600 × 900), g przy Hc ≥ leanFarHc (cały drednot), pomiędzy po log Hc
+  leanGain: 6,
+  leanByZoom: true,
+  leanNearHc: 1200,
+  leanFarHc: 7000,
+  leanMinS: 0.15
 };
 
 /**
@@ -329,6 +337,11 @@ export function createHullCity3D({ scene } = {}) {
     U.uLights.value.set(T.lights, T.lightMinPx, T.halo, T.lightsTop);
     U.uGlow.value.set(T.topGlow ? 1 : 0, T.glowSize, T.glowGain, Math.max(0, Math.min(1, opts?.topView ?? 0)));
     U.uWin.value.set(4, 3.2, T.windowGlow, 0);
+    // widok gry z pochyleniem (tylko kamera ortho; perspektywa / free3d — bez zmian)
+    const lean = opts?.lean;
+    U.uLean.value.set(lean?.on ? 1 : 0, Number.isFinite(lean?.gain) ? lean.gain : T.leanGain,
+      (lean?.byZoom ?? T.leanByZoom) ? 1 : 0, T.leanMinS);
+    U.uLeanZ.value.set(T.leanNearHc, T.leanFarHc, Math.tan(17.5 * Math.PI / 180), 0);
     group.visible = visibility > 0.01 && stats.boxes > 0;
     lightMesh.visible = T.lights > 0.001 && stats.lights > 0;
     const key = `${Math.round(L[0] * 200)}|${Math.round(L[1] * 200)}|${T.shadowElevDeg}|${top}`;

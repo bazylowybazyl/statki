@@ -335,9 +335,10 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   generator miasta → do `cityBuildKey` (`dema/kreator-kadluba-miasto.js`) i opcji `builder.city`.
 - Demo: sekcja „MIASTO 3D” w `dema/kreator-kadluba-webgpu.js` (`cityDemoAfterBuild` po pełnej budowie, `cityDemoCheck`
   na ścieżce barw, `cityDemoSync` w `render()`, w podglądzie przeciągania miasto znika), panel „Miasto 3D” w Warsztacie
-  i opcje w zakładce Kształty Stoczni. KAMERA widoku: płaska (ortho) albo perspektywa z góry = `cameraPersp` passa FG
-  (35°, wysokość (h / 2) / tg(17,5°) / zoom) jako free3d (`viewCamera`, `?kamera=perspektywa`, `localStorage`
-  `kreator.kamera`); płaszczyzna z = 0 w tej samej skali — nakładki edytora bez zmian.
+  i opcje w zakładce Kształty Stoczni. KAMERA widoku (`S.camMode`, `?kamera=`, `localStorage` `kreator.kamera`): płaska
+  (ortho), „widok gry” — ortho + pochylenie ścian samego miasta wg perspektywy FG z przesadą (`S.lean`, suwak
+  „Pochylenie ścian”, domyślnie 6× z oddaleniem — próba wariantu B, docs § 10) albo perspektywa = `cameraPersp` passa
+  FG (35°) jako free3d (`viewCamera`); płaszczyzna z = 0 w tej samej skali — nakładki edytora bez zmian.
 - Zrzuty: `node scripts/webgpu/miasto-3d-kreator.mjs` (generator), `node scripts/webgpu/miasto-3d-zrzuty.mjs` (demo
   `dema/miasto-3d.html`); test `tests/hullDesignCity*.test.mjs`, `tests/hullDesignTowers.test.mjs`.
 

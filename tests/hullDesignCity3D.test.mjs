@@ -98,6 +98,24 @@ test('miasto 3D: setCity — y sceny = −y projektu, mapa wysokości w stałej 
   assert.equal(CITY_LIGHT_LAYOUT.stride, 8);
 });
 
+test('miasto 3D: widok gry z pochyleniem — uniform z update(), wzór w wierzchołku brył i świateł', () => {
+  const city = createHullCity3D({ scene: new THREE.Scene() });
+  const U = city.nodes.U;
+  city.update(1, { topView: 1, lean: { on: true, gain: 3, byZoom: false } });
+  assert.deepEqual(U.uLean.value.toArray().slice(0, 3), [1, 3, 0]);
+  assert.ok(U.uLean.value.w > 0 && U.uLean.value.w < 1, 'najmniejsze s w (0; 1)');
+  assert.ok(Math.abs(U.uLeanZ.value.z - Math.tan(17.5 * Math.PI / 180)) < 1e-6, 'tg ½ FOV kamery FG gry');
+  city.update(1, {});
+  assert.equal(U.uLean.value.x, 0, 'bez opcji — bez pochylenia');
+  // wierzchołek: Hc z macierzy rzutu (P[1][1]) i wyjście (c.xy, c.z · s, c.w · s)
+  const [, boxes, lights] = city.warmupMeshes();
+  for (const m of [boxes, lights]) {
+    const v = buildWGSL(m, new THREE.OrthographicCamera()).vertex;
+    assert.match(v, /cameraProjectionMatrix\[ 1u \]\.y/, `${m.name}: Hc z macierzy rzutu`);
+    assert.match(v, /\.w \* nodeVar\d+ \)/, `${m.name}: w · s na wyjściu`);
+  }
+});
+
 test('miasto 3D: moduł renderu nie czyta window / DOM i nie importuje stanu gry', () => {
   for (const f of ['src/3d/hullCity3D/hullCity3D.js', 'src/3d/hullCity3D/hullCity3D.tsl.js']) {
     const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');

@@ -2,7 +2,11 @@
 // (w takcie monitora — bez setek klatek na sekundę), Vite z tego katalogu.
 //
 //   node scripts/webgpu/miasto-3d-zrzuty.mjs [--out .tmp/kreator/miasto-3d-v3] [--tylko id1,id2] [--w 1600 --h 900]
-//        [--katalog 0|1|tylko] [--pomiar 0]
+//        [--katalog 0|1|tylko] [--pomiar 0] [--zestaw v3|v4]
+//
+// --zestaw v4 — WIDOK GRY Z POCHYLENIEM (kamera płaska + pochylenie ścian miasta z przesadą; docs/OPIS-miasto-3d.md
+// § 10): cały okręt, 3 600 j. i 1 200 j. dla kilku przesad (z oddaleniem i stałej) + perspektywa do porównania, miasto
+// obok płaskiego mostka; bez katalogu, domyślnie do .tmp/kreator/miasto-3d-v4.
 //
 // --katalog 1 (domyślnie) — także arkusz KATALOGU WIEŻOWCÓW (?katalog=1: z góry, z ukosa i nisko; arkusz z góry + ukos
 // w jednym PNG), --katalog tylko — sam katalog, --katalog 0 — bez.
@@ -14,13 +18,33 @@ import { startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, p
 import { readPng, writePng } from './png.mjs';
 
 const args = parseArgs();
-const out = resolve(repo, String(args.out || '.tmp/kreator/miasto-3d-v3'));
+const V4 = String(args.zestaw || 'v3') === 'v4';
+const out = resolve(repo, String(args.out || (V4 ? '.tmp/kreator/miasto-3d-v4' : '.tmp/kreator/miasto-3d-v3')));
 const only = args.tylko ? new Set(String(args.tylko).split(',')) : null;
 const SW = Number(args.w || 1600), SH = Number(args.h || 900);
 mkdirSync(out, { recursive: true });
 
+/** Kadry v4: widok gry z pochyleniem (cam 'gra', lean { gain, byZoom }) przy kilku przesadach + perspektywa. */
+const LEAN_SET = [
+  ['perspektywa', { cam: 'persp' }, 'perspektywa gry (35°, cała scena) — porównanie'],
+  ['gra-1x', { cam: 'gra', lean: { gain: 1, byZoom: false } }, 'widok gry, pochylenie 1× (prawdziwa perspektywa gry — tylko miasto)'],
+  ['gra-2.5x-zoom', { cam: 'gra', lean: { gain: 2.5, byZoom: true } }, 'widok gry, przesada 2,5× z oddaleniem'],
+  ['gra-4x-zoom', { cam: 'gra', lean: { gain: 4, byZoom: true } }, 'widok gry, przesada 4× z oddaleniem'],
+  ['gra-6x-zoom', { cam: 'gra', lean: { gain: 6, byZoom: true } }, 'widok gry, przesada 6× z oddaleniem (propozycja domyślna)'],
+  ['gra-4x-stala', { cam: 'gra', lean: { gain: 4, byZoom: false } }, 'widok gry, przesada 4× stała (bez zależności od zoomu)']
+];
+const KADRY_V4 = [];
+for (const [vid, view, vopis] of [['a-caly', 'caly', 'cały okręt'], ['b-3600', 'row', 'środek 3 600 j.'], ['c-1200', 'blisko', 'zbliżenie 1 200 j.']]) {
+  for (const [lid, o, lopis] of LEAN_SET) KADRY_V4.push({ id: `${vid}-${lid}`, view, ...o, opis: `${vopis}: ${lopis}` });
+}
+KADRY_V4.push(
+  { id: 'd1-mostek-1200-gra-6x-zoom', view: { x: -1700, y: -150, zoom: SW / 1200 }, cam: 'gra', lean: { gain: 6, byZoom: true }, opis: 'wieża mostka głównego i klin 1 200 j. — miasto pochylone, mostek, rdzenie i kadłub płaskie (moduły gry)' },
+  { id: 'd2-mostek-1200-gra-4x-stala', view: { x: -1700, y: -150, zoom: SW / 1200 }, cam: 'gra', lean: { gain: 4, byZoom: false }, opis: 'to samo miejsce, przesada 4× stała — mocne pochylenie obok płaskiego mostka' },
+  { id: 'd3-mostek-1200-perspektywa', view: { x: -1700, y: -150, zoom: SW / 1200 }, cam: 'persp', opis: 'to samo miejsce w perspektywie (mostek i rdzenie też pochylone) — porównanie' },
+  { id: 'd4-mostek-500-gra-6x-zoom', view: { x: -1900, y: -120, zoom: SW / 500 }, cam: 'gra', lean: { gain: 6, byZoom: true }, opis: 'mostek z bliska (500 j.) — przesada z oddaleniem = 1×' }
+);
 /** Kadry: widok (nazwa z dema albo obiekt), parametry miasta, słońce, światła. */
-const KADRY = [
+const KADRY_V3 = [
   { id: 'a1-caly-perspektywa', view: 'caly', opis: 'drednot cały z góry, kamera perspektywy (jak pass FG gry)' },
   { id: 'a1p-caly-plaska', view: 'caly', persp: false, opis: 'ten sam kadr, kamera płaska (ortho) — A/B' },
   { id: 'a2-caly-bez-miasta', view: 'caly', city: false, opis: 'cały okręt bez miasta' },
@@ -33,8 +57,10 @@ const KADRY = [
   { id: 'c1-ukos', view: 'ukos', opis: 'z ukosa jak kadr odniesienia' },
   { id: 'c3-nisko', view: 'nisko', opis: 'nisko wzdłuż środka' },
   { id: 'c4-od-dziobu', view: 'rufa', opis: 'z ukosa od dziobu' }
-].filter((k) => !only || only.has(k.id) || only.has(k.id.split('-')[0])).filter(() => String(args.katalog) !== 'tylko');
-const KATALOG = String(args.katalog ?? '1') !== '0' && (!only || only.has('katalog'));
+];
+const KADRY = (V4 ? KADRY_V4 : KADRY_V3)
+  .filter((k) => !only || only.has(k.id) || only.has(k.id.split('-')[0])).filter(() => String(args.katalog) !== 'tylko');
+const KATALOG = !V4 && String(args.katalog ?? '1') !== '0' && (!only || only.has('katalog'));
 
 const vite = await startVite(5441);
 const chrome = await startChrome({ width: SW, height: SH, takt: true });
@@ -60,13 +86,14 @@ try {
     await ev(`window.__miasto.toggleCity(${k.city === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.toggleLights(${k.lights === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.setTopGlow(${k.glow ? 'true' : 'false'})`);
-    await ev(`window.__miasto.setPersp(${k.persp === false ? 'false' : 'true'})`);
+    await ev(`window.__miasto.setCamMode(${JSON.stringify(k.cam || (k.persp === false ? 'plaska' : 'persp'))})`);
+    if (k.lean) await ev(`window.__miasto.setLean(${k.lean.gain}, ${k.lean.byZoom})`);
     await ev(`window.__miasto.setView(${JSON.stringify(k.view)})`);
     await ev('window.__miasto.runFrames(12)');
     const st = await ev('JSON.stringify(window.__miasto.stats())').then(JSON.parse);
     const file = join(out, `${k.id}.png`);
     await screenshotPng(cdp, file);
-    raport.kadry[k.id] = { opis: k.opis, gpuMs: st.gpuMs, syncPipes: st.syncPipes, gen: st.gen, city: st.city };
+    raport.kadry[k.id] = { opis: k.opis, cam: k.cam || (k.persp === false ? 'plaska' : 'persp'), lean: k.lean || null, gpuMs: st.gpuMs, syncPipes: st.syncPipes, gen: st.gen, city: st.city };
     console.log('zrzut', k.id, 'GPU', st.gpuMs?.toFixed?.(2), 'sync', st.syncPipes);
   }
   raport.koniec = await ev('JSON.stringify(window.__miasto.stats())').then(JSON.parse);
@@ -76,11 +103,15 @@ try {
     await ev('window.__miasto.toggleLights(true)');
     await ev('window.__miasto.setTopGlow(false)');
     raport.pomiar = {};
-    for (const [view, persp] of [['caly', true], ['row', true], ['blisko', true], ['blisko', false], ['ukos', true]]) {
+    const POMIAR = V4 ? [['caly', 'gra'], ['row', 'gra'], ['blisko', 'gra']]
+      : [['caly', 'persp'], ['row', 'persp'], ['blisko', 'persp'], ['blisko', 'plaska'], ['ukos', 'persp']];
+    if (V4) await ev('window.__miasto.setLean(6, true)');
+    for (const [view, cam] of POMIAR) {
+      const persp = cam !== 'plaska';
       const r = {};
       for (const on of [true, false]) {
         await ev(`window.__miasto.toggleCity(${on})`);
-        await ev(`window.__miasto.setPersp(${persp})`);
+        await ev(`window.__miasto.setCamMode(${JSON.stringify(cam)})`);
         await ev(`window.__miasto.setView(${JSON.stringify(view)})`);
         await ev('window.__miasto.runFrames(20)');
         let sum = 0, n = 0;
@@ -92,8 +123,8 @@ try {
         r[on ? 'zMiastem' : 'bezMiasta'] = n ? Math.round(sum / n * 1000) / 1000 : null;
       }
       r.miasto = r.zMiastem != null && r.bezMiasta != null ? Math.round((r.zMiastem - r.bezMiasta) * 1000) / 1000 : null;
-      raport.pomiar[`${view}${persp ? '' : '-plaska'}`] = r;
-      console.log('pomiar GPU', view, persp ? 'perspektywa' : 'płaska', JSON.stringify(r));
+      raport.pomiar[`${view}-${cam}`] = r;
+      console.log('pomiar GPU', view, cam, persp ? '' : '(płaska)', JSON.stringify(r));
     }
     await ev('window.__miasto.toggleCity(true)');
   }
