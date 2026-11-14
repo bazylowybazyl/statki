@@ -882,6 +882,45 @@ Budowa grafu kompozytora w Node (NodeBuilder, minimum z 3; pułapka 40): geo / b
 Generator w Node (`node scripts/kreator-plytka-makieta.mjs --pomiar`, CPU, minimum z 7; makieta, przed poprawkami
 dzielnic): drednot 250–330 ms, Colossus / Citadella / Bellator ≤ 31 ms (krok zegara CPU Windows ~15,6 ms).
 
+## Pancerz z obrysu — ciągła skorupa (2026-11-14, temat 2)
+
+Ocena użytkownika makiety płytki: „pancerz wciąż jest modułowy i spójrz na dziub - generator musi mieć możliwość
+narysowania ciągłego kadłuba bez przerwań. Jednolity.” Propozycja i makieta: `docs/PROPOZYCJA-kreator-pancerz.md`
+(przyczyny łaty: każdy klocek to osobna płyta z własną fazą, poduszką, linią przy krawędzi i rowem wokół; siatka
+paneli wzdłuż osi zamiast wzdłuż burt; rytm równych kafli). Stan i zasady — reguła `kreator-kadlubow` § „Pancerz
+z obrysu”. Prototyp w kreatorze (etapy 1–3):
+
+- pole projektu `shell` (`hullDesignShell.js`, rozwijane w `expandHullDesign`), rytmy A / B / C, otwarcia z klocków-wycięć
+  poziomu 1, wnęki przy przyłączach paliwa z kanałów serwisowych (+6 jd — przy 2 jd dwie dysze SIDE drednota i zbiornik
+  miały przyłącza widoczne w 5–7 z 12 próbek), strażnik `shellViolations`;
+- drednot na skorupie z rowem osi (`axisTrench` ze stacji (−2 896, 0) … (−1 500, 440) … (2 480, 0)), kręgosłup
+  nadbudówek w rowie, napisy i orły na pancerzu; flota TN bez skorupy;
+- panele w demie (Stocznia, Warsztat) — także wariant i świecenie układu maszynowni (`board`);
+- wpusty „płyta w płycie”: stopień 1,8 jd z fazą 2,4 jd i ton ±13% (cztery stopnie: 0,6 / −0,5 / 0,25 / −1) przez
+  trzeci kanał tekstury rowków. Przy 1,3 jd i ±7% z daleka nie było ich widać.
+- `grooveField` rasteryzuje teraz tylko pas ±cap wokół odcinka w każdym wierszu (długie skośne rowki skorupy miały
+  pudło setki razy większe od pasa).
+
+Pomiary (2026-11-14):
+
+| co | wynik |
+|---|---|
+| rozwinięcie ze skorupą (Node, CPU, minimum z 7, bez pamięci LRU) | drednot A 140 ms, B 218 ms, C 172 ms; Bellator A 47 ms |
+| rowki | drednot A 38 (z lustrem), B 44, C 180; siatka odległości 3 204 × 766 (burta y ≤ 0, 2,5 j.) |
+| budowa w demie (headless, `S.timing.total`, pierwsza budowa) | drednot stary 4,36–6,54 s, nowy 4,45–5,67 s (dwa przebiegi; worker: rozwinięcie +0,16–0,26 s, układ maszynowni +0,2–0,3 s — rów większy) |
+| rytm B / C po A (geometria z pamięci) | 1,6–2,1 s (rozwinięcie 0,16–0,4 s, rowki ~40 ms) |
+| sieć systemów | `pipeNetworkCheck` 0 (drednot A / B / C, Colossus, Bellator), przyłącza paliwa 4/4, 6/6, 2/2 |
+| pipeline'y synchroniczne w klatkach / błędy konsoli | 0 / 0 (`kreator-pancerz-ab.mjs`, cały przebieg) |
+
+A/B z kompozytora: `node scripts/webgpu/kreator-pancerz-ab.mjs --out .tmp/kreator/pancerz-prototyp` — `a1-caly.png`,
+`b1-dziob.png`, `b2-skrzydlo.png`, `b3-rufa.png`, `c1-row.png` (u góry stary drednot z `4b1478ca`, na dole nowy),
+`d0-rytmy-caly.png`, `d0-rytmy-dziob.png` (A / B / C od góry), `e1-colossus-colossus.png`, `e2-bellator-bellator.png`
+(bez skorupy — kod kompozytora poza wpustami nie zmienia obrazu: kod wpustu 0 daje mnożnik tonu 1 i stopień 0).
+
+Ryzyka i otwarte sprawy: rytm B owija pasy wokół małych wnęk przy dyszach (gęste zakrętasy przy rufie); duże pola
+skorupy z bliska nadal spokojniejsze niż wzór (ton wpustów subtelny z daleka); przeciąganie klocka drednota przelicza
+skorupę (~0,15–0,25 s na podgląd).
+
 ## Demo — narzędzia
 
 **Stocznia** (domyślny interfejs, `dema/kreator-kadluba-stocznia.js`; prośba użytkownika 2026-10-21: „jak generator

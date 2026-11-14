@@ -22,7 +22,8 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `hullDesignBuildable.js` (strażnik `isPlayerBuildable`), `hullDesignParts.js`, `hullDesignCastles.js`,
   `hullDesignSystems.js` (sieć systemów: kto z kim), `hullDesignSystemSlots.js` (sloty systemów presetów),
   `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster, martwe kable `markPipeNetPower`), `hullDesignBoard.js`
-  (układ maszynowni „jak płytka drukowana” — § „Układ maszynowni”), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
+  (układ maszynowni „jak płytka drukowana” — § „Układ maszynowni”), `hullDesignShell.js` (pancerz z obrysu — § „Pancerz
+  z obrysu”), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
   (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania), `hullDesignClass.js` (klasa
   okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`;
   `hullDesignBuild.js` (budowa etapami z pamięcią — § „Budowa: worker i pamięć etapów”) z workerem
@@ -77,6 +78,11 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   przerwań. Jednolity. Lecimy dalej”. Odczytanie ORKIESTRATORA (nie użytkownika): każdy wariant lepszy niż dziś, żaden
   nie wskazany → domyślny A, B i C wybieralne polem projektu; świecenie chciane, ale dużo słabsze i rzadsze; miasto
   (wieżowce) i ciągły pancerz to osobne tematy (3 i 2).
+- Ciągły pancerz (2026-11-14, temat 2, `docs/PROPOZYCJA-kreator-pancerz.md`): „pancerz wciąż jest modułowy i spójrz na
+  dziub - generator musi mieć możliwość narysowania ciągłego kadłuba bez przerwań. Jednolity.”; „musze zobaczyc
+  w generatorze”; o rowie osi drednota: „row otwary wzdluz osi to znaczy ze nie jest zakryty na srodku pancerzem? jesli
+  o to chodzi to tak”. Rytmu nie wybrał — ma je przełączać na żywo; odczytanie ORKIESTRATORA: wszystkie trzy rytmy
+  wybieralne, domyślnie A; flota TN bez zmian (skorupa to opcja), drednot na skorupie z rowem osi.
 - Superkapitał linii Atlasa (2026-10-27): „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa
   (czerń / szary)”; szkic Atlasa to „bardziej battleship — za krótki na superkapitała” — preset bierze ze szkicu UKŁAD
   sekcji, nie proporcje (dłuższy, smukły kadłub w limicie klasy VI).
@@ -283,6 +289,36 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   ≥ 1,3 jd (~2 teksele przy ~1,5 teksela/jd każdego okrętu). Pomiary i A/B: `docs/KREATOR-KADLUBA.md` § „Układ
   maszynowni”; zrzuty `node scripts/webgpu/kreator-plytka-ab.mjs`, makieta CPU `node scripts/kreator-plytka-makieta.mjs`.
 
+## Pancerz z obrysu (ciągła skorupa)
+
+- Pole projektu `shell` (`normalizeHullShell`; brak, `false` albo `on: false` — płyty z klocków jak dotąd): `{ rhythm:
+  'wzor' | 'pasy' | 'zebra', rim, bands, bandStep, ribStep, inset: { lo, hi, step, cut, axis, ch, minW } | null, keel,
+  grooveW, niche }` — wymiary w jd, zakresy `HD_SHELL_LIMITS`, rytmy `HD_SHELL_RHYTHMS` (A obwódka i wpusty, B pasy
+  wzdłuż burt, C pasy i żebra). Flota TN go nie ma (test); drednot — tak.
+- `expandHullDesign` przy skorupie: klocki poziomu 1 to tylko SYLWETKA (rama), wycięcia poziomu 1 to OTWARCIA (nie tną
+  pól — nadbudówki stojące w rowie zostają), po modułach `hullShellGeometry` daje PŁYTĘ = rama − otwarcia − wnęki przy
+  przyłączach paliwa (kanał serwisowy gondoli, dyszy SIDE i zbiornika + `niche` jd; inaczej przyłącze schowane pod
+  płytą) — jedna bryła 'poly' poziomu 1 (`blockSet: 'shell'`, clip 0 + clipIn jak płyty klocków), wstawiona za bryłami
+  klocków — i ROWKI rytmu (`shell`: rim / band / rib / inset / keel; wpust ma `fill` — ton −1…1) dopisane do rowków
+  projektu z kopiami lustra. `hullDesignShell.js` nie importuje schematu (schemat importuje go).
+- Rytm z odległości od brzegu skorupy (burty i ścian otwarć): transformata ośmiokątna na siatce ≤ 6 mln komórek (przy
+  lustrze tylko burta y ≤ 0 — odległość do ścian drugiej burty nie jest mniejsza niż do ich odbicia), izolinie →
+  łamane (Douglas–Peucker). Wynik w LRU po kluczu wejścia — rozwinięcie woła się przy każdej budowie i kluczu.
+- Strażnik: `shell` to JEDNA cecha projektu (`shellViolations`: rytm z listy, parametry w zakresach); otwarcia to
+  zwykłe klocki na siatce. Klucze budowy biorą skorupę przez rozwinięte bryły (`kGeo`) i rowki (`kGroove`); pole
+  zmienia kształt — NIE może trafić do pomijanych przez `hullDesignLookKey`.
+- Sieć systemów idzie pod skorupą (koszt płyty w A*), widać ją w otwarciach i wnękach; `pipeNetworkCheck` = 0 na
+  drednocie we wszystkich rytmach. Rama się nie zmienia (sylwetka z klocków).
+- Kompozytor: WPUST = trzeci kanał tekstury rowków (`grooveField` wypełnia wnętrze pętli z `fill` kodem 1,5 + ½ · ton;
+  pakiet `packHullGrooveTexture` ten sam), płyta wewnątrz wyżej o `HD_LOOK.panel.insetH` z fazą od rowka i ton
+  ±`insetTone`; kod 0 (projekt bez skorupy) — obraz bez zmian. Siatki paneli wzdłuż osi na skorupie nie ma (`panels` 0 —
+  włączenie skorupy w demie ustawia je samo); nie przywracać (decyzja: to element łaty).
+- Demo: `dema/kreator-kadluba-pancerz.js` (operacje wspólne Stoczni i Warsztatu: włącz / wyłącz, rytm, suwaki, rów osi
+  `addAxisTrench` dopasowany do kadłuba, układ maszynowni: wariant i świecenie); Stocznia — sekcja w opcjach zakładki
+  Kształty, Warsztat — sekcje w panelu. A/B z kompozytora: `node scripts/webgpu/kreator-pancerz-ab.mjs` (stary drednot
+  z historii gita, nowy, rytmy, Colossus i Bellator); test `tests/hullDesignShell.test.mjs`; pomiary — docs § „Pancerz
+  z obrysu”.
+
 ## Klasy okrętów i gniazda broni (etap 2)
 
 - Dane i rachunek w `src/data/shipClasses.js` (czysty, bez kreatora): klasy (limit powierzchni, gniazd, ciężkich, rozmiar
@@ -330,8 +366,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Osprzęt sieci ma numer 16-bitowy w rastrze (`pipeB`: G + 256 · A; `HD_PIPE_TUNE.maxFits` 511, kompozytor `pipeFits`
   512) — drednot ma ~470 elementów, Colossus ~290 (8 bitów obcinało nadmiar od najniższego priorytetu). Biegi zostają
   8-bitowe (`maxRuns` 255; drednot ~130).
-- Skosy z dowolnym nachyleniem na siatce: trapez obrócony o ±90° (`trapX`, `plateAft` / `plateFwd` w pliku drednota —
-  podstawa od rufy albo od dziobu); ostrze 1 : 4 ma x ≡ 4 000 (mod 16), żeby burta wypadała na siatce 4 j.
+- Skosy z dowolnym nachyleniem na siatce: trapez obrócony o ±90° (`trapX` w pliku drednota — podstawa od rufy albo od
+  dziobu); ostrze 1 : 4 ma x ≡ 4 000 (mod 16), żeby burta wypadała na siatce 4 j.
+- Drednot stoi na PANCERZU Z OBRYSU (§ „Pancerz z obrysu”): klocki to sylwetka, rów osi to klocki-wycięcia poziomu 1
+  (`axisTrench`), w rowie kręgosłup nadbudówek (poziom 2: grzbiety, pokład-klin z rdzeniami, wieża mostka) i układ
+  maszynowni; napisy i orły leżą na pancerzu albo na nadbudówkach, nie na dnie rowu. Gniazda broni przy rowie stoją co
+  najmniej promień od jego ściany.
 
 ## Rdzeń: gniazdo obudowy reaktora (v 2)
 

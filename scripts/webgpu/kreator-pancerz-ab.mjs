@@ -37,7 +37,8 @@ async function oldDreadnought(rev) {
   return mod.default.make();
 }
 const OLD = await oldDreadnought(args.stary || '4b1478ca');
-const withRhythm = (rh) => { const d = hullDesignPreset('dreadnought'); d.shell = { ...d.shell, rhythm: rh }; d.name += ` — rytm ${rh}`; return d; };
+// rytm od nowa (jak shellSetRhythm w demie): preset ma pola rytmu A po normalizacji — samo `rhythm` by ich nie zmieniło
+const withRhythm = (rh) => { const d = hullDesignPreset('dreadnought'); d.shell = { rhythm: rh }; d.name += ` — rytm ${rh}`; return d; };
 const DESIGNS = {
   stary: { key: 'dreadnought', set: 'stary', make: () => structuredClone(OLD) },
   nowy: { key: 'dreadnought', set: 'nowy', make: () => hullDesignPreset('dreadnought') },
