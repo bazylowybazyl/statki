@@ -1228,8 +1228,9 @@ export function installShipyard(api) {
       U.designRef = d;
       U.sel = []; U.hover = null; U.dupMemo = null;
       if (U.drag && U.drag.mode !== 'palette' && U.drag.mode !== 'pan') { U.drag = null; if (S.drag?.kind?.startsWith('stocznia')) S.drag = null; }
-      // nowy obiekt projektu (cofanie, ponowienie, straż limitów): suwaki opcji (załadunek) z nowych wartości
-      if (S.ui === 'stocznia' && U.cat === 'ladunek' && !S.drag) renderOpts();
+      // nowy obiekt projektu (cofanie, ponowienie, straż limitów): suwaki opcji z nowych wartości — załadunek
+      // (Ładunek), pancerz, wnętrze i miasto (Kształty)
+      if (S.ui === 'stocznia' && (U.cat === 'ladunek' || U.cat === 'ksztalty') && !S.drag) renderOpts();
       syncTop();
       return;
     }
@@ -2009,6 +2010,6 @@ export function installShipyard(api) {
   return {
     draw, insets, onUi, harness,
     /** Po wczytaniu projektu (preset): karta okrętu od nowa, miniatury w jego barwach. */
-    refresh() { U.statsKey = ''; U.lastPalette = design()?.palette; if (S.ui === 'stocznia') { scheduleThumbs(); if (U.cat === 'ladunek') renderOpts(); } syncTop(); }
+    refresh() { U.statsKey = ''; U.lastPalette = design()?.palette; if (S.ui === 'stocznia') { scheduleThumbs(); if (U.cat === 'ladunek' || U.cat === 'ksztalty') renderOpts(); } syncTop(); }
   };
 }
