@@ -301,6 +301,14 @@ gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę 
    rozpadało się na wąskie paski.
 7. Zniszczenia miasta: chować bryły nad wyrwą (prosto, tanio) czy rozpad brył jako odłamy? — Rekomendacja: najpierw
    chowanie / osmalenie, rozpad później.
+8. Jak rysować miasto w zwykłym widoku gry (§ 9): w passie FG jak stacje czy w passie gry z „pochyleniem
+   perspektywy”? — Rekomendacja: pochylenie w passie gry (wariant B) razem z mostkami, rdzeniami, wieżami i dyszami.
+9. Przy CAŁYM drednocie kamera gry wisi ~7 900 j. nad okrętem, a miasto ma ~166 j. — perspektywa gry (35°) pochyla je
+   o ~2% odstępu od środka kadru (~15 px przy dziobie), więc „cały okręt” dalej wygląda prawie płasko (zrzut
+   `a1-caly-perspektywa`). Przesadzić pochylenie (mnożnik wysokości tylko w pochyleniu, np. 3–4×) czy zostać przy
+   kamerze gry? — Rekomendacja: zostać przy kamerze gry (stacje i hale FG zgadzają się z miastem), przesadę ocenić
+   w prototypie wariantu B (jeden uniform) — w zbliżeniach (3 600 j.: ~5%, 1 200 j.: ~18%) perspektywa już niesie „GTA
+   style”.
 
 ## 8. Jak sprawdzić
 
@@ -312,3 +320,81 @@ gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę 
   `node scripts/webgpu/miasto-3d-kreator.mjs` (domyślnie `.tmp/kreator/miasto-3d-v3/generator`).
 - Testy: `node --test tests/hullDesignTowers.test.mjs tests/hullDesignCity.test.mjs tests/hullDesignCity3D.test.mjs`
   (w zestawie `node --test "tests/hullDesign*.test.mjs"`).
+
+## 9. Miasto w grze w zwykłym widoku („GTA style”) — plan (etap C, bez zmian w grze)
+
+Wymaganie (użytkownik 2026-11-14): „w grze/generatorze chcę 3d gta style (tak jak w grze)” — budowle wychylają się ku
+brzegom kadru jak stacje i hale w grze, widać ściany i okna. Demo i kreator robią to kamerą free3d (wszystko jedną
+kamerą perspektywy). W grze płaszczyzna okrętów idzie passem ortho, więc trzeba wybrać, gdzie rysować miasto.
+
+### Stan gry (to, z czym miasto musi się ułożyć)
+
+- Passy do jednego celu, kolejno: tło → planety → halo → ring-planety → warp → ORTHO (warstwa 0: kadłuby, mostki,
+  rdzenie, wieże, dysze, pociski, efekty, gaz wybuchów) → TARCZE (warstwa 7, kamera ortho, test głębi ortho bez zapisu)
+  → FG (warstwa 2: stacje, części baz i hal nad płaszczyzną, okna i lampy mostków — `BRIDGE3D_WINDOWS`). FG ma kamerę
+  `cameraPersp` (35°, wysokość Hc = (h / 2) / tg(17,5°) / zoom nad punktem kamery, prosto w dół) i WŁASNĄ głębię
+  (czyszczona) — rysuje się nad wszystkim z passa ortho.
+- Głębia passa ortho (`cameraOrtho`, z = 150 000, near 1 / far 400 000, ~0,024 j. na stopień depth24): wysokość nie
+  zmienia obrazu, tylko kolejność. Umowa (`src/3d/ships3d/modelSlabDepth.js`): modele kadłubów w paśmie [−10,4; −5,3],
+  skóry sprite'ów z = 0, wieże i dysze na sprite'ach [0,05; 1,8] / [0,04; 1,4], tarcza z = 1 + wysokość kopuły, pociski
+  i efekty z = 14–15. Bryła gazu wybuchów nie testuje głębi (leży nad tym, co przed nią w passie), żar — testuje.
+- Kamery 3D gry (K / Shift+K, reżyser kadru): tryb `free3d` — wszystkie passy kamerą perspektywy, prawdziwa głębia
+  (`setModelSlabDepthOn(false)`). Miasto działa w nim już dziś (demo, widok „z ukosa”); `update(…, { topView: 0 })`.
+
+### Wariant A — miasto w passie FG (jak stacje)
+
+- Prawdziwa perspektywa i prawdziwa głębia względem stacji i hal FG.
+- FG rysuje się PO pociskach, wiązkach, wybuchach i tarczach i nie zna głębi ortho: miasto przykrywa trafienia
+  i wybuchy na pokładzie drednota, kopułę jego tarczy, iskry i dym z ran — walka na grzbiecie znika pod zabudową.
+- Cień na kadłubie (prostokąt pod kadłubem z testem GREATER na głębi kadłuba) musi zostać w passie ortho — w FG głębi
+  kadłuba nie ma.
+- Mostki, rdzenie, wieże i dysze zostają w ortho, więc stoją płasko obok wieżowców wychylonych o kilkanaście procent
+  (przy zbliżeniu 1 200 j. szczyt miasta, ~166 j., wychyla się o ~18% odstępu od środka kadru, mostek nie). Przeniesienie ich do FG
+  ciągnie za sobą błyski wylotów, odrzut, pasma głębi i kolejność z efektami — przebudowę całej płaszczyzny okrętu.
+
+### Wariant B — pochylenie perspektywy w passie ortho (REKOMENDACJA)
+
+- Kamera FG patrzy prosto w dół, więc punkt na wysokości z ląduje na ekranie w środku kadru + odstęp · Hc / (Hc − z),
+  a kolejność zasłaniania to kolejność z (głębia = Hc − z). Obie rzeczy da się odtworzyć w passie ortho: wierzchołek
+  liczy zwykły rzut ortho `c` punktu (x, y) z głębią z PASMA, a na wyjściu daje `vec4(c.xy, c.z · s, s)`,
+  s = max(0,15; (Hc − z) / Hc). Po dzieleniu przez w: xy jak w FG, głębia z pasma, interpolacja varyingów poprawna
+  perspektywicznie (okna na ścianach bez „pływania”). Hc = wysokość kamery FG z `Core3D` (uniform na widok — podzielony
+  ekran ustawia go przy każdym renderze), z — wysokość nad płaszczyzną okrętu (lokalna, małe liczby).
+- Kolejność z płaszczyzną okrętu bez zmian: miasto w paśmie nad skórami (z > 0) i POD pociskami i efektami (14–15) —
+  pociski, wiązki, wybuchy i tarcza leżą nad miastem jak dziś nad wieżami; cień na kadłubie bez zmian.
+- Jedno pasmo na okręt: wysokość z ∈ [0; Zmax okrętu] → pasmo [0,05; ~12] JEDNĄ skalą dla miasta, mostków, rdzeni, wież
+  i dysz na sprite'ach (dziś `applyModelSlabDepth` mapuje każdy obiekt jego własnym [zb; zt] — wierzch 20-metrowej wieży
+  i 300-metrowego wieżowca trafiłyby na tę samą głębię). Pasmo ~12 j. daje ~0,8 j. wysokości na stopień głębi
+  (1,75 j. dzisiejszego pasma wież — ~5,5 j.: styki ścian z dachami migotałyby). Tarcza (z = 1 + kopuła) musi wtedy
+  leżeć nad pasmem (do ustalenia: podnieść tarczę albo pasmo poniżej niej).
+- Wspólny pomocnik TSL (np. `src/3d/tsl/pochylenieFg.js`: uniform Hc + przełącznik) w wierzchołkach: miasto (bryły,
+  światła), bryła mostka (`bridge3D.tsl.js`), rdzeń (`reactor3D`), wieże (`turretBatch3D`), dysze SIDE
+  (`thrusterBatch3D`), lampy mocowań; modele kadłubów 3D opcjonalnie. Okna i lampy mostków są już w FG (perspektywa) —
+  z pochyloną bryłą trafią w nią przy każdej wysokości (dziś do sprawdzenia: przesunięcie okien wysokich mostków
+  względem bryły z ortho).
+- Kamery 3D (free3d): pochylenie i pasmo wyłączone tym samym przełącznikiem co `setModelSlabDepthOn`.
+- Koszt: kilka działań na wierzchołek, bez nowych passów i zmian w Core3D poza uniformem Hc; worker — Hc liczy Core3D
+  z kamery migawki (bez nowego pola w `RenderWorld`). Rozgrywka bez zmian (zasada żelazna 1); HUD i mysz rzutują
+  płaszczyznę z = 0 przez `View3D` — bez zmian.
+- Ograniczenia: stacje i części FG zawsze nad miastem (jak dziś nad okrętami); gaz wybuchów (bez testu głębi) nad
+  miastem jak nad wszystkim w passie; przy bardzo bliskim zbliżeniu (Hc ≈ wysokość wieży) s obcięte do 0,15 — szczyty
+  „kładą się” zamiast znikać za kamerą.
+- „Cały okręt”: perspektywa gry przy całym drednocie pochyla miasto o ~2% (decyzja 9 w § 7). W wariancie B przesada
+  pochylenia to mnożnik z w s (jeden uniform) — do oceny w prototypie.
+
+### Wariant C — pochylenie tylko miasta
+
+- Najtańszy (sam `hullCity3D`), ale mostki, rdzenie i wieże stoją płasko między pochylonymi wieżowcami — odrzucony.
+
+### Lista zmian (wariant B, kolejno)
+
+1. Prototyp w demie miasta: tryb kamery „pochylenie” (ortho + pomocnik) na mieście, mostkach i rdzeniach; A/B z free3d
+   z góry (ten sam obraz xy), kolejność z pociskami i wybuchami (galeria broni na tle drednota), migotanie pasma.
+2. Pomocnik `pochylenieFg` + uniform Hc w Core3D (strona i worker, podzielony ekran), przełącznik z kamer 3D.
+3. Wspólne pasmo głębi okrętu w `modelSlabDepth.js` (miasto, mostki, rdzenie, wieże i dysze na sprite'ach); tarcza nad
+   pasmem.
+4. Pomocnik w materiałach: miasto, mostek, rdzeń, wieże, dysze SIDE, lampy mocowań; rozgrzewka bez zmian (te same
+   materiały — sprawdzić 0 pipeline'ów sync).
+5. Wpięcie miasta do gry (§ 6 „Do gry”: poza renderu, worker, maskowanie, mgła wojny, zasilanie, mapa ran).
+6. Narzędzia: zrzuty w grze (`scripts/webgpu/*-gra.mjs`) — drednot z miastem w trzech zbliżeniach, bitwa nad
+   grzbietem, kamery 3D; koszt (PerfHUD, `Core3D.gpuFrameMs`) przy 5 120 × 1 440.
