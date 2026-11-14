@@ -1468,11 +1468,11 @@ export function installShipyard(api) {
     const d = design();
     const sh = shellOf(d), shown = sh || shellOf({ ...d, shell: { ...(d?.shell || {}), on: true } });
     const b = boardOf(d);
-    return `<div class="yoptl">Pancerz z obrysu <span class="ydim">· jedna skorupa bez szwów; otwarcia — ✂ Wycięcie na warstwie Pancerz</span></div>
+    return `<div class="yoptl">Pancerz z obrysu <span class="ydim">· jedna skorupa bez szwów; odsłonięte miejsca — ✂ Wycięcie na warstwie Pancerz</span></div>
       <div class="ychips"><button class="ychip${sh ? ' on' : ''}" data-shell="1" title="klocki warstwy Pancerz stają się samą sylwetką, pancerz to jedna płyta">Pancerz z obrysu</button>${HD_SHELL_RHYTHM_KEYS.map((k) => `<button class="ychip${sh && shown.rhythm === k ? ' on' : ''}" data-shellr="${k}">${SHELL_RHYTHM_LABELS[k]}</button>`).join('')}</div>
       ${SHELL_SLIDERS.map((sl) => { const v = sl.get(shown); return `<label class="yslider"><span>${sl.label} <b data-v="shell:${sl.k}">${shellSliderText(sl.k, v)}</b></span><input type="range" data-k="shell:${sl.k}" min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${v}"></label>`; }).join('')}
-      <div class="ychips"><button class="ychip" data-trench="add" title="klocki-wycięcia warstwy Pancerz na osi, dopasowane do kadłuba">＋ Rów osi</button><button class="ychip" data-trench="del">− Rów osi</button></div>
-      <div class="yoptl">Układ maszynowni <span class="ydim">· dno rowów</span></div>
+      <div class="ychips"><button class="ychip" data-trench="add" title="wzdłuż osi okrętu pancerz znika — widać wnętrze (klocki-wycięcia warstwy Pancerz, dopasowane do kadłuba)">＋ Odsłoń środek (bez pancerza)</button><button class="ychip" data-trench="del" title="pancerz znów zakrywa środek okrętu">− Zakryj środek</button></div>
+      <div class="yoptl">Wnętrze pod pancerzem <span class="ydim">· widać je tam, gdzie nie ma płyt</span></div>
       <div class="ychips">${HD_BOARD_VARIANT_KEYS.map((k) => `<button class="ychip${b.variant === k ? ' on' : ''}" data-board="${k}">${BOARD_VARIANT_LABELS[k]}</button>`).join('')}</div>
       <label class="yslider"><span>Świecenie <b data-v="board:glow">${b.glow.toFixed(2)}</b></span><input type="range" data-k="board:glow" min="0" max="1" step="0.01" value="${b.glow}"></label>`;
   }
