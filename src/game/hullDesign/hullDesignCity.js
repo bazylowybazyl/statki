@@ -80,9 +80,11 @@ export const HD_CITY_TUNE = Object.freeze({
   minRidge: 900,        // najkrótszy grzbiet [j.] (z oknem) — krótszy otwarty odcinek osi to plac, nie miasto
   wallClear: 9,         // od ściany rowu (płyty, sylwetka)
   obsClear: 6,          // od przeszkód w rowie (wiązki sieci, moduły, kanały)
+  superRing: 12,        // płyta poziomu 1 do tylu j. od nadbudówki (L2 < 0) to jeszcze nadbudówka
+  superClear: 12,       // od nadbudówek stojących w rowie (klin pokładu, grzbiety, wieża mostka) — ulica wokół nich
   plazaPad: Object.freeze({ reactor: 48, bridge: 34, grav_proj: 30, shield_gen: 30, other: 22 }),
   ringReach: 80, ringK: 1.3,    // pierścień wyższej zabudowy wokół placów rdzeni
-  bridgeTop: 34, bridgeSlope: 0.45,
+  bridgeTop: 34, bridgeSlope: 0.3,   // mostek zwieńczeniem: zabudowa schodzi ku niemu tarasami (34 j. + 0,3 · odległość)
   fireSlope: 0.36, fireClear: 12, turretTop: Object.freeze({ S: 7, M: 10, L: 15, Capital: 24 }),
   avenue: [440, 700], avenueW: 26, street: [100, 200], streetW: 7,
   plotGap: 1.2,         // szczelina między budynkami jednej działki — rząd budynków to ciągła ściana, nie osobne domy
@@ -265,7 +267,11 @@ export function buildHullCity(field, board, opts = {}) {
     const tx = fx - i, ty = fy - j, o = j * grid.w + i;
     return (arr[o] * (1 - tx) + arr[o + 1] * tx) * (1 - ty) + (arr[o + grid.w] * (1 - tx) + arr[o + grid.w + 1] * tx) * ty;
   };
-  const trench = new Uint8Array(n), dom = new Uint8Array(n);
+  // ROW = rama bez pancerza (L1 odkryte) RAZEM z nadbudówkami stojącymi w nim (L2 < 0: klin pokładu, grzbiety, wieża
+  // mostka — przy skorupie z obrysu wycięcia poziomu 1 otwierają rów, a nadbudówki w nim zostają): szerokość rowu liczy
+  // się do ściany pancerza, nadbudówki są w nim przeszkodami (osobna odległość `Ds` — ulica wokół nich)
+  const L2 = field.levels[2] || null;
+  const trench = new Uint8Array(n), dom = new Uint8Array(n), sup = new Uint8Array(n);
   const edgeIn = 0.6 * Du;
   for (let j = 0; j < gh; j++) {
     const y = cy(j);
@@ -273,7 +279,12 @@ export function buildHullCity(field, board, opts = {}) {
     for (let i = 0; i < gw; i++) {
       const x = cx(i);
       const k = j * gw + i;
-      if (sampleLv(L0, x, y) < -edgeIn && sampleLv(L1, x, y) > edgeIn) trench[k] = 1;
+      if (sampleLv(L0, x, y) < -edgeIn) {
+        // nadbudówka = jej płyta poziomu 1 (L2 jest wcięte względem L1 o fazę bloku — pierścień przy obrysie należy do
+        // nadbudówki, nie do pancerza)
+        if (sampleLv(L1, x, y) > edgeIn) trench[k] = 1;
+        else if (L2 && sampleLv(L2, x, y) < T.superRing) { trench[k] = 1; sup[k] = 1; }
+      }
       const bi = Math.floor((x - bg.x0) / bg.cell);
       if (bi >= 0 && bi < bg.w && bj >= 0 && bj < bg.h && board.dom[bj * bg.w + bi]) dom[k] = 1;
     }
@@ -303,6 +314,9 @@ export function buildHullCity(field, board, opts = {}) {
   const Do = new Float32Array(n);
   for (let k = 0; k < n; k++) Do[k] = trench[k] && !dom[k] && Dw[k] > 3 ? 0 : BIG;
   chamfer(Do, gw, gh, cg);
+  const Ds = new Float32Array(n);
+  for (let k = 0; k < n; k++) Ds[k] = sup[k] ? 0 : BIG;
+  chamfer(Ds, gw, gh, cg);
   lap('maski');
 
   // ── PLACE i SUFIT (moduły w rowie, gniazda broni ze stożkiem ostrzału, mostki) ──────────────────────────────────
@@ -366,7 +380,8 @@ export function buildHullCity(field, board, opts = {}) {
   // ── ZABUDOWYWALNE, SZEROKOŚĆ PRZEKROJU, WYSOKOŚĆ ───────────────────────────────────────────────────────────────
   const B = new Uint8Array(n);
   for (let k = 0; k < n; k++) {
-    if (trench[k] === 1 && dom[k] && !excl[k] && Dw[k] >= T.wallClear && Do[k] >= T.obsClear && cap[k] >= T.minLevelH + 2) B[k] = 1;
+    if (trench[k] === 1 && !sup[k] && dom[k] && !excl[k] && Dw[k] >= T.wallClear && Do[k] >= T.obsClear && Ds[k] >= T.superClear
+      && cap[k] >= T.minLevelH + 2) B[k] = 1;
   }
   const Wraw = new Float32Array(gw);
   for (let i = 0; i < gw; i++) {
@@ -654,7 +669,8 @@ export function buildHullCity(field, board, opts = {}) {
     ok: nb > 0, reason: nb > 0 ? '' : 'brak działek', variant: V, boxes, nBoxes: nb, lights, nLights: pk.nLights, height,
     bounds: pk.bounds,
     plazas, buildings: buildings.map((b) => ({ ...b.spec, family: b.tower.family, flags: b.flags, mirror: !!b.mirror, top: b.tower.top })),
-    avenues, streets, stats
+    avenues, streets, stats,
+    ...(opts.debug ? { debug: { gx0, cg, gw, gh, Wc, Hs, axisOpen, Wraw, Dw, trench, sup, axisRaw } } : {})
   };
 }
 

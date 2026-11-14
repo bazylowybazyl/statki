@@ -1,7 +1,7 @@
 // Masyw miasta na grzbiecie okrętu (src/game/hullDesign/hullDesignCity.js, docs/OPIS-miasto-3d.md): determinizm,
-// lustro, bryły w rowie osi (poza płytami, modułami i wiązkami sieci), stożki ostrzału, światła tylko na ścianach,
-// degradacja (wąski rów / mały okręt = bez miasta). Drednot z OTWARTYM rowem osi jak w makiecie płytki
-// (scripts/kreator-plytka-makieta.mjs) — plik drednota bez zmian.
+// lustro, bryły w odsłoniętym środku (poza pancerzem, nadbudówkami w rowie, modułami i wiązkami sieci), stożki ostrzału,
+// światła tylko na ścianach, degradacja (zakryty środek / mały okręt = bez miasta). Drednot z pliku (ciągła skorupa
+// z odsłoniętym środkiem wzdłuż osi — warships/dreadnought.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
@@ -14,15 +14,16 @@ import {
 } from '../src/game/hullDesign/hullDesignCity.js';
 import { boxHalfAt, pointInBox, HD_TOWER_TUNE } from '../src/game/hullDesign/hullDesignTowers.js';
 
-function openTrench(d0) {
+/** Drednot z ZAKRYTYM środkiem: bez klocków-wycięć skorupy (otwarć rowu osi) — degradacja. */
+function closedShell(d0) {
   const d = structuredClone(d0);
-  d.shapes = d.shapes.filter((s) => !(s.kind === 'block' && (s.level ?? 1) >= 1 && s.y === 0 && s.x > -2700 && s.x < 2460));
+  d.shapes = d.shapes.filter((s) => !(s.kind === 'block' && s.op === 'cut' && (s.level ?? 1) === 1));
   return d;
 }
 const memo = new Map();
 function ship(key) {
   if (!memo.has(key)) {
-    const design = key === 'rowOtwarty' ? openTrench(hullDesignPreset('dreadnought')) : hullDesignPreset(key);
+    const design = key === 'zakryty' ? closedShell(hullDesignPreset('dreadnought')) : hullDesignPreset(key);
     const field = buildHullField(design, { board: false });
     const board = buildHullBoard(field, { variant: 'A' });
     memo.set(key, { field, board, cities: new Map() });
@@ -60,34 +61,40 @@ function footprint(b, f) {
   }
 }
 
-test('miasto: drednot z otwartym rowem ma zwarty masyw — poziomy, budynki tarasów i szczytu, dominanty, światła', () => {
+test('miasto: drednot z odsłoniętym środkiem ma zwarty masyw — poziomy, budynki tarasów i szczytu, dominanty, światła', () => {
   for (const v of Object.keys(HD_CITY_VARIANTS)) {
-    const c = city('rowOtwarty', { variant: v });
+    const c = city('dreadnought', { variant: v });
     assert.ok(c.ok, `${v}: ${c.reason}`);
     assert.ok(c.nBoxes > 800, `${v}: za mało brył (${c.nBoxes})`);
     assert.ok(c.nLights > 2000 && c.nLights <= HD_CITY_TUNE.maxLights, `${v}: światła ${c.nLights}`);
     assert.ok(c.stats.dominants >= 2, `${v}: bez dominant`);
     assert.ok(c.bounds.top > 120, `${v}: za niski szczyt ${c.bounds.top}`);
-    // zwartość: miasto pokrywa większość szerokiej części rowu (mapa wysokości > 0 w pasie osi)
+    // zwartość: miasto stoi w większości przekrojów odsłoniętego środka (klin pokładu z tyłu zajmuje cały rów — bez niego)
     let on = 0, all = 0;
-    for (let x = -2400; x <= 1600; x += 20) { all++; if (hullCityHeightAt(c, x, 0) > 0 || hullCityHeightAt(c, x, -40) > 0) on++; }
-    assert.ok(on / all > 0.6, `${v}: pas osi zabudowany w ${Math.round(on / all * 100)}%`);
+    for (let x = -2600; x <= 1800; x += 20) {
+      if (x > -1500 && x < -1250) continue;
+      all++;
+      let hit = false;
+      for (let y = 0; y >= -440 && !hit; y -= 8) hit = hullCityHeightAt(c, x, y) > 0;
+      if (hit) on++;
+    }
+    assert.ok(on / all > 0.75, `${v}: zabudowane przekroje ${Math.round(on / all * 100)}%`);
   }
 });
 
 test('miasto: ten sam projekt i ziarno = to samo miasto; inne ziarno = inne', () => {
-  const s = ship('rowOtwarty');
-  const a = city('rowOtwarty', { variant: 'A', seed: 5 });
+  const s = ship('dreadnought');
+  const a = city('dreadnought', { variant: 'A', seed: 5 });
   const b = buildHullCity(s.field, s.board, { variant: 'A', seed: 5 });
   assert.deepEqual(Array.from(a.boxes), Array.from(b.boxes));
   assert.deepEqual(Array.from(a.lights), Array.from(b.lights));
   assert.deepEqual(Array.from(a.height.data), Array.from(b.height.data));
-  const c = city('rowOtwarty', { variant: 'A', seed: 6 });
+  const c = city('dreadnought', { variant: 'A', seed: 6 });
   assert.notDeepEqual(Array.from(a.boxes.subarray(0, 600)), Array.from(c.boxes.subarray(0, 600)));
 });
 
 test('miasto: lustro osi okrętu — bryły i światła w parach (y, −y)', () => {
-  const c = city('rowOtwarty', { variant: 'A' });
+  const c = city('dreadnought', { variant: 'A' });
   const key = (x, y, a, b) => `${x.toFixed(2)}|${y.toFixed(2)}|${a.toFixed(2)}|${b.toFixed(2)}`;
   const set = new Map();
   for (let i = 0; i < c.nBoxes; i++) {
@@ -110,19 +117,20 @@ test('miasto: lustro osi okrętu — bryły i światła w parach (y, −y)', () 
 });
 
 test('miasto: bryły tylko w rowie osi — poza płytami, sylwetką, modułami i wiązkami sieci', () => {
-  const s = ship('rowOtwarty');
+  const s = ship('dreadnought');
   const { field, board } = s;
   const bg = board.grid;
-  const L0 = field.levels[0], L1 = field.levels[1];
+  const L0 = field.levels[0], L1 = field.levels[1], L2 = field.levels[2];
   const mods = field.expanded.modules.filter((m) => !['vent', 'grate', 'port', 'hatch'].includes(m.type));
   for (const v of Object.keys(HD_CITY_VARIANTS)) {
-    const c = city('rowOtwarty', { variant: v });
+    const c = city('dreadnought', { variant: v });
     let bad = 0, badMod = 0, badDom = 0, first = '';
     for (let i = 0; i < c.nBoxes; i++) {
       const b = boxAt(c, i);
       if (b.z0 > 0.5) continue;                 // stoi na innej bryle — ta stoi już w rowie
       footprint(b, (x, y) => {
-        if (!(sampleLv(field, L0, x, y) < 0 && sampleLv(field, L1, x, y) > 0)) { bad++; first ||= `poza rowem (${x.toFixed(1)}, ${y.toFixed(1)})`; }
+        if (!(sampleLv(field, L0, x, y) < 0 && sampleLv(field, L1, x, y) > 0)) { bad++; first ||= `poza rowem / na nadbudówce (${x.toFixed(1)}, ${y.toFixed(1)})`; }
+        if (sampleLv(field, L2, x, y) < HD_CITY_TUNE.superClear - 2) { bad++; first ||= `przy nadbudówce bez ulicy (${x.toFixed(1)}, ${y.toFixed(1)})`; }
         const bi = Math.floor((x - bg.x0) / bg.cell), bj = Math.floor(Math.abs(y) / bg.cell);
         if (!board.dom[bj * bg.w + bi]) { badDom++; first ||= `na wiązce / module płytki (${x.toFixed(1)}, ${y.toFixed(1)})`; }
         for (const m of mods) if (pipeModuleSdf(m, x, y) < 0) { badMod++; first ||= `na module ${m.type} (${x.toFixed(1)}, ${y.toFixed(1)})`; }
@@ -141,10 +149,10 @@ test('miasto: bryły tylko w rowie osi — poza płytami, sylwetką, modułami i
 });
 
 test('miasto: stożek ostrzału — przy gnieździe broni zabudowa nie wyżej niż linia strzału', () => {
-  const { field } = ship('rowOtwarty');
+  const { field } = ship('dreadnought');
   const T = HD_CITY_TUNE;
   const guns = field.expanded.modules.map((m) => ({ m, mt: hullDesignMountOf(m) })).filter((g) => g.mt && g.mt.slot !== 'hangar');
-  const c = city('rowOtwarty', { variant: 'C', height: 1.8 });
+  const c = city('dreadnought', { variant: 'C', height: 1.8 });
   for (let i = 0; i < c.nBoxes; i++) {
     const b = boxAt(c, i);
     for (const { m, mt } of guns) {
@@ -158,7 +166,7 @@ test('miasto: stożek ostrzału — przy gnieździe broni zabudowa nie wyżej ni
 });
 
 test('miasto: światła tylko na ścianach brył (nigdy na dachu), żadne wewnątrz bryły', () => {
-  const c = city('rowOtwarty', { variant: 'A' });
+  const c = city('dreadnought', { variant: 'A' });
   const BK = 32, buckets = new Map();
   const boxes = [];
   for (let i = 0; i < c.nBoxes; i++) {
@@ -193,9 +201,9 @@ test('miasto: światła tylko na ścianach brył (nigdy na dachu), żadne wewną
 });
 
 test('miasto: wysokość i gęstość z opcji; mapa wysokości zgodna z bryłami', () => {
-  const a = city('rowOtwarty', { variant: 'A' });
-  const hi = city('rowOtwarty', { variant: 'A', height: 1.5 });
-  const lo = city('rowOtwarty', { variant: 'A', density: 0.5 });
+  const a = city('dreadnought', { variant: 'A' });
+  const hi = city('dreadnought', { variant: 'A', height: 1.5 });
+  const lo = city('dreadnought', { variant: 'A', density: 0.5 });
   // objętość masywu (mapa wysokości) — szczyt sam bywa ścięty sufitem ostrzału
   const vol = (c) => { let v = 0; for (const h of c.height.data) v += h; return v * c.height.cell * c.height.cell; };
   assert.ok(vol(hi) > vol(a) * 1.25, `wysokość ×1,5: objętość ${Math.round(vol(hi))} vs ${Math.round(vol(a))}`);
@@ -214,9 +222,9 @@ test('miasto: degradacja — mały okręt i drednot bez otwartego rowu nie dosta
     assert.equal(c.nBoxes, 0, `${key}: ${c.nBoxes} brył (${c.reason})`);
     assert.equal(c.ok, false);
   }
-  // drednot z pliku (oś zakryta pokładem-klinem i grzbietami): boczne rowy przy klinie nie dostają miasta
-  const closed = city('dreadnought');
-  assert.equal(closed.nBoxes, 0, `drednot bez otwartego rowu: ${closed.nBoxes} brył (${closed.reason})`);
+  // drednot z zakrytym środkiem (skorupa bez otwarć): bez miasta
+  const closed = city('zakryty');
+  assert.equal(closed.nBoxes, 0, `drednot z zakrytym środkiem: ${closed.nBoxes} brył (${closed.reason})`);
   // bez układu płytki — bez miasta, bez wyjątku
   assert.equal(buildHullCity(ship('colossus').field, null).ok, false);
 });

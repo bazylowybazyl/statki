@@ -1,12 +1,12 @@
 // Demo MIASTA 3D na grzbiecie drednota (docs/OPIS-miasto-3d.md). NIC nie jest wpięte do gry ani do kreatora.
 //
-// Drednot Terra Novy z otwartym rowem osi (płyty grzbietu zdjęte jak w makiecie płytki — scripts/kreator-plytka-makieta.mjs;
-// plik drednota bez zmian) wypieka kompozytor kreatora i rysuje skóra kadłuba z gry (hexShips3D, oświetlenie v2) na Core3D;
-// mostki i reaktory — modele gry w gniazdach. Na rowie stoi miasto: układ płytki + masyw (src/game/hullDesign/
-// hullDesignCity.js, w workerze dema/miasto-3d.worker.js), bryły i światła — src/3d/hullCity3D/.
+// Drednot Terra Novy z pliku (src/game/hullDesign/warships/dreadnought.js — ciągła skorupa z odsłoniętym środkiem wzdłuż
+// osi; demo go nie przerabia) wypieka kompozytor kreatora i rysuje skóra kadłuba z gry (hexShips3D, oświetlenie v2) na
+// Core3D; mostki i reaktory — modele gry w gniazdach. W odsłoniętym środku stoi miasto: układ płytki + masyw
+// (src/game/hullDesign/hullDesignCity.js, w workerze dema/miasto-3d.worker.js), bryły i światła — src/3d/hullCity3D/.
 //
 // Serwowanie: `npm run dev` → /dema/miasto-3d.html
-//   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?row=0 (drednot z pliku, bez otwartego rowu)
+//   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?zgory=punkty|poswiata
 //   ?katalog=1 — KATALOG BUDYNKÓW: wszystkie rodziny generatora wieżowców w czterech wielkościach na jasnej płycie
 //   ?clean=1 (bez panelu)   ?test=1 (klatki z __miasto.runFrames — scripts/webgpu/miasto-3d-zrzuty.mjs)
 import * as THREE from 'three/webgpu';
@@ -53,6 +53,7 @@ const S = {
   orbit: { tx: -700, ty: 0, dist: 2600, yaw: -2.45, pitch: 0.36 },
   city: { variant: params.get('wariant') || 'A', seed: Number(params.get('ziarno') || 1), density: 1, height: 1, lights: 1 },
   cityOn: true, lightsOn: true, info: false,
+  topGlow: params.get('zgory') === 'poswiata',   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
   sunAz: 25,
   frame: 0, cpuMs: 0, frameMs: 16, syncPipes: 0, syncNames: [],
   gen: null, building: false, pendingCity: false
@@ -104,16 +105,8 @@ function provideSurface(image, data, w, h) {
 }
 const nextTask = () => new Promise((ok) => setTimeout(ok, 0));
 
-/** Drednot z OTWARTYM ROWEM osi: zdjęte płyty grzbietu (jak w makiecie płytki) — tylko w demie. */
-function openTrench(d0) {
-  const d = structuredClone(d0);
-  d.shapes = d.shapes.filter((s) => !(s.kind === 'block' && (s.level ?? 1) >= 1 && s.y === 0 && s.x > -2700 && s.x < 2460));
-  d.name += ' — otwarty rów (demo miasta)';
-  return d;
-}
-
 async function buildShip() {
-  const design = params.get('row') === '0' ? hullDesignPreset('dreadnought') : openTrench(hullDesignPreset('dreadnought'));
+  const design = hullDesignPreset('dreadnought');
   const T = window.__miasto.startup;
   let t = performance.now();
   const res = await builder.build(design, { fast: false, full: true });
@@ -301,12 +294,12 @@ function cameraForFrame() {
 }
 const VIEWS = {
   caly: () => { S.view = 'gra'; S.cam = { x: -150, y: 0, zoom: Math.min(W * 0.9 / 8000, H * 0.9 / 3816) }; },
-  row: () => { S.view = 'gra'; S.cam = { x: -700, y: -150, zoom: W / 3600 }; },
-  blisko: () => { S.view = 'gra'; S.cam = { x: -1000, y: -180, zoom: W / 1200 }; },
+  row: () => { S.view = 'gra'; S.cam = { x: -450, y: -60, zoom: W / 3600 }; },
+  blisko: () => { S.view = 'gra'; S.cam = { x: 60, y: -170, zoom: W / 1200 }; },
   // ujęcie jak kadr odniesienia: nisko z boku-rufy, wzdłuż grzbietu ku dziobowi
-  ukos: () => { S.view = 'ukos'; S.orbit = { tx: -500, ty: 80, dist: 2300, yaw: -2.62, pitch: 0.33 }; },
-  nisko: () => { S.view = 'ukos'; S.orbit = { tx: -900, ty: 0, dist: 1500, yaw: Math.PI + 0.22, pitch: 0.2 }; },
-  rufa: () => { S.view = 'ukos'; S.orbit = { tx: -1100, ty: 0, dist: 2100, yaw: 0.55, pitch: 0.42 }; }
+  ukos: () => { S.view = 'ukos'; S.orbit = { tx: -350, ty: 60, dist: 2300, yaw: -2.62, pitch: 0.33 }; },
+  nisko: () => { S.view = 'ukos'; S.orbit = { tx: -150, ty: 0, dist: 1500, yaw: Math.PI + 0.22, pitch: 0.2 }; },
+  rufa: () => { S.view = 'ukos'; S.orbit = { tx: -900, ty: 0, dist: 2100, yaw: 0.55, pitch: 0.42 }; }
 };
 const CATALOG_VIEWS = {
   caly: () => { S.view = 'gra'; S.cam = { x: 0, y: 0, zoom: Math.min(W * 0.94 / catalog.w, H * 0.94 / catalog.h) }; },
@@ -350,6 +343,7 @@ function render() {
   updateHexShips3D(cam, renderList, cullInfo);
   if (city3D) {
     HULL_CITY3D_TUNE.lights = S.lightsOn ? S.city.lights : 0;
+    HULL_CITY3D_TUNE.topGlow = S.topGlow ? 1 : 0;
     city3D.setSun(window.SUN.x, window.SUN.y);
     city3D.update(S.cityOn && S.cityData ? 1 : 0);
   }
@@ -426,10 +420,17 @@ addEventListener('keydown', (e) => {
   if (v) setView(v);
   else if (e.key === 'm' || e.key === 'M') toggleCity();
   else if (e.key === 'l' || e.key === 'L') toggleLights();
+  else if (e.key === 'g' || e.key === 'G') setTopGlow(!S.topGlow);
   else if (e.key === 'i' || e.key === 'I') { S.info = !S.info; $('info').style.display = S.info ? 'block' : 'none'; }
 });
 function toggleCity(on = !S.cityOn) { S.cityOn = on; $('cityOn').classList.toggle('on', on); }
 function toggleLights(on = !S.lightsOn) { S.lightsOn = on; $('lightsOn').classList.toggle('on', on); }
+function setTopGlow(on) {
+  S.topGlow = !!on;
+  $('topDots').classList.toggle('on', !S.topGlow);
+  $('topGlow').classList.toggle('on', S.topGlow);
+  return true;
+}
 
 function bindPanel() {
   const sel = $('variant');
@@ -454,6 +455,9 @@ function bindPanel() {
   range('elev', () => HULL_CITY3D_TUNE.shadowElevDeg, (v) => { HULL_CITY3D_TUNE.shadowElevDeg = v; }, (v) => `${v}°`, false);
   $('cityOn').onclick = () => toggleCity();
   $('lightsOn').onclick = () => toggleLights();
+  $('topDots').onclick = () => setTopGlow(false);
+  $('topGlow').onclick = () => setTopGlow(true);
+  setTopGlow(S.topGlow);
   for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => setView(b.dataset.view);
   $('fold').onclick = () => { $('panel').classList.toggle('min'); $('fold').textContent = $('panel').classList.contains('min') ? '+' : '–'; };
 }
@@ -494,7 +498,7 @@ window.__miasto = {
   ready: false, error: null, startup: {}, S,
   setView, setCity: async (o) => { Object.assign(S.city, o); await buildCity(); while (S.building || S.pendingCity) await new Promise((r) => setTimeout(r, 30)); return S.gen; },
   setSun(az, elev) { if (az != null) S.sunAz = az; if (elev != null) HULL_CITY3D_TUNE.shadowElevDeg = elev; placeSun(); return true; },
-  toggleCity, toggleLights, showLabels(on) { S.labels = !!on; return true; },
+  toggleCity, toggleLights, setTopGlow, showLabels(on) { S.labels = !!on; return true; },
   async runFrames(n = 1) {
     for (let i = 0; i < n; i++) {
       // pułapka 44: rysunek tylko po rAF — symulacja co klatkę, obraz ostatniej

@@ -94,7 +94,10 @@ function make() {
   // Rów = klocki-wycięcia poziomu 1 (`axisTrench`): szpic za emiterem, najszerszy przy rdzeniach, zwęża się ku kolcowi
   // rufy; w rowie maszynownia (układ „płytka”), rdzenie, mostek główny i kręgosłup nadbudówek. Wnęki przy przyłączach
   // paliwa (gondole, dysze SIDE, zbiorniki) wycina generator skorupy.
-  shapes.push(...axisTrench([[-2896, 0], [-2696, 120], [-2200, 296], [-1500, 440], [-200, 416], [704, 296], [1600, 144], [2480, 0]]));
+  // Szerokość śródokręcia pod miasto 3D (docs/OPIS-miasto-3d.md, 2026-11-14): ±540 przy rdzeniach, ±500 za klinem,
+  // ±332 przy grzbietach dziobowych — pas przy klinie pokładu mieści zabudowę z obu stron; wieże L wewnętrznego rzędu
+  // zostają ≥ 58 j. od ściany rowu.
+  shapes.push(...axisTrench([[-2896, 0], [-2696, 120], [-2200, 296], [-1500, 540], [-200, 500], [704, 332], [1600, 144], [2480, 0]]));
 
   // ── NADBUDÓWKI NA SKORUPIE: emiter na dziobie, nadbudówka skrzydła (poziom 2) ───────────────────────────────────
   shapes.push(

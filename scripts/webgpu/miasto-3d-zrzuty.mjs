@@ -1,7 +1,7 @@
 // Zrzuty dema MIASTA 3D na drednocie (dema/miasto-3d.html; opis docs/OPIS-miasto-3d.md). Jedna przeglądarka headless
 // (w takcie monitora — bez setek klatek na sekundę), Vite z tego katalogu.
 //
-//   node scripts/webgpu/miasto-3d-zrzuty.mjs [--out .tmp/kreator/miasto-3d] [--tylko id1,id2] [--w 1600 --h 900]
+//   node scripts/webgpu/miasto-3d-zrzuty.mjs [--out .tmp/kreator/miasto-3d-v2] [--tylko id1,id2] [--w 1600 --h 900]
 //        [--katalog 0|1|tylko] [--pomiar 0]
 //
 // --katalog 1 (domyślnie) — także arkusz KATALOGU WIEŻOWCÓW (?katalog=1: z góry, z ukosa i nisko; arkusz z góry + ukos
@@ -14,27 +14,30 @@ import { startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, p
 import { readPng, writePng } from './png.mjs';
 
 const args = parseArgs();
-const out = resolve(repo, String(args.out || '.tmp/kreator/miasto-3d'));
+const out = resolve(repo, String(args.out || '.tmp/kreator/miasto-3d-v2'));
 const only = args.tylko ? new Set(String(args.tylko).split(',')) : null;
 const SW = Number(args.w || 1600), SH = Number(args.h || 900);
 mkdirSync(out, { recursive: true });
 
 /** Kadry: widok (nazwa z dema albo obiekt), parametry miasta, słońce, światła. */
 const KADRY = [
-  { id: 'a1-drednot-caly', view: 'caly', opis: 'drednot cały z góry (kamera gry), miasto A' },
+  { id: 'a1-drednot-caly', view: 'caly', opis: 'drednot cały z góry (kamera gry), miasto A, światła z góry — punkty' },
   { id: 'a2-drednot-caly-bez-miasta', view: 'caly', city: false, opis: 'ten sam kadr bez miasta (A/B)' },
-  { id: 'b1-row-3600', view: 'row', opis: 'rów, kadr 3 600 j. z góry' },
-  { id: 'b2-zblizenie-1200', view: 'blisko', opis: 'zbliżenie 1 200 j. z góry' },
+  { id: 'a3-drednot-caly-poswiata', view: 'caly', glow: true, opis: 'drednot cały z góry, światła z góry — poświata' },
+  { id: 'b1-pas-3600', view: 'row', opis: 'odsłonięty środek, kadr 3 600 j. z góry — punkty' },
+  { id: 'b1g-pas-3600-poswiata', view: 'row', glow: true, opis: 'odsłonięty środek 3 600 j. — poświata' },
+  { id: 'b2-zblizenie-1200', view: 'blisko', opis: 'zbliżenie 1 200 j. z góry — punkty' },
+  { id: 'b2g-zblizenie-1200-poswiata', view: 'blisko', glow: true, opis: 'zbliżenie 1 200 j. z góry — poświata' },
   { id: 'b3-zblizenie-1200-bez-swiatel', view: 'blisko', lights: false, opis: 'zbliżenie 1 200 j., światła zgaszone' },
-  { id: 'b4-dziob-1200', view: { x: 1300, y: -60, zoom: SW / 1200 }, opis: 'zwężenie ku dziobowi, 1 200 j.' },
-  { id: 'c1-ukos', view: 'ukos', opis: 'z ukosa jak kadr odniesienia (nisko z boku-rufy, wzdłuż grzbietu)' },
+  { id: 'b4-klin-mostek-1200', view: { x: -1500, y: -150, zoom: SW / 1200 }, opis: 'klin pokładu, rdzenie i wieża mostka, 1 200 j. — punkty' },
+  { id: 'b4g-klin-mostek-1200-poswiata', view: { x: -1500, y: -150, zoom: SW / 1200 }, glow: true, opis: 'klin, rdzenie, mostek 1 200 j. — poświata' },
+  { id: 'b5-dziob-1200', view: { x: 1250, y: -60, zoom: SW / 1200 }, opis: 'grzbiety dziobowe, 1 200 j.' },
+  { id: 'c1-ukos', view: 'ukos', opis: 'z ukosa jak kadr odniesienia (nisko z boku-rufy, wzdłuż środka)' },
   { id: 'c2-ukos-bez-swiatel', view: 'ukos', lights: false, opis: 'z ukosa, bez świateł' },
-  { id: 'c3-nisko', view: 'nisko', opis: 'nisko wzdłuż grzbietu' },
-  { id: 'c4-od-dziobu', view: 'rufa', opis: 'z ukosa od dziobu' },
+  { id: 'c3-nisko', view: 'nisko', opis: 'nisko wzdłuż środka' },
+  { id: 'c4-od-dziobu', view: 'rufa', opis: 'z ukosa od dziobu (klin i mostek z przodu)' },
   { id: 'd-B-ukos', view: 'ukos', city: { variant: 'B' }, opis: 'kompozycja B (tarasy), z ukosa' },
-  { id: 'd-C-ukos', view: 'ukos', city: { variant: 'C' }, opis: 'kompozycja C (skupiska wież), z ukosa' },
-  { id: 'd-B-row', view: 'row', city: { variant: 'B' }, opis: 'kompozycja B, rów 3 600 j.' },
-  { id: 'd-C-row', view: 'row', city: { variant: 'C' }, opis: 'kompozycja C, rów 3 600 j.' }
+  { id: 'd-C-ukos', view: 'ukos', city: { variant: 'C' }, opis: 'kompozycja C (skupiska wież), z ukosa' }
 ].filter((k) => !only || only.has(k.id) || only.has(k.id.split('-')[0])).filter(() => String(args.katalog) !== 'tylko');
 const KATALOG = String(args.katalog ?? '1') !== '0' && (!only || only.has('katalog'));
 
@@ -61,6 +64,7 @@ try {
     }
     await ev(`window.__miasto.toggleCity(${k.city === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.toggleLights(${k.lights === false ? 'false' : 'true'})`);
+    await ev(`window.__miasto.setTopGlow(${k.glow ? 'true' : 'false'})`);
     await ev(`window.__miasto.setView(${JSON.stringify(k.view)})`);
     await ev('window.__miasto.runFrames(12)');
     const st = await ev('JSON.stringify(window.__miasto.stats())').then(JSON.parse);
@@ -74,6 +78,7 @@ try {
     // koszt GPU miasta: ten sam kadr z miastem i bez (średnia z 6 odczytów zegara GPU Core3D, po 10 klatek)
     await ev('window.__miasto.setCity({"variant":"A"})');
     await ev('window.__miasto.toggleLights(true)');
+    await ev('window.__miasto.setTopGlow(false)');
     raport.pomiar = {};
     for (const view of ['caly', 'row', 'blisko', 'ukos']) {
       const r = {};

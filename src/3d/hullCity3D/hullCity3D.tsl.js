@@ -77,7 +77,8 @@ export function createCityNodes(heightTex) {
     uHmTop: shared(new THREE.Vector4(1, 0, 0, 0)),             // szczyt miasta, —, —, —
     uLook: shared(new THREE.Vector4(1, 0.22, 0.05, 1)),        // jasność masywu, ton z wysokością, poświata okien, widoczność
     uLights: shared(new THREE.Vector4(1, 1.4, 0.6, 0.5)),      // jasność świateł, min. rozmiar [px], zasięg poświaty, siła z góry
-    uWin: shared(new THREE.Vector4(4, 3.2, 0.05, 0))           // piętro [j.], okno [j.], udział tlących się okien, —
+    uWin: shared(new THREE.Vector4(4, 3.2, 0.05, 0)),          // piętro [j.], okno [j.], udział tlących się okien, —
+    uGlow: shared(new THREE.Vector4(0, 7, 0.5, 0))             // z góry: poświata 0 / 1, mnożnik rozmiaru, siła, —
   };
   const pal = [];
   for (const c of CITY_MAT_PALETTE) pal.push(new THREE.Vector4(c[0], c[1], c[2], c[3]));
@@ -109,7 +110,8 @@ function cityLib(ctx) {
       const maxT = topK.sub(p.z).div(tanE).toVar();
       // krok rośnie z odległością (~1 j. przy przeszkodzie, ~7,5% drogi dalej): ostry cień u stóp brył bez schodków,
       // daleki koniec cienia wysokiej wieży — rzadziej, tam półcień i tak jest szeroki
-      const t = jit.mul(0.8).add(0.35).toVar();
+      // mały rozrzut startu (0,5–0,9 j.) i kroku (±7%) — półcień bez ziarna na jasnym pancerzu
+      const t = jit.mul(0.4).add(0.5).toVar();
       Loop(CITY_SHADOW_STEPS, () => {
         If(t.greaterThan(maxT), () => { Break(); });
         const rayZ = p.z.add(t.mul(tanE));
@@ -117,7 +119,7 @@ function cityLib(ctx) {
         // półcień proporcjonalny do drogi (stożek): płaski grunt — (t · tg) / (t · k) > 1, zawsze oświetlony
         lit.assign(min(lit, clamp(rayZ.sub(h).div(t.mul(U.uShadow.z.add(0.12)).add(0.05)), 0.0, 1.0)));
         If(lit.lessThanEqual(0.001), () => { Break(); });
-        t.addAssign(max(0.9, t.mul(0.075)).mul(jit.mul(0.3).add(0.85)));
+        t.addAssign(max(0.9, t.mul(0.075)).mul(jit.mul(0.14).add(0.93)));
       });
     });
     return lit;
@@ -344,6 +346,7 @@ export function createCityLightMaterial(ctx) {
   const vI = varyingProperty('float', 'vCityLI');
   const vCol = varyingProperty('vec3', 'vCityLCol');
   const vKind = varyingProperty('float', 'vCityLKind');
+  const vGlow = varyingProperty('float', 'vCityLGlow');
   // Wierzchołek jako Fn z jawnymi zmiennymi (pułapka 39 — bez `select` poza Fn ze wspólnymi węzłami w gałęziach).
   const vertexNode = Fn(() => {
     const lA = attribute('lA', 'vec4');
@@ -357,8 +360,14 @@ export function createCityLightMaterial(ctx) {
     const pxW = float(0).toVar();
     pxW.assign(float(2.0).mul(mix(mvc.z.negate(), float(1.0), ortho)).div(max(cameraProjectionMatrix.element(0).x.mul(screenSize.x), 1e-6)));
     const minPx = U.uLights.y;
+    // POŚWIATA z góry (uGlow.x, tylko kamera ortho): szczeliny, podstawy i okna — szerokie słabe plamy, które nakładają
+    // się w miękki pas wzdłuż kanionu; lampy masztów zostają punktami
+    const kind0 = mod(lB.w, 4.0);
+    const isBeacon = step(2.5, kind0);
+    const glow = float(0).toVar();
+    glow.assign(U.uGlow.x.mul(ortho).mul(float(1.0).sub(isBeacon)));
     const sizeEff = float(0).toVar();
-    sizeEff.assign(max(lA.w, pxW.mul(minPx)));
+    sizeEff.assign(max(lA.w.mul(mix(float(1.0), U.uGlow.y, glow)), pxW.mul(minPx)));
     // energia zachowana: mniejsze niż minPx — słabsze, nie większe
     const energy = float(0).toVar();
     energy.assign(clamp(lA.w.div(pxW.mul(minPx)), 0.0, 1.0));
@@ -377,12 +386,19 @@ export function createCityLightMaterial(ctx) {
     // z góry (ortho) szczeliny, podstawy i lampy przygaszone (uLights.w) — miasto z góry ma być ciemne, nie kropkowane
     const isWin = step(mod(code, 4.0), 0.5);
     const topK = mix(float(1.0), U.uLights.w, ortho.mul(float(1.0).sub(isWin)));
-    I.assign(floor(code.div(16.0)).div(63.0).mul(dir).mul(energy).mul(energy).mul(U.uLights.x).mul(U.uLook.w).mul(topK));
-    const spread = float(1.0).add(U.uLights.z.mul(3.0));
+    // poświata: siła wg rodzaju (podstawa w kanionie najmocniej, szczelina słabiej, okno prawie wcale), bez kierunku
+    const isBase = step(1.5, kind0).mul(step(kind0, 2.5));
+    const isSeam = step(0.5, kind0).mul(step(kind0, 1.5));
+    // (okna i prawie wszystkie szczeliny w poświacie gasną — zostaje dno kanionów; kwady bez nich = mało nakładania)
+    const glowK = mix(float(1.0), isBase.add(isSeam.mul(0.12)).mul(U.uGlow.z), glow);
+    I.assign(floor(code.div(16.0)).div(63.0).mul(mix(dir, float(1.0), glow)).mul(energy).mul(energy).mul(U.uLights.x).mul(U.uLook.w)
+      .mul(mix(topK, float(1.0), glow)).mul(glowK));
+    const spread = mix(float(1.0).add(U.uLights.z.mul(3.0)), float(1.35), glow);
     vUv.assign(corner.mul(2.0).mul(spread));
     vI.assign(I);
     vCol.assign(lightColors.element(int(colI.add(0.5))).xyz);
     vKind.assign(mod(code, 4.0));
+    vGlow.assign(glow);
     const out = vec4(2.0, 2.0, 2.0, 1.0).toVar();
     If(I.greaterThanEqual(0.002), () => {
       out.assign(cameraProjectionMatrix.mul(vec4(mvc.xy.add(corner.mul(sizeEff).mul(spread).mul(2.0)), mvc.z, 1.0)));
@@ -392,10 +408,13 @@ export function createCityLightMaterial(ctx) {
   const fragmentNode = Fn(() => {
     const r = length(vUv).toVar();
     const core = exp(r.mul(r).mul(-3.2));
-    const glowK = exp(r.mul(-1.6)).mul(U.uLights.z).mul(0.16);
+    const haloK = exp(r.mul(-1.6)).mul(U.uLights.z).mul(0.16);
     // szczelina i podstawa — rdzeń słabszy; okno i lampa — punkt
     const kSeam = select(vKind.greaterThan(0.5).and(vKind.lessThan(2.5)), float(0.75), float(1.0));
-    const e = core.mul(1.25).mul(kSeam).add(glowK).mul(vI).toVar();
+    const point = core.mul(1.25).mul(kSeam).add(haloK);
+    // poświata: szeroki miękki gaus bez rdzenia (nie punkt)
+    const soft = exp(r.mul(r).mul(-1.1)).mul(0.55);
+    const e = mix(point, soft, vGlow).mul(vI).toVar();
     If(e.lessThan(0.003), () => { Discard(); });
     return vec4(vCol.mul(e), 1.0);
   })();

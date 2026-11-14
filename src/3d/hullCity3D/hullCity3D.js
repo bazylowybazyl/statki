@@ -30,7 +30,7 @@ export const HULL_CITY3D_TUNE = {
   sunZ: 600,             // wysokość słońca nad płaszczyzną jak w kadłubie (słońce ~60 000 j. dalej — niemal poziome)
   shadowElevDeg: 26,     // „słońce cieni” (mostek: 30°) — długość cienia = wysokość / tg
   shadowStrength: 0.62,  // przyciemnienie kadłuba w pełnym cieniu miasta
-  shadowSoft: 0.05,      // półcień rośnie z odległością
+  shadowSoft: 0.07,      // półcień rośnie z odległością
   selfShadowAmbient: 0.6,
   brightness: 1,         // jasność masywu
   heightTone: 0.5,       // jaśniejsze wyższe dachy (z góry: grzbiet jaśniejszy od tarasów)
@@ -38,7 +38,10 @@ export const HULL_CITY3D_TUNE = {
   lights: 1,             // jasność świateł (0 — zgaszone)
   lightMinPx: 1.4,       // poniżej — światło słabnie zamiast maleć
   halo: 0.55,            // zasięg poświaty
-  lightsTop: 0.22,        // z góry (ortho): siła świateł szczelin i podstaw (okna na pionowych ścianach i tak gasną)
+  lightsTop: 0.22,       // z góry (ortho), tryb punktów: siła świateł szczelin i podstaw (okna pionowych ścian i tak gasną)
+  topGlow: 0,            // z góry: 0 — punkty, 1 — miękka poświata kanionów (szerokie słabe plamy zamiast punktów)
+  glowSize: 5,           // poświata: mnożnik rozmiaru świateł podstaw (dno kanionów)
+  glowGain: 0.28,        // poświata: siła (plamy nakładają się w pas wzdłuż kanionu)
   receiverZ: -0.6
 };
 
@@ -274,6 +277,7 @@ export function createHullCity3D({ scene } = {}) {
     U.uShadow.value.set(tanE, T.shadowStrength, T.shadowSoft, T.selfShadowAmbient);
     U.uLook.value.set(T.brightness, T.heightTone, T.windowGlow, Math.max(0, Math.min(1, visibility)));
     U.uLights.value.set(T.lights, T.lightMinPx, T.halo, T.lightsTop);
+    U.uGlow.value.set(T.topGlow ? 1 : 0, T.glowSize, T.glowGain, 0);
     U.uWin.value.set(4, 3.2, T.windowGlow, 0);
     group.visible = visibility > 0.01 && stats.boxes > 0;
     lightMesh.visible = T.lights > 0.001 && stats.lights > 0;
