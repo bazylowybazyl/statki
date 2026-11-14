@@ -36,9 +36,10 @@ export const HD_TOWER_LIGHT = Object.freeze({ window: 0, seam: 1, base: 2, beaco
  *  twin    — BLIŹNIACZE WIEŻE na końcach dłuższego boku cokołu, łącznik (jeden albo dwa) między nimi;
  *  wedge   — KLIN: tarasy schodzące ku jednej stronie (ku ścianie rowu albo wzdłuż osi), pochylone fronty;
  *  hall    — HALA: długa niska bryła z mocno pochylonymi bokami (dach dwuspadowy z dwóch płyt), szczelina przy okapie;
- *  spire   — IGLICA: smukły ośmiokątny trzon z tarasami, kołnierz korony, długi maszt (dominanta).
+ *  spire   — IGLICA: smukły ośmiokątny trzon z tarasami, kołnierz korony, długi maszt (dominanta);
+ *  plate   — PŁYTA masywu (poziomy zigguratu w hullDesignCity; bez doboru z automatu).
  */
-export const HD_TOWER_FAMILIES = Object.freeze(['slab', 'stepped', 'twin', 'wedge', 'hall', 'spire']);
+export const HD_TOWER_FAMILIES = Object.freeze(['slab', 'stepped', 'twin', 'wedge', 'hall', 'spire', 'plate']);
 
 /** Strojenie (j. świata). */
 export const HD_TOWER_TUNE = Object.freeze({
@@ -47,9 +48,9 @@ export const HD_TOWER_TUNE = Object.freeze({
   topEdge: 1.4,       // bez świateł tuż pod górną krawędzią ściany (parapet dachu)
   minSide: 1.5,       // najmniejsza pół-szerokość bryły
   minH: 1.2,          // najniższa bryła
-  windowFill: 0.16,   // udział zapalonych okien (× gęstość świateł)
-  seamFill: 0.55,     // udział zapalonych miejsc w szczelinach
-  baseFill: 0.32,     // udział zapalonych lamp u podstawy
+  windowFill: 0.2,    // udział zapalonych okien (× gęstość świateł) — w grupach
+  seamFill: 0.3,      // udział zapalonych miejsc w szczelinach
+  baseFill: 0.07,     // udział zapalonych lamp u podstawy (z góry widać tylko je i szczeliny — oszczędnie)
   maxLights: 900      // na budynek
 });
 
@@ -141,6 +142,8 @@ function builder(spec) {
     const u0 = Math.max(-L, u - hu), u1 = Math.min(L, u + hu);
     const v0 = Math.max(-W, v - hv), v1 = Math.min(W, v + hv);
     hu = (u1 - u0) / 2; hv = (v1 - v0) / 2; u = (u0 + u1) / 2; v = (v0 + v1) / 2;
+    // twardy sufit (stożek ostrzału, rampa mostka) — także maszty i korony
+    if (spec.zMax != null && z1 > spec.zMax) z1 = spec.zMax;
     const minSide = o.minSide ?? T.minSide;
     if (hu < minSide || hv < minSide || z1 - z0 < (o.minH ?? T.minH)) return null;
     const [x, y] = toWorld(u, v);
@@ -222,7 +225,7 @@ function builder(spec) {
           if (hg > fill * 2.2) continue;                              // grupa zgaszona
           if (towerHash(seed + bi * 131 + 7, f * 7 + sk, ak) > 0.62) continue;
           const tone = towerHash(seed, bi, f * 13 + grp);
-          wallLight(b, sx, sy, a, z, HD_TOWER_LIGHT.window, { s: 0.9, i: 0.45 + 0.55 * tone, c: tone > 0.93 ? 2 : tone > 0.7 ? 1 : 0 });
+          wallLight(b, sx, sy, a, z, HD_TOWER_LIGHT.window, { s: 1.5, i: 0.5 + 0.5 * tone, c: tone > 0.95 ? 2 : tone > 0.72 ? 1 : 0 });
         }
       }
     }
@@ -244,9 +247,10 @@ function builder(spec) {
       for (let c = 0; c <= n; c++) {
         const a = (c + 0.5 - (n + 1) / 2) * (2 * len / (n + 1));   // w lustrze dokładnie (połówki)
         const key = alongKey(b, sx, c, n);
-        const hg = towerHash(seed + bi * 59 + k * 977, sk, Math.floor(key / 5));
-        if (hg > fill * 1.5) continue;
-        if (towerHash(seed + bi * 59 + 3, sk * 31 + k, key) > 0.75) continue;
+        // skupiska: grupy po 8 miejsc zapalone razem (rząd świateł, nie kropkowany obrys)
+        const hg = towerHash(seed + bi * 59 + k * 977, sk, Math.floor(key / 8));
+        if (hg > fill * 1.25) continue;
+        if (towerHash(seed + bi * 59 + 3, sk * 31 + k, key) > 0.8) continue;
         wallLight(b, sx, sy, a, z, k, { up: o.up ?? 0.55, s: o.s ?? 1.1, i: o.i ?? 0.8, c: o.c ?? 0 });
       }
     }
@@ -529,13 +533,32 @@ function famSpire(B, r) {
   B.mast(top || col || last, 0, 0, H * r.range(0.12, 0.2), 0.9);
 }
 
-const FAMILY_FN = { slab: famSlab, stepped: famStepped, twin: famTwin, wedge: famWedge, hall: famHall, spire: famSpire };
+/**
+ * PŁYTA masywu (rodzina dla hullDesignCity — poziomy zigguratu): jedna bryła na cały rzut, mało pochylona, rzędy okien
+ * na długich frontach, u stopy szczelina (na tarasie poziomu niżej) albo lampy kanionu (na kadłubie).
+ */
+function famPlate(B, r) {
+  const { spec, L, W } = B;
+  const H = spec.H, z0 = spec.z0 ?? 0;
+  const b = B.box(0, 0, L, W, z0, z0 + H, {
+    mat: spec.mat ?? (z0 < 0.5 ? HD_TOWER_MAT.podium : HD_TOWER_MAT.plate),
+    ch: tnCh(L, W, spec.chK ?? r.range(0.04, 0.09)),
+    // front poziomu pochylony (spec.batK · wysokość): z kamery ortho widać go jako pas — jasny od słońca, ciemny od cienia
+    bat: spec.bat ?? Math.min(Math.min(L, W) * 0.3, H * (spec.batK ?? r.range(0.04, 0.08))), tone: r.range(0.94, 1.06)
+  });
+  if (!b) return;
+  B.windows(b, { rows: H > 26 ? 2 : 1, fill: HD_TOWER_TUNE.windowFill * 0.9, pitch: 4.6 });
+  if (z0 < 0.5) B.lightRow(b, z0 + 0.9, HD_TOWER_LIGHT.base, { fill: HD_TOWER_TUNE.baseFill, pitch: 6, up: 0.6, i: 0.7 });
+  else B.lightRow(b, z0 + 0.9, HD_TOWER_LIGHT.seam, { fill: HD_TOWER_TUNE.seamFill * 0.8, pitch: 3.4, up: 0.55, i: 0.85 });
+}
+
+const FAMILY_FN = { slab: famSlab, stepped: famStepped, twin: famTwin, wedge: famWedge, hall: famHall, spire: famSpire, plate: famPlate };
 
 /**
  * Budynek z opisu. `spec`: { x, y, hw, hh (rzut [j.]), H (wysokość nad z0 [j.]), z0 (podłoga, domyślnie 0),
  * family (HD_TOWER_FAMILIES; domyślnie z klasy i ziarna), seed, axis ('x' | 'y'; domyślnie dłuższy bok), sym (lustro y,
  * wymaga y = 0 przy wpisaniu w masyw), face ([sx, sy] — kierunek schodzenia klina), lights (gęstość świateł, 1),
- * tone (ton budynku) }.
+ * tone (ton budynku), zMax (twardy sufit wierzchu brył — także masztów) }.
  * Zwraca { family, cls, boxes, lights, top } — top: najwyższy wierzch [j.].
  */
 export function buildTower(spec) {
