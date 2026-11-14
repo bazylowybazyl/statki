@@ -46,6 +46,7 @@ import {
   SHELL_SLIDERS, SHELL_RHYTHM_LABELS, BOARD_VARIANT_LABELS, HD_SHELL_RHYTHM_KEYS, HD_BOARD_VARIANT_KEYS,
   shellOf, shellToggle, shellSetRhythm, shellSetSlider, addAxisTrench, removeAxisTrench, boardOf, boardSet
 } from './kreator-kadluba-pancerz.js';
+import { CITY_SLIDERS, CITY_VARIANT_LABELS, HD_CITY_VARIANT_KEYS, cityOn, citySet, cityShown, citySliderText, cityToggle } from './kreator-kadluba-miasto.js';
 
 const ACCENT = '#ffb54a';
 const BAD = '#ff6a5e';
@@ -1474,7 +1475,17 @@ export function installShipyard(api) {
       <div class="ychips"><button class="ychip" data-trench="add" title="wzdłuż osi okrętu pancerz znika — widać wnętrze (klocki-wycięcia warstwy Pancerz, dopasowane do kadłuba)">＋ Odsłoń środek (bez pancerza)</button><button class="ychip" data-trench="del" title="pancerz znów zakrywa środek okrętu">− Zakryj środek</button></div>
       <div class="yoptl">Wnętrze pod pancerzem <span class="ydim">· widać je tam, gdzie nie ma płyt</span></div>
       <div class="ychips">${HD_BOARD_VARIANT_KEYS.map((k) => `<button class="ychip${b.variant === k ? ' on' : ''}" data-board="${k}">${BOARD_VARIANT_LABELS[k]}</button>`).join('')}</div>
-      <label class="yslider"><span>Świecenie <b data-v="board:glow">${b.glow.toFixed(2)}</b></span><input type="range" data-k="board:glow" min="0" max="1" step="0.01" value="${b.glow}"></label>`;
+      <label class="yslider"><span>Świecenie <b data-v="board:glow">${b.glow.toFixed(2)}</b></span><input type="range" data-k="board:glow" min="0" max="1" step="0.01" value="${b.glow}"></label>` + cityOptsHtml();
+  }
+  // MIASTO 3D i KAMERA (operacje wspólne z Warsztatem — dema/kreator-kadluba-miasto.js)
+  function cityOptsHtml() {
+    const d = design();
+    const on = cityOn(d), c = cityShown(d || {});
+    return `<div class="yoptl">Miasto 3D <span class="ydim">· zabudowa w odsłoniętym środku, bryły nad kadłubem</span></div>
+      <div class="ychips"><button class="ychip${on ? ' on' : ''}" data-city="1">Miasto</button>${HD_CITY_VARIANT_KEYS.map((k) => `<button class="ychip${on && c.variant === k ? ' on' : ''}" data-cityv="${k}">${CITY_VARIANT_LABELS[k]}</button>`).join('')}<button class="ychip" data-cityseed="1" title="następne ziarno (${c.seed})">⟳ Ziarno</button><button class="ychip${c.glow ? ' on' : ''}" data-cityglow="1" title="z góry światła jako miękka poświata kanionów zamiast punktów">Z góry: poświata</button></div>
+      ${CITY_SLIDERS.map((sl) => `<label class="yslider"><span>${sl.label} <b data-v="city:${sl.k}">${citySliderText(sl.k, c[sl.k])}</b></span><input type="range" data-k="city:${sl.k}" min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${c[sl.k]}"></label>`).join('')}
+      <div class="yoptl">Kamera <span class="ydim">· perspektywa z góry jak gra rysuje wysokie budowle</span></div>
+      <div class="ychips"><button class="ychip${!S.persp ? ' on' : ''}" data-cam="plaska">Płaska</button><button class="ychip${S.persp ? ' on' : ''}" data-cam="perspektywa">Perspektywa</button></div>`;
   }
   function renderOpts() {
     let h = '';
@@ -1515,6 +1526,11 @@ export function installShipyard(api) {
       else if (b.dataset.shellr) { shellSetRhythm(design(), b.dataset.shellr); commit(); }
       else if (b.dataset.trench) { if ((b.dataset.trench === 'add' ? addAxisTrench(design(), S.field?.bounds) : removeAxisTrench(design())) > 0) commit(); }
       else if (b.dataset.board) { boardSet(design(), { variant: b.dataset.board }); commit(); }
+      else if (b.dataset.city) { cityToggle(design()); commit(); }
+      else if (b.dataset.cityv) { citySet(design(), { variant: b.dataset.cityv }); commit(); }
+      else if (b.dataset.cityseed) { citySet(design(), { seed: cityShown(design()).seed + 1 }); commit(); }
+      else if (b.dataset.cityglow) { citySet(design(), { glow: !cityShown(design()).glow }); commit(); }
+      else if (b.dataset.cam) { api.setPersp(b.dataset.cam === 'perspektywa'); }
       else if (b.dataset.k === 'windows') { design().windows = (design().windows ?? 1) > 0.5 ? 0 : 1; commit(); }
       else if (b.dataset.k === 'round') { design().round = (design().round ?? 0) > 0.5 ? 0 : 1; commit(); }
       renderOpts();
@@ -1528,6 +1544,13 @@ export function installShipyard(api) {
         const lb = el.opts.querySelector(`[data-v="${t.dataset.k}"]`);
         if (lb) lb.textContent = shellSliderText(t.dataset.k.slice(6), Number(t.value));
         S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true);
+      }
+      if (t.dataset.k?.startsWith('city:')) {
+        const k = t.dataset.k.slice(5), sl = CITY_SLIDERS.find((q) => q.k === k);
+        const lb = el.opts.querySelector(`[data-v="${t.dataset.k}"]`);
+        if (lb) lb.textContent = citySliderText(k, t.value);
+        // światła — od razu (obraz); gęstość i wysokość — masyw po puszczeniu suwaka (change)
+        if (sl && !sl.build) citySet(design(), { [k]: Number(t.value) });
       }
       if (t.dataset.k === 'board:glow') {
         boardSet(design(), { glow: t.value });
@@ -1546,6 +1569,7 @@ export function installShipyard(api) {
     });
     el.opts.addEventListener('change', (e) => {
       const k = e.target.dataset.k;
+      if (k?.startsWith('city:')) { citySet(design(), { [k.slice(5)]: Number(e.target.value) }); commit(); return; }
       // koniec przeciągania (myszą zamyka je już pointerup niżej — wtedy bez drugiej budowy)
       if ((k === 'detail' || k === 'pipes' || k === 'load' || isLiveSlider(k)) && S.drag) { S.drag = null; commit(); }
     });

@@ -86,6 +86,14 @@ test('miasto 3D: setCity — y sceny = −y projektu, mapa wysokości w stałej 
   const half = THREE.DataUtils.fromHalfFloat(tex.image.data[54 * HULL_CITY3D_LIMITS.hmW + 3]);
   assert.equal(half, 30);
   assert.equal(THREE.DataUtils.fromHalfFloat(tex.image.data[5 * HULL_CITY3D_LIMITS.hmW + 3]), 0);
+  // mipmapy MAKSIMUM (marsz cienia na kadłubie): poziom l — teksel (r ≫ l, i ≫ l) niesie wysokość 30
+  assert.equal(tex.mipmaps.length, HULL_CITY3D_LIMITS.levels);
+  assert.equal(tex.mipmaps[0], tex.image);
+  for (let l = 1; l < tex.mipmaps.length; l++) {
+    const m = tex.mipmaps[l];
+    assert.equal(m.width, HULL_CITY3D_LIMITS.hmW >> l);
+    assert.equal(THREE.DataUtils.fromHalfFloat(m.data[(54 >> l) * m.width + (3 >> l)]), 30, `poziom ${l}`);
+  }
   assert.equal(CITY_BOX_LAYOUT.stride, 12);
   assert.equal(CITY_LIGHT_LAYOUT.stride, 8);
 });

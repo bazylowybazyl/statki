@@ -45,8 +45,11 @@ export const HULL_CITY3D_TUNE = {
   receiverZ: -0.6
 };
 
-/** Pojemność mapy wysokości (teksele): 2048 × 1024 r16f = 4 MB; drednot 8 km mieści się przy ~2,6 j./teksel. */
-export const HULL_CITY3D_LIMITS = Object.freeze({ hmW: 2048, hmH: 1024 });
+/**
+ * Pojemność mapy wysokości (teksele): 3072 × 1024 r16f = 6 MB (+ 2 MB mipmap); drednot 8 km (miasto ~5 200 j.) mieści
+ * się przy 2 j./teksel. `levels` — poziomy mipmap MAKSIMUM (2 × 2 → 1) dla marszu cienia na kadłubie.
+ */
+export const HULL_CITY3D_LIMITS = Object.freeze({ hmW: 3072, hmH: 1024, levels: 5 });
 
 const BOX_ORDER = 12;
 const RECV_ORDER = 11;
@@ -94,15 +97,54 @@ function quadGeometry() {
   return g;
 }
 
-/** Pusta mapa wysokości (r16f; filtr liniowy, bez mipmap — próbka z jawnym poziomem 0). */
-function makeHeightTexture(w, h, data) {
-  const tex = new THREE.DataTexture(data || new Uint16Array(Math.max(1, w * h)), Math.max(1, w), Math.max(1, h), THREE.RedFormat, THREE.HalfFloatType);
+/**
+ * Pusta mapa wysokości (r16f, filtr liniowy) z `levels` poziomami mipmap liczonymi na CPU (`texture.mipmaps` — three
+ * r183 wysyła je poziom po poziomie, bez generatora mipmap na GPU). Poziom 0 = `image`; próbki z jawnym poziomem.
+ */
+function makeHeightTexture(w, h, levels = 1) {
+  const W = Math.max(1, w), H = Math.max(1, h);
+  const tex = new THREE.DataTexture(new Uint16Array(W * H), W, H, THREE.RedFormat, THREE.HalfFloatType);
   tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearFilter;
+  tex.minFilter = levels > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
   tex.generateMipmaps = false;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  if (levels > 1) {
+    tex.mipmaps = [tex.image];
+    for (let l = 1, lw = W, lh = H; l < levels; l++) {
+      lw = Math.max(1, lw >> 1); lh = Math.max(1, lh >> 1);
+      tex.mipmaps.push({ data: new Uint16Array(lw * lh), width: lw, height: lh });
+    }
+  }
   tex.needsUpdate = true;
   return tex;
+}
+
+/**
+ * Mipmapy MAKSIMUM mapy wysokości (poziom l z 2 × 2 tekseli poziomu l − 1) w obszarze w × h poziomu 0. Wysokości są
+ * ≥ 0, a dla nieujemnych liczb połówkowej precyzji porządek bitów `uint16` = porządek wartości — maksimum na bitach.
+ * Maksimum (nie średnia): cień wysokiej, wąskiej wieży na dalszych poziomach się nie skraca, tylko poszerza o teksel.
+ */
+function buildMaxMips(tex, w, h) {
+  const M = tex.mipmaps;
+  if (!M || M.length < 2) return;
+  for (let l = 1; l < M.length; l++) {
+    const src = M[l - 1], dst = M[l];
+    const S = src.data, D = dst.data, sw = src.width, sh = src.height, dw = dst.width;
+    D.fill(0);
+    const nw = Math.min(dst.width, Math.ceil(w / 2)), nh = Math.min(dst.height, Math.ceil(h / 2));
+    for (let j = 0; j < nh; j++) {
+      const r0 = 2 * j * sw, r1 = Math.min(2 * j + 1, sh - 1) * sw;
+      for (let i = 0; i < nw; i++) {
+        const c0 = 2 * i, c1 = Math.min(c0 + 1, sw - 1);
+        let m = S[r0 + c0];
+        if (S[r0 + c1] > m) m = S[r0 + c1];
+        if (S[r1 + c0] > m) m = S[r1 + c0];
+        if (S[r1 + c1] > m) m = S[r1 + c1];
+        D[j * dw + i] = m;
+      }
+    }
+    w = nw; h = nh;
+  }
 }
 
 /**
@@ -113,7 +155,7 @@ function makeHeightTexture(w, h, data) {
 export function createHullCity3D({ scene } = {}) {
   const T = HULL_CITY3D_TUNE;
   const LIM = HULL_CITY3D_LIMITS;
-  const heightTex = makeHeightTexture(LIM.hmW, LIM.hmH);
+  const heightTex = makeHeightTexture(LIM.hmW, LIM.hmH, LIM.levels);
   const nodes = createCityNodes(heightTex);
   const group = new THREE.Group();
   group.name = 'HullCity3D';
@@ -215,16 +257,21 @@ export function createHullCity3D({ scene } = {}) {
       const sy0 = -(hm.y0 + hm.h * hm.cell);
       nodes.U.uHm.value.set(hm.x0, sy0, 1 / (LIM.hmW * cell), 1 / (LIM.hmH * cell));
       top = Math.max(1, hm.top || city.bounds?.top || 1);
-      nodes.U.uHmTop.value.set(top, 0, 0, 0);
+      nodes.U.uHmTop.value.set(top, 1 / cell, LIM.levels - 1, 0);
       texels = w * h;
       stats.hmStep = k;
+      buildMaxMips(heightTex, w, h);
+    } else {
+      buildMaxMips(heightTex, 0, 0);
     }
     heightTex.needsUpdate = true;
     bounds = city?.bounds || null;
     updateReceiver();
     group.visible = nb > 0;
     stats.boxes = nb; stats.lights = nl; stats.heightTexels = texels; stats.top = Math.round(top);
-    stats.gpuBytes = boxCap * S * 4 + lightCap * SL * 4 + LIM.hmW * LIM.hmH * 2 + 48 * 4 * (3 + 3 + 2) + 84 * 4;
+    let hmBytes = 0;
+    for (const m of heightTex.mipmaps.length ? heightTex.mipmaps : [heightTex.image]) hmBytes += m.width * m.height * 2;
+    stats.gpuBytes = boxCap * S * 4 + lightCap * SL * 4 + hmBytes + 48 * 4 * (3 + 3 + 2) + 84 * 4;
     stats.setMs = Math.round((performance.now() - t0) * 10) / 10;
   }
 

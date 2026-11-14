@@ -2,8 +2,10 @@
 
 > Temat 3 generatora kadłubów (orkiestrator prac nad drednotem). Zabudowa „miasta” na otwartym rowie osi okrętu jako
 > PRAWDZIWE bryły 3D: generator wieżowców, generator masywu i moduł renderu na Core3D, pokazane na stronie dema.
-> Niewpięte do kreatora ani do gry. Makieta płaska (gałąź `claude/kreator-miasto-f58236`) — odrzucona przez użytkownika
-> 2026-11-14 („kropki są na dachu reprezentując okna od dachu”, „miasto będzie 3d”).
+> Wpięte do dema kreatora (pole projektu `city`, § 6), niewpięte do gry (plan — § 9). Makieta płaska (gałąź
+> `claude/kreator-miasto-f58236`) — odrzucona przez użytkownika 2026-11-14 („kropki są na dachu reprezentując okna od
+> dachu”, „miasto będzie 3d”). Po pierwszym demie: „kamera od góry widzę, że jest ortograficzna? w grze/generatorze chcę
+> 3d gta style (tak jak w grze)”, „jak wezmę »z ukosa« do góry to jest OK, ale »cały okręt« wszystko spłaszcza”.
 
 ## 1. Rozpoznanie (stan gry i kreatora, 2026-11-14)
 
@@ -172,11 +174,15 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
 
 - `createHullCity3D({ scene })` → `setCity(miasto)`, `setPose(x, y, kąt)`, `setSun(x, y)`, `update(widoczność)`,
   `warmupMeshes()`, `afterWarmup()`, `dispose()`, `stats`. Strojenie `HULL_CITY3D_TUNE`, pojemność mapy wysokości
-  `HULL_CITY3D_LIMITS` (2048 × 1024 r16f — większa mapa zmniejszana maksimum z komórek).
+  `HULL_CITY3D_LIMITS` (3072 × 1024 r16f — drednot mieści się przy 2 j./teksel; większa mapa zmniejszana maksimum
+  z komórek — przy 2048 mapa drednota szła co 4 j. i cień na białym klinie miał schodki).
 - Światło: kierunek jak kadłub (słońce, z = 600 — niemal poziomo): ściany od słońca — rozproszone 1,18; dachy —
   otoczenie × `roofLight` (ściany ½), ton dachu z wysokością (niskie tarasy ciemniej, grzbiet jaśniej — z góry forma
   masywu), jasna faza krawędzi dachu (0,9 j.), AO kanionów (8 próbek mapy), cień rzucany: marsz 48 kroków od ~1 j.
-  rosnących o 7,5% drogi, półcień proporcjonalny do drogi, na bryłach mały rozrzut startu w komórkach ~1 px (jak mostek), na kadłubie bez rozrzutu z szerszym półcieniem (na jasnym pancerzu rozrzut dawał ziarno). Okna: pasy
+  rosnących o 7,5% drogi, półcień proporcjonalny do drogi, na bryłach mały rozrzut startu w komórkach ~1 px (jak mostek), na kadłubie bez rozrzutu z szerszym półcieniem (na jasnym pancerzu rozrzut dawał ziarno) i z mipmap
+  MAKSIMUM mapy wysokości (5 poziomów, 2–32 j./teksel, liczone na CPU; poziom ≈ krok marszu) — przy kroku większym niż
+  teksel cień był sumą przesuniętych kopii prostokątów brył i brzeg wzdłuż słońca szedł schodkami (biały klin
+  w generatorze); maksimum zamiast średniej nie skraca cienia wąskich wież. Okna: pasy
   szyb co piętro (4 j.), rzadkie tlące się okna pod progiem bloomu; jasne punkty to osobne światła.
 - Światła z góry (kamera ortho), dwa tryby (`topGlow`, przełącznik w demie — G): PUNKTY — okna pionowych ścian gasną
   z kątem patrzenia, szczeliny i podstawy przygaszone (`lightsTop` 0,22); POŚWIATA — światła dna kanionów (podstawy)
@@ -205,7 +211,7 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
 | Budynki / bryły / światła | ~1 005 / ~2 020 / ~47 600 (z drednotem sprzed przebudowy: 1 157 / 2 843 / ~62 700) |
 | Trójkąty | bryły ~57 tys. (28 na bryłę), światła ~95 tys. (2 na kwad) |
 | Rysunki | 3 na miasto (bryły, cień, światła) — jeden pipeline na rodzaj |
-| Pamięć GPU | ~6,5 MB: mapa wysokości 4 MB (stała), światła ~2 MB (pojemność 65 536 × 32 B), bryły ~0,2 MB |
+| Pamięć GPU | ~10,4 MB: mapa wysokości 8 MB (stała, 3 072 × 1 024 r16f + mipmapy maksimum), światła ~2 MB (pojemność 65 536 × 32 B), bryły ~0,2 MB |
 | Generator (worker) | płytka 0,3–0,4 s (raz na kadłub) + masyw ~0,32 s (siatka 1 321 × 140); wysyłka na GPU ~15 ms |
 | GPU na klatkę (z miastem − bez) | cały okręt +0,12 ms, pas 3 600 j. +0,25 ms, 1 200 j. +0,28 ms, z ukosa +0,13 ms; poświata ≈ punkty |
 | Pipeline'y synchroniczne | 0 w każdym kadrze (rozgrzewka: bryły, cień, światła; okna mostków kamerą FG) |
@@ -217,7 +223,8 @@ gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę 
 
 ## 5. Odstępstwa od kadru odniesienia i dlaczego
 
-- Z GÓRY nie ma perspektywy ani ścian (kamera gry ortho) — kadr odniesienia jest ukośny. Z góry wysokość niosą: cień
+- Z GÓRY kamerą płaską (ortho passa gry) nie ma ścian — kadr odniesienia jest ukośny; demo i kreator rysują dlatego
+  widoki z góry domyślnie perspektywą passa FG (§ 3, § 6), a grę — plan § 9. W płaskiej kamerze wysokość niosą: cień
   rzucany (na dachy niższych i na pancerz przy ścianie rowu), ton dachu z wysokością (umowny: wyższe jaśniej), jasna
   faza krawędzi od słońca i POCHYLONE fronty poziomów (glacis cokołu 0,55 wysokości) — w kadrze odniesienia ściany są
   pionowe. Z ukosa pochylenie frontów czyta się jak skośne płyty tarasów.
@@ -232,15 +239,31 @@ gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę 
   w kadrze odniesienia świateł jest więcej i są jaśniejsze — suwak „Światła” do 2,5×.
 - Dachy płaskie z drobną maszynerią; detal ścian (pasy okien) z bliska — bez modeli z Blendera.
 
-## 6. Wpięcie (do zrobienia, nie w tej pracy)
+## 6. Wpięcie
 
-### Do kreatora
+### Do kreatora (zrobione 2026-11-14)
 
-- Pole projektu `city: { variant: 'A' | 'B' | 'C' | 'off', seed, density, height }` w `normalizeHullDesign`
-  (domyślnie 'off'; projekt NPC drednota — 'A'), etap MIASTO po UKŁADZIE w `hullDesignBuild.js` (klucz = klucz układu +
-  pole `city`), wynik (tablice) z workera budowy bez kopii; w demie kreatora przycisk „Miasto” i wpis `Core3D.warmup`
-  jak mostek. Kompozytor NIE rysuje miasta (płaski obraz zostaje płytką pod miastem).
-- Przy przeciąganiu (`fast`) miasto z pamięci (jak `boardStale`), nie liczone na polu połowy rozdzielczości.
+- Pole projektu `city: { on, variant: 'A' | 'B' | 'C', seed, density, height, lights, glow }`
+  (`normalizeHullCityField` w `normalizeHullDesign`; brak pola = bez miasta, `on: false` — wyłączone z zachowanymi
+  ustawieniami; zakresy `HD_CITY_LIMITS`), strażnik `cityViolations` w `isPlayerBuildable`. Drednot ma
+  `city: { on: true, variant: 'A' }`, pozostałe presety pola nie mają (test).
+- Pole jest POZA kluczem kształtu (`hullDesignShapeKey` je pomija): miasto nie zmienia obrazu kadłuba, więc zmiana
+  miasta nie przebudowuje kadłuba. Miasto liczy worker budowy osobną wiadomością `city` (`builder.city(opcje)`,
+  klient `hullDesignBuildClient.city` → Promise) z pola i płytki OSTATNIEJ PEŁNEJ budowy; pamięć LRU(3) po kluczu
+  układu + opcjach (wariant, ziarno, gęstość, wysokość). Bez pełnej budowy — wynik pusty. `lights` i `glow` to sam obraz
+  (bez workera). Drednot: miasto z workera ~0,38 s po pełnej budowie, edycja nie stoi.
+- Demo (`dema/kreator-kadluba-webgpu.js`, sekcja „MIASTO 3D”; operacje na polu — `dema/kreator-kadluba-miasto.js`):
+  `createHullCity3D` przy starcie z wpisem rozgrzewki `miasto 3D (hullCity3D)`, `cityDemoAfterBuild` po pełnej
+  budowie, `cityDemoCheck` na ścieżce barw (zmiana samego miasta), `cityDemoSync` w `render()`; w podglądzie
+  przeciągania (`fast`) miasto znika i wraca po puszczeniu (nie liczy się na polu połowy rozdzielczości).
+  Panel „Miasto 3D” w Warsztacie (miasto wł. / wył., kompozycja, ziarno z losowaniem, gęstość, wysokość, światła,
+  poświata, kamera) i te same opcje w Stoczni (zakładka Kształty, pod pancerzem z obrysu).
+- KAMERA widoku kreatora: płaska (ortho, domyślna) albo perspektywa z góry = `cameraPersp` passa FG (35°, wysokość
+  (h / 2) / tg(17,5°) / zoom) podana jako `free3d` (`viewCamera()`); płaszczyzna z = 0 w tej samej skali, więc nakładki
+  edytora (zaznaczenie, uchwyty, duch) trafiają bez zmian. `?kamera=perspektywa`, wybór pamięta `localStorage`
+  `kreator.kamera`; harness `__kreator.setPersp`, `__kreator.city`, `__kreator.cityIdle()`.
+- Zrzuty: `node scripts/webgpu/miasto-3d-kreator.mjs [--out …]` — drednot w obu kamerach (cały, środek, zbliżenie,
+  mostek z klinem), panele Warsztatu i Stoczni, Colossus bez miasta; raport z pipeline'ami sync i błędami konsoli.
 
 ### Do gry
 
@@ -283,7 +306,9 @@ gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę 
 
 - Demo: `npm run dev` → `http://localhost:5173/dema/miasto-3d.html` (po scaleniu do main; w worktree — port jego serwera
   dev), katalog wieżowców: `…/dema/miasto-3d.html?katalog=1`.
-- Zrzuty i pomiar: `node scripts/webgpu/miasto-3d-zrzuty.mjs --out .tmp/kreator/miasto-3d-v2 [--tylko id,…] [--katalog
+- Zrzuty i pomiar: `node scripts/webgpu/miasto-3d-zrzuty.mjs --out .tmp/kreator/miasto-3d-v3 [--tylko id,…] [--katalog
   0|1|tylko] [--pomiar 0]` (raport.json: czasy, bryły, światła, ms GPU z miastem i bez, pipeline'y sync, błędy).
+- Kreator: `/dema/kreator-kadluba-webgpu.html?preset=dreadnought&kamera=perspektywa`; zrzuty
+  `node scripts/webgpu/miasto-3d-kreator.mjs` (domyślnie `.tmp/kreator/miasto-3d-v3/generator`).
 - Testy: `node --test tests/hullDesignTowers.test.mjs tests/hullDesignCity.test.mjs tests/hullDesignCity3D.test.mjs`
   (w zestawie `node --test "tests/hullDesign*.test.mjs"`).

@@ -167,6 +167,8 @@ function make() {
     v: 2, name: 'Drednot Terra Novy (klasa VII)', role: 'military', npc: true, style: 'chamfer', mirror: true, palette: 'terra',
     seed: 83, detail: D, grid: 4, windows: 0, bevel: 1.9, round: 1, panels: 0, pipeNet: { density: 1, seed: 0 },
     shell: { rhythm: 'wzor' },
+    // MIASTO 3D w odsłoniętym środku (docs/OPIS-miasto-3d.md; generator hullDesignCity.js, obraz src/3d/hullCity3D/)
+    city: { on: true, variant: 'A' },
     blocks: [], shapes, modules, decals, castles, parts: []
   };
 }

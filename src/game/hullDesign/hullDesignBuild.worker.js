@@ -5,12 +5,15 @@
 // (wygrywa najnowsza; przerwana dostaje { id, aborted: true }). Czekająca praca, którą zastąpi nowsza, też kończy
 // się `aborted`. Wynik idzie z przekazaniem tablic (transfer): pola poziomów tylko przy nowej geometrii, pakiety
 // tekstur tylko przy nowym kluczu — strona trzyma poprzednie (hullDesignBuildClient.js).
+// Wiadomość { type: 'city', id, opts } — miasto 3D na kadłubie ostatniej pełnej budowy (liczone po budowach w kolejce;
+// kopie tablic idą z przekazaniem, pamięć etapu zostaje).
 
 import { createHullDesignBuilder } from './hullDesignBuild.js';
 
 const builder = createHullDesignBuilder();
 let current = null;     // { id }
 let waiting = null;     // najnowsza praca w kolejce
+let cityJob = null;     // najnowsza prośba o miasto (starsza — zastąpiona)
 const sent = { geo: null, field: null, aux: null, groove: null, pipes: null, paint: null, board: null };
 
 const yieldLoop = () => new Promise((ok) => setTimeout(ok, 0));
@@ -31,12 +34,37 @@ self.onmessage = (e) => {
   const m = e.data;
   if (m?.type === 'reset') { builder.clear(); keyIds.clear(); for (const k of Object.keys(sent)) sent[k] = null; return; }
   if (m?.type === 'cancel') { if (current) current.cancel = true; return; }
+  if (m?.type === 'city') {
+    if (cityJob) self.postMessage({ id: cityJob.id, city: null });
+    cityJob = m;
+    if (!current) runCity();
+    return;
+  }
   if (m?.type !== 'build') return;
   if (waiting) self.postMessage({ id: waiting.id, aborted: true });
   waiting = m;
   if (current && m.supersede) current.cancel = true;
   if (!current) pump();
 };
+
+function runCity() {
+  const job = cityJob;
+  cityJob = null;
+  if (!job) return;
+  try {
+    const c = builder.city(job.opts || {});
+    const boxes = c.boxes.slice(), lights = c.lights.slice();
+    const height = c.height ? { ...c.height, data: c.height.data.slice() } : null;
+    const transfer = [boxes.buffer, lights.buffer];
+    if (height) transfer.push(height.data.buffer);
+    self.postMessage({ id: job.id, city: {
+      ok: c.ok, reason: c.reason, boxes, nBoxes: c.nBoxes, lights, nLights: c.nLights, height, bounds: c.bounds,
+      stats: c.stats, nBuildings: c.buildings ? c.buildings.length : 0
+    } }, transfer);
+  } catch (ex) {
+    self.postMessage({ id: job.id, city: null, error: String(ex?.stack || ex) });
+  }
+}
 
 async function pump() {
   while (waiting) {
@@ -64,6 +92,8 @@ async function pump() {
       self.postMessage({ id: job.id, checks });
     }
   }
+  // miasto po budowach z kolejki (z płytki ostatniej pełnej budowy)
+  if (cityJob) runCity();
 }
 
 function post(id, res) {

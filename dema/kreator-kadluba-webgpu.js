@@ -8,6 +8,7 @@
 // Serwowanie: `npm run dev` → /dema/kreator-kadluba-webgpu.html
 //   ?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty
 //   ?clean=1 (bez paneli)   ?test=1 (klatki z __kreator.runFrames — skrypt scripts/webgpu/kreator-kadluba-demo.mjs)
+import * as THREE from 'three/webgpu';
 import { Core3D } from '../src/3d/core3d.js';
 import {
   initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D, acquireHullVisualTexture, releaseHullVisualTexture
@@ -54,6 +55,10 @@ import {
   SHELL_SLIDERS, SHELL_RHYTHM_LABELS, BOARD_VARIANT_LABELS, HD_SHELL_RHYTHM_KEYS, HD_BOARD_VARIANT_KEYS,
   shellOf, shellToggle, shellSetRhythm, shellSetSlider, addAxisTrench, removeAxisTrench, boardOf, boardSet
 } from './kreator-kadluba-pancerz.js';
+import {
+  CITY_SLIDERS, CITY_VARIANT_LABELS, HD_CITY_VARIANT_KEYS, cityBuildKey, cityOf, cityOn, citySet, cityShown, citySliderText, cityToggle
+} from './kreator-kadluba-miasto.js';
+import { createHullCity3D, HULL_CITY3D_TUNE } from '../src/3d/hullCity3D/hullCity3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Bridge3D } from '../src/3d/bridge3D.js';
 import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
@@ -100,8 +105,15 @@ const S = {
   // klasa okrętu (etap 2): wynik hullDesignClass, ostatni projekt w limitach mostka (straż akcji), nowe gniazdo
   cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null,
   // interfejs: 'stocznia' — przyjazny edytor przeciągnij-i-upuść (domyślny), 'warsztat' — pełny panel narzędzi
-  ui: uiFromPage()
+  ui: uiFromPage(),
+  // kamera widoku: płaska (ortho, jak dotąd) albo perspektywa z góry (jak pass FG gry) — `?kamera=perspektywa|plaska`
+  persp: cameraFromPage()
 };
+function cameraFromPage() {
+  let stored = null;
+  try { stored = localStorage.getItem('kreator.kamera'); } catch { /* bez pamięci strony */ }
+  return (params.get('kamera') || stored) === 'perspektywa';
+}
 function uiFromPage() {
   let stored = null;
   try { stored = localStorage.getItem('kreator.ui'); } catch { /* bez pamięci strony */ }
@@ -252,7 +264,7 @@ function scheduleBuild(fast) {
   // passy kompozytora bez workera i ciała gry
   if ((!S.busy || S.thumbBusy) && !S.pending && S.field && S.bakeOpts) {
     const nd = normalizeHullDesign(S.design);
-    if (colorsOnly(nd)) { runColors(S.rev, false); return; }
+    if (colorsOnly(nd)) { cityDemoCheck(nd); runColors(S.rev, false); return; }
     if (S.shownLookKey && S.shownLookKey === hullDesignLookKey(nd)) { runColors(S.rev, true); return; }
   }
   S.pending = { fast };
@@ -395,6 +407,7 @@ async function runBuild() {
           S.field = field; S.recipe = res.recipe; S.mounts = res.mounts; S.bake = bake;
           reactorDemoCoresFrom(field);
           bridgeDemoAttach(field);
+          cityDemoAfterBuild();
           S.timing = { worker: res.timing, czekanie: t1 - t0, kompozytor: t2 - t1, odczyt: t3 - t2, cialo: t4 - t3, ...S.hullT, total: t4 - t0, fast: false };
           S.builtRev = rev;
           S.shownShapeKey = shapeKey;
@@ -893,14 +906,17 @@ function entities() {
 function render(realDt, list) {
   Core3D.beginPlanetLayerFrame?.();
   SimClock.beginRender(1, PHYS_DT, true);
-  const cam = { x: S.cam.x, y: S.cam.y, zoom: S.cam.zoom };
+  const cam = viewCamera();
   cullInfo.x = cam.x; cullInfo.y = cam.y;
-  cullInfo.drawHalfW = W * 0.5 / cam.zoom + 600; cullInfo.drawHalfH = H * 0.5 / cam.zoom + 600;
+  // perspektywa z góry: płaszczyzna jak w ortho, bryły nad nią wychodzą ku brzegom kadru — kadr z zapasem
+  const pad = S.persp ? 900 : 600, kk = S.persp ? 0.6 : 0.5;
+  cullInfo.drawHalfW = W * kk / cam.zoom + pad; cullInfo.drawHalfH = H * kk / cam.zoom + pad;
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   backdrop.sync(cam, W, H);
   updateHexShips3D(cam, list, cullInfo);
   reactorDemoSync(cam);
   bridgeDemoSync(cam);
+  cityDemoSync();
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
@@ -1318,6 +1334,38 @@ function syncShellPanel(d) {
   $('inp-board-glow').value = String(b.glow);
   $('lbl-board-glow').textContent = `świecenie ${b.glow.toFixed(2)}`;
 }
+function syncCityPanel(d) {
+  if (!$('btn-city')) return;
+  const c = cityShown(d || {});
+  $('btn-city').classList.toggle('on', cityOn(d));
+  $('sel-city').value = c.variant;
+  $('inp-city-seed').value = String(c.seed);
+  for (const sl of CITY_SLIDERS) {
+    $(`inp-city-${sl.k}`).value = String(c[sl.k]);
+    $(`lbl-city-${sl.k}`).textContent = `${sl.label.toLowerCase()} ${citySliderText(sl.k, c[sl.k])}`;
+  }
+  $('btn-city-glow').classList.toggle('on', !!c.glow);
+  $('btn-cam-flat').classList.toggle('on', !S.persp);
+  $('btn-cam-persp').classList.toggle('on', !!S.persp);
+}
+function bindCityPanel() {
+  const sel = $('sel-city');
+  for (const k of HD_CITY_VARIANT_KEYS) sel.add(new Option(`kompozycja: ${CITY_VARIANT_LABELS[k]}`, k));
+  sel.addEventListener('change', () => { citySet(design(), { variant: sel.value }); requestBuild(); syncPanel(); });
+  $('btn-city').addEventListener('click', () => { cityToggle(design()); requestBuild(); syncPanel(); });
+  $('inp-city-seed').addEventListener('change', () => { citySet(design(), { seed: Math.max(0, Math.round(Number($('inp-city-seed').value) || 0)) }); requestBuild(); syncPanel(); });
+  $('btn-city-seed').addEventListener('click', () => { citySet(design(), { seed: cityShown(design()).seed + 1 }); requestBuild(); syncPanel(); });
+  for (const sl of CITY_SLIDERS) {
+    const inp = $(`inp-city-${sl.k}`);
+    inp.min = String(sl.min); inp.max = String(sl.max); inp.step = String(sl.step);
+    // suwak: obraz od razu (światła), masyw po puszczeniu (worker) — bez przebudowy kadłuba
+    inp.addEventListener('input', () => { $(`lbl-city-${sl.k}`).textContent = `${sl.label.toLowerCase()} ${citySliderText(sl.k, inp.value)}`; if (!sl.build) citySet(design(), { [sl.k]: Number(inp.value) }); });
+    inp.addEventListener('change', () => { citySet(design(), { [sl.k]: Number(inp.value) }); requestBuild(); syncPanel(); });
+  }
+  $('btn-city-glow').addEventListener('click', () => { citySet(design(), { glow: !cityShown(design()).glow }); requestBuild(); syncPanel(); });
+  $('btn-cam-flat').addEventListener('click', () => setPersp(false));
+  $('btn-cam-persp').addEventListener('click', () => setPersp(true));
+}
 function bindShellPanel() {
   const selR = $('sel-shell-rhythm');
   for (const k of HD_SHELL_RHYTHM_KEYS) selR.add(new Option(`rytm: ${SHELL_RHYTHM_LABELS[k]}`, k));
@@ -1354,6 +1402,7 @@ function syncPanel() {
   $('sel-pipemat').value = S.pipeMat;
   $('inp-panels').value = String(d.panels ?? 1);
   syncShellPanel(d);
+  syncCityPanel(d);
   $('sel-part').value = S.partId;
   for (let L = 0; L < HD_LEVELS; L++) $(`lvl-${L}`).classList.toggle('on', S.level === L);
   $('btn-polycut').classList.toggle('on', !!S.polyCut);
@@ -1506,6 +1555,7 @@ function bindPanel() {
   pan.addEventListener('input', () => { design().panels = Number(pan.value); requestBuild(true); });
   pan.addEventListener('change', () => requestBuild(false));
   bindShellPanel();
+  bindCityPanel();
   const selPart = $('sel-part');
   for (const k of HD_PART_IDS) selPart.add(new Option(`część: ${HD_PARTS[k].label}`, k));
   selPart.addEventListener('change', () => { S.partId = selPart.value; S.tool = 'part'; syncPanel(); });
@@ -2537,6 +2587,15 @@ window.__kreator = {
   setUi(mode) { return setUi(mode); },
   get stocznia() { return shipyard?.harness || null; },
   setBridge3D(on) { S.bridge3D = !!on; return true; },
+  /** Kamera widoku: true — perspektywa z góry (jak pass FG gry), false — płaska (ortho, jak dotąd). */
+  setPersp(on) { setPersp(on); return true; },
+  /** Miasto 3D: stan i liczby; `cityIdle()` — czeka, aż worker odda miasto bieżącego projektu. */
+  get city() { return { on: cityOn(S.design), key: cityDemo.key, shownKey: cityDemo.shownKey, stats: cityDemo.city3D?.stats || null, gen: cityDemo.gen }; },
+  async cityIdle(timeoutMs = 60000) {
+    const t0 = performance.now();
+    while (performance.now() - t0 < timeoutMs && (cityDemo.busy || cityDemo.pending || (cityOn(S.design) && cityDemo.shownKey !== cityDemo.key))) await new Promise((r) => setTimeout(r, 50));
+    return cityDemo.shownKey === cityDemo.key || !cityOn(S.design);
+  },
   setNetGraph(on) { S.netGraph = !!on; syncPanel(); return true; },
   toScreen(x, y) { return { x: (x - S.cam.x) * S.cam.zoom + W * 0.5, y: (y - S.cam.y) * S.cam.zoom + H * 0.5 }; },
   async built() { await waitBuilt(); return true; },
@@ -2643,6 +2702,92 @@ function bridgeDemoSync(cam) {
 }
 
 // ---------------------------------------------------------------------------
+// MIASTO 3D w odsłoniętym środku (pole projektu `city`; generator src/game/hullDesign/hullDesignCity.js, obraz
+// src/3d/hullCity3D/, opis docs/OPIS-miasto-3d.md): masyw liczy worker budowy z pola i płytki OSTATNIEJ PEŁNEJ budowy
+// (`builder.city`), demo przypina partię brył do kadłuba projektu jak mostki (układ projektu = świat). Haki:
+// cityDemoInit() przy starcie (rozgrzewka), cityDemoAfterBuild() po pełnej budowie, cityDemoCheck(projekt) na ścieżce
+// barw (pole `city` jest poza kluczem kształtu), cityDemoSync() w render(); w trakcie podglądu przeciągania miasto
+// znika (kadłub w podglądzie nie jest jeszcze tym, na którym stoi).
+const cityDemo = { city3D: null, key: 'off', shownKey: 'off', busy: false, pending: false, gen: null };
+function cityDemoInit() {
+  cityDemo.city3D = createHullCity3D({ scene: Core3D.scene });
+  cityDemo.city3D.setPose(0, 0, 0);
+  Core3D.warmup.add({ name: 'miasto 3D (hullCity3D)', objects: () => cityDemo.city3D.warmupMeshes(), layer: 0, phase: 'loading' });
+}
+function cityDemoAfterBuild() {
+  // nowy kadłub — miasto od nowa (płytka mogła się zmienić), także przy tym samym kluczu ustawień
+  cityDemo.shownKey = null;
+  cityDemoCheck(normalizeHullDesign(S.design), true);
+}
+function cityDemoCheck(nd, force = false) {
+  const c = nd.city;
+  cityDemo.key = cityBuildKey(c);
+  if (!force && cityDemo.key === cityDemo.shownKey) return;
+  if (!c?.on) {
+    cityDemo.city3D?.setCity(null);
+    cityDemo.shownKey = 'off';
+    return;
+  }
+  if (cityDemo.busy) { cityDemo.pending = true; return; }
+  cityDemoRequest(c);
+}
+async function cityDemoRequest(c) {
+  cityDemo.busy = true;
+  const key = cityBuildKey(c);
+  const t0 = performance.now();
+  const city = await builder.city({ variant: c.variant, seed: c.seed, density: c.density, height: c.height });
+  cityDemo.busy = false;
+  if (city) {
+    cityDemo.city3D.setCity(city);
+    cityDemo.shownKey = key;
+    cityDemo.gen = { ms: Math.round(performance.now() - t0), ok: city.ok, reason: city.reason, boxes: city.nBoxes, lights: city.nLights, stats: city.stats };
+  }
+  if (cityDemo.pending || cityDemo.key !== cityDemo.shownKey) {
+    cityDemo.pending = false;
+    const nd = normalizeHullDesign(S.design);
+    if (nd.city?.on && cityBuildKey(nd.city) !== cityDemo.shownKey) cityDemoRequest(nd.city);
+  }
+}
+function cityDemoSync() {
+  const C3 = cityDemo.city3D;
+  if (!C3) return;
+  const nd = S.design ? cityOf(S.design) : null;
+  HULL_CITY3D_TUNE.lights = nd?.lights ?? 1;
+  HULL_CITY3D_TUNE.topGlow = nd?.glow ? 1 : 0;
+  C3.setSun(window.SUN.x, window.SUN.y);
+  const vis = nd?.on && !previewQuad?.visible && cityDemo.shownKey !== 'off' ? 1 : 0;
+  C3.update(vis, { topView: S.persp ? 1 : 0 });
+}
+
+// KAMERA WIDOKU: płaska (ortho passa gry — jak dotąd) albo PERSPEKTYWA Z GÓRY = Core3D.cameraPersp passa FG gry (35°,
+// wysokość (h / 2) / tg(17,5°) / zoom, prosto w dół) podana jako free3d — kadłub, mostki, wieże i miasto w 3D; płaszczyzna
+// z = 0 w tej samej skali co ortho (nakładki edytora i stoczni bez zmian).
+const VIEW_FOV = 35;
+const _vEye = new THREE.Vector3(), _vTgt = new THREE.Vector3(), _vUp = new THREE.Vector3(0, 1, 0), _vM = new THREE.Matrix4(), _vQ = new THREE.Quaternion();
+const perspCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: VIEW_FOV, near: 10, far: 400000 };
+function viewCamera() {
+  const c = S.cam;
+  if (!S.persp) return { x: c.x, y: c.y, zoom: c.zoom };
+  const h = (H / 2) / Math.tan(VIEW_FOV * Math.PI / 360) / c.zoom;
+  _vEye.set(c.x, -c.y, h);
+  _vTgt.set(c.x, -c.y, 0);
+  _vM.lookAt(_vEye, _vTgt, _vUp);
+  _vQ.setFromRotationMatrix(_vM);
+  perspCam.position.x = _vEye.x; perspCam.position.y = _vEye.y; perspCam.position.z = _vEye.z;
+  perspCam.quaternion.x = _vQ.x; perspCam.quaternion.y = _vQ.y; perspCam.quaternion.z = _vQ.z; perspCam.quaternion.w = _vQ.w;
+  perspCam.x = c.x; perspCam.y = c.y; perspCam.zoom = c.zoom;
+  perspCam.near = Math.max(10, h - 4000);
+  perspCam.far = h + 60000;
+  return perspCam;
+}
+function setPersp(on) {
+  S.persp = !!on;
+  try { localStorage.setItem('kreator.kamera', S.persp ? 'perspektywa' : 'plaska'); } catch { /* bez pamięci strony */ }
+  syncCityPanel(S.design);
+
+}
+
+// ---------------------------------------------------------------------------
 // STOCZNIA (przyjazny edytor, dema/kreator-kadluba-stocznia.js): stan, budowa i historia, wybór i przekształcenia
 // elementów, klocki palety, fabryki elementów i kompozytor na wyłączność (miniatury kart). Haki w demie: installShipyard
 // przy starcie, shipyard.draw(cam) w render(), shipyard.insets() w fit(), bramki `S.ui === 'stocznia'` w obsługach myszy
@@ -2654,7 +2799,7 @@ function shipyardApi() {
     pick, isLocked, mirrorOn, polyLoopOf, partWorldBox, removePicked, rotateObj, scaleObj,
     paletteBlock, paletteBox, snapBlock, blkGrid, blockLabel, classModuleLabel,
     newModule, newCastle, newPart, newDecal,
-    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive
+    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp
   };
 }
 
@@ -2678,6 +2823,7 @@ function shipyardApi() {
     previewQuad = createDesignPreview(Core3D);
     reactorDemoInit();
     bridgeDemoInit();
+    cityDemoInit();
     window.__composer = composer;
     await composer.prewarm();
     await previewQuad.warm(composer);

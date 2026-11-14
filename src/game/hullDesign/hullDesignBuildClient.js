@@ -9,6 +9,7 @@
 //   const res = await client.build(design, { fast, full, supersede });   // null — zastąpiona nowszą pracą
 //   res.field — jak buildHullField (+ `packed` dla HullComposer.setDesign), res.cls / recipe / mounts / physics /
 //   cells / timing; res.checks — obietnica kontroli pełnej budowy { systems, netCheck, integrity } (po obrazie) albo null.
+//   const city = await client.city({ variant, seed, density, height });   // miasto 3D ostatniej pełnej budowy albo null
 
 import { createHullDesignBuilder } from './hullDesignBuild.js';
 
@@ -22,6 +23,7 @@ export function createHullDesignBuildClient() {
   const waiting = new Map();
   const checkWaiters = new Map();   // id → zakończenie kontroli pełnej budowy (systemy, sieć, rama — po obrazie)
   const checkPromises = new Map();
+  const cityWaiters = new Map();  // id → miasto 3D (wiadomość 'city')
   let seq = 0;
   const last = { geo: null, field: null, aux: null, groove: null, pipes: null, paint: null, board: null };
   let local = null;
@@ -57,6 +59,13 @@ export function createHullDesignBuildClient() {
   if (worker) {
     worker.onmessage = (e) => {
       const m = e.data;
+      if (m.city !== undefined) {
+        const c = cityWaiters.get(m.id);
+        cityWaiters.delete(m.id);
+        if (m.error) console.error(`miasto: ${m.error}`);
+        c?.(m.city);
+        return;
+      }
       if (m.checks !== undefined) {
         const c = checkWaiters.get(m.id);
         checkWaiters.delete(m.id);
@@ -107,6 +116,21 @@ export function createHullDesignBuildClient() {
         waiting.set(id, { resolve, reject });
         if (runOpts.full) checkPromises.set(id, new Promise((ok) => checkWaiters.set(id, ok)));
         worker.postMessage({ type: 'build', id, design, opts: runOpts, supersede });
+      });
+    },
+    /**
+     * Miasto 3D (masyw z hullDesignCity.js) na kadłubie ostatniej PEŁNEJ budowy: { boxes, nBoxes, lights, nLights,
+     * height, bounds, stats, ok, reason } albo null (zastąpione nowszą prośbą). Worker liczy je po budowach z kolejki.
+     */
+    city(opts = {}) {
+      const id = ++seq;
+      if (!worker) {
+        local = local || createHullDesignBuilder();
+        return Promise.resolve(local.city(opts));
+      }
+      return new Promise((resolve) => {
+        cityWaiters.set(id, resolve);
+        worker.postMessage({ type: 'city', id, opts });
       });
     },
     /** Przerwij trwającą budowę (na granicy etapu; jej obietnica kończy się null). */

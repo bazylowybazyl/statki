@@ -228,3 +228,39 @@ test('miasto: degradacja — mały okręt i drednot bez otwartego rowu nie dosta
   // bez układu płytki — bez miasta, bez wyjątku
   assert.equal(buildHullCity(ship('colossus').field, null).ok, false);
 });
+
+test('pole projektu `city`: normalizacja, strażnik edytora, poza kluczem kształtu; drednot z miastem, inne presety bez', async () => {
+  const { normalizeHullCityField, normalizeHullDesign, hullDesignShapeKey, HD_CITY_VARIANT_KEYS, HD_CITY_LIMITS } = await import('../src/game/hullDesign/hullDesignSchema.js');
+  const { cityViolations, isPlayerBuildable } = await import('../src/game/hullDesign/hullDesignBuildable.js');
+  const { HD_PRESET_KEYS } = await import('../src/game/hullDesign/hullDesignPresets.js');
+  assert.deepEqual([...HD_CITY_VARIANT_KEYS], Object.keys(HD_CITY_VARIANTS), 'kompozycje schematu = generatora');
+  assert.equal(normalizeHullCityField(undefined), null);
+  assert.deepEqual(normalizeHullCityField({ variant: 'Z', density: 9, lights: -1 }),
+    { on: true, variant: 'A', seed: 0, density: HD_CITY_LIMITS.density[1], height: 1, lights: 0, glow: false });
+  assert.equal(normalizeHullCityField({ on: false, variant: 'C' }).on, false, 'wyłączone zostaje z ustawieniami');
+  assert.deepEqual(cityViolations({ on: true, variant: 'B', density: 0.8 }), []);
+  assert.ok(cityViolations({ variant: 'Z' }).length && cityViolations({ height: 5 }).length && cityViolations({ budynki: [] }).length);
+  const d = hullDesignPreset('dreadnought');
+  assert.equal(normalizeHullDesign(d).city?.on, true, 'drednot ma miasto');
+  assert.ok(isPlayerBuildable(d).ok);
+  assert.ok(!isPlayerBuildable({ ...d, city: { on: true, variant: 'Z' } }).ok, 'zła kompozycja — naruszenie');
+  const a = normalizeHullDesign(d), b = normalizeHullDesign({ ...d, city: { on: true, variant: 'C', seed: 9 } });
+  assert.equal(hullDesignShapeKey(a), hullDesignShapeKey(b), 'miasto nie zmienia obrazu kadłuba');
+  for (const k of HD_PRESET_KEYS) if (k !== 'dreadnought') assert.equal(normalizeHullDesign(hullDesignPreset(k)).city, null, `${k}: bez miasta`);
+});
+
+test('budowa kreatora: etap miasta z płytki ostatniej pełnej budowy = buildHullCity, z pamięci; bez pełnej budowy — puste', async () => {
+  const { createHullDesignBuilder } = await import('../src/game/hullDesign/hullDesignBuild.js');
+  const b = createHullDesignBuilder();
+  assert.equal(b.city({ variant: 'A' }).nBoxes, 0, 'bez pełnej budowy');
+  const d = hullDesignPreset('dreadnought');
+  const res = await b.run(d, { full: true }, async () => true);
+  assert.ok(res?.field?.board, 'pełna budowa ma układ maszynowni');
+  const c1 = b.city({ variant: 'A', seed: 3 });
+  const c2 = b.city({ variant: 'A', seed: 3 });
+  assert.equal(c1, c2, 'z pamięci');
+  const ref = buildHullCity(res.field, res.field.board, { variant: 'A', seed: 3, density: 1, height: 1 });
+  assert.equal(c1.nBoxes, ref.nBoxes);
+  assert.deepEqual(Array.from(c1.boxes.subarray(0, 240)), Array.from(ref.boxes.subarray(0, 240)));
+  assert.ok(c1.nBoxes > 800);
+});

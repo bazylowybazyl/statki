@@ -8,7 +8,7 @@
 // 'rect' też nie (w palecie są koło i prostokąt). Liczba elementów ograniczona tak, żeby okręt dało się ułożyć ręcznie
 // (połowę — lustro robi drugą burtę).
 
-import { normalizeHullDesign } from './hullDesignSchema.js';
+import { normalizeHullDesign, HD_CITY_LIMITS, HD_CITY_VARIANT_KEYS } from './hullDesignSchema.js';
 import { blockRotStep } from './hullDesignBlocks.js';
 import { HD_SHELL_LIMITS, HD_SHELL_RHYTHMS } from './hullDesignShell.js';
 
@@ -86,9 +86,28 @@ export function isPlayerBuildable(input) {
   lim('pipes', d.pipes.length, L.pipes);
   // pancerz z obrysu: jedna cecha projektu — rytm z listy, parametry w zakresach suwaków edytora (otwarcia to klocki)
   for (const t of shellViolations(input?.shell)) bad('shell', -1, t);
+  // miasto 3D: jedna cecha projektu — kompozycja z listy, suwaki w zakresach (budynki liczy generator, nie gracz)
+  for (const t of cityViolations(input?.city)) bad('city', -1, t);
   d.grooves.forEach((q, i) => { if (q.pts.length > L.polylinePoints) bad('grooves', i, `rowek z ${q.pts.length} pkt (najwyżej ${L.polylinePoints})`); });
   d.pipes.forEach((q, i) => { if (q.pts.length > L.polylinePoints) bad('pipes', i, `rura z ${q.pts.length} pkt (najwyżej ${L.polylinePoints})`); });
   return { ok: violations.length === 0, violations };
+}
+
+/** Naruszenia pola `city` (surowego, przed normalizacją — normalizacja obcina po cichu). */
+export function cityViolations(c) {
+  if (c === undefined || c === null) return [];
+  if (typeof c !== 'object') return ['miasto: pole nie jest obiektem'];
+  const out = [];
+  if (c.on !== undefined && typeof c.on !== 'boolean') out.push('miasto: `on` nie jest true / false');
+  if (c.variant !== undefined && !HD_CITY_VARIANT_KEYS.includes(c.variant)) out.push(`miasto: nieznana kompozycja „${c.variant}”`);
+  for (const k of Object.keys(HD_CITY_LIMITS)) {
+    if (c[k] === undefined || c[k] === null) continue;
+    const n = Number(c[k]), lim = HD_CITY_LIMITS[k];
+    if (!Number.isFinite(n) || n < lim[0] || n > lim[1]) out.push(`miasto: ${k} = ${c[k]} poza zakresem ${lim[0]}–${lim[1]}`);
+  }
+  const extra = Object.keys(c).filter((k) => !['on', 'variant', 'seed', 'density', 'height', 'lights', 'glow'].includes(k));
+  if (extra.length) out.push(`miasto: nieznane pola ${extra.join(', ')}`);
+  return out;
 }
 
 /** Naruszenia pola `shell` (surowego, przed normalizacją — normalizacja obcina po cichu). */

@@ -50,13 +50,13 @@ window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.r
 // ---------------------------------------------------------------------------
 // Stan
 const S = {
-  view: 'gra',                                   // 'gra' — z góry (ortho jak w grze), 'ukos' — kamera 3D (free3d)
+  view: 'gra',                                   // 'gra' — z góry (kamera wg `persp`), 'ukos' — kamera 3D (free3d)
   cam: { x: -400, y: 0, zoom: 0.2 },
   orbit: { tx: -700, ty: 0, dist: 2600, yaw: -2.45, pitch: 0.36 },
   city: { variant: params.get('wariant') || 'A', seed: Number(params.get('ziarno') || 1), density: 1, height: 1, lights: 1 },
   cityOn: true, lightsOn: true, info: false,
-  topGlow: params.get('zgory') === 'poswiata',
-  persp: params.get('kamera') !== 'plaska',      // widoki z góry: perspektywa jak pass FG gry (true) albo ortho (false)   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
+  topGlow: params.get('zgory') === 'poswiata',   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
+  persp: params.get('kamera') !== 'plaska',      // widoki z góry: perspektywa jak pass FG gry (true) albo ortho (false)
   sunAz: 25,
   frame: 0, cpuMs: 0, frameMs: 16, syncPipes: 0, syncNames: [],
   gen: null, building: false, pendingCity: false

@@ -519,7 +519,35 @@ export function normalizeHullDesign(design = {}) {
     // UKŁAD MASZYNOWNI „jak płytka drukowana” (src/game/hullDesign/hullDesignBoard.js): wariant zasady, ziarno, świecenie
     board: normBoard(design.board, design.npc === true),
     // PANCERZ Z OBRYSU (src/game/hullDesign/hullDesignShell.js): jedna ciągła skorupa zamiast płyt klocków; null — brak
-    shell: normalizeHullShell(design.shell)
+    shell: normalizeHullShell(design.shell),
+    // MIASTO 3D w odsłoniętym środku (src/game/hullDesign/hullDesignCity.js, docs/OPIS-miasto-3d.md); null — brak
+    city: normalizeHullCityField(design.city)
+  };
+}
+
+/** Kompozycje masywu miasta (HD_CITY_VARIANTS w hullDesignCity.js — test pilnuje zgodności; schemat jej nie importuje). */
+export const HD_CITY_VARIANT_KEYS = Object.freeze(['A', 'B', 'C']);
+/** Zakresy pola `city` (suwaki edytora; poza zakresem — naruszenie strażnika, normalizacja obcina). */
+export const HD_CITY_LIMITS = Object.freeze({ seed: [0, 1e6], density: [0.4, 1.4], height: [0.5, 1.8], lights: [0, 2.5] });
+
+/**
+ * Pole `city`: { on (true — miasto stoi), variant ('A' | 'B' | 'C'), seed (0 — z ziarna projektu), density (gęstość
+ * zabudowy), height (mnożnik wysokości), lights (jasność świateł — tylko obraz), glow (światła z góry: miękka poświata
+ * zamiast punktów — tylko obraz) } albo null. Wyłączone zostaje z `on: false` (ustawienia nie giną). Miasto NIE zmienia
+ * kształtu, sieci ani map kompozytora — klucz kształtu go pomija (liczy je osobny etap: płytka ostatniej pełnej budowy).
+ */
+export function normalizeHullCityField(c) {
+  if (!c || typeof c !== 'object') return null;
+  const L = HD_CITY_LIMITS;
+  const clampF = (v, lim, d) => Math.max(lim[0], Math.min(lim[1], num(v, d)));
+  return {
+    on: c.on !== false,
+    variant: HD_CITY_VARIANT_KEYS.includes(c.variant) ? c.variant : 'A',
+    seed: clampInt(c.seed, L.seed[0], L.seed[1]),
+    density: clampF(c.density, L.density, 1),
+    height: clampF(c.height, L.height, 1),
+    lights: clampF(c.lights, L.lights, 1),
+    glow: c.glow === true
   };
 }
 
@@ -694,7 +722,8 @@ export function expandHullDecals(design, partDecals = []) {
  * geometria, sieć i mapy kompozytora — zmiana dotyczy tylko passów barw (HullComposer.setColors / renderColors).
  */
 export function hullDesignShapeKey(design) {
-  return JSON.stringify(design, (k, v) => (k === 'palette' || k === 'paint' || k === 'decals' || k === 'name' ? undefined : v));
+  // `city` — miasto 3D nad kadłubem: osobny etap (płytka ostatniej pełnej budowy), nie obraz kadłuba
+  return JSON.stringify(design, (k, v) => (k === 'palette' || k === 'paint' || k === 'decals' || k === 'name' || k === 'city' ? undefined : v));
 }
 
 /**

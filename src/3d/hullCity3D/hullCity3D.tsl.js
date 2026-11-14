@@ -74,7 +74,7 @@ export function createCityNodes(heightTex) {
     uSunL: shared(new THREE.Vector3(-0.7, 0.7, 0.01)),         // kierunek do słońca (układ miasta)
     uShadow: shared(new THREE.Vector4(0.58, 0.5, 0.06, 0.55)), // tg wysokości słońca cieni, siła na kadłubie, miękkość, cień w otoczeniu
     uHm: shared(new THREE.Vector4(0, 0, 1, 1)),                // mapa wysokości: x0, y0 (układ miasta), 1 / szer., 1 / wys. [j.]
-    uHmTop: shared(new THREE.Vector4(1, 0, 0, 0)),             // szczyt miasta, —, —, —
+    uHmTop: shared(new THREE.Vector4(1, 0.5, 0, 0)),           // szczyt miasta, 1 / teksel [1/j.], najwyższy poziom mipmap, —
     uLook: shared(new THREE.Vector4(1, 0.22, 0.05, 1)),        // jasność masywu, ton z wysokością, poświata okien, widoczność
     uLights: shared(new THREE.Vector4(1, 1.4, 0.6, 0.5)),      // jasność świateł, min. rozmiar [px], zasięg poświaty, siła z góry
     uWin: shared(new THREE.Vector4(4, 3.2, 0.05, 0)),          // piętro [j.], okno [j.], udział tlących się okien, —
@@ -93,16 +93,20 @@ export function createCityNodes(heightTex) {
 /** Biblioteka marszu: wysokość miasta w punkcie, cień w stronę słońca cieni, AO kanionu. */
 function cityLib(ctx) {
   const { U, heightNode } = ctx;
-  const height = (q) => {
+  // lod — poziom mipmap MAKSIMUM (null — poziom 0)
+  const height = (q, lod = null) => {
     const t = q.sub(U.uHm.xy).mul(U.uHm.zw).toVar();
     const h = float(0).toVar();
     If(t.x.greaterThan(0.0).and(t.y.greaterThan(0.0)).and(t.x.lessThan(1.0)).and(t.y.lessThan(1.0)), () => {
-      h.assign(heightNode.sample(t).level(0).x);
+      h.assign(heightNode.sample(t).level(lod === null ? 0 : lod).x);
     });
     return h;
   };
   // 1 = w pełni oświetlony. p — punkt (układ miasta), dir — jednostkowy azymut słońca, jit — rozrzut startu.
-  const shadow = (p, dir, jit, softAdd = 0) => {
+  // byStep — wysokość z poziomu mipmap maksimum o tekselu ≈ krokowi marszu (cień na kadłubie bez rozrzutu: przy
+  // kroku większym niż teksel cień był sumą przesuniętych kopii prostokątów brył i jego brzeg wzdłuż słońca szedł
+  // schodkami; na poziomie ≈ kroku rampa filtra liniowego zakrywa odstęp próbek).
+  const shadow = (p, dir, jit, softAdd = 0, byStep = false) => {
     const tanE = max(U.uShadow.x, 0.05).toVar();
     const lit = float(1.0).toVar();
     const topK = U.uHmTop.x;
@@ -115,11 +119,13 @@ function cityLib(ctx) {
       Loop(CITY_SHADOW_STEPS, () => {
         If(t.greaterThan(maxT), () => { Break(); });
         const rayZ = p.z.add(t.mul(tanE));
-        const h = height(p.xy.add(dir.mul(t)));
+        const step = max(0.9, t.mul(0.075));
+        const lod = byStep ? clamp(log2(step.mul(U.uHmTop.y)), 0.0, U.uHmTop.z) : null;
+        const h = height(p.xy.add(dir.mul(t)), lod);
         // półcień proporcjonalny do drogi (stożek): płaski grunt — (t · tg) / (t · k) > 1, zawsze oświetlony
         lit.assign(min(lit, clamp(rayZ.sub(h).div(t.mul(U.uShadow.z.add(0.12 + softAdd)).add(0.05)), 0.0, 1.0)));
         If(lit.lessThanEqual(0.001), () => { Break(); });
-        t.addAssign(max(0.9, t.mul(0.075)).mul(jit.mul(0.14).add(0.93)));
+        t.addAssign(step.mul(jit.mul(0.14).add(0.93)));
       });
     });
     return lit;
@@ -319,7 +325,7 @@ export function createCityReceiverMaterial(ctx, receiverZ) {
     const L = normalize(U.uSunL);
     const sunDir = L.xy.div(max(length(L.xy), 1e-4));
     // na kadłubie bez rozrzutu startu (na jasnym pancerzu rozrzut dawał ziarno) — szerszy półcień zamiast tego
-    const sh = L3.shadow(p, sunDir, float(0.5), 0.1).toVar();
+    const sh = L3.shadow(p, sunDir, float(0.5), 0.1, true).toVar();
     const ao = L3.occlusion(p, float(4.0)).toVar();
     const dark = float(1.0).sub(sh).mul(U.uShadow.y).mul(sunVisibility()).add(float(1.0).sub(ao).mul(1.4)).toVar();
     dark.assign(min(dark, 0.82).mul(U.uLook.w));

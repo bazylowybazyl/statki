@@ -83,6 +83,9 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   w generatorze”; o rowie osi drednota: „row otwary wzdluz osi to znaczy ze nie jest zakryty na srodku pancerzem? jesli
   o to chodzi to tak”. Rytmu nie wybrał — ma je przełączać na żywo; odczytanie ORKIESTRATORA: wszystkie trzy rytmy
   wybieralne, domyślnie A; flota TN bez zmian (skorupa to opcja), drednot na skorupie z rowem osi.
+- Miasto na grzbiecie (2026-11-14, temat 3): „brakuje mi wieżowców zabudowań podobnych do miasta a'la executoner
+  palpatina”, „miasto będzie 3d”; po demie: „w grze/generatorze chcę 3d gta style (tak jak w grze)”, „»cały okręt«
+  wszystko spłaszcza” — widoki z góry w perspektywie (kamera passa FG gry), płaska tylko jako A/B. § „Miasto 3D”.
 - Superkapitał linii Atlasa (2026-10-27): „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa
   (czerń / szary)”; szkic Atlasa to „bardziej battleship — za krótki na superkapitała” — preset bierze ze szkicu UKŁAD
   sekcji, nie proporcje (dłuższy, smukły kadłub w limicie klasy VI).
@@ -318,6 +321,25 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   Kształty, Warsztat — sekcje w panelu. A/B z kompozytora: `node scripts/webgpu/kreator-pancerz-ab.mjs` (stary drednot
   z historii gita, nowy, rytmy, Colossus i Bellator); test `tests/hullDesignShell.test.mjs`; pomiary — docs § „Pancerz
   z obrysu”.
+
+## Miasto 3D (odsłonięty środek)
+
+- Opis, koszty, wpięcie do gry: `docs/OPIS-miasto-3d.md`. Generator wieżowców `hullDesignTowers.js`, masyw
+  `hullDesignCity.js` (`buildHullCity(pole, płytka)` — rów = rama bez pancerza z nadbudówkami w nim jako przeszkodami,
+  grzbiet tylko przy otwartej osi ≥ 900 j.), obraz `src/3d/hullCity3D/` (partia brył, cień na kadłub, światła; graf TSL
+  raz). Kompozytor miasta NIE rysuje.
+- Pole projektu `city: { on, variant A|B|C, seed, density, height, lights, glow }` (`normalizeHullCityField`, strażnik
+  `cityViolations` w `isPlayerBuildable`); drednot — włączone, reszta presetów bez (test). Pole jest POZA kluczem kształtu
+  (nie zmienia obrazu kadłuba): miasto liczy worker budowy osobną wiadomością `city` z pola i płytki OSTATNIEJ PEŁNEJ
+  budowy (`builder.city`, pamięć po kluczu układu + opcjach); `lights` i `glow` to sam obraz. Nowe pole czytane przez
+  generator miasta → do `cityBuildKey` (`dema/kreator-kadluba-miasto.js`) i opcji `builder.city`.
+- Demo: sekcja „MIASTO 3D” w `dema/kreator-kadluba-webgpu.js` (`cityDemoAfterBuild` po pełnej budowie, `cityDemoCheck`
+  na ścieżce barw, `cityDemoSync` w `render()`, w podglądzie przeciągania miasto znika), panel „Miasto 3D” w Warsztacie
+  i opcje w zakładce Kształty Stoczni. KAMERA widoku: płaska (ortho) albo perspektywa z góry = `cameraPersp` passa FG
+  (35°, wysokość (h / 2) / tg(17,5°) / zoom) jako free3d (`viewCamera`, `?kamera=perspektywa`, `localStorage`
+  `kreator.kamera`); płaszczyzna z = 0 w tej samej skali — nakładki edytora bez zmian.
+- Zrzuty: `node scripts/webgpu/miasto-3d-kreator.mjs` (generator), `node scripts/webgpu/miasto-3d-zrzuty.mjs` (demo
+  `dema/miasto-3d.html`); test `tests/hullDesignCity*.test.mjs`, `tests/hullDesignTowers.test.mjs`.
 
 ## Klasy okrętów i gniazda broni (etap 2)
 

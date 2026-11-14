@@ -8,6 +8,8 @@
 //   kopuła) → ROWKI → SIEĆ (moduły, rury ręczne, ustawienia sieci + geometria) → UKŁAD maszynowni (sieć + `board`:
 //   wariant, ziarno — hullDesignBoard.js) → MOC (martwe kable z bilansu klasy) → klasa, receptura, mocowania → PAKIETY tekstur kompozytora (float16, ten sam wynik co setDesign) → przy pełnej
 //   budowie: kontrola sieci, systemy, spójność ramy, alfa fizyki (ciało gry).
+// MIASTO 3D (`city`, osobno — `city(opcje)`): masyw z pola i układu maszynowni OSTATNIEJ PEŁNEJ budowy, pamięć po kluczu
+// układu + opcjach; pole `city` nie wchodzi do kluczy etapów (nie zmienia obrazu kadłuba).
 //
 // Zmiana barw, naklejek albo klasy nie rusza geometrii ani sieci; przesunięcie modułu (bez bryły) — tylko sieć.
 // Między etapami `yieldFn` (worker: oddaje pętlę zdarzeń, żeby nowsza praca mogła anulować starą); zwrócone
@@ -24,6 +26,7 @@ import { pipeNetworkCheck } from './hullDesignPipes.js';
 import { packHalfChannel, toHalfBits, halfFromF32Bits } from './hullDesignHalf.js';
 import { hullPaintLayer } from './hullDesignPaint.js';
 import { buildHullBoard, packHullBoardTextures } from './hullDesignBoard.js';
+import { buildHullCity } from './hullDesignCity.js';
 
 // Pola obiektów rozwiniętych, które nie wpływają na wynik etapów (odwołania do części / kasztelu, znacznik kopii
 // lustra) — poza kluczem (inaczej klucz niósłby całe definicje części).
@@ -101,7 +104,7 @@ export function packHullPipeTextures(pipeNet, pipeTex, grid) {
  * pełnej budowy — osobno, `checks()`.
  */
 export function createHullDesignBuilder() {
-  const C = { geo: lru(2), groove: lru(2), pipes: lru(2), board: lru(2), power: lru(3), packGeo: lru(2), packGroove: lru(2), packPipes: lru(3), packBoard: lru(2), full: lru(2) };
+  const C = { geo: lru(2), groove: lru(2), pipes: lru(2), board: lru(2), power: lru(3), packGeo: lru(2), packGroove: lru(2), packPipes: lru(3), packBoard: lru(2), full: lru(2), city: lru(3) };
   async function run(design, opts = {}, yieldFn = null) {
     const T = {};
     let t = performance.now();
@@ -204,7 +207,7 @@ export function createHullDesignBuilder() {
       out.physics = rasterHullAlpha(field, 1);
       out.cells = hullCells(field, 0).count;
       lap('fizyka');
-      lastFull = { key: kPower, field };
+      lastFull = { key: kPower, field, kBoard };
     }
     T.razem = Math.round(Object.values(T).reduce((a, b) => a + b, 0) * 10) / 10;
     return out;
@@ -226,8 +229,21 @@ export function createHullDesignBuilder() {
     }
     return fr;
   }
+  /**
+   * Miasto 3D na kadłubie ostatniej pełnej budowy (`opts`: variant, seed, density, height — buildHullCity). Wynik
+   * z pamięci po kluczu układu maszynowni i opcjach; bez układu (wariant 'off', brak pełnej budowy) — puste miasto.
+   */
+  function city(opts = {}) {
+    const board = lastFull?.field?.board;
+    if (!board) return { ok: false, reason: 'brak układu maszynowni (pełna budowa)', nBoxes: 0, nLights: 0, boxes: new Float32Array(0), lights: new Float32Array(0), height: null, bounds: null, stats: {} };
+    const o = { variant: opts.variant || 'A', seed: opts.seed | 0, density: opts.density ?? 1, height: opts.height ?? 1 };
+    const key = `${lastFull.kBoard}|${keyOf(o)}`;
+    let c = C.city.get(key);
+    if (!c) c = C.city.set(key, buildHullCity(lastFull.field, board, o));
+    return c;
+  }
   let lastFull = null;
   let lastFastPipes = null;
   let lastBoard = null;
-  return { run, checks, clear() { lastFull = null; lastFastPipes = null; lastBoard = null; for (const c of Object.values(C)) c.clear(); } };
+  return { run, checks, city, clear() { lastFull = null; lastFastPipes = null; lastBoard = null; for (const c of Object.values(C)) c.clear(); } };
 }
