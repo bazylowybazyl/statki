@@ -701,10 +701,22 @@ export function grooveField(grooves, grid, cap) {
       const ix1 = Math.min(w - 1, Math.ceil((Math.max(a[0], b[0]) + cap - x0) * res));
       const iy0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - cap - y0) * res));
       const iy1 = Math.min(h - 1, Math.ceil((Math.max(a[1], b[1]) + cap - y0) * res));
+      // wiersz: tylko kolumny w pasie ±cap wokół odcinka (część odcinka w paśmie y ± cap), nie całe pudło — skośne
+      // długie odcinki (rowki skorupy) miały pudło setki razy większe od pasa
+      const dy = b[1] - a[1];
       for (let j = iy0; j <= iy1; j++) {
         const py = y0 + (j + 0.5) * inv;
         const row = j * w;
-        for (let i = ix0; i <= ix1; i++) {
+        let ri0 = ix0, ri1 = ix1;
+        if (Math.abs(dy) > 1e-9) {
+          let t0 = (py - cap - a[1]) / dy, t1 = (py + cap - a[1]) / dy;
+          if (t0 > t1) { const t = t0; t0 = t1; t1 = t; }
+          t0 = t0 < 0 ? 0 : (t0 > 1 ? 1 : t0); t1 = t1 < 0 ? 0 : (t1 > 1 ? 1 : t1);
+          const xa = a[0] + (b[0] - a[0]) * t0, xb = a[0] + (b[0] - a[0]) * t1;
+          ri0 = Math.max(ix0, Math.floor((Math.min(xa, xb) - cap - x0) * res));
+          ri1 = Math.min(ix1, Math.ceil((Math.max(xa, xb) + cap - x0) * res));
+        }
+        for (let i = ri0; i <= ri1; i++) {
           const d = segDist(x0 + (i + 0.5) * inv, py, a[0], a[1], b[0], b[1]);
           if (d < f[row + i]) { f[row + i] = d; width[row + i] = gw; }
         }

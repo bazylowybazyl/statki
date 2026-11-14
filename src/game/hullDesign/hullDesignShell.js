@@ -1,79 +1,83 @@
 // src/game/hullDesign/hullDesignShell.js
 //
-// KREATOR KADŁUBÓW — PANCERZ Z OBRYSU (temat 2 generatora kadłubów, PROTOTYP CPU, niewpięty; propozycja:
-// docs/PROPOZYCJA-kreator-pancerz.md, makieta: scripts/kreator-pancerz-makieta.mjs, test: tests/hullDesignShell.test.mjs).
-// Czysty moduł: bez three i DOM.
+// KREATOR KADŁUBÓW — PANCERZ Z OBRYSU (skorupa; czysty: bez three i DOM, bez importu schematu — woła go expandHullDesign).
+// Propozycja i makieta: docs/PROPOZYCJA-kreator-pancerz.md, scripts/kreator-pancerz-makieta.mjs; test
+// tests/hullDesignShell.test.mjs.
 //
-// Zamiast płyt kładzionych klocek po klocku (każda z własną fazą, szwem i rowem wokół) — JEDNA CIĄGŁA SKORUPA idąca za
-// całą sylwetką (rama projektu = suma pełnych obrysów klocków) z jawnie zadanymi OTWARCIAMI (klocki-wycięcia: rów
-// wzdłuż osi, wnęki silników). Rytm pancerza rysują ROWKI liczone z odległości od brzegu skorupy (burty i ścian
-// otwarć), więc wszystkie linie idą równolegle do burt i obchodzą otwarcia:
-//   - OBWÓDKA — izolinia w odległości `rim` jd od brzegu (pas wzdłuż całej sylwetki i wokół otwarć),
-//   - PASY — kolejne izolinie co `bandStep` jd (`bands` sztuk),
-//   - ŻEBRA — odcinki poprzeczne do osi co `ribStep` jd w strefie pasów,
-//   - WPUSTY „płyta w płycie” — strefa `inset.lo … inset.hi` jd od brzegu pocięta poprzecznie co `inset.step` jd i wzdłuż
-//     osi (`inset.axis`), każdy kawałek obwiedziony rowkiem z fazą rogów `inset.ch`,
-//   - STĘPKA — rowek wzdłuż osi (gdy nie ma tam otwarcia).
-// Odległość liczy transformata ośmiokątna (wagi 1 i √2) na siatce komórek — izolinie mają w narożach wklęsłych fazy 45°
-// jak linie paneli TN, a kawałki, które się nie mieszczą (wąski ząb, kolec), znikają same. Lustro z konstrukcji: rowki
-// z burty y ≤ 0, druga burta to kopia (expandHullDesign); siatka jest symetryczna względem osi.
-// Wszystkie wymiary rytmu w JEDNOSTKACH DETALU (jd = design.detail j.), szerokość rowków `grooveW` jd.
-//
-// Wynik `buildHullShell` jest w postaci, którą dzisiejszy projekt rozumie bez zmian kodu: płyta = bryły 'poly' poziomu 1
-// (z otworami, przycięte do ramy jak płyty klocków: clip 0 + clipIn), rytm = `grooves` (łamane). `applyHullShell` składa
-// z tego wariant projektu do makiety (płyty klocków poziomu 1 zdjęte, `panels` 0 — bez losowej siatki paneli wzdłuż osi).
-// Wariant NIE przechodzi `isPlayerBuildable` (wielokąt skorupy i rowki mają setki punktów) — w docelowym formacie skorupa
-// jest JEDNĄ cechą projektu (`shell: { rhythm, rim, … }`) rozwijaną w expandHullDesign jak kasztele, a strażnik sprawdza
-// tylko jej parametry (propozycja, § „Format i edytor”).
+// Pole projektu `shell` (normalizeHullShell; brak — jak dawniej, płyty z klocków). Przy włączonej skorupie:
+//   - klocki poziomu 1 są tylko SYLWETKĄ (rama), płyty z nich nie ma; klocki poziomu ≥ 2 to dalej nadbudówki NA skorupie,
+//   - PŁYTA = sylwetka ramy (suma pełnych obrysów klocków) minus OTWARCIA — jedna bryła 'poly' poziomu 1 bez szwów
+//     (suma / różnica geometryczna), przycięta do ramy jak płyty klocków (clip 0 + clipIn),
+//   - OTWARCIA = klocki-wycięcia poziomu 1 (rów osi — `axisTrench`, wnęki) i WNĘKI generatora przy przyłączach paliwa
+//     (kanał serwisowy gondoli MAIN, dyszy SIDE i zbiornika poszerzony o `nicheDu`) — przy skorupie wycięcie poziomu 1
+//     otwiera tylko skorupę: nadbudówki stojące w rowie zostają (kręgosłup w rowie),
+//   - RYTM = rowki (`grooves`, znacznik `shell`) z odległości od brzegu skorupy (burty i ścian otwarć; transformata
+//     ośmiokątna — w narożach wklęsłych fazy 45°, za wąskie kawałki znikają same): OBWÓDKA (`rim`), PASY (`bands` co
+//     `bandStep`), ŻEBRA poprzeczne (`ribStep`), WPUSTY „płyta w płycie” (`inset`), STĘPKA (`keel`).
+// Lustro z konstrukcji: przy `mirror` siatka obejmuje burtę y ≤ 0 (odległość do ścian drugiej burty nigdy nie jest
+// mniejsza niż do ich odbicia), rowki tylko z niej — kopie dokłada wywołujący. Wymiary rytmu w jd (design.detail j.).
+// Wynik w pamięci (LRU po kluczu wejścia) — rozwinięcie projektu woła się przy każdej budowie i każdym kluczu.
 
-import { expandHullDesign, normalizeHullDesign } from './hullDesignSchema.js';
-import { blockWorldLoops, loopArea, normalizeBlock, polygonDifference, polygonUnion, HD_BLOCK_TUNE } from './hullDesignBlocks.js';
-import { cornerCut } from './hullDesignGeometry.js';
+import { blockWorldLoops, loopArea, polygonDifference, polygonUnion } from './hullDesignBlocks.js';
+import { serviceChannel } from './hullDesignSystems.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
-const MIRROR_EPS = 1e-6;
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const MIRROR_EPS = 0.5;
 
 /**
- * RYTMY pancerza (warianty do wyboru użytkownika; wymiary w jd). `rim` — szerokość obwódki, `bands` / `bandStep` — pasy
- * równoległe do burt, `ribStep` — żebra poprzeczne w strefie pasów, `inset` — wpusty { lo, hi (Infinity — do środka),
- * step, cut (szerokość rowu między wpustami), axis (rów osi między wpustami), ch (faza rogów), minW (najwęższy wpust) },
- * `keel` — rowek stępki wzdłuż osi.
+ * RYTMY (wymiary w jd): A „obwódka i wpusty” (jak wzór użytkownika), B „pasy wzdłuż burt”, C „pasy i żebra”.
+ * `inset`: { lo, hi (od brzegu), step (krok cięć poprzecznych), cut (rów między wpustami), axis (rów osi między
+ * wpustami), ch (faza rogów), minW (najwęższy wpust) }.
  */
 export const HD_SHELL_RHYTHMS = Object.freeze({
-  wzor: Object.freeze({ label: 'Obwódka i wpusty', rim: 44, bands: 0, ribStep: 0, keel: true,
+  wzor: Object.freeze({ label: 'A · obwódka i wpusty', rim: 44, bands: 0, bandStep: 34, ribStep: 0, keel: true,
     inset: Object.freeze({ lo: 62, hi: 230, step: 440, cut: 16, axis: 16, ch: 22, minW: 40 }) }),
-  pasy: Object.freeze({ label: 'Pasy wzdłuż burt', rim: 44, bands: 4, bandStep: 34, ribStep: 0, keel: true, inset: null }),
-  zebra: Object.freeze({ label: 'Pasy i żebra', rim: 44, bands: 3, bandStep: 40, ribStep: 110, keel: true, inset: null })
+  pasy: Object.freeze({ label: 'B · pasy wzdłuż burt', rim: 44, bands: 4, bandStep: 34, ribStep: 0, keel: true, inset: null }),
+  zebra: Object.freeze({ label: 'C · pasy i żebra', rim: 44, bands: 3, bandStep: 40, ribStep: 110, keel: true, inset: null })
 });
+export const HD_SHELL_RHYTHM_KEYS = Object.freeze(Object.keys(HD_SHELL_RHYTHMS));
+/** Zakresy parametrów (edytor, normalizacja, strażnik) [jd]. */
+export const HD_SHELL_LIMITS = Object.freeze({
+  rim: [8, 200], bands: [0, 8], bandStep: [8, 200], ribStep: [0, 600], grooveW: [0.6, 8], niche: [0, 24],
+  inset: Object.freeze({ lo: [8, 400], hi: [16, 2000], step: [0, 2000], cut: [4, 80], axis: [0, 80], ch: [0, 80], minW: [8, 400] })
+});
+/** Szerokość rowków [jd]: obwódka i reszta; wnęka przy przyłączu paliwa [jd] ponad kanał serwisowy. */
+export const HD_SHELL_DEFAULTS = Object.freeze({ rhythm: 'wzor', grooveW: 3, rimGrooveW: 4, niche: 6, maxCells: 6e6 });
 
-/** Ustawienia domyślne narzędzia (poza rytmem): szerokość rowków [jd], rozmiar komórki siatki odległości (0 — z detalu). */
-export const HD_SHELL_DEFAULTS = Object.freeze({ rhythm: 'wzor', grooveW: 3, rimGrooveW: 4, cell: 0, maxCells: 6e6 });
-
-// ---------------------------------------------------------------------------
-// Sylwetka i otwarcia
-
-/** Sylwetka projektu: rama z klocków (suma pełnych obrysów, z lustrem) — lista wielokątów [obrys, …otwory]. */
-export function hullShellSilhouette(designInput) {
-  const ex = expandHullDesign(designInput);
-  const out = [];
-  for (const s of ex.shapes) if (s.blockSet === 'frame' && s.op === 'add') out.push([s.pts, ...(s.holes || [])]);
-  return out;
-}
-
-/** Otwarcia (klocki-wycięcia; kopia lustra jak w projekcie) → suma wielokątów [{ outer, holes }]. */
-export function hullShellOpenings(openings, mirror = true) {
-  const loops = [];
-  for (const o of openings || []) {
-    const b = normalizeBlock({ ...o, kind: 'block', op: 'cut' });
-    loops.push(blockWorldLoops(b, false));
-    if (mirror && b.mirror !== false && Math.abs(b.y) > MIRROR_EPS) loops.push(blockWorldLoops(b, true));
+/**
+ * Normalizacja pola `shell`: brak, false albo { on: false } → null (płyty z klocków). Pola spoza rytmu nadpisują
+ * jego wartości; wynik ma komplet pól (stały klucz). `inset: null` — bez wpustów.
+ */
+export function normalizeHullShell(v) {
+  if (!v || v.on === false) return null;
+  const rhythm = HD_SHELL_RHYTHMS[v.rhythm] ? v.rhythm : HD_SHELL_DEFAULTS.rhythm;
+  const R = HD_SHELL_RHYTHMS[rhythm], L = HD_SHELL_LIMITS;
+  const r = (k, d) => clamp(num(v[k], d), L[k][0], L[k][1]);
+  let inset = null;
+  const iv = v.inset === undefined ? R.inset : v.inset;
+  if (iv) {
+    const base = R.inset || HD_SHELL_RHYTHMS.wzor.inset;
+    const ri = (k) => clamp(num(iv[k], base[k]), L.inset[k][0], L.inset[k][1]);
+    inset = { lo: ri('lo'), hi: ri('hi'), step: ri('step'), cut: ri('cut'), axis: ri('axis'), ch: ri('ch'), minW: ri('minW') };
+    if (inset.hi < inset.lo + inset.minW) inset.hi = inset.lo + inset.minW;
   }
-  return loops.length ? polygonUnion(loops) : [];
+  return {
+    rhythm,
+    rim: r('rim', R.rim),
+    bands: Math.round(r('bands', R.bands)),
+    bandStep: r('bandStep', R.bandStep),
+    ribStep: r('ribStep', R.ribStep),
+    inset,
+    keel: v.keel === undefined ? R.keel : v.keel !== false,
+    grooveW: r('grooveW', HD_SHELL_DEFAULTS.grooveW),
+    niche: r('niche', HD_SHELL_DEFAULTS.niche)
+  };
 }
 
 /**
- * Rów wzdłuż osi z „pióra” stacji [[x, pół-szerokość], …] (od rufy ku dziobowi) — klocki-wycięcia (trapezy na osi,
- * obrót +90°: podstawa od rufy), tak jak gracz kładzie wycięcie w edytorze. Pół-szerokość 0 — szpic.
+ * Rów wzdłuż osi z „pióra” stacji [[x, pół-szerokość], …] — klocki-wycięcia poziomu 1 (trapezy na osi, obrót ±90°),
+ * tak jak gracz kładzie wycięcie w edytorze. Pół-szerokość 0 — szpic.
  */
 export function axisTrench(stations, level = 1) {
   const st = stations.slice().sort((a, b) => a[0] - b[0]);
@@ -82,13 +86,34 @@ export function axisTrench(stations, level = 1) {
     const [x0, h0] = st[i], [x1, h1] = st[i + 1];
     const hw = Math.max(h0, h1);
     if (!(hw > 0) || !(x1 > x0)) continue;
-    // trapez obrócony o +90°: w — szerokość w poprzek (2·hw), h — długość; a, b wcinają róg po stronie dziobu (x1),
-    // rot −90° — po stronie rufy (x0)
+    // trapez obrócony o +90°: wcięcia a, b po stronie dziobu (x1); −90° — po stronie rufy (x0)
     const fwdNarrow = h1 <= h0;
     out.push({ kind: 'block', shape: 'trap', op: 'cut', level, x: (x0 + x1) / 2, y: 0, w: 2 * hw, h: x1 - x0,
       rot: fwdNarrow ? Math.PI / 2 : -Math.PI / 2, a: hw - Math.min(h0, h1), b: hw - Math.min(h0, h1) });
   }
   return out;
+}
+
+/** Faza rogów pętli (jak cornerCut geometrii): róg o skręcie ≥ minTurnDeg ścięty o min(ch, ½ krótszej krawędzi). */
+function cornerCut(pts, ch, minTurnDeg = 30) {
+  if (!(ch > 0)) return pts;
+  const n = pts.length, cosMin = Math.cos(minTurnDeg * Math.PI / 180), out = [];
+  for (let i = 0; i < n; i++) {
+    const P = pts[(i - 1 + n) % n], V = pts[i], N = pts[(i + 1) % n];
+    const lp = Math.hypot(V[0] - P[0], V[1] - P[1]), ln = Math.hypot(N[0] - V[0], N[1] - V[1]);
+    if (lp < 1e-6 || ln < 1e-6) { out.push(V); continue; }
+    const ix = (V[0] - P[0]) / lp, iy = (V[1] - P[1]) / lp, ox = (N[0] - V[0]) / ln, oy = (N[1] - V[1]) / ln;
+    if (ix * ox + iy * oy > cosMin) { out.push(V); continue; }
+    const t = Math.min(ch, lp * 0.5, ln * 0.5);
+    out.push([V[0] - ix * t, V[1] - iy * t], [V[0] + ox * t, V[1] + oy * t]);
+  }
+  return out;
+}
+
+/** Prostokąt obrócony (środek, obrót, pół-wymiary) → pętla w obiegu klocków. */
+function rectLoop(x, y, rot, hw, hh) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([lx, ly]) => [x + lx * c - ly * s, y + lx * s + ly * c]);
 }
 
 // ---------------------------------------------------------------------------
@@ -283,163 +308,7 @@ function simplifyLine(l, tol) {
 
 const R3 = (v) => Math.round(v * 1000) / 1000;
 const roundPts = (pts) => pts.map(([x, y]) => [R3(x), R3(y) === 0 ? 0 : R3(y)]);
-
-/** Łamana jako rowek (pętla zamknięta powtórzeniem pierwszego punktu). */
-function toGroove(l, w) {
-  const pts = roundPts(l.closed ? [...l.pts, l.pts[0]] : l.pts);
-  return pts.length >= 2 ? { pts, w } : null;
-}
-
 const polyLength = (pts) => { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return s; };
-
-// ---------------------------------------------------------------------------
-// Skorupa
-
-/**
- * PANCERZ Z OBRYSU. `opts`: rhythm (klucz HD_SHELL_RHYTHMS albo obiekt rytmu), nadpisania pól rytmu (rim, bands,
- * bandStep, ribStep, inset, keel), openings (klocki-wycięcia: rów osi, wnęki — `axisTrench` albo zwykłe klocki), grooveW,
- * rimGrooveW, cell [j.]. Zwraca { detail, half, silhouette, openings, plate: [{ outer, holes }], grooves, insets (pętle
- * wpustów), grid, stats }. Rowki tylko z burty y ≤ 0 (przy lustrze) — drugą burtę dokłada expandHullDesign.
- */
-export function buildHullShell(designInput, opts = {}) {
-  const design = normalizeHullDesign(designInput);
-  const D = design.detail;
-  const half = !!design.mirror;
-  const base = typeof opts.rhythm === 'object' ? opts.rhythm : (HD_SHELL_RHYTHMS[opts.rhythm || HD_SHELL_DEFAULTS.rhythm] || HD_SHELL_RHYTHMS.wzor);
-  const R = { ...base, ...Object.fromEntries(['rim', 'bands', 'bandStep', 'ribStep', 'inset', 'keel'].filter((k) => opts[k] !== undefined).map((k) => [k, opts[k]])) };
-  const grooveW = num(opts.grooveW, HD_SHELL_DEFAULTS.grooveW), rimW = num(opts.rimGrooveW, HD_SHELL_DEFAULTS.rimGrooveW);
-
-  // sylwetka i płyta: sylwetka minus otwarcia (suma geometryczna — bez szwów)
-  const silhouette = hullShellSilhouette(design);
-  const openings = hullShellOpenings(opts.openings, half);
-  let plate;
-  if (!silhouette.length) plate = [];
-  else if (openings.length) plate = polygonDifference(silhouette.flat(), openings.flatMap((p) => [p.outer, ...p.holes]));
-  else plate = polygonUnion(silhouette);
-  plate = plate.filter((p) => Math.abs(loopArea(p.outer)) > 1e-6);
-
-  const box = [Infinity, Infinity, -Infinity, -Infinity];
-  for (const p of plate) for (const [x, y] of p.outer) {
-    if (x < box[0]) box[0] = x; if (y < box[1]) box[1] = y; if (x > box[2]) box[2] = x; if (y > box[3]) box[3] = y;
-  }
-  const grooves = [], insets = [];
-  const stats = { cells: 0, isolines: 0, grooves: 0, insets: 0, groovePts: 0, grooveLen: 0 };
-  if (!plate.length) return { detail: D, half, silhouette, openings, plate, grooves, insets, grid: null, stats, rhythm: R };
-
-  const span = Math.max(box[2] - box[0], box[3] - box[1]);
-  let c = num(opts.cell, HD_SHELL_DEFAULTS.cell) || Math.max(D * 0.9, span / 3200);
-  // pułap pamięci: komórek najwyżej maxCells
-  const area0 = (box[2] - box[0] + 4 * c) * (2 * Math.max(Math.abs(box[1]), Math.abs(box[3])) + 4 * c);
-  if (area0 / (c * c) > HD_SHELL_DEFAULTS.maxCells) c = Math.sqrt(area0 / HD_SHELL_DEFAULTS.maxCells);
-  const g = makeGrid(box, c, 2 * c);
-  const inside = rasterInside(plate, g);
-  const dist = chamferDistance(inside, g);
-  stats.cells = g.w * g.h;
-  const N = g.w * g.h;
-  // przy lustrze: łamane tylko z wierszy y < 0 (+ wiersz przez oś — przycięty niżej do y ≤ 0)
-  const jMax = half ? g.h / 2 : g.h - 1;
-  const tol = Math.max(0.35 * c, 0.25 * D);
-  const f = new Float32Array(N);
-  const clipHalf = (l) => (half ? clipToHalf(l) : [l]);
-  const addLines = (lines, w, minLen, kind) => {
-    for (const l0 of lines) {
-      for (const l1 of clipHalf(simplifyLine(l0, tol))) {
-        if (l1.pts.length < 2 || polyLength(l1.pts) < minLen) continue;
-        const gr = toGroove(l1, w);
-        if (!gr) continue;
-        gr.shell = kind;
-        grooves.push(gr);
-      }
-    }
-  };
-
-  // OBWÓDKA i PASY: izolinie odległości od brzegu skorupy
-  const levelsJd = [];
-  if (R.rim > 0) levelsJd.push([R.rim, rimW, 'rim']);
-  for (let k = 1; k <= (R.bands | 0); k++) levelsJd.push([R.rim + k * R.bandStep, grooveW, 'band']);
-  for (const [t, w, kind] of levelsJd) {
-    const tw = t * D;
-    for (let q = 0; q < N; q++) f[q] = inside[q] ? dist[q] - tw : -tw;
-    const lines = isolines(f, g, 0, jMax);
-    stats.isolines += lines.length;
-    addLines(lines, w, 3 * w * D, kind);
-  }
-
-  // ŻEBRA: odcinki x = const w strefie pasów (rim … rim + bands·bandStep), krok od x = 0 (na siatce)
-  if (R.ribStep > 0 && R.bands > 0) {
-    const lo = R.rim * D, hi = (R.rim + R.bands * R.bandStep) * D, st = R.ribStep * D;
-    for (let x = Math.ceil(box[0] / st) * st; x <= box[2]; x += st) {
-      const fi = (x - g.x0) / c - 0.5, i = Math.floor(fi), t = fi - i;
-      if (i < 0 || i + 1 >= g.w) continue;
-      const at = (j) => (inside[j * g.w + i] || inside[j * g.w + i + 1]) ? dist[j * g.w + i] * (1 - t) + dist[j * g.w + i + 1] * t : -1;
-      let ya = null;
-      const jEnd = half ? g.h / 2 : g.h;
-      for (let j = 0; j <= jEnd; j++) {
-        const v = j < jEnd ? at(j) : -1;
-        const inZ = v >= lo && v <= hi;
-        const y = g.y0 + (j + 0.5) * c;
-        if (inZ && ya === null) ya = y;
-        if (!inZ && ya !== null) {
-          const yb = Math.min(y - c, half ? 0 : Infinity);
-          if (yb - ya > 0.5 * R.bandStep * D) grooves.push({ pts: [[R3(x), R3(ya)], [R3(x), R3(yb) === 0 ? 0 : R3(yb)]], w: grooveW, shell: 'rib' });
-          ya = null;
-        }
-      }
-    }
-  }
-
-  // WPUSTY: strefa lo … hi od brzegu minus rowy poprzeczne (co step) i rów osi; brzeg kawałka = izolinia 0 pola g
-  if (R.inset) {
-    const I = R.inset;
-    const lo = I.lo * D, hi = (I.hi === undefined || I.hi === null ? Infinity : I.hi * D), st = I.step * D;
-    const cutH = I.cut * D * 0.5, axH = (I.axis || 0) * D * 0.5;
-    for (let j = 0; j < g.h; j++) {
-      const y = g.y0 + (j + 0.5) * c;
-      for (let i = 0; i < g.w; i++) {
-        const q = j * g.w + i;
-        if (!inside[q]) { f[q] = -lo; continue; }
-        const x = g.x0 + (i + 0.5) * c;
-        const dx = st > 0 ? Math.abs(x - Math.round(x / st) * st) - cutH : Infinity;
-        f[q] = Math.min(dist[q] - lo, hi - dist[q], dx, Math.abs(y) - axH);
-      }
-    }
-    const lines = isolines(f, g, 0, g.h - 1);
-    const minA = (I.minW * D) ** 2 * 2;
-    for (const l of lines) {
-      if (!l.closed) continue;
-      const s = simplifyLine(l, tol);
-      if (half && s.pts.some(([, y]) => y > MIRROR_EPS)) continue;     // druga burta — z lustra
-      if (Math.abs(loopArea(s.pts)) < minA) continue;
-      // wąski kawałek (pole / obwód): wpust poniżej minW znika
-      if (2 * Math.abs(loopArea(s.pts)) / polyLength([...s.pts, s.pts[0]]) < I.minW * D * 0.5) continue;
-      const pts = I.ch > 0 ? cornerCut(s.pts, I.ch * D, 30) : s.pts;
-      insets.push(roundPts(pts));
-      grooves.push({ ...toGroove({ pts, closed: true }, grooveW), shell: 'inset' });
-    }
-  }
-
-  // STĘPKA: rowek na osi tam, gdzie płyta sięga dalej niż obwódka
-  if (R.keel) {
-    const jA = g.h / 2 - 1, jB = g.h / 2;
-    let xa = null;
-    for (let i = 0; i <= g.w; i++) {
-      const v = i < g.w ? Math.min(inside[jA * g.w + i] ? dist[jA * g.w + i] : 0, inside[jB * g.w + i] ? dist[jB * g.w + i] : 0) : 0;
-      const x = g.x0 + (i + 0.5) * c;
-      const on = v >= (R.rim + 0.5 * (R.bandStep || R.rim)) * D;
-      if (on && xa === null) xa = x;
-      if (!on && xa !== null) {
-        if (x - c - xa > 4 * R.rim * D) grooves.push({ pts: [[R3(xa), 0], [R3(x - c), 0]], w: grooveW, shell: 'keel' });
-        xa = null;
-      }
-    }
-  }
-
-  stats.grooves = grooves.length;
-  stats.insets = insets.length;
-  for (const q of grooves) { stats.groovePts += q.pts.length; stats.grooveLen += polyLength(q.pts); }
-  stats.grooveLen = Math.round(stats.grooveLen);
-  return { detail: D, half, silhouette, openings, plate, grooves, insets, grid: { x0: g.x0, y0: g.y0, w: g.w, h: g.h, c }, stats, rhythm: R };
-}
 
 /** Łamana przycięta do burty y ≤ 0 (kawałki; przecięcia z osią wstawione). */
 function clipToHalf(l) {
@@ -452,46 +321,163 @@ function clipToHalf(l) {
       const q = P[i - 1];
       if ((q[1] <= 0) !== (p[1] <= 0)) {
         const t = q[1] / (q[1] - p[1]);
-        const X = [q[0] + (p[0] - q[0]) * t, 0];
-        cur.push(X);
+        cur.push([q[0] + (p[0] - q[0]) * t, 0]);
         if (p[1] > 0) { if (cur.length >= 2) out.push(cur); cur = []; }
       }
     }
     if (p[1] <= 0) cur.push(p);
   }
   if (cur.length >= 2) out.push(cur);
-  if (l.closed && out.length > 1 && P[0][1] <= 0) {
-    // pętla rozcięta osią: pierwszy i ostatni kawałek to jedna łamana
-    const last = out.pop();
-    out[0] = [...last, ...out[0].slice(1)];
-  }
+  if (l.closed && out.length > 1 && P[0][1] <= 0) { const last = out.pop(); out[0] = [...last, ...out[0].slice(1)]; }
   if (l.closed && out.length === 1 && out[0].length === P.length) return [{ pts: out[0].slice(0, -1), closed: true }];
   return out.map((pts) => ({ pts, closed: false }));
 }
 
+const CACHE = new Map();
+const CACHE_MAX = 4;
+
 /**
- * Wariant projektu z ciągłym pancerzem (makieta): zdjęte klocki-płyty poziomu 1 (i poziomu ≥ 2, dla których
- * `keepUpper(b)` daje false), dopisana płyta skorupy (bryły 'poly' poziomu 1 przycięte do ramy jak płyty klocków)
- * i rowki rytmu; `panels` 0 — bez losowej siatki paneli wzdłuż osi. Rama (poziom 0) bez zmian.
+ * SKORUPA: `frame` — wielokąty sylwetki [[obrys, …otwory], …] (rama z klocków, kopie lustra już w środku), `cuts` —
+ * klocki-wycięcia poziomu 1 (znormalizowane), `modules` — moduły rozwinięte (z kopiami lustra; wnęki przy przyłączach
+ * paliwa), `detail` [j./jd], `mirror`, `shell` (normalizeHullShell). Zwraca { plate: [{ outer, holes }], grooves
+ * (burta y ≤ 0 przy lustrze; { pts, w, shell }), insets (pętle wpustów), openings, grid, stats }.
  */
-export function applyHullShell(designInput, shell, opts = {}) {
-  const d = structuredClone(designInput);
-  const D = shell.detail;
-  const keepUpper = opts.keepUpper || (() => true);
-  // klocek-płyta schodzi do ramy (poziom 0), nie znika: rama = suma PEŁNYCH obrysów wszystkich klocków dodających,
-  // więc zdjęcie płyt zmniejszałoby sylwetkę (Colossus ma burty z klocków poziomu 1)
-  d.shapes = d.shapes.map((s) => {
-    if (s.kind !== 'block' || s.op === 'cut') return s;
-    const L = s.level ?? 1;
-    if (L === 0 || (L >= 2 && keepUpper(s))) return s;
-    return { ...s, level: 0 };
-  });
-  for (const p of shell.plate) {
-    d.shapes.push({ kind: 'poly', op: 'add', level: 1, pts: roundPts(p.outer), holes: p.holes.length ? p.holes.map(roundPts) : undefined,
-      ch: HD_BLOCK_TUNE.plateChDu * D, clip: 0, clipIn: HD_BLOCK_TUNE.rimDu * D, mirror: false });
+export function hullShellGeometry({ frame, cuts = [], modules = [], detail, mirror = true, shell }) {
+  const key = JSON.stringify([frame, cuts, modules.map((m) => [m.type, m.x, m.y, m.rot, m.w, m.h]), detail, mirror, shell]);
+  const hit = CACHE.get(key);
+  if (hit) { CACHE.delete(key); CACHE.set(key, hit); return hit; }
+  const res = computeShell(frame, cuts, modules, detail, mirror, shell);
+  CACHE.set(key, res);
+  if (CACHE.size > CACHE_MAX) CACHE.delete(CACHE.keys().next().value);
+  return res;
+}
+
+function computeShell(frame, cuts, modules, D, half, R) {
+  const stats = { cells: 0, grooves: 0, insets: 0, groovePts: 0, grooveLen: 0, niches: 0 };
+  // otwarcia: klocki-wycięcia (z lustrem) + wnęki przy przyłączach paliwa
+  const openLoops = [];
+  for (const b of cuts) {
+    openLoops.push(blockWorldLoops(b, false));
+    if (half && b.mirror !== false && Math.abs(b.y) > MIRROR_EPS) openLoops.push(blockWorldLoops(b, true));
   }
-  d.grooves = [...(d.grooves || []), ...shell.grooves.map(({ pts, w }) => ({ pts, w }))];
-  d.panels = opts.panels ?? 0;
-  if (opts.name !== false) d.name = `${d.name} — ciągły pancerz (makieta)`;
-  return d;
+  if (R.niche > 0) {
+    for (const m of modules) {
+      const ch = serviceChannel(m, D, true);
+      if (!ch) continue;
+      const g = R.niche * D;
+      openLoops.push([rectLoop(ch.x, ch.y, ch.rot, ch.w + g, ch.h + g)]);
+      stats.niches++;
+    }
+  }
+  const openings = openLoops.length ? polygonUnion(openLoops) : [];
+  let plate = !frame.length ? [] : (openings.length
+    ? polygonDifference(frame.flat(), openings.flatMap((p) => [p.outer, ...p.holes]))
+    : polygonUnion(frame));
+  plate = plate.filter((p) => Math.abs(loopArea(p.outer)) > 1e-6);
+  const grooves = [], insets = [];
+  if (!plate.length) return { plate, grooves, insets, openings, grid: null, stats };
+
+  const box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const p of plate) for (const [x, y] of p.outer) {
+    if (x < box[0]) box[0] = x; if (y < box[1]) box[1] = y; if (x > box[2]) box[2] = x; if (y > box[3]) box[3] = y;
+  }
+  const span = Math.max(box[2] - box[0], box[3] - box[1]);
+  let c = Math.max(D * 0.9, span / 3200);
+  const area0 = (box[2] - box[0] + 4 * c) * ((half ? 1 : 2) * Math.max(Math.abs(box[1]), Math.abs(box[3])) + 4 * c);
+  if (area0 / (c * c) > HD_SHELL_DEFAULTS.maxCells) c = Math.sqrt(area0 / HD_SHELL_DEFAULTS.maxCells);
+  const g = makeGrid(box, c, 2 * c);
+  if (half) g.h = g.h / 2;                        // tylko wiersze y < 0 (ostatni wiersz przy osi)
+  const inside = rasterInside(plate, g);
+  const dist = chamferDistance(inside, g);
+  const N = g.w * g.h;
+  stats.cells = N;
+  const tol = Math.max(0.35 * c, 0.25 * D);
+  const f = new Float32Array(N);
+  const gw = R.grooveW, rimW = Math.max(gw, HD_SHELL_DEFAULTS.rimGrooveW);
+  const addLines = (lines, w, minLen, kind) => {
+    for (const l0 of lines) {
+      for (const l1 of (half ? clipToHalf(simplifyLine(l0, tol)) : [simplifyLine(l0, tol)])) {
+        if (l1.pts.length < 2 || polyLength(l1.pts) < minLen) continue;
+        const pts = roundPts(l1.closed ? [...l1.pts, l1.pts[0]] : l1.pts);
+        grooves.push({ pts, w, shell: kind });
+      }
+    }
+  };
+  // OBWÓDKA i PASY: izolinie odległości od brzegu skorupy
+  const levels = [[R.rim, rimW, 'rim']];
+  for (let k = 1; k <= R.bands; k++) levels.push([R.rim + k * R.bandStep, gw, 'band']);
+  for (const [t, w, kind] of levels) {
+    const tw = t * D;
+    for (let q = 0; q < N; q++) f[q] = inside[q] ? dist[q] - tw : -tw;
+    addLines(isolines(f, g), w, 3 * w * D, kind);
+  }
+  // ŻEBRA: odcinki x = const w strefie pasów, krok od x = 0
+  if (R.ribStep > 0 && R.bands > 0) {
+    const lo = R.rim * D, hi = (R.rim + R.bands * R.bandStep) * D, st = R.ribStep * D;
+    for (let x = Math.ceil(box[0] / st) * st; x <= box[2]; x += st) {
+      const fi = (x - g.x0) / c - 0.5, i = Math.floor(fi), t = fi - i;
+      if (i < 0 || i + 1 >= g.w) continue;
+      const at = (j) => (inside[j * g.w + i] || inside[j * g.w + i + 1] ? dist[j * g.w + i] * (1 - t) + dist[j * g.w + i + 1] * t : -1);
+      let ya = null;
+      for (let j = 0; j <= g.h; j++) {
+        const v = j < g.h ? at(j) : -1;
+        const on = v >= lo && v <= hi;
+        const y = g.y0 + (j + 0.5) * c;
+        if (on && ya === null) ya = y;
+        if (!on && ya !== null) {
+          const yb = Math.min(y - c, half ? 0 : Infinity);
+          if (yb - ya > 0.5 * R.bandStep * D) grooves.push({ pts: [[R3(x), R3(ya)], [R3(x), R3(yb) === 0 ? 0 : R3(yb)]], w: gw, shell: 'rib' });
+          ya = null;
+        }
+      }
+    }
+  }
+  // WPUSTY: strefa lo … hi od brzegu minus rowy poprzeczne (co step) i rów osi; brzeg kawałka = izolinia 0
+  if (R.inset) {
+    const I = R.inset;
+    const lo = I.lo * D, hi = I.hi * D, st = I.step * D, cutH = I.cut * D * 0.5;
+    // przy lustrze rów osi co najmniej pół komórki — kawałek nie może przejść przez oś (siatka kończy się na osi)
+    const axH = Math.max(I.axis * D * 0.5, half ? c : 0);
+    for (let j = 0; j < g.h; j++) {
+      const y = g.y0 + (j + 0.5) * c;
+      for (let i = 0; i < g.w; i++) {
+        const q = j * g.w + i;
+        if (!inside[q]) { f[q] = -lo; continue; }
+        const x = g.x0 + (i + 0.5) * c;
+        const dx = st > 0 ? Math.abs(x - Math.round(x / st) * st) - cutH : Infinity;
+        f[q] = Math.min(dist[q] - lo, hi - dist[q], dx, Math.abs(y) - axH);
+      }
+    }
+    const minA = (I.minW * D) ** 2 * 2;
+    for (const l of isolines(f, g)) {
+      if (!l.closed) continue;
+      const s = simplifyLine(l, tol);
+      const A = Math.abs(loopArea(s.pts));
+      if (A < minA || 2 * A / polyLength([...s.pts, s.pts[0]]) < I.minW * D * 0.5) continue;
+      const pts = roundPts(I.ch > 0 ? cornerCut(s.pts, I.ch * D) : s.pts);
+      insets.push(pts);
+      grooves.push({ pts: [...pts, pts[0]], w: gw, shell: 'inset' });
+    }
+  }
+  // STĘPKA: rowek na osi tam, gdzie płyta sięga dalej niż obwódka (przy lustrze — wiersz przy osi)
+  if (R.keel) {
+    const rows = half ? [g.h - 1] : [g.h / 2 - 1, g.h / 2];
+    let xa = null;
+    for (let i = 0; i <= g.w; i++) {
+      let v = Infinity;
+      for (const j of rows) v = Math.min(v, i < g.w && inside[j * g.w + i] ? dist[j * g.w + i] : 0);
+      const x = g.x0 + (i + 0.5) * c;
+      const on = v >= (R.rim + 0.5 * (R.bandStep || R.rim)) * D;
+      if (on && xa === null) xa = x;
+      if (!on && xa !== null) {
+        if (x - c - xa > 4 * R.rim * D) grooves.push({ pts: [[R3(xa), 0], [R3(x - c), 0]], w: gw, shell: 'keel' });
+        xa = null;
+      }
+    }
+  }
+  stats.grooves = grooves.length;
+  stats.insets = insets.length;
+  for (const q of grooves) { stats.groovePts += q.pts.length; stats.grooveLen += polyLength(q.pts); }
+  stats.grooveLen = Math.round(stats.grooveLen);
+  return { plate, grooves, insets, openings, grid: { x0: g.x0, y0: g.y0, w: g.w, h: g.h, c }, stats };
 }

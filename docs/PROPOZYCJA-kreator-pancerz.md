@@ -1,9 +1,10 @@
 # Propozycja: ciągły pancerz z obrysu (kreator, temat 2)
 
-Stan: PROPOZYCJA z makietą (2026-11-14), do oceny użytkownika. Kompozytor, schemat, geometria, presety i plik drednota
-bez zmian. Prototyp narzędzia: `src/game/hullDesign/hullDesignShell.js` (czysty, niewpięty), makieta:
-`node scripts/kreator-pancerz-makieta.mjs` → `.tmp/kreator/pancerz-makieta/` (`--pomiar` — czasy i kontrola sieci),
-test: `tests/hullDesignShell.test.mjs`.
+Stan: PROTOTYP w kreatorze (2026-11-14, etap 1): pole projektu `shell` (`src/game/hullDesign/hullDesignShell.js`,
+rozwijane w `expandHullDesign`), drednot przebudowany na skorupę z rowem osi; flota TN bez skorupy. Opis stanu: reguła
+`kreator-kadlubow` § „Pancerz z obrysu”; A/B z kompozytora: `node scripts/webgpu/kreator-pancerz-ab.mjs`; test:
+`tests/hullDesignShell.test.mjs`. Dokument niżej to propozycja z makietą (makieta CPU zastąpiona prototypem; kadry
+makiety zostały w `.tmp/kreator/pancerz-makieta/`).
 
 ## Skąd „łatanina”
 

@@ -77,8 +77,9 @@ import { HD_PARTS, expandHullPart } from './hullDesignParts.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { MOUNT_SIZES, POWER_CATEGORIES, SHIP_CLASS_MAX, SHIP_CLASS_NPC_MAX } from '../../data/shipClasses.js';
 import { BRIDGE_LEVEL_MAX, bridgeLevel } from '../../data/bridgeLevels.js';
-import { expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
+import { HD_BLOCK_TUNE, expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
 import { expandCastle, normalizeCastle } from './hullDesignCastles.js';
+import { hullShellGeometry, normalizeHullShell } from './hullDesignShell.js';
 
 export const HD_VERSION = 2;
 /** Bok komórki siatki belek [j.] — HULL_BODY_CONFIG.cellPx przy spriteScale 1. */
@@ -516,7 +517,9 @@ export function normalizeHullDesign(design = {}) {
     },
     panels: Math.max(0, Math.min(1, num(design.panels, 1))),
     // UKŁAD MASZYNOWNI „jak płytka drukowana” (src/game/hullDesign/hullDesignBoard.js): wariant zasady, ziarno, świecenie
-    board: normBoard(design.board, design.npc === true)
+    board: normBoard(design.board, design.npc === true),
+    // PANCERZ Z OBRYSU (src/game/hullDesign/hullDesignShell.js): jedna ciągła skorupa zamiast płyt klocków; null — brak
+    shell: normalizeHullShell(design.shell)
   };
 }
 
@@ -567,13 +570,22 @@ export function expandHullDesign(input) {
   const mirrorOf = (o) => design.mirror && o.mirror !== false;
   const shapes = [];
   // klocki: wszystkie naraz (sumy geometryczne ramy, płyt i wycięć) w miejscu pierwszego klocka
-  const blockList = design.shapes.filter((s) => s.kind === 'block');
+  // PANCERZ Z OBRYSU: klocki poziomu 1 są tylko sylwetką (rama), wycięcia poziomu 1 — otwarciami skorupy (nie tną pól,
+  // więc nadbudówki stojące w rowie zostają); płytę i rowki rytmu dokłada skorupa po modułach (wnęki przy przyłączach)
+  const shell = design.shell;
+  const allBlocks = design.shapes.filter((s) => s.kind === 'block');
+  const shellCuts = shell ? allBlocks.filter((b) => b.op === 'cut' && b.level === 1) : [];
+  const blockList = shell
+    ? allBlocks.filter((b) => !(b.op === 'cut' && b.level === 1)).map((b) => (b.op !== 'cut' && b.level === 1 ? { ...b, level: 0 } : b))
+    : allBlocks;
   let blocksDone = false;
+  let shellAt = -1;
   for (const s of design.shapes) {
     if (s.kind === 'block') {
       if (blocksDone) continue;
       blocksDone = true;
       for (const sh of expandHullBlocks(blockList, { detail: design.detail, mirror: mirrorOf, levels: HD_LEVELS })) shapes.push(sh);
+      shellAt = shapes.length;
       continue;
     }
     if (s.kind === 'poly') {
@@ -629,9 +641,22 @@ export function expandHullDesign(input) {
     const r = m.type === 'engine' ? Math.min(m.h * 0.35, 16) : Math.min(m.h * 0.55, 12);
     shapes.push({ kind: 'rect', op: 'add', x: m.x, y: m.y, w: m.w, h: m.h, r, ch: 0, rot: m.rot, level: def.level, module: m.type });
   }
+  // skorupa: płyta (bryły 'poly' poziomu 1 za bryłami klocków) i rowki rytmu (kopie lustra jak rowki projektu)
+  let shellGrooves = [];
+  if (shell && shellAt >= 0) {
+    const frame = shapes.filter((s) => s.blockSet === 'frame' && s.op === 'add').map((s) => [s.pts, ...(s.holes || [])]);
+    const sh = hullShellGeometry({ frame, cuts: shellCuts, modules, detail: design.detail, mirror: design.mirror, shell });
+    const D = design.detail;
+    const plates = sh.plate.map((p) => ({
+      kind: 'poly', op: 'add', level: 1, pts: p.outer, holes: p.holes.length ? p.holes : undefined, mirror: false,
+      ch: HD_BLOCK_TUNE.plateChDu * D, r: 0, clip: 0, clipIn: HD_BLOCK_TUNE.rimDu * D, blockSet: 'shell'
+    }));
+    shapes.splice(shellAt, 0, ...plates);
+    shellGrooves = sh.grooves;
+  }
   const decals = expandHullDecals(design, partDecals);
   const grooves = [];
-  for (const g of design.grooves) {
+  for (const g of [...design.grooves, ...shellGrooves]) {
     grooves.push(g);
     if (mirrorOf(g) && g.pts.some(([, y]) => Math.abs(y) > MIRROR_EPS)) grooves.push({ ...g, pts: g.pts.map(([x, y]) => [x, -y]), mirrorOf: true });
   }

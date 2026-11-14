@@ -10,6 +10,7 @@
 
 import { normalizeHullDesign } from './hullDesignSchema.js';
 import { blockRotStep } from './hullDesignBlocks.js';
+import { HD_SHELL_LIMITS, HD_SHELL_RHYTHMS } from './hullDesignShell.js';
 
 /** Limity edytora gracza: punktów pióra i łamanych, elementów projektu. */
 export const HD_BUILD_LIMITS = Object.freeze({
@@ -83,7 +84,25 @@ export function isPlayerBuildable(input) {
   lim('decals', d.decals.length, L.decals);
   lim('grooves', d.grooves.length, L.grooves);
   lim('pipes', d.pipes.length, L.pipes);
+  // pancerz z obrysu: jedna cecha projektu — rytm z listy, parametry w zakresach suwaków edytora (otwarcia to klocki)
+  for (const t of shellViolations(input?.shell)) bad('shell', -1, t);
   d.grooves.forEach((q, i) => { if (q.pts.length > L.polylinePoints) bad('grooves', i, `rowek z ${q.pts.length} pkt (najwyżej ${L.polylinePoints})`); });
   d.pipes.forEach((q, i) => { if (q.pts.length > L.polylinePoints) bad('pipes', i, `rura z ${q.pts.length} pkt (najwyżej ${L.polylinePoints})`); });
   return { ok: violations.length === 0, violations };
+}
+
+/** Naruszenia pola `shell` (surowego, przed normalizacją — normalizacja obcina po cichu). */
+export function shellViolations(sh) {
+  if (!sh || sh.on === false) return [];
+  const out = [];
+  if (sh.rhythm !== undefined && !HD_SHELL_RHYTHMS[sh.rhythm]) out.push(`pancerz z obrysu: nieznany rytm „${sh.rhythm}”`);
+  const L = HD_SHELL_LIMITS;
+  const chk = (v, lim, name) => {
+    if (v === undefined || v === null) return;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < lim[0] || n > lim[1]) out.push(`pancerz z obrysu: ${name} = ${v} poza zakresem ${lim[0]}–${lim[1]}`);
+  };
+  for (const k of ['rim', 'bands', 'bandStep', 'ribStep', 'grooveW', 'niche']) chk(sh[k], L[k], k);
+  if (sh.inset && typeof sh.inset === 'object') for (const k of Object.keys(L.inset)) chk(sh.inset[k], L.inset[k], `inset.${k}`);
+  return out;
 }
