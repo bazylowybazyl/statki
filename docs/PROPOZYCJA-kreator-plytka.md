@@ -1,6 +1,8 @@
 # Propozycja: podstawa kadłuba jak płytka drukowana (kreator, temat 1)
 
-Stan: PROPOZYCJA z makietą (2026-11-14), do oceny użytkownika. Kompozytor, schemat, sieć i presety bez zmian.
+Stan: propozycja z makietą oceniona 2026-11-14 („każdy lepszy, świecenie za jasne”); PROTOTYP w kompozytorze tego samego
+dnia (wariant A domyślny, pole projektu `board`) — stan i zasady w regule `kreator-kadlubow` § „Układ maszynowni”,
+pomiary w `docs/KREATOR-KADLUBA.md` § „Układ maszynowni”. Niżej — propozycja w brzmieniu z makiety.
 Prototyp generatora: `src/game/hullDesign/hullDesignBoard.js` (czysty, niewpięty), makieta:
 `node scripts/kreator-plytka-makieta.mjs` → `.tmp/kreator/plytka-makieta/`, test: `tests/hullDesignBoard.test.mjs`.
 

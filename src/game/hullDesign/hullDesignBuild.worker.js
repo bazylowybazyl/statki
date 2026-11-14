@@ -11,7 +11,7 @@ import { createHullDesignBuilder } from './hullDesignBuild.js';
 const builder = createHullDesignBuilder();
 let current = null;     // { id }
 let waiting = null;     // najnowsza praca w kolejce
-const sent = { geo: null, field: null, aux: null, groove: null, pipes: null, paint: null };
+const sent = { geo: null, field: null, aux: null, groove: null, pipes: null, paint: null, board: null };
 
 const yieldLoop = () => new Promise((ok) => setTimeout(ok, 0));
 // Klucze etapów to długie napisy (bryły projektu) — do strony idą krótkie numery.
@@ -92,7 +92,12 @@ function post(id, res) {
     aux: pack('aux', pk.aux, { data: pk.aux.data }),
     groove: pack('groove', pk.groove, { data: pk.groove.data }),
     pipes: { ...pack('pipes', pk.pipes, { a: pk.pipes.a, b: pk.pipes.b }), on: pk.pipes.on, w: pk.pipes.w, h: pk.pipes.h },
-    paint: pk.paint ? { ...pack('paint', pk.paint, { data: pk.paint.data }), table: pk.paint.table, w: pk.paint.w, h: pk.paint.h } : null
+    paint: pk.paint ? { ...pack('paint', pk.paint, { data: pk.paint.data }), table: pk.paint.table, w: pk.paint.w, h: pk.paint.h } : null,
+    // układ maszynowni: tablice tylko przy nowym kluczu, opis (rozmiary, stałe rysunku) zawsze
+    board: pk.board ? {
+      ...pack('board', pk.board, { a: pk.board.a, b: pk.board.b, e: pk.board.e }),
+      on: pk.board.on, w: pk.board.w, h: pk.board.h, x0: pk.board.x0, cell: pk.board.cell, eW: pk.board.eW, eH: pk.board.eH, n: pk.board.n, params: pk.board.params
+    } : null
   };
   const pipeNet = f.pipeNet ? { ...f.pipeNet, base: undefined } : null;
   const msg = {

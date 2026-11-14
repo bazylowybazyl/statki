@@ -22,6 +22,7 @@
 import { standardizeLoop } from './hullDesignRegularize.js';
 import { HD_BLOCK, HD_LEVELS, HD_SHAPE_TUNE, blocksAtLevel, expandHullDesign } from './hullDesignSchema.js';
 import { buildPipeNetwork, rasterPipeNetwork } from './hullDesignPipes.js';
+import { buildHullBoard } from './hullDesignBoard.js';
 
 // ---------------------------------------------------------------------------
 // 1. Kontury bloków
@@ -530,7 +531,11 @@ export function buildHullField(input, opts = {}) {
   const { groove, grooveBand } = hullFieldGrooves(expanded, geo);
   const { pipeNet, pipeTex } = opts.pipes === false ? { pipeNet: null, pipeTex: null } : hullFieldPipes(expanded, geo, opts.pipeTune);
   const { style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, area } = geo;
-  return { expanded, style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, groove, grooveBand, pipeNet, pipeTex, area };
+  // układ maszynowni (hullDesignBoard.js) — jak etap UKŁAD budowy; `opts.board === false` albo wariant 'off' — bez
+  const bd = expanded.design.board;
+  const board = opts.board === false || opts.pipes === false || !bd || bd.variant === 'off' ? null
+    : buildHullBoard({ expanded, grid, levels, bounds, band, pipeNet }, { variant: bd.variant, seed: bd.seed > 0 ? bd.seed : undefined });
+  return { expanded, style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, groove, grooveBand, pipeNet, pipeTex, area, board };
 }
 
 /**

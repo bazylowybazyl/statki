@@ -21,7 +21,8 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   komórki belek), `hullDesignBlocks.js` (KLOCKI: paleta, wielokąty, suma / różnica wielokątów, szczelina płyt),
   `hullDesignBuildable.js` (strażnik `isPlayerBuildable`), `hullDesignParts.js`, `hullDesignCastles.js`,
   `hullDesignSystems.js` (sieć systemów: kto z kim), `hullDesignSystemSlots.js` (sloty systemów presetów),
-  `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster, martwe kable `markPipeNetPower`), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
+  `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster, martwe kable `markPipeNetPower`), `hullDesignBoard.js`
+  (układ maszynowni „jak płytka drukowana” — § „Układ maszynowni”), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
   (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania), `hullDesignClass.js` (klasa
   okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`;
   `hullDesignBuild.js` (budowa etapami z pamięcią — § „Budowa: worker i pamięć etapów”) z workerem
@@ -70,6 +71,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   + ładownia otwarta od góry) i „rampą / paszczą” to RÓŻNE sposoby ładowania; statki: złomiarz, paszcza, młyn (daje
   surowiec „złom”, nie stal), rafineria przy młynie, frachtowiec z rampą jak w samolocie transportowym, dźwig
   z damperami.
+- Układ maszynowni (2026-11-14, ocena makiet trzech wariantów, `docs/PROPOZYCJA-kreator-plytka.md`): „Lepsze gorsze, są
+  inne. Każdy lepszy, świecenie za jasne, brakuje mi wieżowców zabudowań podobnych do miasta a'la executoner palpatina.
+  No i pancerz - wciąż jest modułowy i spójrz na dziub - generator musi mieć możliwość narysowania ciągłego kadłuba bez
+  przerwań. Jednolity. Lecimy dalej”. Odczytanie ORKIESTRATORA (nie użytkownika): każdy wariant lepszy niż dziś, żaden
+  nie wskazany → domyślny A, B i C wybieralne polem projektu; świecenie chciane, ale dużo słabsze i rzadsze; miasto
+  (wieżowce) i ciągły pancerz to osobne tematy (3 i 2).
 - Superkapitał linii Atlasa (2026-10-27): „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa
   (czerń / szary)”; szkic Atlasa to „bardziej battleship — za krótki na superkapitała” — preset bierze ze szkicu UKŁAD
   sekcji, nie proporcje (dłuższy, smukły kadłub w limicie klasy VI).
@@ -247,6 +254,34 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Wydajność: A* po komórkach z heurystyką na kolejce kubełkowej; zmiany mierzyć na przemian ze starą wersją (minimum
   z ≥ 9 przebiegów), w testach liczyć pracę A* albo czas CPU, nie zegar ścienny.
 - Demo: graf sieci pod I, panel „Sieć systemów” (liczniki wolnych końców i wiązek poza obrysem).
+
+## Układ maszynowni (płytka drukowana)
+
+- `hullDesignBoard.js` (czysty): z pola po GEOMETRII i SIECI liczy na siatce PÓŁ-kadłuba (komórka 1,5 jd, wiersz 0 = oś;
+  druga burta — lustro z konstrukcji) odległość od ściany rowu D (metryka ośmiokątna — szyny jako izolinie mają rogi
+  45°; ściany to płyty, sylwetka, moduły, kanały serwisowe i WIĄZKI SIECI), grubość lokalną T, kręgosłup (kapsuły na osi,
+  tylko T ≥ `spineMinT`), kwartały w klasach 96 → 6 jd (drzewo czwórkowe wyrównane do osi; klasy ≥ 36 jd tylko przy
+  T ≥ `bigMinT`), dzielnice (rodzaj i ton elementów z hasza dzielnicy, łączenie sąsiadów w dłuższe bryły), ulice
+  (izolinia E = odstęp / 2), ścieżki do szyn z przelotkami. Deterministyczny z ziarna; trasy sieci bez zmian
+  (`pipeNetworkCheck` jak bez układu). Projekt bez lustra — układ tylko tam, gdzie obie burty są odsłonięte.
+- Pole projektu `board: { variant: 'A' | 'B' | 'C' | 'off', seed, glow }` (`normalizeHullDesign`; domyślnie A, glow 0,
+  projekt NPC — 0,35). Warianty: `HD_BOARD_VARIANTS` (A hierarchia, B magistrale, C płaska siatka). Elementy mają klasę
+  WYSOKOŚCI `hc` (`HD_BOARD_HEIGHT_CLASSES`) — kanał dla zabudowy „miasta” (temat 3); dziś tylko relief.
+- Budowa: etap UKŁAD po SIECI (`hullDesignBuild.js`), klucz `kBoard` = klucz sieci + wariant + ziarno (świecenie i barwy
+  poza kluczem), pakiet `packHullBoardTextures` (ta sama funkcja w kompozytorze bez pakietu — te same bity; test
+  `hullDesignBuild`). Przeciąganie (`fast`): tylko układ z pamięci albo ostatniej pełnej budowy (`boardStale`), nigdy
+  liczony na polu połowy rozdzielczości. `buildHullField` też liczy układ (`opts.board === false` — bez).
+- Kompozytor: `_board` w sekcji „MASZYNOWNIA” zamiast komórek z hasza; tekstury `boardA` (RGBA8 liniowo: D, E, ścieżki,
+  T), `boardB` (RGBA8, textureLoad: numer elementu 16 bit + dziedzina), `boardE` (RGBA32F, 2 teksele na element);
+  uniformy `brd*` (stałe szyn z `hullBoardParams`). Poza układem (T = 0, wariant 'off', brak danych) — dzisiejsze komórki.
+  Wiązki sieci, obejmy i osprzęt rysują się NA układzie bez zmian. Barwy z palety (`rowC`, `engC`, `metal`, `pipeC`,
+  `_pal(11)`) przez `glowSafeNode` — rów zostaje ciemny jak dziś.
+- Świecenie (`board.glow`): krótkie odcinki DRUGIEJ szyny (hasz komórek 22 jd, ~28%) do mapy EMIS — w grze świeci tak jak
+  okna: przez „okna → albedo” (`glowToAlbedo`, maska `hullGlowMask`); bazowe albedo bez niebieskiego. Skóra gry nie ma
+  osobnego kanału emisji — EOUT nikt dziś nie czyta.
+- Nowy rodzaj elementu → kod w `HD_BOARD_KINDS`, gałąź w `_board` (łańcuch `ElseIf` po kodzie), test. Szerokości linii
+  ≥ 1,3 jd (~2 teksele przy ~1,5 teksela/jd każdego okrętu). Pomiary i A/B: `docs/KREATOR-KADLUBA.md` § „Układ
+  maszynowni”; zrzuty `node scripts/webgpu/kreator-plytka-ab.mjs`, makieta CPU `node scripts/kreator-plytka-makieta.mjs`.
 
 ## Klasy okrętów i gniazda broni (etap 2)
 
@@ -447,6 +482,8 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   [--detale 1,1.25,3.2]` (cały okręt, A/B z Colossusem, dziób, rufa, burta, sponson, sieć, panel klasy; czasy wypieku
   i pamięć w `raport.json` → `drednot`). Szybki podgląd układu bez GPU (poziomy, moduły, sieć) — wystarczy
   `buildHullField` + `pipeNetworkCheck`; preset drednota liczy się w Node ~0,5 s (z siecią ~0,8 s).
+- Układ maszynowni: `node --test tests/hullDesignBoard.test.mjs tests/hullDesignBuild.test.mjs`; A/B z kompozytora —
+  `node scripts/webgpu/kreator-plytka-ab.mjs --out .tmp/kreator/plytka-prototyp [--tylko bellator]`.
 - Testy budowy i barw: `node --test tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`; statki cywilne
   i ładunek: `node --test tests/hullDesignCargo.test.mjs`; statki robocze i kontrakt osprzętu:
   `node --test tests/hullDesignWorkships.test.mjs`.

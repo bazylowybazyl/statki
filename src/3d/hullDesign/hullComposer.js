@@ -44,6 +44,7 @@ import { HD_CARGO } from '../../game/hullDesign/hullDesignCargo.js';
 import { HD_PAINT_MAX } from '../../game/hullDesign/hullDesignPaint.js';
 import { bridgeLevel } from '../../data/bridgeLevels.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
+import { packHullBoardTextures } from '../../game/hullDesign/hullDesignBoard.js';
 
 // maxSide: gwarantowane minimum WebGPU (maxTextureDimension2D = 8 192) — drednot 5,4 km dostaje 1,2 teksela/j. (HD_TEX.min)
 // pipeFits: numer osprzętu sieci 16-bitowy w teksturze pipeB (G + 256 · A) — HD_PIPE_TUNE.maxFits + 1
@@ -150,10 +151,11 @@ function makeMaterial(name, node) {
 }
 
 function placeholder(type) {
-  const data = type === THREE.HalfFloatType ? new Uint16Array(4) : new Uint8Array(4);
+  const data = type === THREE.HalfFloatType ? new Uint16Array(4) : (type === THREE.FloatType ? new Float32Array(4) : new Uint8Array(4));
   const t = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat, type);
-  t.magFilter = THREE.LinearFilter;
-  t.minFilter = THREE.LinearFilter;
+  // float32 bez filtrowania (tabela elementów układu — tylko textureLoad)
+  t.magFilter = type === THREE.FloatType ? THREE.NearestFilter : THREE.LinearFilter;
+  t.minFilter = type === THREE.FloatType ? THREE.NearestFilter : THREE.LinearFilter;
   t.generateMipmaps = false;
   t.colorSpace = THREE.NoColorSpace;
   t.needsUpdate = true;
@@ -207,6 +209,11 @@ const segDist = (p, a, b) => {
   return length(pa.sub(ba.mul(t)));
 };
 const lum = (c) => dot(c, vec3(0.2126, 0.7152, 0.0722));
+/** Prostokąt (pół-wymiary b) ze ściętymi narożnikami 45° (faza ch) — element układu maszynowni. */
+const sdCham = (q, b, ch) => {
+  const a = abs(q);
+  return max(sdBox(q, b), a.x.add(a.y).sub(b.x.add(b.y).sub(ch)).mul(0.70710678));
+};
 /**
  * glowSafeLinear w grafie: niebieski ściszony do 0,38 przy czerwonym < 0,25 (maska hullGlowMask gry jest wtedy 0) — dla
  * barw modułu złożonych z wierszy palety pomnożonych ponad 1 (nadpisanie gracza `paint` może być na granicy maski).
@@ -256,7 +263,14 @@ export class HullComposer {
       // z — mapa malowania włączona (0 / 1)
       pnet: uniform(new THREE.Vector4(0, 26, 0, 0)),
       pruns: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeRuns * 3 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeRuns'),
-      pfits: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeFits * 2 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeFits')
+      pfits: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeFits * 2 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeFits'),
+      // UKŁAD MASZYNOWNI (hullDesignBoard.js): x — włączony, y — x0 siatki [j.], z — komórek / j., w — świecenie 0–1;
+      // rozmiary (siatka w × h, tabela elementów eW × eH); szyny r0, krok, liczba, mnożnik grubości; ringRoom, szerokości
+      // szyny / ścieżki, ulica [jd]. Wektory od zer (pułapka 46).
+      brd: uniform(new THREE.Vector4(0, 0, 1, 0)),
+      brdS: uniform(new THREE.Vector4(1, 1, 1, 1)),
+      brdR: uniform(new THREE.Vector4(3, 4, 0, 2)),
+      brdW: uniform(new THREE.Vector4(10, 1.4, 1.3, 3))
     };
     // Tekstury: węzły bazowe z uv-atrapą (pułapka 7), wartości podmieniane przy każdym projekcie / rozmiarze.
     this.T = {
@@ -270,7 +284,11 @@ export class HullComposer {
       geo: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       base: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       emis: texture(placeholder(THREE.HalfFloatType), vec2(0)),
-      surf: texture(placeholder(THREE.UnsignedByteType), vec2(0))
+      surf: texture(placeholder(THREE.UnsignedByteType), vec2(0)),
+      // układ maszynowni (siatka pół-kadłuba): D / E / ścieżki / T (liniowo), numer elementu (textureLoad), tabela elementów
+      boardA: texture(placeholder(THREE.UnsignedByteType), vec2(0)),
+      boardB: texture(placeholder(THREE.UnsignedByteType), vec2(0)),
+      boardE: texture(placeholder(THREE.FloatType), vec2(0))
     };
     this.targets = null;
     this._fieldTex = null;
@@ -280,6 +298,8 @@ export class HullComposer {
     this._pipeBTex = null;
     this._atlasTex = null;
     this._paintTex = null;
+    this._boardTex = null;     // { a, b, e } — układ maszynowni
+    this._boardKey = null;
     this.mapsRev = 0;
     this._build();
   }
@@ -558,6 +578,140 @@ export class HullComposer {
         o.fK.assign(up);
         o.fC.assign(mix(mix(mix(engC.mul(1.1), mix(vec3(0.02), hazard, stripe), ring), coreC, core), engC.mul(0.5), bolt));
       });
+    });
+    return o;
+  }
+
+  /**
+   * UKŁAD MASZYNOWNI w punkcie (src/game/hullDesign/hullDesignBoard.js → boardA / boardB / boardE, siatka pół-kadłuba —
+   * próbka w (x, −|y|)): podłoga rowu z płytami co 6 jd, SZYNY (izolinie D = r0 + k · krok tam, gdzie T na nie pozwala),
+   * ULICE (izolinia E = odstęp / 2) i ŚCIEŻKI do szyn, ELEMENTY z tabeli (kapsuła, blok, moduł, chip, skrzynka, walec,
+   * krata, para, pad, przelotka). Świecenie: rzadkie krótkie odcinki drugiej szyny (emisja; U.brd.w).
+   * Zwraca { on (0 — poza układem: dzisiejsze komórki), H [jd], C, seam, glow }.
+   */
+  _board(p, P, rowC, metal, engC, pipeC) {
+    const U = this.U, T = this.T, L = this.look;
+    const iD = U.det.y;
+    const o = { on: float(0.0).toVar(), H: float(0.0).toVar(), C: vec3(0.0).toVar(), seam: float(0.0).toVar(), glow: vec3(0.0).toVar() };
+    const by = abs(p.y).negate().toVar();
+    const bc = vec2(p.x.sub(U.brd.y).mul(U.brd.z), by.negate().mul(U.brd.z)).toVar();
+    const ba = T.boardA.sample(bc.div(U.brdS.xy)).level(0).toVar();
+    o.on.assign(step(0.5, U.brd.x).mul(step(0.002, ba.w)));
+    If(o.on.greaterThan(0.5), () => {
+      const aa = float(0.5).div(U.tex.z.mul(U.det.x)).toVar();           // pół teksela [jd]
+      const Dj = ba.x.mul(63.75).toVar(), Ej = ba.y.mul(15.9375).toVar(), TRj = ba.z.mul(3.984375).toVar(), Tj = ba.w.mul(255.0).toVar();
+      const Pb = vec2(P.x, by.mul(iD)).toVar();
+      o.C.assign(rowC);
+      // podłoga: płyty co 6 jd (wąski rowek)
+      const fq = fract(Pb.div(6.0));
+      const fl = min(min(fq.x, float(1.0).sub(fq.x)), min(fq.y, float(1.0).sub(fq.y))).mul(6.0);
+      const flK = float(1.0).sub(smoothstep(0.1, 0.25, fl)).toVar();
+      o.H.assign(flK.mul(-0.15));
+      o.seam.assign(flK.mul(0.25));
+      // szyny: najbliższa izolinia D = r_k
+      const k = clamp(floor(Dj.sub(U.brdR.x).div(U.brdR.y).add(0.5)), 0.0, max(U.brdR.z.sub(1.0), 0.0)).toVar();
+      const rk = U.brdR.x.add(k.mul(U.brdR.y)).toVar();
+      const ringK = float(1.0).sub(smoothstep(U.brdW.y.mul(0.5).sub(aa), U.brdW.y.mul(0.5).add(aa), abs(Dj.sub(rk))))
+        .mul(step(U.brdR.w.mul(rk).add(U.brdW.x), Tj)).mul(step(0.5, U.brdR.z)).toVar();
+      // ulice (środek między elementami, obwódka w otwartym polu) i ścieżki
+      const g2 = U.brdW.w.mul(0.5).toVar();
+      const sw = min(U.brdW.z.mul(0.5), g2.sub(0.6)).toVar();
+      const streetK = float(1.0).sub(smoothstep(sw.sub(aa), sw.add(aa), abs(Ej.sub(g2)))).mul(step(g2, Dj)).toVar();
+      const traceK = float(1.0).sub(smoothstep(U.brdW.z.mul(0.5).sub(aa), U.brdW.z.mul(0.5).add(aa), TRj)).toVar();
+      const lineK = max(streetK, traceK).mul(float(1.0).sub(ringK)).toVar();
+      o.H.assign(max(o.H, max(ringK.mul(0.35), lineK.mul(0.25))));
+      o.C.assign(mix(o.C, mix(rowC, engC.mul(0.7), 0.3).mul(1.2), ringK));
+      o.C.assign(mix(o.C, rowC.mul(1.22), lineK));
+      o.seam.assign(o.seam.mul(float(1.0).sub(max(ringK, lineK))));
+      // świecenie: druga szyna (przy jednej — pierwsza), krótkie odcinki z hasza komórek 22 jd
+      const gk = min(float(1.0), max(U.brdR.z.sub(1.0), 0.0));
+      const seg = step(hash12(floor(Pb.div(22.0)).add(U.tex.w.mul(0.07))), 0.28);
+      o.glow.assign(vec3(...L.glowCyan).mul(U.brd.w.mul(1.6)).mul(ringK).mul(step(abs(k.sub(gk)), 0.5)).mul(seg));
+      // element pod komórką
+      const ic = ivec2(clamp(int(floor(bc.x)), int(0), int(U.brdS.x).sub(1)), clamp(int(floor(bc.y)), int(0), int(U.brdS.y).sub(1)));
+      const bb = textureLoad(T.boardB, ic).toVar();
+      const eid = floor(bb.x.mul(255.0).add(0.5)).add(floor(bb.y.mul(255.0).add(0.5)).mul(256.0)).sub(1.0).toVar();
+      If(eid.greaterThan(-0.5), () => {
+        const t2 = eid.mul(2.0);
+        const ty = floor(t2.div(U.brdS.z));
+        const tx = t2.sub(ty.mul(U.brdS.z));
+        const E0 = textureLoad(T.boardE, ivec2(int(tx), int(ty))).toVar();
+        const E1 = textureLoad(T.boardE, ivec2(int(tx.add(1.0)), int(ty))).toVar();
+        const lq = vec2(p.x.sub(E0.x), by.sub(E0.y)).toVar();
+        const sd = sdCham(lq, E0.zw, E1.w).toVar();
+        If(sd.lessThan(0.0), () => {
+          const u = lq.x.mul(iD).toVar(), v = lq.y.mul(iD).toVar(), sdj = sd.mul(iD).toVar();
+          const hw = E0.z.mul(iD).toVar(), hh = E0.w.mul(iD).toVar();
+          const kind = E1.x.sub(floor(E1.x.div(16.0)).mul(16.0)).toVar();
+          const tn = float(0.85).add(E1.z.mul(0.3)).toVar();
+          const longX = step(hh, hw).toVar();
+          const along = mix(v, u, longX).toVar(), across = mix(u, v, longX).toVar();
+          const hl = mix(hh, hw, longX).toVar(), hs = mix(hw, hh, longX).toVar();
+          const steel = this._pal(11);
+          const hE = float(0.0).toVar(), cE = vec3(0.0).toVar(), inE = float(1.0).toVar();
+          const groove = (a, b) => step(a, sdj).mul(step(sdj, b));
+          If(kind.lessThan(1.5), () => {
+            // KAPSUŁA kręgosłupa: żebra co 3 jd, wewnętrzny obrys, grzbiet
+            const rib = step(abs(fract(u.div(3.0)).sub(0.5)), 0.1).mul(step(sdj, -3.0));
+            hE.assign(float(3.4).sub(rib.mul(0.5)).sub(groove(-2.6, -1.8).mul(0.7)).add(step(abs(v), hh.mul(0.22)).mul(step(sdj, -3.0)).mul(0.7)));
+            cE.assign(mix(engC, steel, 0.35).mul(tn).mul(float(1.0).sub(rib.mul(0.25))));
+          }).ElseIf(kind.lessThan(2.5), () => {
+            // BLOK kwartału: obrys wewnętrzny, gniazda chipów 8 × 6 jd
+            const cu = u.add(hw).div(8.0), cv = v.add(hh).div(6.0);
+            const chipK = step(abs(fract(cu).sub(0.5)), 0.32).mul(step(abs(fract(cv).sub(0.5)), 0.27))
+              .mul(step(0.25, hash12(floor(vec2(cu, cv)).add(E1.z.mul(97.0))))).mul(step(sdj, -4.5)).toVar();
+            hE.assign(float(2.6).sub(groove(-3.2, -2.4).mul(0.7)).add(chipK.mul(0.7)));
+            cE.assign(mix(engC.mul(0.95).mul(tn), metal.mul(0.9), chipK));
+          }).ElseIf(kind.lessThan(3.5), () => {
+            // MODUŁ: obrys wewnętrzny, żaluzje w poprzek dłuższej osi
+            const slat = step(abs(fract(along.div(1.6)).sub(0.5)), 0.2).mul(step(sdj, -3.0)).toVar();
+            hE.assign(float(2.0).sub(groove(-2.4, -1.8).mul(0.6)).sub(slat.mul(0.4)));
+            cE.assign(mix(engC.mul(1.05).mul(tn), engC.mul(0.7), slat));
+          }).ElseIf(kind.lessThan(4.5), () => {
+            // CHIP: ciemny korpus, nóżki na dłuższych bokach
+            const body = step(abs(along), hl.sub(0.4)).mul(step(abs(across), hs.sub(1.3))).toVar();
+            const pin = float(1.0).sub(body).mul(step(abs(fract(along.div(1.5)).sub(0.5)), 0.22)).toVar();
+            hE.assign(body.mul(1.3).add(pin.mul(0.5)));
+            cE.assign(mix(mix(rowC, steel.mul(0.9), pin), metal.mul(0.55).mul(tn), body));
+          }).ElseIf(kind.lessThan(5.5), () => {
+            // SKRZYNKA
+            hE.assign(float(1.2).sub(groove(-1.4, -1.0).mul(0.3)));
+            cE.assign(mix(engC.mul(0.85), engC.mul(1.2), E1.z));
+          }).ElseIf(kind.lessThan(6.5), () => {
+            // WALEC (zbiornik) z żebrami
+            const tt = clamp(across.div(max(hs, 0.5)), -1.0, 1.0);
+            const ribs = step(0.38, abs(fract(along.div(1.8)).sub(0.5))).toVar();
+            hE.assign(sqrt(max(float(0.0), float(1.0).sub(tt.mul(tt)))).mul(min(float(3.0), hs.mul(0.8))).add(0.3).sub(ribs.mul(0.3)));
+            cE.assign(mix(engC.mul(1.1), pipeC, 0.25).mul(tn).mul(float(1.0).sub(ribs.mul(0.3))));
+          }).ElseIf(kind.lessThan(7.5), () => {
+            // KRATA: rama i listwy
+            const slat = step(abs(fract(along.div(1.6)).sub(0.5)), 0.25);
+            hE.assign(select(sdj.greaterThan(-1.0), float(1.0), mix(float(0.15), float(0.8), slat)));
+            cE.assign(mix(metal, engC, 0.5).mul(tn));
+          }).ElseIf(kind.lessThan(8.5), () => {
+            // PARA bloków
+            hE.assign(step(0.5, abs(along)).mul(1.4));
+            cE.assign(engC.mul(tn));
+          }).ElseIf(kind.lessThan(9.5), () => {
+            // PAD z otworem
+            hE.assign(float(0.6).sub(step(length(vec2(u, v)), min(hw, hh).mul(0.35)).mul(0.35)));
+            cE.assign(mix(engC, pipeC, 0.4));
+          }).Else(() => {
+            // PRZELOTKA: pierścień na końcu ścieżki (poza kołem — szyna / ścieżka pod spodem)
+            const rr = length(vec2(u, v));
+            inE.assign(step(rr, hw));
+            hE.assign(select(rr.lessThan(hw.mul(0.42)), float(0.1), float(0.55)));
+            cE.assign(engC.mul(0.9));
+          });
+          If(inE.greaterThan(0.5), () => {
+            const bev = clamp(sdj.negate().div(0.7), 0.0, 1.0);
+            o.H.assign(hE.mul(bev.mul(0.65).add(0.35)));
+            o.C.assign(cE);
+            o.seam.assign(lineN(sdj, float(0.4)).mul(0.6));
+          });
+        });
+      });
+      o.C.assign(glowSafeNode(o.C));
     });
     return o;
   }
@@ -1779,32 +1933,42 @@ export class HullComposer {
       const rowC = mix(metal.mul(0.55), mix(metal.mul(0.9), this._pal(10).mul(0.5), 0.5), netOn.mul(L.net.rowWarm));
       machC.assign(mix(rowC, pcol.mul(float(0.7).add(cyl.mul(0.45))), inPipe));
       machC.assign(mix(machC, engC.mul(1.2), band.mul(pipeZone).mul(0.8)));
-      // dalej od pancerza: sprzęt w komórkach (skrzynki, żebrowane walce, kraty)
-      const G = float(L.machine);
-      const cell = floor(P.div(G));
-      const lc = P.sub(cell.add(0.5).mul(G)).toVar();
-      const r1 = hash12(cell.add(seedV).add(3.3)), r2 = hash12(cell.add(seedV).mul(1.7).add(5.1)), r3 = hash12(cell.add(seedV).mul(2.3).add(8.9));
-      const r4 = hash12(cell.add(seedV).mul(0.7).add(13.7));
-      const away = float(1.0).sub(pipeZone).mul(step(1.2, room)).toVar();
-      const boxH = vec2(r2.mul(3.2).add(2.4), r3.mul(3.0).add(2.2));
-      const boxSd = sdBox(lc.sub(vec2(r4.sub(0.5).mul(G.sub(boxH.x.mul(2.0)).sub(1.0)), 0.0)), boxH);
-      const isBox = step(r1, 0.24);
-      const box = clamp(boxSd.negate().div(0.5), 0.0, 1.0).mul(isBox);
-      const isCyl = step(0.24, r1).mul(step(r1, 0.46));
-      const rc = r2.mul(1.6).add(2.4);
-      const cy = clamp(lc.y.div(rc), -1.0, 1.0);
-      const cylM = step(abs(lc.y), rc).mul(isCyl);
-      const ribs = smoothstep(0.3, 0.45, abs(fract(P.x.div(1.8)).sub(0.5)));
-      const cylH = sqrt(max(float(0.0), float(1.0).sub(cy.mul(cy)))).mul(rc).mul(0.8).sub(ribs.mul(0.3));
-      const isTwin = step(0.46, r1).mul(step(r1, 0.56));
-      const tw = vec2(abs(lc.x).sub(G.mul(0.24)), lc.y);
-      const twin = clamp(sdBox(tw, vec2(2.4, 3.4)).negate().div(0.4), 0.0, 1.0).mul(isTwin);
-      const grate = float(1.0).sub(isBox).sub(isCyl).sub(isTwin).max(0.0).mul(step(0.5, abs(fract(P.y.div(1.6)).sub(0.5)).add(0.3)));
-      const gH = box.mul(r4.mul(1.8).add(1.4)).add(cylM.mul(cylH)).add(twin.mul(1.8)).sub(grate.mul(0.25));
-      machH.addAssign(gH.mul(away));
-      const gC = select(isBox.greaterThan(0.5), mix(engC.mul(0.85), engC.mul(1.25), r3), select(isCyl.greaterThan(0.5), mix(engC.mul(1.1), pipeC, r4.mul(0.5)).mul(float(1.0).sub(ribs.mul(0.35))), mix(metal, engC, 0.5)));
-      machC.assign(mix(machC, gC, away.mul(max(box, max(cylM, twin)))));
-      machSeam.assign(max(line(boxSd, 0.4).mul(isBox), ribs.mul(cylM).mul(0.3)).mul(away));
+      // UKŁAD MASZYNOWNI (płytka): zamiast komórek z hasza; poza układem (wariant 'off', podgląd przeciągania bez danych,
+      // część jednej burty projektu bez lustra) — dzisiejsze komórki
+      const brd = this._board(p, P, rowC, metal, engC, pipeC);
+      If(brd.on.greaterThan(0.5), () => {
+        machH.addAssign(brd.H.mul(float(1.0).sub(inPipe)));
+        machC.assign(mix(brd.C, machC, inPipe));
+        machSeam.assign(brd.seam);
+        emis.addAssign(brd.glow.mul(mach));
+      }).Else(() => {
+        // dalej od pancerza: sprzęt w komórkach (skrzynki, żebrowane walce, kraty)
+        const G = float(L.machine);
+        const cell = floor(P.div(G));
+        const lc = P.sub(cell.add(0.5).mul(G)).toVar();
+        const r1 = hash12(cell.add(seedV).add(3.3)), r2 = hash12(cell.add(seedV).mul(1.7).add(5.1)), r3 = hash12(cell.add(seedV).mul(2.3).add(8.9));
+        const r4 = hash12(cell.add(seedV).mul(0.7).add(13.7));
+        const away = float(1.0).sub(pipeZone).mul(step(1.2, room)).toVar();
+        const boxH = vec2(r2.mul(3.2).add(2.4), r3.mul(3.0).add(2.2));
+        const boxSd = sdBox(lc.sub(vec2(r4.sub(0.5).mul(G.sub(boxH.x.mul(2.0)).sub(1.0)), 0.0)), boxH);
+        const isBox = step(r1, 0.24);
+        const box = clamp(boxSd.negate().div(0.5), 0.0, 1.0).mul(isBox);
+        const isCyl = step(0.24, r1).mul(step(r1, 0.46));
+        const rc = r2.mul(1.6).add(2.4);
+        const cy = clamp(lc.y.div(rc), -1.0, 1.0);
+        const cylM = step(abs(lc.y), rc).mul(isCyl);
+        const ribs = smoothstep(0.3, 0.45, abs(fract(P.x.div(1.8)).sub(0.5)));
+        const cylH = sqrt(max(float(0.0), float(1.0).sub(cy.mul(cy)))).mul(rc).mul(0.8).sub(ribs.mul(0.3));
+        const isTwin = step(0.46, r1).mul(step(r1, 0.56));
+        const tw = vec2(abs(lc.x).sub(G.mul(0.24)), lc.y);
+        const twin = clamp(sdBox(tw, vec2(2.4, 3.4)).negate().div(0.4), 0.0, 1.0).mul(isTwin);
+        const grate = float(1.0).sub(isBox).sub(isCyl).sub(isTwin).max(0.0).mul(step(0.5, abs(fract(P.y.div(1.6)).sub(0.5)).add(0.3)));
+        const gH = box.mul(r4.mul(1.8).add(1.4)).add(cylM.mul(cylH)).add(twin.mul(1.8)).sub(grate.mul(0.25));
+        machH.addAssign(gH.mul(away));
+        const gC = select(isBox.greaterThan(0.5), mix(engC.mul(0.85), engC.mul(1.25), r3), select(isCyl.greaterThan(0.5), mix(engC.mul(1.1), pipeC, r4.mul(0.5)).mul(float(1.0).sub(ribs.mul(0.35))), mix(metal, engC, 0.5)));
+        machC.assign(mix(machC, gC, away.mul(max(box, max(cylM, twin)))));
+        machSeam.assign(max(line(boxSd, 0.4).mul(isBox), ribs.mul(cylM).mul(0.3)).mul(away));
+      });
       // SIEĆ RUR nad maszynownią: wiązki, wspornik obejmy do bliskiej ściany płyty, osprzęt
       const bracket = net.band.mul(step(net.halfW, abs(net.t))).mul(step(oU.x, L.net.bracket))
         .mul(step(abs(net.t).sub(net.halfW), L.net.bracket)).mul(step(0.05, net.halfW));
@@ -2237,6 +2401,9 @@ export class HullComposer {
       this._setPipes(field, n, toHalf);
     }
     this._setPipeUniforms(field.pipeNet, field.packed ? field.packed.pipes.on : !!(field.pipeNet && field.pipeNet.runs.length + field.pipeNet.fits.length > 0));
+    // układ maszynowni: pakiet z budowy (ten sam wynik co packHullBoardTextures na polu) albo z pola
+    if (field.packed) this._setBoard(field.packed.board || null, field.packed.board?.key ?? null, design);
+    else this._setBoard(field.board ? packHullBoardTextures(field.board) : null, field.board || null, design);
     U.field.value.set(g.x0, g.y0, g.res, field.band);
     U.fieldSize.value.set(g.w, g.h);
     U.det.value.set(design.detail, 1 / design.detail, design.windows ?? 1, opts.rivets ?? 1);
@@ -2436,6 +2603,46 @@ export class HullComposer {
     this.T.grooves.value = this._grooveTex;
     this.T.pipeA.value = this._pipeATex;
     this.T.pipeB.value = this._pipeBTex;
+  }
+
+  /**
+   * Układ maszynowni do tekstur (boardA RGBA8 liniowo, boardB RGBA8 i boardE RGBA32F — textureLoad) i uniformów;
+   * tekstury idą na GPU tylko przy nowym kluczu. Bez układu (`pb` null / off) — wyłącznik: dzisiejsze komórki.
+   */
+  _setBoard(pb, key, design) {
+    const U = this.U;
+    if (!pb || !pb.on || !pb.a) { U.brd.value.set(0, 0, 1, 0); return; }
+    if (this._boardKey !== key || !this._boardTex) {
+      const mk = (data, w, h, type, lin) => {
+        const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, type);
+        t.magFilter = lin ? THREE.LinearFilter : THREE.NearestFilter;
+        t.minFilter = lin ? THREE.LinearFilter : THREE.NearestFilter;
+        t.generateMipmaps = false;
+        t.colorSpace = THREE.NoColorSpace;
+        t.needsUpdate = true;
+        return t;
+      };
+      const put = (old, data, w, h, type, lin) => {
+        if (old && old.image.width === w && old.image.height === h) { old.image.data = data; old.needsUpdate = true; return old; }
+        old?.dispose();
+        return mk(data, w, h, type, lin);
+      };
+      const t = this._boardTex || {};
+      this._boardTex = {
+        a: put(t.a, pb.a, pb.w, pb.h, THREE.UnsignedByteType, true),
+        b: put(t.b, pb.b, pb.w, pb.h, THREE.UnsignedByteType, false),
+        e: put(t.e, pb.e, pb.eW, pb.eH, THREE.FloatType, false)
+      };
+      this._boardKey = key;
+      this.T.boardA.value = this._boardTex.a;
+      this.T.boardB.value = this._boardTex.b;
+      this.T.boardE.value = this._boardTex.e;
+    }
+    const q = pb.params;
+    U.brd.value.set(1, pb.x0, 1 / pb.cell, design?.board?.glow ?? 0);
+    U.brdS.value.set(pb.w, pb.h, pb.eW, pb.eH);
+    U.brdR.value.set(q.r0, q.pitch, q.count, q.ringT);
+    U.brdW.value.set(q.room, q.ringW, q.traceW, q.gap);
   }
 
   /** Uniformy sieci rur: wyłącznik, okres obejm, biegi i osprzęt. */
