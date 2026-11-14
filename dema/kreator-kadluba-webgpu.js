@@ -2612,6 +2612,9 @@ const bridgeDemoOpts = { nowSec: 0, dt: 1 / 60, zoom: 1, cull: null, camera: nul
 function bridgeDemoInit() {
   Bridge3D.attach(Core3D.scene);
   Core3D.warmup.add({ name: 'mostki 3D (bridge3D)', objects: () => Bridge3D.warmupMeshes(), layer: 0, phase: 'loading' });
+  // okna i lampy mostków leżą na warstwie FG (2) — rozgrzewka kamerą tego passa (wpis z warstwą 0 kompilował je kamerą
+  // passa ortho; przy zbliżeniu na mostek pipeline `bridge3D:windows` powstawał w klatce synchronicznie)
+  Core3D.warmup.add({ name: 'mostki 3D: okna (FG)', objects: () => Bridge3D.warmupMeshes().filter((m) => m.layers.isEnabled(2)), layer: 2, phase: 'loading' });
   window.__kreator.bridge3D = Bridge3D;
 }
 function bridgeDemoAttach(field) {
