@@ -9,10 +9,14 @@
 
 ### Kamera, czyli ile widać ścian
 
-- Płaszczyzna gry (kadłuby, mostki, reaktory — warstwa 0) rysuje się kamerą **ORTOGRAFICZNĄ prosto z góry**
-  (`Core3D.cameraOrtho`, z = 150 000, `syncCamera`): ściana pionowa ma w kadrze zerową szerokość. Z góry widać tylko
-  dachy, powierzchnie POCHYLONE i to, co leży w szczelinach między bryłami. Perspektywy w widoku gry nie ma (kamera
-  perspektywy `FLAT_PERSP_FOV` 35° rysuje tylko planety).
+- Płaszczyzna gry (kadłuby, mostki, reaktory — warstwa 0, pass `ortho`) rysuje się kamerą **ORTOGRAFICZNĄ prosto
+  z góry** (`Core3D.cameraOrtho`, z = 150 000, `syncCamera`): ściana pionowa ma w kadrze zerową szerokość.
+- Wysokie budowle w zwykłym widoku gry (stacje, budowle świata, planetoida bazy piratów) idą passem **FG** (warstwa 2,
+  `Core3D.enableForeground3D`, `makeScenePass('fg', …, 2, false)` — własna głębia): kamera PERSPEKTYWY
+  `Core3D.cameraPersp` — `FLAT_PERSP_FOV` 35°, nad punktem kamery na wysokości (h / 2) / tg(17,5°) / zoom, prosto w dół
+  (płaszczyzna z = 0 w tej samej skali co ortho; to, co wyżej, wychyla się ku brzegom kadru i widać ściany). Tą samą
+  kamerą rysują się planety (passy tła i planet). (Pierwsza wersja tej noty podawała błędnie, że perspektywa rysuje
+  tylko planety.) Demo miasta w widokach z góry używa domyślnie dokładnie tej kamery (§ 3).
 - Kamery 3D gry (`src/game/game3D.js`, K / Shift+K — reguła `modele-3d`) i reżyser kadru ustawiają Core3D w tryb
   `free3d` (perspektywa, wspólna głębia): wtedy widać ściany. Ten tryb daje ujęcie „z ukosa” jak kadr odniesienia —
   demo używa go do orbity.
@@ -172,7 +176,7 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
 - Światło: kierunek jak kadłub (słońce, z = 600 — niemal poziomo): ściany od słońca — rozproszone 1,18; dachy —
   otoczenie × `roofLight` (ściany ½), ton dachu z wysokością (niskie tarasy ciemniej, grzbiet jaśniej — z góry forma
   masywu), jasna faza krawędzi dachu (0,9 j.), AO kanionów (8 próbek mapy), cień rzucany: marsz 48 kroków od ~1 j.
-  rosnących o 7,5% drogi, półcień proporcjonalny do drogi, rozrzut startu w komórkach ~1 px (jak mostek). Okna: pasy
+  rosnących o 7,5% drogi, półcień proporcjonalny do drogi, na bryłach mały rozrzut startu w komórkach ~1 px (jak mostek), na kadłubie bez rozrzutu z szerszym półcieniem (na jasnym pancerzu rozrzut dawał ziarno). Okna: pasy
   szyb co piętro (4 j.), rzadkie tlące się okna pod progiem bloomu; jasne punkty to osobne światła.
 - Światła z góry (kamera ortho), dwa tryby (`topGlow`, przełącznik w demie — G): PUNKTY — okna pionowych ścian gasną
   z kątem patrzenia, szczeliny i podstawy przygaszone (`lightsTop` 0,22); POŚWIATA — światła dna kanionów (podstawy)
@@ -184,8 +188,13 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
   wysokości to jedna tekstura o stałej pojemności, a nowe miasto pisze w nią dane.
 - Demo `dema/miasto-3d.html` (+ `.js`, worker `miasto-3d.worker.js`): drednot z pliku (bez przeróbek w demie)
   z kompozytora kreatora na skórze gry, mostki i reaktory gry w gniazdach, miasto z workera. Światła z góry: punkty /
-  poświata (G, `?zgory=poswiata`). Widoki 1–6 (z góry jak w grze: cały okręt, rów 3 600 j.,
-  1 200 j.; z ukosa: jak kadr odniesienia, nisko wzdłuż grzbietu, od dziobu; przeciąganie — orbita), suwaki:
+  poświata (G, `?zgory=poswiata`). Widoki 1–6 (z góry: cały okręt, środek 3 600 j., 1 200 j.; z ukosa: jak kadr
+  odniesienia, nisko wzdłuż środka, od dziobu; przeciąganie — orbita). KAMERA widoków z góry (P, `?kamera=plaska`):
+  domyślnie PERSPEKTYWA = `cameraPersp` passa FG gry (35°, wysokość (h / 2) / tg(17,5°) / zoom, prosto w dół) podana
+  jako `free3d`, żeby całą scenę (kadłub, mostki, reaktory, miasto) rysowała ta sama kamera — budowle wychylają się ku
+  brzegom kadru, widać ściany i okna („GTA style” — decyzja użytkownika 2026-11-14); PŁASKA — ortho passa gry (A/B).
+  W widoku z góry poświata i przygaszanie świateł działają też w perspektywie (`update(…, { topView })`). Panel jest
+  nieczynny do końca ładowania (przełączenie kamery niczego nie przebudowuje). Suwaki:
   kompozycja, ziarno, gęstość, wysokość, światła, słońce (azymut), cień (wysokość słońca cieni); M — miasto, L —
   światła, I — liczby. `?katalog=1` — katalog wieżowców (rodziny × 4 wielkości na jasnej płycie).
 

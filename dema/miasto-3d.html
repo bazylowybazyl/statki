@@ -34,9 +34,11 @@
   #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
   #nogpu { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: #030406f2; font-size: 15px; text-align: center; }
   body.clean #panel, body.clean #info { display: none !important; }
+  /* do końca ładowania panel nieczynny — przełączenie widoku nic nie przebudowuje, ale w trakcie wypieku myliło */
+  body.loading #panel { opacity: .45; pointer-events: none; }
 </style>
 </head>
-<body>
+<body class="loading">
   <canvas id="webgl-layer"></canvas>
   <canvas id="c" tabindex="0" aria-label="Drednot Terra Novy z miastem 3D na grzbiecie"></canvas>
   <div id="panel">
@@ -49,6 +51,11 @@
       <button data-view="ukos">Z ukosa <kbd>4</kbd></button>
       <button data-view="nisko">Nisko wzdłuż <kbd>5</kbd></button>
       <button data-view="rufa">Ukos od dziobu <kbd>6</kbd></button>
+    </div>
+    <h2>Kamera (P)</h2>
+    <div class="btns">
+      <button id="camPersp" class="on">Perspektywa</button>
+      <button id="camFlat">Płaska (ortho)</button>
     </div>
     <h2>Miasto</h2>
     <div class="row"><label>Kompozycja</label><select id="variant"></select></div>
@@ -67,10 +74,10 @@
       <button id="topDots" class="on">Punkty</button>
       <button id="topGlow">Poświata</button>
     </div>
-    <div class="hint">Widok z góry jak w grze (kamera ortho): przeciągnij — przesuń, kółko — zoom. Z ukosa: przeciągnij — obrót, prawy przycisk albo Shift — przesuń, kółko — odległość. „Światła z góry” zmienia tylko widok z góry (kamera gry). I — liczby.</div>
+    <div class="hint">Widoki z góry: kamera perspektywy jak pass FG gry (budowle wychylają się ku brzegom kadru) albo płaska (ortho); przeciągnij — przesuń, kółko — zoom. Z ukosa: przeciągnij — obrót, prawy przycisk albo Shift — przesuń, kółko — odległość. „Światła z góry” zmienia tylko widok z góry (kamera gry). I — liczby.</div>
   </div>
   <div id="info"></div>
-  <div id="loading">Wypiek drednota i miasta…</div>
+  <div id="loading">Start WebGPU…</div>
   <div id="errors"></div>
   <div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
 <script type="module" src="./miasto-3d.js"></script>

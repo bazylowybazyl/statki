@@ -6,7 +6,9 @@
 // (src/game/hullDesign/hullDesignCity.js, w workerze dema/miasto-3d.worker.js), bryły i światła — src/3d/hullCity3D/.
 //
 // Serwowanie: `npm run dev` → /dema/miasto-3d.html
-//   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?zgory=punkty|poswiata
+//   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?zgory=punkty|poswiata   ?kamera=plaska
+//   Widoki z góry (1–3) domyślnie kamerą PERSPEKTYWY znad okrętu — tą samą co pass FG gry (cameraPersp: 35°, wysokość
+//   (h / 2) / tg(17,5°) / zoom, prosto w dół; ściany i okna widać ku brzegom kadru); „płaska” — kamera ortho passa gry.
 //   ?katalog=1 — KATALOG BUDYNKÓW: wszystkie rodziny generatora wieżowców w czterech wielkościach na jasnej płycie
 //   ?clean=1 (bez panelu)   ?test=1 (klatki z __miasto.runFrames — scripts/webgpu/miasto-3d-zrzuty.mjs)
 import * as THREE from 'three/webgpu';
@@ -53,7 +55,8 @@ const S = {
   orbit: { tx: -700, ty: 0, dist: 2600, yaw: -2.45, pitch: 0.36 },
   city: { variant: params.get('wariant') || 'A', seed: Number(params.get('ziarno') || 1), density: 1, height: 1, lights: 1 },
   cityOn: true, lightsOn: true, info: false,
-  topGlow: params.get('zgory') === 'poswiata',   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
+  topGlow: params.get('zgory') === 'poswiata',
+  persp: params.get('kamera') !== 'plaska',      // widoki z góry: perspektywa jak pass FG gry (true) albo ortho (false)   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
   sunAz: 25,
   frame: 0, cpuMs: 0, frameMs: 16, syncPipes: 0, syncNames: [],
   gen: null, building: false, pendingCity: false
@@ -278,8 +281,29 @@ function drawCatalogLabels() {
 // Kamera: z góry (ortho jak w grze) albo z ukosa (free3d, orbita)
 const _eye = new THREE.Vector3(), _tgt = new THREE.Vector3(), _up = new THREE.Vector3(0, 0, 1), _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
 const freeCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: 38, near: 4, far: 400000 };
+// Kamera perspektywy z góry = Core3D.cameraPersp passa FG gry (FLAT_PERSP_FOV 35°, nad punktem kamery na wysokości
+// (h / 2) / tg(fov / 2) / zoom — płaszczyzna z = 0 w tej samej skali co ortho), podana jako free3d, żeby w demie całą
+// scenę (kadłub, mostki, reaktory, miasto) rysowała ta sama kamera.
+const FLAT_FOV = 35;
+const topCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: FLAT_FOV, near: 10, far: 400000 };
+const _upY = new THREE.Vector3(0, 1, 0);
 function cameraForFrame() {
-  if (S.view !== 'ukos') return { x: S.cam.x, y: S.cam.y, zoom: S.cam.zoom };
+  if (S.view !== 'ukos' && !S.persp) return { x: S.cam.x, y: S.cam.y, zoom: S.cam.zoom };
+  if (S.view !== 'ukos') {
+    const c = S.cam;
+    const h = (H / 2) / Math.tan(FLAT_FOV * Math.PI / 360) / c.zoom;
+    _eye.set(c.x, -c.y, h);
+    _tgt.set(c.x, -c.y, 0);
+    _m.lookAt(_eye, _tgt, _upY);
+    _q.setFromRotationMatrix(_m);
+    topCam.position.x = _eye.x; topCam.position.y = _eye.y; topCam.position.z = _eye.z;
+    topCam.quaternion.x = _q.x; topCam.quaternion.y = _q.y; topCam.quaternion.z = _q.z; topCam.quaternion.w = _q.w;
+    topCam.x = c.x; topCam.y = c.y; topCam.zoom = c.zoom;
+    // głębia: wszystko leży między dnem a ~400 j. nad płaszczyzną — bliska płaszczyzna wysoko (precyzja)
+    topCam.near = Math.max(10, h - 4000);
+    topCam.far = h + 60000;
+    return topCam;
+  }
   const o = S.orbit;
   const cp = Math.cos(o.pitch);
   _tgt.set(o.tx, -o.ty, 0);
@@ -334,6 +358,11 @@ function render() {
   const cam = cameraForFrame();
   if (S.view === 'ukos') {
     cullInfo.x = cam.x; cullInfo.y = cam.y; cullInfo.drawHalfW = cullInfo.drawHalfH = 2e4; cullInfo.halfW = cullInfo.halfH = 6e4;
+  } else if (S.persp) {
+    // perspektywa z góry: płaszczyzna w kadrze jak w ortho, bryły nad nią wychodzą ku brzegom — kadr z zapasem
+    cullInfo.x = cam.x; cullInfo.y = cam.y;
+    cullInfo.drawHalfW = W * 0.6 / cam.zoom + 900; cullInfo.drawHalfH = H * 0.6 / cam.zoom + 900;
+    cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   } else {
     cullInfo.x = cam.x; cullInfo.y = cam.y;
     cullInfo.drawHalfW = W * 0.5 / cam.zoom + 600; cullInfo.drawHalfH = H * 0.5 / cam.zoom + 600;
@@ -345,7 +374,7 @@ function render() {
     HULL_CITY3D_TUNE.lights = S.lightsOn ? S.city.lights : 0;
     HULL_CITY3D_TUNE.topGlow = S.topGlow ? 1 : 0;
     city3D.setSun(window.SUN.x, window.SUN.y);
-    city3D.update(S.cityOn && S.cityData ? 1 : 0);
+    city3D.update(S.cityOn && S.cityData ? 1 : 0, { topView: S.view !== 'ukos' && S.persp ? 1 : 0 });
   }
   if (reactor3D) {
     reactorOpts.origin.x = cam.x; reactorOpts.origin.y = cam.y; reactorOpts.view = cullInfo; reactorOpts.zoom = cam.zoom;
@@ -421,10 +450,17 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'm' || e.key === 'M') toggleCity();
   else if (e.key === 'l' || e.key === 'L') toggleLights();
   else if (e.key === 'g' || e.key === 'G') setTopGlow(!S.topGlow);
+  else if (e.key === 'p' || e.key === 'P') setPersp(!S.persp);
   else if (e.key === 'i' || e.key === 'I') { S.info = !S.info; $('info').style.display = S.info ? 'block' : 'none'; }
 });
 function toggleCity(on = !S.cityOn) { S.cityOn = on; $('cityOn').classList.toggle('on', on); }
 function toggleLights(on = !S.lightsOn) { S.lightsOn = on; $('lightsOn').classList.toggle('on', on); }
+function setPersp(on) {
+  S.persp = !!on;
+  $('camPersp').classList.toggle('on', S.persp);
+  $('camFlat').classList.toggle('on', !S.persp);
+  return true;
+}
 function setTopGlow(on) {
   S.topGlow = !!on;
   $('topDots').classList.toggle('on', !S.topGlow);
@@ -455,6 +491,9 @@ function bindPanel() {
   range('elev', () => HULL_CITY3D_TUNE.shadowElevDeg, (v) => { HULL_CITY3D_TUNE.shadowElevDeg = v; }, (v) => `${v}°`, false);
   $('cityOn').onclick = () => toggleCity();
   $('lightsOn').onclick = () => toggleLights();
+  $('camPersp').onclick = () => setPersp(true);
+  $('camFlat').onclick = () => setPersp(false);
+  setPersp(S.persp);
   $('topDots').onclick = () => setTopGlow(false);
   $('topGlow').onclick = () => setTopGlow(true);
   setTopGlow(S.topGlow);
@@ -498,7 +537,7 @@ window.__miasto = {
   ready: false, error: null, startup: {}, S,
   setView, setCity: async (o) => { Object.assign(S.city, o); await buildCity(); while (S.building || S.pendingCity) await new Promise((r) => setTimeout(r, 30)); return S.gen; },
   setSun(az, elev) { if (az != null) S.sunAz = az; if (elev != null) HULL_CITY3D_TUNE.shadowElevDeg = elev; placeSun(); return true; },
-  toggleCity, toggleLights, setTopGlow, showLabels(on) { S.labels = !!on; return true; },
+  toggleCity, toggleLights, setTopGlow, setPersp, showLabels(on) { S.labels = !!on; return true; },
   async runFrames(n = 1) {
     for (let i = 0; i < n; i++) {
       // pułapka 44: rysunek tylko po rAF — symulacja co klatkę, obraz ostatniej
@@ -531,6 +570,7 @@ window.__miasto = {
     cityInit();
     await composer.prewarm();
     T.kompozytor = Math.round(performance.now() - T0);
+    $('loading').textContent = KATALOG ? 'Katalog wieżowców…' : 'Wypiek drednota…';
     bindPanel();
     if (KATALOG) {
       buildCatalog();
@@ -539,7 +579,9 @@ window.__miasto = {
     } else {
       setView(params.get('widok') || 'caly');
       await buildShip();
+      $('loading').textContent = 'Miasto (worker)…';
       await buildCity(true);
+      $('loading').textContent = 'Rozgrzewka pipeline\'ów…';
     }
     T.miasto = Math.round(performance.now() - T0);
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });
@@ -549,6 +591,7 @@ window.__miasto = {
     hookPipelines();
     T.gotowe = Math.round(performance.now() - T0);
     $('loading').style.display = 'none';
+    document.body.classList.remove('loading');
     window.__miasto.ready = true;
     requestAnimationFrame(loop);
   } catch (err) {

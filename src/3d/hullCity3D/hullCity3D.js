@@ -267,8 +267,11 @@ export function createHullCity3D({ scene } = {}) {
   }
   function setSun(x, y) { sun.x = x; sun.y = y; }
 
-  /** Raz na klatkę: uniformy ze strojenia i słońca; widoczność 0–1 (maskowanie, „Statki 3D”). */
-  function update(visibility = 1) {
+  /**
+   * Raz na klatkę: uniformy ze strojenia i słońca; widoczność 0–1 (maskowanie, „Statki 3D”); `opts.topView` 0–1 — kamera
+   * perspektywy patrzy z góry (poświata i przygaszanie świateł jak w kamerze ortho; ortho shader rozpoznaje sam).
+   */
+  function update(visibility = 1, opts = null) {
     const U = nodes.U;
     const L = localSun();
     U.uSunL.value.set(L[0], L[1], L[2]);
@@ -277,7 +280,7 @@ export function createHullCity3D({ scene } = {}) {
     U.uShadow.value.set(tanE, T.shadowStrength, T.shadowSoft, T.selfShadowAmbient);
     U.uLook.value.set(T.brightness, T.heightTone, T.windowGlow, Math.max(0, Math.min(1, visibility)));
     U.uLights.value.set(T.lights, T.lightMinPx, T.halo, T.lightsTop);
-    U.uGlow.value.set(T.topGlow ? 1 : 0, T.glowSize, T.glowGain, 0);
+    U.uGlow.value.set(T.topGlow ? 1 : 0, T.glowSize, T.glowGain, Math.max(0, Math.min(1, opts?.topView ?? 0)));
     U.uWin.value.set(4, 3.2, T.windowGlow, 0);
     group.visible = visibility > 0.01 && stats.boxes > 0;
     lightMesh.visible = T.lights > 0.001 && stats.lights > 0;

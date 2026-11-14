@@ -78,7 +78,7 @@ export function createCityNodes(heightTex) {
     uLook: shared(new THREE.Vector4(1, 0.22, 0.05, 1)),        // jasność masywu, ton z wysokością, poświata okien, widoczność
     uLights: shared(new THREE.Vector4(1, 1.4, 0.6, 0.5)),      // jasność świateł, min. rozmiar [px], zasięg poświaty, siła z góry
     uWin: shared(new THREE.Vector4(4, 3.2, 0.05, 0)),          // piętro [j.], okno [j.], udział tlących się okien, —
-    uGlow: shared(new THREE.Vector4(0, 7, 0.5, 0))             // z góry: poświata 0 / 1, mnożnik rozmiaru, siła, —
+    uGlow: shared(new THREE.Vector4(0, 7, 0.5, 0))             // z góry: poświata 0 / 1, mnożnik rozmiaru, siła, widok z góry 0–1 (kamera perspektywy)
   };
   const pal = [];
   for (const c of CITY_MAT_PALETTE) pal.push(new THREE.Vector4(c[0], c[1], c[2], c[3]));
@@ -102,7 +102,7 @@ function cityLib(ctx) {
     return h;
   };
   // 1 = w pełni oświetlony. p — punkt (układ miasta), dir — jednostkowy azymut słońca, jit — rozrzut startu.
-  const shadow = (p, dir, jit) => {
+  const shadow = (p, dir, jit, softAdd = 0) => {
     const tanE = max(U.uShadow.x, 0.05).toVar();
     const lit = float(1.0).toVar();
     const topK = U.uHmTop.x;
@@ -117,7 +117,7 @@ function cityLib(ctx) {
         const rayZ = p.z.add(t.mul(tanE));
         const h = height(p.xy.add(dir.mul(t)));
         // półcień proporcjonalny do drogi (stożek): płaski grunt — (t · tg) / (t · k) > 1, zawsze oświetlony
-        lit.assign(min(lit, clamp(rayZ.sub(h).div(t.mul(U.uShadow.z.add(0.12)).add(0.05)), 0.0, 1.0)));
+        lit.assign(min(lit, clamp(rayZ.sub(h).div(t.mul(U.uShadow.z.add(0.12 + softAdd)).add(0.05)), 0.0, 1.0)));
         If(lit.lessThanEqual(0.001), () => { Break(); });
         t.addAssign(max(0.9, t.mul(0.075)).mul(jit.mul(0.14).add(0.93)));
       });
@@ -318,7 +318,8 @@ export function createCityReceiverMaterial(ctx, receiverZ) {
     const p = vec3(vP, 0.0).toVar();
     const L = normalize(U.uSunL);
     const sunDir = L.xy.div(max(length(L.xy), 1e-4));
-    const sh = L3.shadow(p, sunDir, jitterOf(p)).toVar();
+    // na kadłubie bez rozrzutu startu (na jasnym pancerzu rozrzut dawał ziarno) — szerszy półcień zamiast tego
+    const sh = L3.shadow(p, sunDir, float(0.5), 0.1).toVar();
     const ao = L3.occlusion(p, float(4.0)).toVar();
     const dark = float(1.0).sub(sh).mul(U.uShadow.y).mul(sunVisibility()).add(float(1.0).sub(ao).mul(1.4)).toVar();
     dark.assign(min(dark, 0.82).mul(U.uLook.w));
@@ -365,7 +366,10 @@ export function createCityLightMaterial(ctx) {
     const kind0 = mod(lB.w, 4.0);
     const isBeacon = step(2.5, kind0);
     const glow = float(0).toVar();
-    glow.assign(U.uGlow.x.mul(ortho).mul(float(1.0).sub(isBeacon)));
+    // „z góry” = kamera ortho albo perspektywa prosto z góry (uGlow.w od wołającego)
+    const topV = float(0).toVar();
+    topV.assign(max(ortho, U.uGlow.w));
+    glow.assign(U.uGlow.x.mul(topV).mul(float(1.0).sub(isBeacon)));
     const sizeEff = float(0).toVar();
     sizeEff.assign(max(lA.w.mul(mix(float(1.0), U.uGlow.y, glow)), pxW.mul(minPx)));
     // energia zachowana: mniejsze niż minPx — słabsze, nie większe
@@ -385,7 +389,7 @@ export function createCityLightMaterial(ctx) {
     const I = float(0).toVar();
     // z góry (ortho) szczeliny, podstawy i lampy przygaszone (uLights.w) — miasto z góry ma być ciemne, nie kropkowane
     const isWin = step(mod(code, 4.0), 0.5);
-    const topK = mix(float(1.0), U.uLights.w, ortho.mul(float(1.0).sub(isWin)));
+    const topK = mix(float(1.0), U.uLights.w, topV.mul(float(1.0).sub(isWin)));
     // poświata: siła wg rodzaju (podstawa w kanionie najmocniej, szczelina słabiej, okno prawie wcale), bez kierunku
     const isBase = step(1.5, kind0).mul(step(kind0, 2.5));
     const isSeam = step(0.5, kind0).mul(step(kind0, 1.5));
