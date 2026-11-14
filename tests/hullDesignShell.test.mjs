@@ -101,3 +101,28 @@ test('wariant ze skorupą: rama i pole bez zmian, sieć bez błędów (wnęki pr
   assert.deepEqual(chk.unfueled, []);
   assert.deepEqual(chk.fuelHidden, []);
 });
+
+test('wpusty: wnętrze pętli wpustu ma kod tonu w polu rowków (1–2), poza wpustem 0; pakiet niesie ten sam kanał', async () => {
+  const { grooveField } = await import('../src/game/hullDesign/hullDesignGeometry.js');
+  const { packHullGrooveTexture } = await import('../src/game/hullDesign/hullDesignBuild.js');
+  const { toHalfBits } = await import('../src/game/hullDesign/hullDesignHalf.js');
+  const ex = expandHullDesign(withShell('colossus', { rhythm: 'wzor', ...SMALL }));
+  const ins = ex.grooves.filter((g) => Number.isFinite(g.fill));
+  assert.ok(ins.length >= 2 && ins.every((g) => g.fill >= -1 && g.fill <= 1));
+  assert.ok(new Set(ins.map((g) => g.fill)).size >= 2, 'wpusty w różnych tonach');
+  const grid = { x0: -800, y0: -340, w: 400, h: 170, res: 0.25 };
+  const f = grooveField(ex.grooves, grid, 12);
+  assert.ok(f.inset, 'kanał wpustów');
+  let inside = 0;
+  for (const v of f.inset) if (v > 0) { inside++; assert.ok(v >= 1 && v <= 2); }
+  assert.ok(inside > 100);
+  // środek pierwszego wpustu ma kod jego tonu
+  const g0 = ins[0];
+  const cx = g0.pts.reduce((s, p) => s + p[0], 0) / g0.pts.length, cy = g0.pts.reduce((s, p) => s + p[1], 0) / g0.pts.length;
+  const i = Math.floor((cx - grid.x0) * grid.res), j = Math.floor((cy - grid.y0) * grid.res);
+  assert.equal(f.inset[j * grid.w + i], Math.fround(1.5 + 0.5 * g0.fill));
+  const gr = packHullGrooveTexture(f, 12, grid.w * grid.h);
+  assert.equal(gr[(j * grid.w + i) * 4 + 2], toHalfBits(1.5 + 0.5 * g0.fill));
+  // projekt bez skorupy: brak kanału
+  assert.equal(grooveField(expandHullDesign(hullDesignPreset('colossus')).grooves, grid, 12).inset, undefined);
+});

@@ -110,6 +110,20 @@ function cornerCut(pts, ch, minTurnDeg = 30) {
   return out;
 }
 
+/**
+ * Ton wpustu (−1…1, deterministyczny z położenia środka w komórkach 8 jd): wzór ma jaśniejsze i ciemniejsze płyty —
+ * cztery stopnie, sąsiednie wpusty zwykle różne.
+ */
+const INSET_TONES = [0.6, -0.5, 0.25, -1];
+function insetTone(pts, D) {
+  let cx = 0, cy = 0;
+  for (const [x, y] of pts) { cx += x; cy += y; }
+  const a = Math.round(cx / pts.length / (8 * D)), b = Math.round(Math.abs(cy) / pts.length / (8 * D));
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  return INSET_TONES[((h ^ (h >>> 13)) >>> 0) % INSET_TONES.length];
+}
+
 /** Prostokąt obrócony (środek, obrót, pół-wymiary) → pętla w obiegu klocków. */
 function rectLoop(x, y, rot, hw, hh) {
   const c = Math.cos(rot), s = Math.sin(rot);
@@ -456,7 +470,7 @@ function computeShell(frame, cuts, modules, D, half, R) {
       if (A < minA || 2 * A / polyLength([...s.pts, s.pts[0]]) < I.minW * D * 0.5) continue;
       const pts = roundPts(I.ch > 0 ? cornerCut(s.pts, I.ch * D) : s.pts);
       insets.push(pts);
-      grooves.push({ pts: [...pts, pts[0]], w: gw, shell: 'inset' });
+      grooves.push({ pts: [...pts, pts[0]], w: gw, shell: 'inset', fill: insetTone(pts, D) });
     }
   }
   // STĘPKA: rowek na osi tam, gdzie płyta sięga dalej niż obwódka (przy lustrze — wiersz przy osi)

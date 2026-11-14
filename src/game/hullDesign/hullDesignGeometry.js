@@ -684,7 +684,8 @@ export function hullFieldPipes(expanded, geo, pipeTune) {
 
 /**
  * Odległość od łamanych rowków na siatce pola [j.], obcięta do `cap` (bez rowków — cała siatka = cap), i szerokość
- * najbliższego rowku [jd] (`f.width`, Float32Array).
+ * najbliższego rowku [jd] (`f.width`, Float32Array). Rowek z polem `fill` (wpust skorupy — pętla zamknięta, ton
+ * −1…1) wypełnia swoje wnętrze kodem wpustu `f.inset` = 1,5 + ½ · ton (0 — poza wpustem; Float32Array albo brak).
  */
 export function grooveField(grooves, grid, cap) {
   const { x0, y0, w, h, res } = grid;
@@ -719,6 +720,33 @@ export function grooveField(grooves, grid, cap) {
         for (let i = ri0; i <= ri1; i++) {
           const d = segDist(x0 + (i + 0.5) * inv, py, a[0], a[1], b[0], b[1]);
           if (d < f[row + i]) { f[row + i] = d; width[row + i] = gw; }
+        }
+      }
+    }
+  }
+  // wpusty „płyta w płycie” (pętle z `fill`): wnętrze parzysto-nieparzyście w środkach tekseli
+  const fills = (grooves || []).filter((g) => Number.isFinite(g.fill) && g.pts.length >= 4);
+  if (fills.length) {
+    const ins = new Float32Array(w * h);
+    f.inset = ins;
+    const xs = [];
+    for (const g of fills) {
+      const code = 1.5 + 0.5 * Math.max(-1, Math.min(1, g.fill));
+      const P = g.pts;
+      let y0g = Infinity, y1g = -Infinity;
+      for (const [, y] of P) { if (y < y0g) y0g = y; if (y > y1g) y1g = y; }
+      const j0 = Math.max(0, Math.ceil((y0g - y0) * res - 0.5)), j1 = Math.min(h - 1, Math.floor((y1g - y0) * res - 0.5));
+      for (let j = j0; j <= j1; j++) {
+        const py = y0 + (j + 0.5) * inv;
+        xs.length = 0;
+        for (let s = 0; s + 1 < P.length; s++) {
+          const a = P[s], b = P[s + 1];
+          if ((a[1] <= py) !== (b[1] <= py)) xs.push(a[0] + (py - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
+        }
+        xs.sort((p, q) => p - q);
+        for (let k = 0; k + 1 < xs.length; k += 2) {
+          const i0 = Math.max(0, Math.ceil((xs[k] - x0) * res - 0.5)), i1 = Math.min(w - 1, Math.floor((xs[k + 1] - x0) * res - 0.5));
+          for (let i = i0; i <= i1; i++) ins[j * w + i] = code;
         }
       }
     }

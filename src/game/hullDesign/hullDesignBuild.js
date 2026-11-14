@@ -52,13 +52,14 @@ export function packHullFieldTextures(geo) {
   return { field, aux };
 }
 
-/** Tekstura rowków (RGBA16F): odległość [j.], szerokość najbliższego rowku [jd]. */
+/** Tekstura rowków (RGBA16F): odległość [j.], szerokość najbliższego rowku [jd], kod wpustu skorupy (0 — brak). */
 export function packHullGrooveTexture(groove, grooveBand, n) {
   const gr = new Uint16Array(n * 4);
   if (groove) {
     packHalfChannel(gr, 0, groove);
     if (groove.width) packHalfChannel(gr, 1, groove.width);
     else { const g14 = toHalfBits(1.4); for (let i = 0; i < n; i++) gr[i * 4 + 1] = g14; }
+    if (groove.inset) packHalfChannel(gr, 2, groove.inset);
   } else {
     const gcap = toHalfBits(grooveBand || 1e3), g14 = toHalfBits(1.4);
     for (let i = 0; i < n; i++) { gr[i * 4] = gcap; gr[i * 4 + 1] = g14; }
