@@ -33,7 +33,7 @@ import {
 import { HALO_TAU, haloGnoise3, haloHash12, haloHash22, haloPortSitesTSL, haloPureFn } from './haloRingTSL.js';
 import { createUniformBlock, nodeOf } from './haloUniformsAdapter.js';
 import { HALO_SECTOR_TYPES, HALO_TERRAIN } from './haloRingConfig.js';
-import { haloPortTileUniforms } from './haloRingUniforms.js';
+import { haloFloorSiteUniforms, haloPortTileUniforms } from './haloRingUniforms.js';
 import { haloSectorFeatures, resolveHaloProfile } from './haloRingProfiles.js';
 import { HALO_LANDMARK } from './haloRingLandmarks.js';
 import { HALO_DOME } from './haloRingDomes.js';
@@ -642,6 +642,9 @@ export class HaloWorldMaps {
     }
     const sectorStart = ((layout.sectorStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     const port = haloPortTileUniforms(layout);
+    // miejsca podłogi spoza szablonu (opcja `floorSites`) — wpisy bloku tylko z opcją (bez niej blok i WGSL jak dawniej)
+    const floor = haloFloorSiteUniforms(layout);
+    const floorSpec = floor ? { uFloorSiteA: { array: floor.a }, uFloorSiteZ: { array: floor.z } } : {};
     const v4s = (n, make) => ({ array: Array.from({ length: n }, make) });
     // jeden blok = jeden bufor uniformów (limit WebGPU: 12 buforów na etap)
     return createUniformBlock({
@@ -675,7 +678,8 @@ export class HaloWorldMaps {
       uDomeC: v4s(MAX_DOMES, () => new THREE.Vector4()),
       uPortTile: port.tile,
       uPortRects: { array: port.rects },
-      uPortZones: { array: port.zones }
+      uPortZones: { array: port.zones },
+      ...floorSpec
     }, 'haloBakeU').uniforms;
   }
 

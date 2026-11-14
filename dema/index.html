@@ -72,6 +72,7 @@ const GROUPS = [
   ['WebGPU', [
     ['bronie-webgpu.html', 'Bronie — 27 dział, PD i laserów'],
     ['rakiety-webgpu.html', 'Rakiety — efekty'],
+    ['silniki-marki.html', 'Silniki — marki frakcji: sześć dysz i strug w trybach normalny, boost, hipercruise, warp (propozycja)'],
     ['asteroidy-webgpu.html', 'Pas asteroid'],
     ['warp-webgpu.html', 'Warp „Nurt” — wycofane (dawna soczewka i ośrodek; warp gry = „Pęd”)'],
     ['warp-ped.html', 'Warp „Pęd” — warp gry: świat w soczewce, wyjście z pędem — moduły gry'],
@@ -102,6 +103,8 @@ const GROUPS = [
     ['render-worker-proto.html', 'Render w workerze — prototyp RW-02'],
   ]],
   ['Ringi, porty i budowle', [
+    ['stocznia-ringu.html', 'Port przy ringu z drogą i stocznią — prototyp kompleksu: wjazd K-7, droga między rzędami doków, suchy dok floty, stocznia: doki refitu i zamknięta ulica z kratownicą wokół trójkątnego suchego doku (Ziemia) albo linie taśmowe (Jowisz); lot Atlasem'],
+    ['ring-dzielnica.html', 'Ring Ziemi — wszystkie dzielnice obok siebie na jednym łuku: port ze stocznią, fabryki, huta, elektronika, zbrojownia, składy, dworzec (jedna osobno: ?d=huta…); droga z kratownicą, zatoki ciężarówek, przystanki kolei; lot Atlasem'],
     ['autostrada.html', 'Autostrada wokół Ziemi — style pasów, węzły, sygnalizacja, Atlas na czerwonym'],
     ['hangar-ring.html', 'Dok K-7 — wcięcie pierścienia'],
     ['orbital_ring_demo.html', 'ECUMENE / Orbital Ring'],
@@ -182,7 +185,7 @@ for (const [title, demos] of GROUPS) {
     a.href = new URL(file.split('/').map(encodeURIComponent).join('/'), base).href;
     a.dataset.q = (name + ' ' + file).toLowerCase();
     const gpu = /webgpu/i.test(file) || file === 'halo_ring_demo.html' || file === 'kontenery.html' || file === 'mapa-gwiezdna.html'
-      || file === 'autostrada.html';
+      || file === 'autostrada.html' || file === 'stocznia-ringu.html' || file === 'ring-dzielnica.html';
     a.innerHTML = `<div class="name"></div><div class="file"></div>`;
     a.firstChild.textContent = name;
     if (gpu) a.firstChild.insertAdjacentHTML('beforeend', '<span class="tag">WebGPU</span>');

@@ -3,6 +3,7 @@
 //   node scripts/webgpu/autostrada-demo.mjs [--out .tmp/autostrada/1] [--rozmiar 1920x1080] [--style klisza,...] [--kadry wezel,zatoka,...]
 //        [--atlas 1] (sekwencja: przed, żółte, czerwone, przejazd, zielone) [--ring 0] (bez ringu — szybkie strojenie) [--klatki 30] [--port 5461]
 //   Kadr własny: --kadr 45000,-45000,0.1 (scena x, y, zoom kamery gry)
+//   Układ „rama” (styl rama): --kadry wezel,stocznia,… ; inny zasięg stoczni: --query zasieg=40000 (dopisek do adresu strony)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo } from './wspolne.mjs';
@@ -31,7 +32,8 @@ async function zrzut(nazwa) {
 
 try {
   const ring = args.ring === '0' ? '&ring=0' : '';
-  await cdp.send('Page.navigate', { url: `${base}/dema/autostrada.html?test=1${NAKLADKA}${ring}&atlas=0` });
+  const dopisek = args.query ? `&${args.query}` : '';
+  await cdp.send('Page.navigate', { url: `${base}/dema/autostrada.html?test=1${NAKLADKA}${ring}&atlas=0${dopisek}` });
   if (!await waitFor(cdp, '!!(window.__autostrada && window.__autostrada.gotowe) || !!(window.__autostrada && window.__autostrada.blad)', 240000, 500)) throw new Error('demo nie wstało');
   const lista = await ev('[...document.querySelectorAll("#style button")].map((b) => b.dataset.id)');
   const style = args.style ? args.style.split(',') : lista;

@@ -1124,3 +1124,39 @@ Stara bryła (przed § 10.22) w widoku orbitalnym: 1,27 / 0,87 / 0,96 ms. W 5120
 Czego brakuje: chmury płaskie (dalsze planety, `?bryla=0`) mają dawny wygląd i inny układ chmur; na granicach cienia
 zostaje lekkie ziarno; przy kadrze poniżej ~100 km chmura wypełnia ekran miękką bielą (szczegół kończy się na ~1,3 km);
 cień chmur na gruncie nie ma drobnego szczegółu (miękki).
+
+### 10.24. Chmury burzowe z piorunami (2026-11-12, demo)
+
+Polecenie użytkownika: „teraz dodaj chmury burzowe z piorunami”.
+
+Zrobione:
+
+- **Układy burzowe** (`planetGenStorms.js`, czysty JS): 2–4 na planecie z chmurami ziemskimi (pokład: 1–3, pył: 0),
+  z ziarna planety — kierunek środka, promień tarczy 0,075–0,14 rad (~400–800 km), aktywność błysków. To jawne
+  obiekty, nie skutek szumu: program zna ich położenie (kadr dema; później strefa rozgrywki, dźwięk grzmotu).
+  Wiatr pasa szerokości przenosi burzę razem z jej chmurami.
+- **Chmura burzowa** w bryle: w tarczy burzy (brzeg nieregularny z szumu rodzaju chmur) pokrycie niezależne od mapy,
+  niestabilność = 1 (wieże), kowadło jako gruba płyta w pasie ~0,5–0,82 wysokości powłoki z kopułami najmocniejszych
+  wież ponad nim, chmura gęstsza optycznie i stalowa poniżej kowadła; wokół układu (1,7 promienia) tarcza chmur
+  pierzastych. Cień burzy na gruncie z tych samych układów.
+- **Pioruny**: błyski jako funkcja (ziarno, czas) — dwa strumienie na burzę, okno 0,4 s, 1–3 wyładowania gasnące
+  w ~30 ms; do sześciu naraz w uniformach bryły. Światło WEWNĄTRZ chmury (poświata ~0,014 R + jądro), bez cienia,
+  także po nocnej stronie; jaśniej w szczelinach, ciemniej na kopułach wysoko nad błyskiem; jasność ponad progiem
+  bloomu.
+- Demo: pierwsza burza planety przeniesiona ~0,13 rad od miejsca-bohatera (widać od razu; `?burza=0` — zostaje tam,
+  gdzie wyszła z ziarna), przycisk „Burza” (kadr na następną burzę, słońce nisko).
+
+Błędy po drodze: pierwsza wersja kowadła (obniżony próg tylko pod stropem powłoki) dawała cienką, półprzezroczystą,
+ziarnistą płytę — płyta gruba, a ponad nią próg rośnie; błysk bez zależności od budowy chmury był gładką plamą „jak
+lampa” (tłumienie z wysokością nad błyskiem, szczeliny jaśniejsze); w zrzutach serii błysku nie było widać —
+najpierw narzędzie wybierało chwilę najjaśniejszą na całej planecie (błysk w innej burzy), potem okazało się, że
+zegar dema biegnie w czasie rzeczywistym i błysk gasł przed zrzutem (`stormPace = 0`).
+
+Koszt (czas GPU całej klatki, 1600 × 900): widok orbitalny na burzę 1,19–1,20 ms (kadr startowy i 1,25 R), widok
+z góry 1,30 ms (zoom 0,5) i 1,85 ms (zoom 1,6, kadr wypełniony burzą — gęsta chmura w każdym pikselu). Liczenie
+błysków na CPU: kilkanaście haszy na klatkę (nie mierzone osobno). W 5120 × 1440 nie mierzone.
+
+Czego brakuje: nie ma widocznych kanałów wyładowań (tylko rozbłyski w chmurze — tak widać burzę z orbity), błysk nie
+oświetla gruntu ani sąsiednich chmur poza swoją poświatą, nie ma deszczu ani ciemnej podstawy widocznej z boku,
+burze nie powstają i nie zanikają (stała lista), chmury płaskie (`?bryla=0`, dalsze planety) burz nie pokazują,
+w półprzezroczystych częściach kowadła zostaje ziarno; styl „pokład” nie był oglądany.

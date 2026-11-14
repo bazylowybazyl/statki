@@ -8,7 +8,7 @@
 <title>Rakiety WebGPU — demo efektów</title>
 <link rel="icon" href="data:,">
 <style>
-  :root { --ink: #dde4ea; --muted: #7f8f99; --line: #b0c8d826; --panel: #080c12e8; --accent: #ffb070; --nova: #ff7ae6; }
+  :root { --ink: #dde4ea; --muted: #7f8f99; --line: #b0c8d826; --panel: #080c12e8; --accent: #ffb070; --nova: #ff7ae6; --heavy: #ff6a3a; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
   #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
@@ -32,6 +32,8 @@
   button.on { border-color: var(--accent); background: #2a1c10; }
   button.nova { border-color: #6a2a60; }
   button.nova.on, button.nova:hover { border-color: var(--nova); background: #2a1028; }
+  button.heavy { border-color: #7a3a22; }
+  button.heavy.on, button.heavy:hover { border-color: var(--heavy); background: #2c140c; }
   button small { display: block; color: var(--muted); font-size: 10px; margin-top: 1px; }
   #stats { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre; color: var(--ink); background: #02070bcc; border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
   #stats b { color: var(--accent); font-weight: 600; }
@@ -50,12 +52,14 @@
 <div id="errors"></div>
 <div id="panel">
   <h1>RAKIETY WebGPU — NOWE EFEKTY</h1>
-  <div class="sub">Rakiety manewrujące, szybkie i specjalne (Supernowa) na WebGPURenderer + TSL: dym liczony na GPU i oświetlony wszystkimi światłami (dysze, błyski) z samocieniem chmur, kule ognia jako objętość, płonące odłamki, fale uderzeniowe jako sama refrakcja, pozostałość supernowej ze 110 tys. cząstek.</div>
-  <h2>Pokaz (klawisze 1–7)</h2>
+  <div class="sub">Rakiety manewrujące, szybkie i specjalne (Supernowa, Niszczyciel) na WebGPURenderer + TSL: dym liczony na GPU i oświetlony wszystkimi światłami (dysze, błyski) z samocieniem chmur, kule ognia jako objętość, płonące odłamki, fale uderzeniowe jako sama refrakcja, Supernova Barrage jak w grze: 4 głowice, pozostałość z wirem i dżetami pulsara. Nowość: Niszczyciel — jedna ciężka rakieta, która przebija kadłub i wybucha w środku. Głowica FALA: duża rozmyta poświata rośnie od środka, a za nią idą trzy kręgi refrakcji i gorące powietrze — szybko, bez ozdobników. Poprzednie wersje wybuchu (Pulsar, gaz 3D z gry) zostały do wyboru niżej.</div>
+  <h2>Pokaz (klawisze 1–9)</h2>
   <div class="scen">
+    <button id="sc-niszczyciel" class="heavy" data-sc="niszczyciel">8 · Niszczyciel<small>jedna ciężka rakieta, wybuch w kadłubie</small></button>
+    <button id="sc-niszczyciel-zblizenie" class="heavy" data-sc="niszczycielZoom">9 · Wybuch z bliska<small>zwolnione ×0,45</small></button>
     <button id="sc-salwa" data-sc="salwa">1 · Salwa<small>12 rakiet manewrujących</small></button>
     <button id="sc-szybkie" data-sc="szybkie">2 · Szybkie rakiety<small>rój na fregaty w ruchu</small></button>
-    <button id="sc-supernowa" class="nova" data-sc="supernowa">3 · Supernowa<small>rakieta specjalna</small></button>
+    <button id="sc-supernowa" class="nova" data-sc="supernowa">3 · Supernowa<small>salwa 4 głowic</small></button>
     <button id="sc-deszcz" data-sc="deszcz">4 · Deszcz rakiet<small>96 rakiet, łuki kinowe</small></button>
     <button id="sc-zblizenie" data-sc="zblizenie">5 · Zbliżenie trafienia<small>zwolnione ×0,3</small></button>
     <button id="sc-nova-zblizenie" class="nova" data-sc="novaZoom">6 · Supernowa z bliska<small>zwolnione ×0,4</small></button>
@@ -66,6 +70,12 @@
     <button id="b-pause" title="Pauza symulacji (kamera działa)">Pauza (Spacja)</button>
     <button id="b-slow" title="Zwolnienie ×0,25">Zwolnienie (T)</button>
     <button id="b-clear" title="Wyczyść dym i efekty">Wyczyść (C)</button>
+  </div>
+  <h2>Głowica Niszczyciela (pokaz 8 i 9, ŚPM / Ctrl+LPM)</h2>
+  <div class="buttons">
+    <button class="heavy on" data-wh="wave" title="Rozmyta poświata rosnąca od środka i fala refrakcji">Fala</button>
+    <button class="heavy" data-wh="pulsar" title="Poprzednia wersja: miniaturowy pulsar w 3D">Pulsar</button>
+    <button class="heavy" data-wh="gas" title="Kula ognia i dym z gazu na siatce 3D gry">Gaz 3D z gry</button>
   </div>
   <h2>Statystyki</h2>
   <div id="stats">…</div>
@@ -93,7 +103,7 @@
   <div class="row"><label>żar spalin</label><input id="s-emit" type="range" min="0" max="3" step="0.05" value="1"><output id="o-emit"></output></div>
   <div class="row"><label>płomienie dysz</label><input id="s-plume" type="range" min="0" max="3" step="0.05" value="1"><output id="o-plume"></output></div>
   <div class="row"><label>moc wybuchów</label><input id="s-blast" type="range" min="0.2" max="2.5" step="0.05" value="1"><output id="o-blast"></output></div>
-  <div class="hint">Kółko — zoom (0,1–3,2). LPM na okręcie — salwa rakiet manewrujących w cel, LPM w pustkę — salwa w punkt. Shift+LPM — szybkie rakiety. PPM — Supernowa w cel pod kursorem. Z — zoom 1, H — ukryj panele. W/A/S/D — Atlas. „Bitwa w ruchu”: cała flota leci 700 j./s, a rakiety, dym i wybuchy dziedziczą pęd nośnika jak w grze — obraz ma wyglądać jak w bitwie stojącej.</div>
+  <div class="hint">Kółko — zoom (0,1–3,2). LPM na okręcie — salwa rakiet manewrujących w cel, LPM w pustkę — salwa w punkt. Shift+LPM — szybkie rakiety. PPM — Supernova Barrage (4 głowice: pierwsza w cel pod kursorem, reszta w inne okręty grupy). Środkowy przycisk myszy albo Ctrl+LPM — Niszczyciel (jedna rakieta; w okręt — przebija kadłub, w pustkę — wybuch w punkcie), z głowicą wybraną w panelu: Fala, Pulsar albo gaz 3D z gry. Z — zoom 1, H — ukryj panele. W/A/S/D — Atlas. „Bitwa w ruchu”: cała flota leci 700 j./s, a rakiety, dym i wybuchy dziedziczą pęd nośnika jak w grze — obraz ma wyglądać jak w bitwie stojącej.</div>
 </div>
 <script type="module" src="/dema/rakiety-webgpu.js"></script>
 </body>

@@ -10,7 +10,7 @@
 // bloku), biblioteka TSL (haloRingTSL.js) bierze go przez nodeOf().
 import * as THREE from 'three';
 import { createUniformBlock } from './haloUniformsAdapter.js';
-import { HALO_ATMOSPHERE, HALO_LIGHT, HALO_ROOF, HALO_TRANSIT, haloPortTemplate, haloTransitAngles } from './haloRingConfig.js';
+import { HALO_ATMOSPHERE, HALO_LIGHT, HALO_ROOF, HALO_TRANSIT, haloFloorSites, haloPortTemplate, haloTransitAngles } from './haloRingConfig.js';
 import {
   HALO_MEGA_PALETTE_SIZE,
   HALO_STRUCTURE_PALETTE_KEYS,
@@ -58,6 +58,21 @@ export function haloPortTileUniforms(layout, out = null) {
   });
   return o;
 }
+// Miejsca podłogi spoza szablonu (opcja `floorSites`, haloRingConfig.js) dla wypieku map: na miejsce dwa wektory —
+// a: (s środka na floorMid, pół-rozpiętość s, t0, t1) jak prostokąt szablonu (bez kafla — miejsce jest jedno),
+// z: (zasięg przemysłu, osad, płyta bez zabudowy 0/1, osłona nad pasem 0/1). null bez opcji — wypiek bez tej gałęzi.
+export function haloFloorSiteUniforms(layout) {
+  const sites = haloFloorSites(layout);
+  if (!sites.length || !portSitesActive(layout)) return null;
+  const fm = layout.radii.floorMid;
+  const tz = layout.floor.tangent.z;
+  const tAt = (z) => (z - layout.z.botIn) / tz;
+  return {
+    a: sites.map((f) => new THREE.Vector4(f.theta * fm, f.halfS, tAt(f.zMin) - 150, tAt(f.zMax) + 250)),
+    z: sites.map((f) => new THREE.Vector4(f.zoneInd, f.zoneRes, f.pad, f.shield))
+  };
+}
+
 // Tranzyty: (kąt pierwszej osi, krok, liczba, pół-szerokość wycięcia) i z wycięcia.
 export function haloTransitUniforms(layout, outA = new THREE.Vector4(), outZ = new THREE.Vector4()) {
   const T = HALO_TRANSIT;

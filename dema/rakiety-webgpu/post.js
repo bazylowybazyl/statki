@@ -7,8 +7,9 @@
 //     obraz ściśnięty na froncie, rozciągnięty za nim); BEZ świecącego obrysu
 //     (feedback usera: fale = sam przezroczysty efekt zakrzywiania);
 //   • 1 implozja: próbkowanie OD środka — obraz wsysany do punktu zapadania;
-//   • 2 gorące powietrze: płynący szum w kole, słabnący ku brzegowi.
-// Dyspersja barw ×0,82 / ×1 / ×1,22 (jak w grze) tylko dla fal i implozji.
+//   • 2 gorące powietrze: płynący szum w kole, słabnący ku brzegowi;
+//   • 3 skręcenie: przesunięcie styczne wokół środka — obraz obraca się wokół punktu (wybuch „Pulsar”).
+// Dyspersja barw ×0,82 / ×1 / ×1,22 (jak w grze) tylko dla fal, implozji i skręcenia.
 // Ekspozycja: chwilowe przygaszenie przed wybuchem supernowej.
 
 import * as THREE from 'three/webgpu';
@@ -26,7 +27,7 @@ export class PostFx {
     this.U = {
       count: uniform(0, 'int'),
       A: v4(DISTORT_CAP), // x, y (scena), promień, szerokość
-      B: v4(DISTORT_CAP), // siła [px], typ, dyspersja 0..1, faza
+      B: v4(DISTORT_CAP), // siła [px], typ, dyspersja 0..1, skala wzoru gorącego powietrza (1 — wzór dema)
       cam: uniform(new THREE.Vector3(0, 0, 1)), // środek kamery (scena), zoom
       size: uniform(new THREE.Vector2(1920, 1080)),
       time: uniform(0),
@@ -40,10 +41,13 @@ export class PostFx {
     this.sources.length = 0;
   }
 
-  /** Źródło w SCENIE: typ 0 fala, 1 implozja, 2 gorące powietrze. */
-  add(type, x, y, radius, width, strengthPx, dispersion = 1) {
+  /**
+   * Źródło w SCENIE: typ 0 fala, 1 implozja, 2 gorące powietrze, 3 skręcenie; scale — skala wzoru gorącego
+   * powietrza (< 1 — grubszy wzór, jak `DistortionField.heat(…, scale)` w grze: haze Supernowej 0,3).
+   */
+  add(type, x, y, radius, width, strengthPx, dispersion = 1, scale = 1) {
     if (this.sources.length >= DISTORT_CAP || !(strengthPx > 0.02)) return;
-    this.sources.push({ type, x, y, radius, width, strengthPx, dispersion });
+    this.sources.push({ type, x, y, radius, width, strengthPx, dispersion, scale });
   }
 
   commit(camX, camY, zoom, W, H, time) {
@@ -55,7 +59,7 @@ export class PostFx {
     for (let i = 0; i < n; i++) {
       const s = this.sources[i];
       U.A.array[i].set(s.x, s.y, s.radius, s.width);
-      U.B.array[i].set(s.strengthPx, s.type, s.dispersion, 0);
+      U.B.array[i].set(s.strengthPx, s.type, s.dispersion, s.scale);
     }
     U.count.value = n;
   }
@@ -85,15 +89,22 @@ export class PostFx {
           const u = r.div(max(A.z, 1.0));
           const prof = u.mul(exp(u.mul(u).mul(-2.2))).mul(2.2);
           o.assign(dir.mul(prof.mul(B.x)));
-        }).Else(() => {
+        }).ElseIf(B.y.lessThan(2.5), () => {
           const u = r.div(max(A.z, 1.0));
           const fall = float(1.0).sub(smoothstep(0.3, 1.0, u));
           const t = U.time;
+          const Q = P.mul(B.w);
           const w = vec2(
-            sin(P.x.mul(0.021).add(t.mul(7.3))).add(sin(P.y.mul(0.034).sub(t.mul(5.1)))),
-            cos(P.y.mul(0.025).add(t.mul(6.1))).add(cos(P.x.mul(0.029).add(t.mul(4.7))))
+            sin(Q.x.mul(0.021).add(t.mul(7.3))).add(sin(Q.y.mul(0.034).sub(t.mul(5.1)))),
+            cos(Q.y.mul(0.025).add(t.mul(6.1))).add(cos(Q.x.mul(0.029).add(t.mul(4.7))))
           ).mul(0.5);
           o.assign(w.mul(B.x.mul(fall)));
+        }).Else(() => {
+          // 3 — skręcenie: przesunięcie STYCZNE wokół środka (obraz obraca się wokół punktu, najmocniej
+          // w pół promienia) — przestrzeń wleczona przez wirujące jądro wybuchu „Pulsar”.
+          const u = r.div(max(A.z, 1.0));
+          const prof = u.mul(exp(u.mul(u).mul(-2.2))).mul(2.2);
+          o.assign(vec2(dir.y.negate(), dir.x).mul(prof.mul(B.x)));
         });
         offPx.addAssign(o);
         dispPx.addAssign(o.mul(B.z));

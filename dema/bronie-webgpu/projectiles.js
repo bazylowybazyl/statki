@@ -27,6 +27,20 @@ export const PSTYLE = Object.freeze({ TRACER: 0, BOLT: 1, ION: 2, ORB: 3, NEEDLE
 const MAX = 4096;
 const SUB_DT = 1 / 240;
 
+/**
+ * Wygląd pocisków w locie jak w grze (src/3d/weapons/weaponFx.js PROJECTILE_LOOK, 2026-10-13, „feel strzelania”):
+ *  - shutter — MIGAWKA: smuga nie krótsza niż droga pocisku w czasie klatki × shutter (szybki pocisk był krótszy
+ *    niż skok między klatkami i migał), nie dłuższa niż droga od wylotu;
+ *  - minPx — najmniejsza szerokość pocisku na ekranie [px] wg rozmiaru broni, najwyżej × minGrow naturalnej;
+ *  - pixelCore — siła rdzenia pikselowego w shaderze (0 — wył.). Konsola: `window.__demo.projectileLook`.
+ */
+export const PROJECTILE_LOOK = {
+  shutter: 1.15,
+  minPx: { S: 2.5, M: 3.5, L: 4.5, Capital: 6 },
+  minGrow: 2.5,
+  pixelCore: 1
+};
+
 export class ProjectileSystem {
   constructor({ scene, noise, trails, renderOrder = 55 }) {
     this.trails = trails;
@@ -35,8 +49,9 @@ export class ProjectileSystem {
     this.pool = [];
     this.node = attributeArray(MAX * 3, 'vec4').setName('projectiles');
     this.data = this.node.value.array;
-    this.U = { time: uniform(0), zoom: uniform(1) };
+    this.U = { time: uniform(0), zoom: uniform(1), pixelCore: uniform(1) };
     this.time = 0;
+    this._frameDt = 1 / 60;
     this._buildMesh(scene, renderOrder);
   }
 
@@ -125,8 +140,13 @@ export class ProjectileSystem {
         const core = exp(sq(r.div(0.2)).negate());
         const mid = exp(sq(r.div(0.42)).negate()).mul(n.mul(0.7).add(0.5));
         const corona = exp(sq(r.div(0.75)).negate()).mul(n.mul(n)).mul(0.5);
-        const tail = exp(sq(d.div(halo.mul(0.28))).negate()).mul(ta.mul(ta)).mul(0.7);
-        out.assign(vec3(1.3, 1.5, 1.6).mul(core.mul(3.0)).add(col.mul(mid.add(corona).add(tail))));
+        // ogon komety (jak w grze): zwęża się ku końcowi, plazma płynie od głowy (szum przesuwany w tył),
+        // cienka otoczka gaśnie szybciej niż rdzeń ogona
+        const tw = halo.mul(mix(0.1, 0.3, ta));
+        const fl = texture(noise, vec2(along.div(halo).mul(0.06).add(t.mul(2.4)), across.div(halo).mul(0.25).add(seed))).g;
+        const tail = exp(sq(d.div(tw)).negate()).mul(ta.mul(ta)).mul(fl.mul(0.7).add(0.55)).mul(0.75);
+        const sheath = exp(sq(d.div(halo.mul(0.6))).negate()).mul(ta.mul(ta).mul(ta)).mul(0.12);
+        out.assign(vec3(1.3, 1.5, 1.6).mul(core.mul(3.0)).add(col.mul(mid.add(corona).add(tail).add(sheath))));
       }).ElseIf(style.lessThan(4.5), () => {
         // NEEDLE — igła railguna + stożek Macha za głową
         const core = exp(sq(d.div(halo.mul(0.06))).negate()).mul(ta.mul(0.7).add(0.3));
@@ -158,6 +178,13 @@ export class ProjectileSystem {
         const twinkle = sin(t.mul(60.0).add(seed.mul(20.0))).mul(0.3).add(0.85);
         out.assign(col.mul(body.mul(0.9)).add(vec3(1.6, 1.4, 1.0).mul(tip.mul(2.4).mul(twinkle))));
       });
+      // Rdzeń pikselowy (jak w grze, 2026-10-13): mały pocisk na ekranie (pół szerokości < ~6 px) ma rdzenie stylów
+      // węższe niż piksel — gubił się i migał. Ostra linia ~1,5 px wzdłuż toru i kropka głowy; przy zbliżeniu gaśnie.
+      const zoomPx = U.zoom;
+      const small = float(1.0).sub(smoothstep(2.0, 6.0, halo.mul(zoomPx))).mul(U.pixelCore);
+      const line = exp(sq(d.mul(zoomPx).div(0.8)).negate()).mul(ta.mul(0.75).add(0.25));
+      const dot = exp(sq(dh.mul(zoomPx).div(1.3)).negate());
+      out.addAssign(col.mul(line.mul(0.9)).add(vec3(1.4, 1.5, 1.6).mul(dot.mul(1.6))).mul(small));
       return vec4(max(out.mul(e), vec3(0.0)), 0.0);
     })();
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
@@ -292,9 +319,14 @@ export class ProjectileSystem {
     }
   }
 
-  commit(zoom) {
+  /** frameDt — czas klatki obrazu [s] (migawka; w pauzie 0 — pocisk stoi, smuga bez migawki). */
+  commit(zoom, frameDt = 1 / 60) {
     this.U.time.value = this.time;
     this.U.zoom.value = zoom;
+    this.U.pixelCore.value = PROJECTILE_LOOK.pixelCore;
+    if (frameDt > 0) this._frameDt += (Math.min(frameDt, 1 / 30) - this._frameDt) * 0.25;
+    const fdt = frameDt > 0 ? this._frameDt : 0;
+    const z = Math.max(1e-4, zoom);
     const D = this.data;
     let n = 0;
     for (const p of this.list) {
@@ -304,9 +336,17 @@ export class ProjectileSystem {
       const o = n * 12;
       // długość smugi: stała stylu + krótka smuga ruchu (1/90 s), wzrost na starcie
       const grow = Math.min(1, p.age * 40 + 0.15);
-      const len = (p.len + spd * (p.streak ?? 0.004)) * grow;
+      let len = (p.len + spd * (p.streak ?? 0.004)) * grow;
+      // migawka: nie krótsza niż skok między klatkami, nie dłuższa niż droga od wylotu
+      const shutter = spd * Math.min(fdt * PROJECTILE_LOOK.shutter, p.age);
+      if (shutter > len) len = shutter;
+      // najmniejsza szerokość na ekranie wg rozmiaru broni (najwyżej × minGrow naturalnej)
+      let width = p.width;
+      const minPx = PROJECTILE_LOOK.minPx[p.weapon?.def?.size] || PROJECTILE_LOOK.minPx.M;
+      const minW = Math.min(minPx / z, width * PROJECTILE_LOOK.minGrow);
+      if (minW > width) width = minW;
       D[o] = p.x; D[o + 1] = -p.y; D[o + 2] = 14; D[o + 3] = p.style;
-      D[o + 4] = dx; D[o + 5] = -dy; D[o + 6] = len; D[o + 7] = p.width;
+      D[o + 4] = dx; D[o + 5] = -dy; D[o + 6] = len; D[o + 7] = width;
       D[o + 8] = p.color[0]; D[o + 9] = p.color[1]; D[o + 10] = p.color[2]; D[o + 11] = p.seed;
       n++;
     }

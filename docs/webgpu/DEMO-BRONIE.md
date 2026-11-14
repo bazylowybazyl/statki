@@ -19,6 +19,17 @@ Statystyki strzału (prędkość, kadencja, rozrzut, zasięg, salwy flak, promie
 `MASTER_WEAPONS`, odrzut i wstrząs z `FX_PROFILE` (`src/vfx/turret2D.js`), gniazda z `ATLAS_EDITOR_DEFAULTS`,
 wieżyczki z atlasów gry (`assets/weapons/*-atlas-*.png`), skala wieżyczki = `SCALE_BY_SIZE × CATEGORY_TRIM`.
 
+**Stan z gry (2026-11-10).** Demo dogonione do efektów broni w grze (`src/3d/weapons/`): katalog jak `WEAPON_FX`
+(34 bronie — doszły Yamato L, Oszczep, Kolec, Lanca, Lanca L, działko kanonierki i Promień Śmierci „Gungnir”), odrzut
+i wstrząs z danych broni (`recoil`, `shake`), smugi gazu tylko Hexlance'a i Mjolnira (`TRAIL_FAMILIES`) z ciągłością
+węzłów z gry, Yamato i Tempest bez efektu lotu (ogon komety Yamato w shaderze ORB, `streak` 0,035), wygląd pocisków
+w locie z gry (`PROJECTILE_LOOK`: migawka, najmniejsza szerokość na ekranie, rdzeń pikselowy — `window.__demo` nie
+ma suwaka, wartości w `projectiles.js`), Promień Śmierci: receptura `deathRay` (liczby z gry), wiązka `BEAM.RAY`,
+sterownik `ray` w `gunnery.js` (obraz jak `WeaponFx._stepRays`; zawsze z dziobu jak Hexlance, przeładowanie w demie
+3,5 s zamiast 45 s, obrażeń brak). Bez odpowiednika w demie: zniekształcenia pola z `Core3D.fxDistortion()` przy
+promieniu (fala wylotu, gorące powietrze wzdłuż wiązki, implozja — receptura daje własne paczki DIST), gaz z lufy
+(reżyser wybuchów), kamery 3D. Zmiana efektów broni w grze → przenieś tutaj.
+
 ## Moduły
 
 | Plik | Co robi |

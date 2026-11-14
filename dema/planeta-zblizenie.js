@@ -17,6 +17,7 @@ import { describePlanet } from '../src/3d/planetGen/planetGenSpec.js';
 import { PlanetGenBaker } from '../src/3d/planetGen/planetGenBaker.js';
 import { createGenNearBody } from '../src/3d/planetGen/planetGenNear.js';
 import { freshSeed, mix32 } from '../src/3d/planetGen/planetGenRng.js';
+import { rotateY } from '../src/3d/planetGen/planetGenStorms.js';
 import { describePlace } from '../src/3d/planetGen/planetGenPlace.js';
 import { exportPlanet, loadPlanet } from '../src/3d/planetGen/planetGenFiles.js';
 
@@ -340,6 +341,18 @@ async function build(style = S.style, seed = null) {
     await pickWeatherTime(body, baked, vents[Math.max(0, vents.findIndex((v) => Math.abs(v.dir.y) < Math.sin(35 * DEG)))]?.dir);
     if (gen !== S.gen) { scene.remove(body.group); body.dispose(); baked.dispose(); return; }
     S.body = body; S.baked = baked; S.spec = spec; S.vents = vents;
+    S.stormIdx = -1;
+    // burza przy bohaterze (demo ma pokazać chmury burzowe z piorunami od razu): pierwszy układ burzowy planety
+    // przeniesiony ~0,13 rad od miejsca-bohatera; reszta zostaje tam, gdzie wyszła z ziarna
+    if (body.storms.length && params.get('burza') !== '0') {
+      const hero = vents[Math.max(0, vents.findIndex((v) => Math.abs(v.dir.y) < Math.sin(35 * DEG)))];
+      if (hero) {
+        const dC = rotateY([hero.dir.x, hero.dir.y, hero.dir.z], -(body.clouds ? body.clouds.rotation.y : 0));
+        const list = body.storms.map((s) => ({ ...s, dir: s.dir.slice() }));
+        list[0].dir = nearDir(dC, num('burzaOdl', 0.13), num('burzaKat', 0.5));
+        body.setStorms(list);
+      }
+    }
     // bohater: najlepszy wulkan w pasie ±35° szerokości
     S.ventIdx = Math.max(0, vents.findIndex((v) => Math.abs(v.dir.y) < Math.sin(35 * DEG)));
     for (const b of document.querySelectorAll('#styles button')) b.classList.toggle('on', b.dataset.s === style);
@@ -507,6 +520,7 @@ function viewDirs() {
   $('b-erupt').onclick = () => toggleEruption();
   $('b-vent').onclick = () => nextVent();
   $('b-all').onclick = () => viewAll();
+  $('b-storm').onclick = () => nextStorm();
   $('b-los').onclick = () => rebuild(S.style, seedForStyle(S.style, freshSeed()));
   $('s-ros').value = S.veg;
   $('s-ros').onchange = () => { S.veg = $('s-ros').value; rebuild(S.style, S.seed); };
@@ -523,6 +537,30 @@ function setViewMode(v) {
 function toggleVolume() {
   if (S.view === 'orbit') S.volOrbit = !S.volOrbit; else S.volTop = !S.volTop;
   $('t-vol').classList.toggle('on', S.view === 'orbit' ? S.volOrbit : S.volTop);
+}
+// kierunek odległy od `d` o kąt `rho` [rad] w stronę `phi` (0 — wschód, π / 2 — północ)
+function nearDir(d, rho, phi) {
+  let ex = d[2]; let ez = -d[0];
+  const el = Math.hypot(ex, ez) || 1;
+  ex /= el; ez /= el;
+  const n = [d[1] * ez, d[2] * ex - d[0] * ez, -d[1] * ex];
+  const cr = Math.cos(rho); const sr = Math.sin(rho); const cp = Math.cos(phi); const sp = Math.sin(phi);
+  const p = [d[0] * cr + (ex * cp + n[0] * sp) * sr, d[1] * cr + n[1] * sp * sr, d[2] * cr + (ez * cp + n[2] * sp) * sr];
+  const l = Math.hypot(p[0], p[1], p[2]) || 1;
+  return [p[0] / l, p[1] / l, p[2] / l];
+}
+// Kadr na następną burzę: słońce nisko (błyski piorunów widać najlepiej o zmierzchu)
+function nextStorm() {
+  const st = S.body && S.body.storms;
+  if (!st || !st.length || !S.vents.length) return;
+  S.stormIdx = (S.stormIdx + 1) % st.length;
+  const g = rotateY(st[S.stormIdx].dir, S.body.clouds ? S.body.clouds.rotation.y : 0);
+  const v0 = S.vents[S.ventIdx] || S.vents[0];
+  const v = { ...v0, dir: v0.dir.clone().set(g[0], g[1], g[2]).normalize(), storm: true };
+  let at = S.vents.findIndex((x) => x.storm);
+  if (at >= 0) S.vents[at] = v; else at = S.vents.push(v) - 1;
+  goVent(at, Math.max(S.zoom, 0.3), 9);
+  if (S.view === 'orbit') orbitAt(undefined, undefined, Math.min(S.orb.dist, 1.4));
 }
 function nextVent() {
   if (!S.vents.length) return;

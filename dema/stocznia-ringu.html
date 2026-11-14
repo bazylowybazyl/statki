@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki tekstur gry (assets/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Port przy ringu z drogą i stocznią — koncept kompleksu</title>
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: grab; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace; min-width: 300px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .place { font-size: 14px; letter-spacing: .08em; color: #fff; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 340px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .views { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .views button { text-align: left; padding: 6px 9px; font-size: 12px; }
+  .views button small { display: block; color: var(--muted); font-size: 11px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  .checks { display: grid; grid-template-columns: 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 2px 4px; border-bottom: 1px solid #ffffff14; }
+  th:first-child, td:first-child { text-align: left; color: var(--muted); font-weight: 400; }
+  th { color: var(--muted); font-weight: 600; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #caption { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 40; padding: 6px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 12px ui-monospace, Consolas, monospace; letter-spacing: .03em; pointer-events: none; }
+  body.shot #panel, body.shot #hud, body.shot #caption { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Port przy ringu: droga między rzędami doków, wjazd K-7, suchy dok floty; lot Atlasem"></canvas>
+</div>
+<div id="hud">ładowanie…</div>
+<div id="caption"></div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>PORT PRZY RINGU — DROGA</h1>
+  <div class="sub">Koncept v2 jednego kompleksu portu Ziemi: wszystko dociśnięte do ringu i do siebie. W środku droga nad kręgosłupem z rurami, do doków wjeżdża się z drogi. Hala K-7 przebudowana na wjazd, flota stoi w suchym doku, na lewym końcu stocznia: doki refitu od drogi, a za halą — Ziemia: ulica z kratownicą wokół trójkątnego suchego doku, zamknięta od zewnątrz (kadłuby jadą kratownicą do doków, surowce przywożą statki); Jowisz: krótkie linie taśmowe. Potok renderu gry (Core3D), kamera gry, Atlas 1:1.</div>
+  <h2>Miejsca (1–9)</h2>
+  <div class="views" id="views"></div>
+  <h2>Widok</h2>
+  <div class="checks" id="toggles"></div>
+  <h2>Stocznia</h2>
+  <div class="btns" id="yardKind"></div>
+  <h2>Tempo stoczni</h2>
+  <div class="btns" id="yardSpeed"></div>
+  <div class="hint" id="yardInfo"></div>
+  <h2>Stanowiska kompleksu</h2>
+  <table id="berths"></table>
+  <div class="hint">„Dziś”: hala K-7 (flota) i dwie zatoki (cywilne). Ściana ringu to w demie bryła zastępcza; statki w dokach stoją.</div>
+  <h2>Sterowanie</h2>
+  <div class="hint">W / S — ciąg naprzód / wstecz, A / D — obrót, spacja — hamulec, Shift — dopalacz (w przestrzeni). F — kamera za statkiem, C — kino z ukosa. Mysz: przeciąganie — przesuw kamery (w kinie: orbita), kółko — zoom.</div>
+</div>
+<script type="module" src="/dema/stocznia-ringu.js"></script>
+</body>
+</html>

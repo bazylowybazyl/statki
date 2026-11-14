@@ -360,8 +360,9 @@ test('powłoki z marszem promienia: komplet uniformów, WGSL bryły chmur, atmos
     assert.match(cv, /texture_3d/, 'bryła chmur: tekstura szumu 3D');
     assert.doesNotMatch(cv, /textureSample\(/, 'bryła chmur: każda próbka z jawnym poziomem (pętla i gałęzie)');
     assert.doesNotMatch(cv, /NaN/);
-    // (kształt chmur wklejany w kilku miejscach: marsz, bliska próbka światła, dalekie próbki — stąd rozmiar)
-    assert.ok(cv.length < 90000, `bryła chmur: WGSL ${cv.length} znaków`);
+    // (kształt chmur wklejany w kilku miejscach: marsz, bliskie próbki światła, dalekie próbki; do tego układy
+    // burzowe i błyski piorunów rozwinięte po uniformach — stąd rozmiar)
+    assert.ok(cv.length < 120000, `bryła chmur: WGSL ${cv.length} znaków`);
     const am = createGenAtmosphereMaterial(au);
     const at = build(sphere(am), am, camera);
     assert.match(at, /for\s*\(/);
@@ -391,7 +392,8 @@ test('cień brył chmur na gruncie: materiał zbliżenia liczy te same kłęby (
   const near = build(sphere(m), m, new THREE.PerspectiveCamera());
   assert.match(near, /texture_3d/, 'cień kłębów czyta teksturę szumu bryły');
   const src = read('src/3d/planetGen/planetGenSurfaceNear.tsl.js');
-  assert.match(src, /cloudShape\(xc, cP, cov, cloudRegime\(xc, noise3, U\.uGnCloudVol2\.x, U\.uGnCloudVol3\.z\)/, 'ten sam kształt i rodzaj co bryła');
+  assert.match(src, /regS\.assign\(cloudRegime\(xc, noise3, U\.uGnCloudVol2\.x, U\.uGnCloudVol3\.z\)\)/, 'ten sam rodzaj chmur co bryła');
+  assert.match(src, /cloudShape\(xc, \{ \.\.\.cP, storm: stS \}/, 'ten sam kształt co bryła, z burzą');
   assert.match(src, /\[\[0\.2, true\], \[0\.5, true\], \[0\.85, false\]\]/, 'trzy wysokości: ława, kopuły, wieże');
   // wieże i przesunięcie rodzaju z bryły trafiają do cienia (setCloudMode)
   const nearJs = read('src/3d/planetGen/planetGenNear.js');

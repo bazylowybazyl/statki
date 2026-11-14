@@ -600,6 +600,16 @@ export function haloPortSitesTSL(u) {
   const rects = nodeOf(u.uPortRects);
   const zones = nodeOf(u.uPortZones);
   if (!tile || !rects || !zones) throw new Error('haloPortSitesTSL: brak uPortTile/uPortRects/uPortZones');
+  // Miejsca podłogi spoza szablonu (opcja ringu `floorSites`, haloRingConfig.js) — tylko w uniformach wypieku i tylko
+  // z opcją; bez niej ta gałąź nie wchodzi do grafu (WGSL jak dawniej). Miejsce jest jedno (bez kafla): ds zawinięte
+  // obwodem L. A = (s środka, pół-rozpiętość, t0, t1), Z = (przemysł, osady, płyta 0/1, osłona 0/1).
+  const floorA = nodeOf(u.uFloorSiteA);
+  const floorZ = nodeOf(u.uFloorSiteZ);
+  const floorN = floorA && floorZ ? Math.min(floorA.length, floorZ.length) : 0;
+  const floorDS = (P, sA, L) => {
+    const d = sA.sub(P.x).toVar();
+    return d.sub(L.mul(floor(d.div(L).add(0.5))));
+  };
   // płyta bez zabudowy: 1 na płycie doku / portalu, miękka krawędź
   const haloPortPad = (sAbs, t, L, grow, soft) => {
     void L;
@@ -618,6 +628,15 @@ export function haloPortSitesTSL(u) {
         });
       });
     });
+    for (let i = 0; i < floorN; i++) {
+      const P = floorA.element(i).toVar();
+      const Z = floorZ.element(i);
+      const ds = floorDS(P, sA, float(L));
+      const a = float(1.0).sub(smoothstep(P.y.add(grow), P.y.add(grow).add(soft), abs(ds)));
+      const b = float(1.0).sub(smoothstep(0.0, soft, P.z.sub(grow).sub(tt)))
+        .mul(float(1.0).sub(smoothstep(0.0, soft, tt.sub(P.w).sub(grow))));
+      m.assign(max(m, a.mul(b).mul(Z.z)));
+    }
     return m;
   };
   // wagi stref wokół płyt doków: x = pas fabryczny, y = osady, z = 0, w = osłona
@@ -645,6 +664,21 @@ export function haloPortSitesTSL(u) {
         w.assign(max(w, vec4(ind, res, 0.0, shield)));
       });
     });
+    for (let i = 0; i < floorN; i++) {
+      const P = floorA.element(i).toVar();
+      const Z = floorZ.element(i).toVar();
+      const ds = floorDS(P, sA, float(L)).toVar();
+      const dx = max(abs(ds).sub(P.y), 0.0);
+      const dy = max(max(P.z.sub(tt), tt.sub(P.w)), 0.0).div(0.6);
+      const d = max(length(vec2(dx, dy)).add(wp), 0.0).toVar();
+      const ind = Z.x.greaterThan(1.0).select(float(1.0).sub(smoothstep(Z.x.mul(0.72), Z.x.mul(1.2), d)), 0.0);
+      const res = Z.y.greaterThan(1.0).select(float(1.0).sub(smoothstep(Z.y.mul(0.8), Z.y.mul(1.2), d)), 0.0);
+      const shield = Z.w.greaterThan(0.5).select(
+        float(1.0).sub(smoothstep(P.y.add(150.0), P.y.add(750.0), abs(ds))).mul(smoothstep(P.w.sub(450.0), P.w, tt)),
+        0.0
+      );
+      w.assign(max(w, vec4(ind, res, 0.0, shield)));
+    }
     return w;
   };
   return { haloPortPad, haloPortZones, haloPortDS: (R, sAbs) => haloPortDS(R, sAbs, tile) };

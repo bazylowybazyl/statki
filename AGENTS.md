@@ -144,6 +144,8 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `niebo` | Wypiekacz nieba, tło kosmosu |
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |
 | `doki-portow` | Doki portów bez ringu (krzyż, okrąg, koło z wlotem): geometria, ścieżki bańki, kolizje, model |
+| `stocznia-ringu` | Port przy ringu z drogą w środku i stocznią (prototyp, demo, niewpięty): rzędy doków dociśnięte do ringu, droga nad kręgosłupem z rurami, hala K-7 jako wjazd, suchy dok floty, stocznia z dokami refitu — Ziemia: zamknięta, ulica z kratownicą wokół trójkątnego suchego doku (żurawie, drony, kadłuby na kratownicy, bez taśm), Jowisz: fabryka taśmowa (linie taktowe z drukarką); decyzje użytkownika i otwarte pytania |
+| `dzielnice-ringu` | Dzielnice ringu Ziemi (prototypy, demo, niewpięte): wspólny zestaw i strona dema z wtyczkami, huta ze składami rudy, kontrakt wtyczki (układ, bryły, ruch), zatoki ciężarówek, przystanki kolei i połączenie z zewnątrz; decyzje użytkownika |
 | `k7-obsluga` | Hala K-7: obsługa paliwowa stanowisk, ramiona SCARA, przewody, hala z Blendera |
 | `pyl-hal-k7` | Pył i para w halach K-7, źródła gazu, światła i pola siłowe hali |
 | `gaz-przestrzeni` | Gaz w otwartej przestrzeni (port dema gazy-transport): pole z transportem gęstości, sceny pasa i ringu Jowisza w budowie, mapy i warstwa |
@@ -166,7 +168,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `statek-gracza` | Statek gracza: lot, zapis wyposażenia, zapis gracza (pozycja, kredyty, ładownia, kampania — klucz `game`), WYPOSAŻENIE |
 | `pociski` | Pociski, kolizje, nośnik prędkości, przebicia, IFF, ładowanie broni |
 | `efekty-broni` | Efekty broni (WeaponFx), receptury, wygląd pocisków |
-| `rakiety` | Rakiety i torpedy, salwy, Supernowa, obrona punktowa |
+| `rakiety` | Rakiety i torpedy, salwy, Supernowa, obrona punktowa; „Niszczyciel” z wybuchem „Fala” (demo, niewpięty) |
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
@@ -176,10 +178,10 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |
 | `fregata-zwiadu` | Fregata zwiadu w ładowni Atlasa |
 | `holownik` | Uszkodzenie silników i holownik serwisowy |
-| `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie |
+| `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie; marki silników frakcji — sześć dysz i strug w trybach normalny, boost, hipercruise, warp (demo, niewpięte) |
 | `drony-naprawcze` | Rój dronów naprawczych (R) |
 | `roj-przeladunkowy` | Rój dronów przeładunkowych (demo) |
-| `autostrada` | Autostrada wokół Ziemi (demo, niewpięte): sieć węzłów, ruch IDM i sygnalizacja K-7, Atlas na czerwonym, style wyglądu pasów, ślady z historii pozycji |
+| `autostrada` | Autostrada wokół Ziemi (demo, niewpięte): sieć węzłów, ruch IDM i sygnalizacja K-7, Atlas na czerwonym, style wyglądu pasów, ślady z historii pozycji, układ „rama” pod stocznię K-7 (geometria pasów przez `geo`) |
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
 | `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |

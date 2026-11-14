@@ -7,6 +7,9 @@
 //
 // Układ jak siec.js: scena, y w górę. Jezdnia 0 = wewnętrzna, CW; 1 = zewnętrzna, CCW. Pas 0 = L1 (przy rozdziale, szybki),
 // 1 = L2, 2 = L3 (przy krawędzi).
+//
+// AGENT: ruch NIE zakłada okręgów. Położenie na pasie głównym to (s, r): droga wzdłuż pasa odniesienia jezdni i współrzędna
+// boczna („promień równoważny”, wartości HW); na świat przelicza je wyłącznie `siec.geo` (siec.js: pierścień, siec-rama.js: rama).
 import { zbudujSiec, punktNaSciezce, hubToWorld, HW, NODE, DEG, SPEED, complexes, R0 } from './siec.js';
 
 const TAU = Math.PI * 2;
@@ -34,8 +37,6 @@ const PASY_R = Object.freeze([
 ]);
 const PAS_SZER = Object.freeze([HW.widths.L1, HW.widths.L2, HW.widths.L3]);
 const PAS_V = Object.freeze([SPEED.L1, SPEED.L2, SPEED.L3]);
-const RREF = Object.freeze([HW.iL2, HW.oL2]);
-const OBWOD = Object.freeze([TAU * RREF[0], TAU * RREF[1]]);
 
 /** Historia pozycji pojazdów dla śladów: wiersz = chwila (co DT s), kolumna = slot pojazdu; ślad idzie prawdziwym torem. */
 export const HIST = Object.freeze({ SLOTY: 2048, WIERSZE: 32, DT: 0.2 });
@@ -43,13 +44,6 @@ export const HIST = Object.freeze({ SLOTY: 2048, WIERSZE: 32, DT: 0.2 });
 /** Faza skrzyżowania K-7 widziana przez obraz: co świeci przed linią stopu. */
 export const FAZA = Object.freeze({ MAIN: 0, YELLOW: 1, CLEAR: 2, BOX: 3, CLEAR2: 4 });
 export const STAN_SWIATLA = Object.freeze({ ZIELONE: 0, ZOLTE: 1, CZERWONE: 2 });
-
-const sOf = (cw, thetaDeg) => {
-  const t = ((thetaDeg % 360) + 360) % 360;
-  return cw === 0 ? ((360 - t) % 360) * DEG * RREF[0] : t * DEG * RREF[1];
-};
-const fwd = (cw, a, b) => { const d = (b - a) % OBWOD[cw]; return d < 0 ? d + OBWOD[cw] : d; };
-const thetaOf = (cw, s) => (cw === 0 ? -s / RREF[0] : s / RREF[1]);
 
 function mulberry(seed) {
   let a = seed | 0;
@@ -86,6 +80,16 @@ export function utworzRuch(opcje = {}) {
   const los = mulberry(opcje.ziarno || 7);
   const siec = opcje.siec || zbudujSiec();
   const P = siec.poId;
+  const geo = siec.geo;
+  const OKREGI = geo.id === 'pierscien';
+  const OBWOD = geo.OBWOD;
+  const WEZEL = siec.wezel || NODE;               // linia stopu i pół pudła węzła K-7 / stoczni
+  const sOf = geo.sKata;
+  const thetaOf = geo.thetaOf;
+  const fwd = (cw, a, b) => { const d = (b - a) % OBWOD[cw]; return d < 0 ? d + OBWOD[cw] : d; };
+  // Droga miejsca styku ścieżki z pasem: w pierścieniu z kąta węzła (jak dawniej, co do bitu), w innym układzie z rzutu końca ścieżki.
+  const sPoczatku = (cw, sc, kat) => (OKREGI ? sOf(cw, kat) : geo.sPunktu(cw, sc.probki.x[0], sc.probki.y[0]));
+  const sKonca = (cw, sc, kat) => (OKREGI ? sOf(cw, kat) : geo.sPunktu(cw, sc.probki.x[sc.probki.n - 1], sc.probki.y[sc.probki.n - 1]));
   const cfg = {
     gestosc: opcje.gestosc ?? 1,
     minGlowna: opcje.minGlowna ?? 55,        // [s] najkrócej zielone dla głównej przy wezwaniach ciężkich
@@ -101,12 +105,14 @@ export function utworzRuch(opcje = {}) {
   const duchy = [[[], [], []], [[], [], []]];    // pojazdy w trakcie zmiany pasa: widziane też w pasie, z którego schodzą
   const _lat = { r: 0, nach: 0 };
   const _pkt = { x: 0, y: 0, h: 0, k: 0 };
+  const _rz = { s: 0, r: 0, h: 0 };
+  const _pz = { x: 0, y: 0, h: 0, kr: 0 };
   const hist = { dane: new Float32Array(HIST.SLOTY * HIST.WIERSZE * 2), wiersz: 0, tWiersza: 0, wersja: 0 };
   const wolneSloty = [];
   for (let i = HIST.SLOTY - 1; i >= 0; i--) wolneSloty.push(i);
   let krokN = 0;
   const pojazdy = [];
-  let nextId = 1;
+  let nextId = opcje.idOd || 1;
   let t = 0;
   const licznik = Object.create(null);
   const czeka = Object.create(null);
@@ -117,8 +123,8 @@ export function utworzRuch(opcje = {}) {
   // ---------- Sygnalizacje K-7 ----------
   const K7 = complexes().map((a, k) => ({
     k, a,
-    sStop: [sOf(0, a + NODE.stopX / HW.iL2 / DEG), sOf(1, a - NODE.stopX / HW.oL2 / DEG)],
-    sWyjscie: [sOf(0, a - NODE.boxHalf / HW.iL2 / DEG), sOf(1, a + NODE.boxHalf / HW.oL2 / DEG)],
+    sStop: [geo.sWzdluz(0, a, -WEZEL.stopX), geo.sWzdluz(1, a, -WEZEL.stopX)],
+    sWyjscie: [geo.sWzdluz(0, a, WEZEL.boxHalf), geo.sWzdluz(1, a, WEZEL.boxHalf)],
     faza: FAZA.MAIN, tFazy: 0, czekajace: 0, wPudle: 0, wymuszenie: false,
     kolejka: [0, 0], stoi: [0, 0], stan: STAN_SWIATLA.ZIELONE
   }));
@@ -172,18 +178,18 @@ export function utworzRuch(opcje = {}) {
     if (n.kind === 'bay' || n.kind === 'transit') {
       const off = P.get(`${n.id}.IN`);
       const on = P.get(`${n.id}.OUT`);
-      wyjazdy.push({ id: n.id, rodzaj: n.kind, sciezka: off, cw: 0, s: sOf(0, off.gore) });
+      wyjazdy.push({ id: n.id, rodzaj: n.kind, sciezka: off, cw: 0, s: sPoczatku(0, off, off.gore) });
       wjazdy.push({ id: n.id, rodzaj: n.kind, sciezka: on, cw: 0, kolejka: [], nastepny: 0, od: on.probki.len - NODE.taperLen - NODE.accelLen * 0.6 });
     } else if (n.kind === 'gateOut') {
       const go = P.get(n.id);
-      wyjazdy.push({ id: n.id, rodzaj: 'wrota', sciezka: go, cw: 1, s: sOf(1, go.gore) });
+      wyjazdy.push({ id: n.id, rodzaj: 'wrota', sciezka: go, cw: 1, s: sPoczatku(1, go, go.gore) });
     } else if (n.kind === 'gateIn') {
       const gi = P.get(n.id);
       wjazdy.push({ id: n.id, rodzaj: 'wrota', sciezka: gi, cw: 1, kolejka: [], nastepny: 0, od: gi.probki.len - NODE.taperLen - NODE.accelLen * 0.6 });
     } else if (n.kind === 'uturn') {
       const u = P.get(n.id);
       const z = n.uKind === 'U1' ? 1 : 0;
-      zawrotki.push({ id: n.id, sciezka: u, z, na: 1 - z, s: sOf(z, n.diverge), sMerge: sOf(1 - z, n.merge), od: u.probki.len - NODE.taperLen * 0.5 - NODE.pocketAccel * 0.6 });
+      zawrotki.push({ id: n.id, sciezka: u, z, na: 1 - z, s: sPoczatku(z, u, n.diverge), sMerge: sKonca(1 - z, u, n.merge), od: u.probki.len - NODE.taperLen * 0.5 - NODE.pocketAccel * 0.6 });
     }
   }
   const noga = (w) => ({ cw: w.cw, pas: 2, s: w.s, sciezka: w.sciezka, zawrotka: null });
@@ -331,8 +337,7 @@ export function utworzRuch(opcje = {}) {
       czeka[it.klasa.id]--;
       const sq = sc.probki;
       const koniec = sq.n - 1;
-      const thetaKonca = Math.atan2(sq.y[koniec], sq.x[koniec]) / DEG;
-      const nogi = trasa(wj.cw, sOf(wj.cw, thetaKonca), it.wy);
+      const nogi = trasa(wj.cw, geo.sPunktu(wj.cw, sq.x[koniec], sq.y[koniec]), it.wy);
       if (!nogi) continue;
       const v = nowyPojazd(it.klasa, nogi);
       v.cw = wj.cw;
@@ -384,7 +389,7 @@ export function utworzRuch(opcje = {}) {
     const rGranica = sc.dir === 'in' ? HW.edgeOut + 1700 : HW.edgeIn - 1400;
     w = 0;
     for (let i = 0; i < q.n; i++) {
-      const r = Math.hypot(q.x[i], q.y[i]);
+      const r = q.rb[i];
       if (sc.dir === 'in' ? r <= rGranica : r >= rGranica) { w = q.s[i]; break; }
     }
     _psLinii.set(sc, w);
@@ -398,7 +403,7 @@ export function utworzRuch(opcje = {}) {
     const rGranica = sc.dir === 'in' ? HW.edgeIn - 100 : HW.edgeOut + 100;
     w = q.len;
     for (let i = 0; i < q.n; i++) {
-      const r = Math.hypot(q.x[i], q.y[i]);
+      const r = q.rb[i];
       if (sc.dir === 'in' ? r <= rGranica : r >= rGranica) { w = q.s[i]; break; }
     }
     _psPudla.set(sc, w);
@@ -421,8 +426,13 @@ export function utworzRuch(opcje = {}) {
   }
 
   // ---------- Atlas (misja 1: wylot z K-7 przez G-01) ----------
+  // Tor Atlasa w hubie kompleksu: w pierścieniu z hali K-7 (z 3 600), w innym układzie z nastaw sieci (pochylnia stoczni).
+  const TOR = siec.atlas || null;
+  const Z0_ATLASA = TOR ? TOR.z0 : 3600;
+  const Z_POZA = TOR ? TOR.zPoza : 30000;
+  const rufaZaDroga = (z) => (TOR ? z > TOR.zZwolnienia : R0 + z - 900 > HW.edgeOut + 200);
   const atlas = {
-    stan: 'dok', czas: 0, K: 0, x: NODE.boxLanes[1], z: 3600, v: 0, vmax: 507, a: 160, opoznienie: 3.45,
+    stan: 'dok', czas: 0, K: 0, x: NODE.boxLanes[1], z: Z0_ATLASA, v: 0, vmax: 507, a: 160, opoznienie: 3.45,
     xs: 0, ys: 0, kat: 0, widoczny: true, licznikStartow: 0, zwolnionoT: -1
   };
   function atlasStart(o = {}) {
@@ -443,10 +453,10 @@ export function utworzRuch(opcje = {}) {
     } else if (atlas.stan === 'lot') {
       atlas.v = Math.min(atlas.vmax, atlas.v + atlas.a * dt);
       atlas.z += atlas.v * dt;
-      if (w.wymuszenie && R0 + atlas.z - 900 > HW.edgeOut + 200) { w.wymuszenie = false; atlas.zwolnionoT = t; }
-      if (atlas.z > 30000) { atlas.stan = 'poza'; atlas.czas = 0; atlas.widoczny = false; }
+      if (w.wymuszenie && rufaZaDroga(atlas.z)) { w.wymuszenie = false; atlas.zwolnionoT = t; }
+      if (atlas.z > Z_POZA) { atlas.stan = 'poza'; atlas.czas = 0; atlas.widoczny = false; }
     } else if (atlas.stan === 'poza') {
-      if (atlas.czas > 3) { atlas.stan = 'dok'; atlas.z = 3600; atlas.v = 0; atlas.widoczny = true; }
+      if (atlas.czas > 3) { atlas.stan = 'dok'; atlas.z = Z0_ATLASA; atlas.v = 0; atlas.widoczny = true; }
     }
   }
 
@@ -602,12 +612,17 @@ export function utworzRuch(opcje = {}) {
         // Bez skoku: reszta odsunięcia wobec osi ścieżki gaśnie po drodze (po prawej burcie, znak jak na pasie).
         torBoczny(v, v.d);
         punktNaSciezce(sc.probki, ps, _pkt, 0);
-        const rS = Math.sqrt(_pkt.x * _pkt.x + _pkt.y * _pkt.y);
+        const rS = geo.rPunktu(_pkt.x, _pkt.y);
         v.off0 = cw === 0 ? rS - _lat.r : _lat.r - rS;
         v.offPs0 = ps;
         v.offPs = ps + Math.max(1500, Math.abs(v.off0) * 12);
-        // Nachylenie toru z pasa przechodzi na odsunięcie (kurs bez skoku przy zjeździe w trakcie zmiany pasa).
-        v.offM = (cw === 0 ? -_lat.nach : _lat.nach) * (v.offPs - v.offPs0);
+        // Kurs bez skoku: pochodna odsunięcia = tangens kąta między ścieżką w tym punkcie a kursem kadłuba na pasie (nachylenie
+        // toru bocznego + to, o ile ścieżka zdążyła już odejść od pasa przez nadwyżkę ps — klin zawrotki skręca od pierwszego metra).
+        geo.poza(cw, v.s, _lat.r, _pz);
+        const odchPasa = _lat.nach === 0 ? 0 : Math.atan(_lat.nach);
+        let roznica = _pkt.h - (_pz.h + (cw === 0 ? odchPasa : -odchPasa));
+        roznica = Math.atan2(Math.sin(roznica), Math.cos(roznica));
+        v.offM = Math.max(-0.75, Math.min(0.75, Math.tan(roznica))) * (v.offPs - v.offPs0);
         wejdzNaSciezke(v, sc, ps);
         v.noga++;
         stat.zjazdy++;
@@ -655,19 +670,20 @@ export function utworzRuch(opcje = {}) {
       const od = v.wjazd?.od ?? (koniec - NODE.taperLen - NODE.accelLen * 0.6);
       if (v.ps >= od) {
         v.pi = punktNaSciezce(q, v.ps, _pkt, v.pi);
-        const thR = Math.atan2(_pkt.y, _pkt.x);
         const cw = sc.kind === 'uturn' ? (sc.uKind === 'U1' ? 0 : 1) : (sc.kind === 'gateIn' ? 1 : 0);
         const pas = sc.kind === 'uturn' ? 0 : 2;
-        const s = sOf(cw, thR / DEG);
+        geo.rzut(cw, _pkt.x, _pkt.y, _rz);
+        const s = _rz.s;
         const luz = v.ps > koniec - 500 ? 0.45 : 0.85;
         if (miesciSie(v, cw, pasy[cw][pas], s, luz)) {
           lista.splice(i, 1);
           // Ciągłość: promień i nachylenie z pozy na ścieżce (kurs kadłuba bez skoku).
-          const rS = Math.sqrt(_pkt.x * _pkt.x + _pkt.y * _pkt.y);
+          const rS = _rz.r;
           const rObecny = rS + (cw === 0 ? -1 : 1) * odsuniecieSciezki(v);
-          let alfa = _pkt.h - (thR + (cw === 0 ? -1 : 1) * Math.PI * 0.5);
+          // Kurs kadłuba na ścieżce (z pochodną gasnącego odsunięcia) wobec kursu pasa; klin kieszeni ma nachylenie do 0,63.
+          let alfa = _pkt.h - Math.atan(_off.d) - _rz.h;
           alfa = Math.atan2(Math.sin(alfa), Math.cos(alfa));
-          const nach = Math.max(-0.5, Math.min(0.5, (cw === 0 ? 1 : -1) * Math.tan(alfa)));
+          const nach = Math.max(-0.75, Math.min(0.75, (cw === 0 ? 1 : -1) * Math.tan(alfa)));
           wstawNaPas(v, cw, pas, s);
           ustawTor(v, rObecny, nach, celPasa(v, cw, pas), 9, 1500);
           v.lc = t + 2;
@@ -813,19 +829,16 @@ export function utworzRuch(opcje = {}) {
     const ds = (v.vel + 0.5 * v.acc * tau) * tau;
     if (v.tryb === 0) {
       const s = v.s + ds;
-      const th = thetaOf(v.cw, s);
       torBoczny(v, v.d + ds);
       const rr = _lat.r;
       v.r = rr;
-      const c = Math.cos(th);
-      const sn = Math.sin(th);
-      v.x = rr * c;
-      v.y = rr * sn;
-      const kier = v.cw === 0 ? -1 : 1;
+      geo.poza(v.cw, s, rr, _pz);
+      v.x = _pz.x;
+      v.y = _pz.y;
       // Na zewnątrz po lewej burcie przy jeździe CW, po prawej przy CCW: kurs wg nachylenia toru (dawniej: znak odwrotny).
       const odch = _lat.nach === 0 ? 0 : Math.atan(_lat.nach);
-      v.h = th + kier * Math.PI * 0.5 + (v.cw === 0 ? odch : -odch);
-      v.kr = kier / rr;
+      v.h = _pz.h + (v.cw === 0 ? odch : -odch);
+      v.kr = _pz.kr;
     } else {
       const q = v.sciezka.probki;
       const ps = Math.min(q.len, v.ps + ds);
@@ -867,6 +880,6 @@ export function utworzRuch(opcje = {}) {
     siec, cfg, K7, pasy, pojazdy, licznik, stat, atlas, wyjazdy, wjazdy, zawrotki, dt, hist,
     get czas() { return t; },
     step, rozruch, odswiezPozy, atlasStart, ustawFaze,
-    OBWOD, sOf, fwd, thetaOf, PASY_R
+    OBWOD, sOf, fwd, thetaOf, PASY_R, geo
   };
 }

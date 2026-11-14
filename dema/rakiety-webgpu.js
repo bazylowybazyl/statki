@@ -14,6 +14,9 @@
 //   • supernowa: implozja → błysk z linią anamorficzną → fala (sama
 //     refrakcja) → pozostałość ze 110 tys. cząstek generowanych na GPU
 //     (nebula.js), łuki wyładowań w śladzie (arcs.js);
+//   • „Niszczyciel” (tylko demo, weaponsDemo.js): jedna ciężka rakieta — człon
+//     startowy, sprint, przebicie kadłuba i WYBUCH 3D: kula ognia i dym z gazu
+//     na siatce 3D gry (gasBlast.js na src/3d/gas/), kadłubki z własnych siatek;
 //   • post: refrakcja (post.js) → bloom gry (bloomConfig.js) → ACES gry.
 //
 // Konwencja sceny jak w grze: świat (x, y) → scena (x − O.x, −(y − O.y), z),
@@ -43,11 +46,16 @@ import { PlumeSystem } from './rakiety-webgpu/plumes.js';
 import { FireballSystem } from './rakiety-webgpu/fireballs.js';
 import { NebulaSystem } from './rakiety-webgpu/nebula.js';
 import { ArcSystem } from './rakiety-webgpu/arcs.js';
-import { MissileBodies } from './rakiety-webgpu/missileBodies.js';
+import { MissileBodies, buildHeavyGeometry, HEAVY_BODY_LOOK } from './rakiety-webgpu/missileBodies.js';
+import { GasBlast } from './rakiety-webgpu/gasBlast.js';
+import { PulsarBlast } from './rakiety-webgpu/pulsar.js';
+import { WaveBlast } from './rakiety-webgpu/waveBlast.js';
 import { PostFx } from './rakiety-webgpu/post.js';
 import { Effects } from './rakiety-webgpu/effects.js';
 import { MissileFlight } from './rakiety-webgpu/flight.js';
 import { MISSILE_VFX } from './rakiety-webgpu/palette.js';
+import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { planBarrageTargets } from '../src/game/barrage.js';
 
 const params = new URLSearchParams(location.search);
 if (params.get('shot') === '1') document.body.classList.add('shot');
@@ -129,6 +137,14 @@ let fireballs = null;
 let nebula = null;
 let arcs = null;
 let bodies = null;
+// Kadłubki „Niszczyciela” ({ full, dart, booster }) i jego trzy głowice: „Fala” (waveBlast.js — rozmyta
+// poświata i fala refrakcji od środka, domyślna), „Pulsar” (pulsar.js) oraz wybuch z gazu na siatce 3D gry
+// (gasBlast.js). Wybór: panel (przyciski [data-wh]) albo adres strony (?glowica=fala|pulsar|gaz).
+let heavyBodies = null;
+let gas = null;
+let pulsar = null;
+let wave = null;
+const WARHEAD_BY_PARAM = { fala: 'wave', wave: 'wave', pulsar: 'pulsar', gaz: 'gas', gas: 'gas' };
 let fx = null;
 let flight = null;
 
@@ -142,6 +158,14 @@ async function initRenderer() {
   const requiredLimits = {};
   const want = { maxInterStageShaderVariables: 28, maxStorageBuffersPerShaderStage: 10 };
   for (const [k, v] of Object.entries(want)) if (adapter.limits[k] >= v) requiredLimits[k] = v;
+  // Gaz 3D wybuchu „Niszczyciela” (src/3d/gas/ — kernele i marsz jak w grze): limity adaptera jak w Core3D
+  // (GPU_REQUIRED_LIMITS) — tekstury próbkowane i zapisywane na etap, bufory storage, rozmiary grup compute.
+  for (const k of ['maxSampledTexturesPerShaderStage', 'maxStorageTexturesPerShaderStage', 'maxStorageBuffersPerShaderStage',
+    'maxInterStageShaderVariables', 'maxBufferSize', 'maxStorageBufferBindingSize', 'maxComputeInvocationsPerWorkgroup',
+    'maxComputeWorkgroupStorageSize', 'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupSizeY']) {
+    const v = adapter.limits?.[k];
+    if (Number.isFinite(v)) requiredLimits[k] = v;
+  }
   renderer = new THREE.WebGPURenderer({ antialias: false, alpha: false, trackTimestamp: true, requiredLimits });
   renderer.setPixelRatio(1);
   renderer.setSize(W, H);
@@ -356,12 +380,17 @@ function fire(kind, target, opts = {}) {
   if (!hulls.atlas || !flight) return null;
   const vfx = MISSILE_VFX[kind];
   let from = opts.from;
-  if (!from) from = atlasMount(kind === 'supernova');
+  // Rakiety specjalne (Supernowa, „Niszczyciel”) wychodzą z gniazda special_missile Atlasa.
+  if (!from) from = atlasMount(kind === 'supernova' || !!vfx.heavy);
   const src = opts.launcher || hulls.atlas;
   const tgt = target && target.isHull ? hullTarget(target.hull) : target;
   const m = flight.fire(kind, vfx.weaponId, from.x, from.y, tgt, {
-    frameVx: src.vx || 0, frameVy: src.vy || 0, heading: src.angle, headingOffset: opts.headingOffset
+    frameVx: src.vx || 0, frameVy: src.vy || 0, heading: src.angle, headingOffset: opts.headingOffset,
+    // Lot z gry (zawis, przechył, wysokość): salwa Supernowej i rakiety z `gameFlight` („Niszczyciel”).
+    game: opts.game ?? !!vfx.gameFlight, salvo: opts.salvo || null
   });
+  // Głowica „Niszczyciela” ('pulsar' | 'gas'); bez niej reżyser bierze wybór z panelu (fx.opts.heavyWarhead).
+  if (m && opts.warhead) m.warhead = opts.warhead;
   if (opts.inFlight && m) {
     // Wlot w kadr: rakieta już leci (bez wyrzutu i zapłonu).
     m.state = 'POWERED';
@@ -373,9 +402,57 @@ function fire(kind, target, opts = {}) {
     m.vz = 0;
     m.throttle = 0.6;
     m.travel = 400;
+    if (m.game) {
+      // Lot gry: już w poziomie na wysokości przelotu, pełne naprowadzanie od razu.
+      m.heading = Math.atan2(m.vy, m.vx);
+      m.nosePitch = 0;
+      m.z = m.p.launch.cruiseAltitude;
+      m.ignitedAt = 0;
+      m.interceptAt = m.t - 1;
+    }
     fx.onIgnite(m);
   }
   return m;
+}
+
+// SUPERNOVA BARRAGE jak w grze (supernova_missile): salwa `burstCount` głowic co `burstDelay`,
+// cele z planBarrageTargets (src/game/barrage.js — ta sama funkcja co w grze): pierwsza w cel,
+// kolejne w inne okręty grupy w promieniu `barrage.radius`, bez wroga — okrąg wokół punktu.
+// Wyrzut i lot jak w grze (flight.js `game`): pionowy zimny start z komory z zawisem, zapłon po
+// `ignitionDelay`, przechył w wachlarz salwy (`dispersal`) — jedno ziarno na salwę, numer głowicy
+// w wachlarzu. Zwraca pierwszą rakietę (kamera pokazu).
+function fireBarrage(target, opts = {}) {
+  const def = MASTER_WEAPONS.supernova_missile;
+  const count = Math.max(1, def.burstCount || 1);
+  const delay = def.burstDelay || 0;
+  const primary = target && target.isHull ? target.hull : null;
+  const cx = primary ? primary.x : target.x;
+  const cy = primary ? primary.y : target.y;
+  const plan = planBarrageTargets({
+    count, primary, cx, cy,
+    point: primary ? null : target,
+    candidates: hulls.pirates,
+    radius: def.barrage?.radius || 0,
+    spacing: def.barrage?.spacing || 0,
+    getX: (h) => h.x,
+    getY: (h) => h.y,
+    need: (h) => h.length || 1
+  });
+  const seed = Math.random();
+  let first = null;
+  for (let i = 0; i < count; i++) {
+    const t = plan[i];
+    const tgt = hulls.pirates.includes(t) ? asTarget(t) : (t ? { x: t.x, y: t.y, point: true } : target);
+    const o = {
+      ...opts,
+      game: true,
+      salvo: { index: i, count, seed },
+      from: opts.from ? { x: opts.from.x + (i % 2) * 60, y: opts.from.y + (i - (count - 1) / 2) * 90 } : undefined
+    };
+    if (i === 0) first = fire('supernova', tgt, o);
+    else scen.at(scen.t + i * delay, () => fire('supernova', tgt, o));
+  }
+  return first;
 }
 
 function hullAt(wx, wy, pad = 30) {
@@ -410,10 +487,10 @@ const SCENARIOS = {
     }
   },
   supernowa: {
-    label: 'Supernowa — plazma i dym chemiczny, łuki wyładowań, implozja → błysk → fala → pozostałość',
-    duration: 8.8, zoom: 0.5, follow: true, zoomAfter: 0.22,
+    label: 'Supernova Barrage (jak w grze) — 4 głowice na różne okręty grupy: implozja → błysk → fala z echem → wir z dżetami pulsara',
+    duration: 7.5, zoom: 0.5, follow: true, zoomAfter: 0.12,
     start(sc) {
-      sc.at(0.3, () => { sc.missile = fire('supernova', asTarget(pirate(0))); });
+      sc.at(0.3, () => { sc.missile = fireBarrage(asTarget(pirate(0))); });
     }
   },
   deszcz: {
@@ -456,8 +533,8 @@ const SCENARIOS = {
     }
   },
   novaZoom: {
-    label: 'Supernowa z bliska (×0,4) — implozja wsysa dym, fala go wymiata, włókna pozostałości',
-    duration: 5.4, zoom: 0.55, zoomAfter: 0.3, timeScale: 0.4, focus: () => pirate(0),
+    label: 'Supernowa z bliska (×0,4) — implozja wsysa dym, fala go wymiata, wir pozostałości i snopy pulsara',
+    duration: 6.2, zoom: 0.55, zoomAfter: 0.18, timeScale: 0.4, focus: () => pirate(0),
     start(sc) {
       // Stary dym wokół celu: kilka rakiet chwilę wcześniej.
       for (let i = 0; i < 6; i++) {
@@ -470,12 +547,36 @@ const SCENARIOS = {
       }
       sc.at(0.9, () => {
         const h = pirate(0);
-        sc.missile = fire('supernova', asTarget(h), { from: { x: h.x - 1900, y: h.y - 420 }, inFlight: true });
+        sc.missile = fireBarrage(asTarget(h), { from: { x: h.x - 1900, y: h.y - 420 }, inFlight: true });
+      });
+    }
+  },
+  // „Niszczyciel”: głowica z panelu (fx.opts.heavyWarhead — „Fala” domyślnie, „Pulsar”, gaz 3D);
+  // durationBy — czas ujęcia zależny od głowicy (wybuchy trwają ~1,3 s / ~4,4 s / kilka sekund).
+  niszczyciel: {
+    label: 'Niszczyciel — człon startowy, sprint, przebicie kadłuba i wybuch w środku (głowica z panelu: Fala / Pulsar / gaz 3D)',
+    // cam — kadr przy wyrzutni Atlasa, zanim rakieta wyjdzie z komory (kamera zdąży dojechać z poprzedniego ujęcia).
+    duration: 8.2, durationBy: { wave: 8.2, pulsar: 11.5, gas: 12 },
+    zoom: 0.5, follow: true, zoomAfter: 0.27, zoomDelay: 0.2, cam: { x: -1600, y: 250 },
+    start(sc) {
+      sc.at(0.9, () => { sc.missile = fire('niszczyciel', asTarget(pirate(0))); });
+    }
+  },
+  niszczycielZoom: {
+    label: 'Wybuch Niszczyciela z bliska, zwolniony (głowica z panelu) — poświata i fala refrakcji rosną od środka',
+    duration: 4.2, durationBy: { wave: 4.2, pulsar: 6.6, gas: 7.5 },
+    zoom: 0.62, timeScale: 0.45, focus: () => pirate(0),
+    start(sc) {
+      sc.at(0.1, () => {
+        const h = pirate(0);
+        sc.missile = fire('niszczyciel', asTarget(h), { from: { x: h.x - 2900, y: h.y + 520 }, inFlight: true });
       });
     }
   }
 };
-const ORDER = ['salwa', 'szybkie', 'supernowa', 'deszcz', 'zblizenie', 'novaZoom', 'poscig'];
+// Klawisze 1–9 (KEYS) oraz kolejność pętli pokazu (ORDER): nowość — „Niszczyciel” — idzie w pętli pierwsza.
+const KEYS = ['salwa', 'szybkie', 'supernowa', 'deszcz', 'zblizenie', 'novaZoom', 'poscig', 'niszczyciel', 'niszczycielZoom'];
+const ORDER = ['niszczyciel', 'niszczycielZoom', 'salwa', 'szybkie', 'supernowa', 'deszcz', 'zblizenie', 'novaZoom', 'poscig'];
 
 const scen = {
   name: null,
@@ -492,6 +593,7 @@ function startScenario(name) {
   if (!def) return;
   scen.name = name;
   scen.def = def;
+  scen.duration = (def.durationBy && fx && def.durationBy[fx.opts.heavyWarhead]) || def.duration;
   scen.t = 0;
   scen.queue = [];
   scen.missile = null;
@@ -533,10 +635,16 @@ function stepScenario(dt) {
       S.camTarget.x = m.x + Math.cos(m.heading) * lead + (m.vx + m.fx) / CAM_K;
       S.camTarget.y = m.y + Math.sin(m.heading) * lead + (m.vy + m.fy) / CAM_K;
     } else {
-      if (!scen.lastNova) scen.lastNova = { x: scen.missile.x, y: scen.missile.y, t: scen.t };
-      S.camTarget.x = scen.lastNova.x;
-      S.camTarget.y = scen.lastNova.y;
-      if (scen.t - scen.lastNova.t > 0.6) S.camTarget.zoom = def.zoomAfter || def.zoom;
+      // Po wybuchu kamera zostaje na miejscu trafienia; trafiony kadłub (m.hitHull — „Niszczyciel” wybucha
+      // w jego środku) jedzie dalej, więc kamera jedzie z nim.
+      if (!scen.lastNova) {
+        const hh = scen.missile.hitHull || null;
+        scen.lastNova = { x: scen.missile.x, y: scen.missile.y, t: scen.t, hull: hh, ox: hh ? scen.missile.x - hh.x : 0, oy: hh ? scen.missile.y - hh.y : 0 };
+      }
+      const ln = scen.lastNova;
+      S.camTarget.x = ln.hull ? ln.hull.x + ln.ox : ln.x;
+      S.camTarget.y = ln.hull ? ln.hull.y + ln.oy : ln.y;
+      if (scen.t - ln.t > (def.zoomDelay ?? 0.6)) S.camTarget.zoom = def.zoomAfter || def.zoom;
     }
   } else if (def.focus) {
     const h = def.focus();
@@ -553,7 +661,7 @@ function stepScenario(dt) {
     S.camTarget.x = O.x + scen.cam.x + fleet.x;
     S.camTarget.y = O.y + scen.cam.y + fleet.y;
   }
-  if (scen.t > def.duration && S.loop) {
+  if (scen.t > scen.duration && S.loop) {
     const i = ORDER.indexOf(scen.name);
     startScenario(ORDER[(i + 1) % ORDER.length]);
   }
@@ -582,8 +690,15 @@ function frame(nowMs, forcedDt = null) {
   } else {
     for (const h of allHulls()) h.syncMesh(O.x, O.y);
   }
+  // Wybuchy „Fala” i „Pulsar”: krok co klatkę (w pauzie dt = 0 — obraz stoi), potem ich wstrząs, przygaszenie i bloom.
+  wave.update(dt, time);
+  pulsar.update(dt, time, S.cam.zoom);
+  fx.mergeBlasts();
   const view = updateCamera(dt);
   updateSun();
+  // Gaz 3D wybuchów „Niszczyciela”: emitery, symulacja i bryły domen (po reżyserze — wybuch z tej klatki
+  // dostaje pierwsze źródła od razu); w pauzie dt = 0 i obraz stoi.
+  gas.update(dt, camera, sunDir, S.sunOn);
 
   // Światła siatki: statki + efekty.
   grid.begin();
@@ -608,9 +723,11 @@ function frame(nowMs, forcedDt = null) {
 
   // Instancje na tę klatkę.
   bodies.begin();
+  heavyBodies.full.begin(); heavyBodies.dart.begin(); heavyBodies.booster.begin();
   plumes.begin();
   fx.addMissiles(flight.list, time);
   bodies.commit();
+  heavyBodies.full.commit(); heavyBodies.dart.commit(); heavyBodies.booster.commit();
   plumes.commit(time, S.cam.zoom);
   glow.begin();
   for (const h of allHulls()) h.addGlows(glow, O.x, O.y, time);
@@ -623,7 +740,7 @@ function frame(nowMs, forcedDt = null) {
   sky.u.offset.value.set(((S.cam.x * 0.002) % 7000 + 7000) % 7000, ((S.cam.y * 0.002) % 7000 + 7000) % 7000);
 
   post.begin();
-  fx.fillDistortion(post, time);
+  fx.fillDistortion(post, time, S.cam.zoom, flight.list);
   post.commit(view.cx, view.cy, S.cam.zoom, W, H, time);
   post.U.exposure.value = fx.exposure;
   if (post.bloomNode) post.bloomNode.strength.value = S.bloomOn ? BLOOM_DEFAULTS.strength + fx.bloomBoost : 0;
@@ -674,6 +791,12 @@ function collectStats() {
     sparks: sparks.highWater,
     nebula: nebula.highWater,
     fireballs: fireballs.items.length,
+    gasDomains: gas.domains,
+    gasCells: gas.domains ? gas.grid.stats.cells : 0,
+    gasEmbers: gas.embers.stats.alive,
+    waves: wave.count,
+    pulsars: pulsar.count,
+    pulsarParticles: pulsar.particles.stats.alive,
     fragments: fx.stats.fragments,
     lights: grid.stats.lights,
     fxLights: fx.stats.lights,
@@ -691,6 +814,8 @@ function updateHud() {
     `rakiety w locie ${fmt(st.missiles)} · kule ognia ${st.fireballs} · odłamki ${st.fragments}`,
     `dym: pula ${fmt(st.smoke)} / 524 288 · iskry ${fmt(st.sparks)}`,
     `mgławica ${fmt(st.nebula)} · światła ${fmt(st.lights)} (efekty ${st.fxLights})`,
+    `fala: wybuchy ${st.waves} · pulsar: wybuchy ${st.pulsars} · cząstki plazmy ${fmt(st.pulsarParticles)}`,
+    `gaz 3D: domeny ${st.gasDomains} · komórki ${fmt(st.gasCells / 1000)} tys. · żar ${fmt(st.gasEmbers)}`,
     `draw calle ${fmt(st.drawCalls)} · compute ${fmt(st.computeCalls)} · trójkąty ${fmt(st.triangles / 1000)} tys.`
   ].join('\n');
   const lines = [];
@@ -715,8 +840,9 @@ addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   const k = e.key.toLowerCase();
   S.keys.add(k);
-  const n = Number(k);
-  if (n >= 1 && n <= ORDER.length) startScenario(ORDER[n - 1]);
+  // 1–9 — scenariusze po kolei (0 — dziesiąty, gdy jest).
+  const n = k === '0' ? 10 : Number(k);
+  if (k.length === 1 && n >= 1 && n <= KEYS.length) startScenario(KEYS[n - 1]);
   if (k === ' ') { e.preventDefault(); setPause(!S.paused); }
   if (k === 't') setSlow(!S.slow);
   if (k === 'l') setLoop(!S.loop);
@@ -736,17 +862,25 @@ function bindCanvasInput(canvas) {
   }, { passive: false });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointermove', (e) => { S.mouse.x = e.clientX; S.mouse.y = e.clientY; });
+  // Środkowy przycisk myszy odpala „Niszczyciela” — bez przewijania strony kółkiem-przyciskiem.
+  canvas.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
   canvas.addEventListener('pointerdown', (e) => {
     canvas.focus();
     const p = screenToWorld(e.clientX, e.clientY);
     const h = hullAt(p.x, p.y);
     const target = h ? asTarget(h) : { x: p.x, y: p.y, point: true };
+    // „Niszczyciel”: jedna ciężka rakieta — ŚPM albo Ctrl+LPM.
+    if (e.button === 1 || (e.button === 0 && e.ctrlKey)) {
+      e.preventDefault();
+      fire('niszczyciel', target);
+      return;
+    }
     if (e.button === 0) {
       const kind = e.shiftKey ? 'fast' : 'cruise';
       const n = e.shiftKey ? 6 : 4;
       for (let i = 0; i < n; i++) scen.at(scen.t + i * 0.12, () => fire(kind, target));
     }
-    if (e.button === 2) fire('supernova', target);
+    if (e.button === 2) fireBarrage(target);
   });
 }
 
@@ -760,6 +894,10 @@ function setLoop(v) { S.loop = v; $('b-loop').classList.toggle('on', v); }
 function clearAll() {
   flight.clear(false);
   fx.clear();
+  nebula.clear();
+  gas.clear();
+  pulsar.clear();
+  wave.clear();
   fireballs.items.length = 0;
   smoke.highWater = 0; smoke.head = 0; smoke.spawnCount = 0;
 }
@@ -796,6 +934,14 @@ function bindControls() {
   bindRange('s-plume', 'o-plume', f2, (v) => { plumes.U.gain.value = v; });
   bindRange('s-blast', 'o-blast', f2, (v) => { fx.opts.blastGain = v; });
   for (const b of document.querySelectorAll('[data-sc]')) b.addEventListener('click', () => startScenario(b.dataset.sc));
+  // Głowica „Niszczyciela”: dla scenariuszy 8 i 9 oraz odpaleń z myszy; start z adresu strony (?glowica=).
+  const warheads = document.querySelectorAll('[data-wh]');
+  const setWarhead = (id) => {
+    fx.opts.heavyWarhead = id;
+    for (const o of warheads) o.classList.toggle('on', o.dataset.wh === id);
+  };
+  for (const b of warheads) b.addEventListener('click', () => setWarhead(b.dataset.wh));
+  setWarhead(WARHEAD_BY_PARAM[params.get('glowica')] || fx.opts.heavyWarhead);
   $('b-loop').addEventListener('click', () => setLoop(!S.loop));
   $('b-pause').addEventListener('click', () => setPause(!S.paused));
   $('b-slow').addEventListener('click', () => setSlow(!S.slow));
@@ -810,7 +956,8 @@ function bindControls() {
 // supernowa kompilowały shadery w trakcie pokazu (skok ~40 ms).
 
 function warmUp() {
-  const meshes = [smoke.mesh, smoke.densityMesh, sparks.mesh, plumes.mesh, fireballs.mesh, nebula.mesh, arcs.mesh, bodies.mesh, glow.mesh];
+  const meshes = [smoke.mesh, smoke.densityMesh, sparks.mesh, plumes.mesh, fireballs.mesh, nebula.mesh, arcs.mesh, bodies.mesh, glow.mesh,
+    heavyBodies.full.mesh, heavyBodies.dart.mesh, heavyBodies.booster.mesh, ...gas.warmMeshes, ...pulsar.warmMeshes, ...wave.warmMeshes];
   const saved = meshes.map((m) => ({ m, visible: m.visible, count: m.count, ic: m.geometry.instanceCount }));
   for (const m of meshes) {
     m.visible = true;
@@ -824,6 +971,8 @@ function warmUp() {
   renderer.compute(smoke.lightNode, 1);
   nebula.U.count.value = 0;
   renderer.compute(nebula.initNode, 1);
+  gas.warm();
+  pulsar.warm();
   const prev = renderer.getRenderTarget();
   renderer.setRenderTarget(smoke.densityRT);
   renderer.render(smoke.densityScene, smoke.densityCam);
@@ -876,11 +1025,23 @@ async function start() {
   nebula = new NebulaSystem({ renderer, scene, noise3D });
   arcs = new ArcSystem({ scene });
   bodies = new MissileBodies({ scene });
-  fx = new Effects({ smoke, sparks, plumes, fireballs, nebula, arcs, glow, post, bodies, origin: O });
+  // „Niszczyciel”: kadłubki z własnych siatek (oba człony, sam penetrator, odrzucony człon startowy)
+  // i wybuch 3D — gaz na siatce 3D gry z szumem dema (ten sam algorytm co fxNoise gry).
+  const heavyBody = (part) => new MissileBodies({ scene, capacity: 64, geometry: buildHeavyGeometry(part), ...HEAVY_BODY_LOOK[part], name: `missileBodiesHeavy_${part}` });
+  heavyBodies = { full: heavyBody('full'), dart: heavyBody('dart'), booster: heavyBody('booster') };
+  loading.textContent = 'Gaz 3D wybuchu (siatka, marsz promienia)…';
+  await new Promise((r) => setTimeout(r, 20));
+  gas = new GasBlast({ renderer, scene, noise3D, curl3D: curlTex, lightGrid: grid });
+  // Głowica „Pulsar”: nowy wybuch — bryła 3D liczona analitycznie, linie pola, własna pula cząstek (compute).
+  pulsar = new PulsarBlast({ renderer, scene, noise3D });
+  // Głowica „Fala” (domyślna): rozmyta poświata rosnąca od środka i fala refrakcji — bez compute i cząstek.
+  wave = new WaveBlast({ scene, noise3D });
+  fx = new Effects({ smoke, sparks, plumes, fireballs, nebula, arcs, glow, post, bodies, heavyBodies, gas, pulsar, wave, origin: O });
   flight = new MissileFlight({
     onLaunch: (m) => fx.onLaunch(m),
     onIgnite: (m) => fx.onIgnite(m),
     onFly: (m, dt, x0, y0) => fx.onFly(m, dt, x0, y0),
+    onSprint: (m) => fx.onSprint(m),
     onDetonate: (m, x, y, hull, nx, ny) => fx.onDetonate(m, x, y, hull, nx, ny)
   });
   stepFleet(0, 0);
@@ -890,14 +1051,18 @@ async function start() {
   loading.textContent = 'Kompilacja shaderów…';
   await new Promise((r) => setTimeout(r, 20));
   warmUp();
+  // Potoki z rozgrzewki kompiluje proces GPU już po powrocie z warmUp(), a strona staje na tym przy pierwszym
+  // zapisie do kolejki: napis ładowania zostaje do opróżnienia kolejki GPU, inaczej pierwsza klatka pokazu
+  // stała ~0,6 s (świeży profil przeglądarki; pomiar: `niszczyciel-demo.mjs --swiezy 1`).
+  try { await renderer.backend.device.queue.onSubmittedWorkDone(); } catch { /* bez kolejki — bez czekania */ }
   loading.style.display = 'none';
   S.ready = true;
-  const first = params.get('scenario') || 'salwa';
+  const first = params.get('scenario') || ORDER[0];
   if (params.get('loop') === '0') setLoop(false);
-  startScenario(SCENARIOS[first] ? first : 'salwa');
+  startScenario(SCENARIOS[first] ? first : ORDER[0]);
   if (params.has('zoom')) { S.manualZoom = true; S.cam.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(params.get('zoom')) || 1)); }
   window.__demo = {
-    S, scen, fx, flight, smoke, sparks, nebula, fireballs, renderer, hulls,
+    S, scen, fx, flight, smoke, sparks, nebula, fireballs, gas, pulsar, wave, renderer, hulls,
     scenario: (name) => startScenario(name),
     step: (n = 1, dt = 1 / 60) => {
       // Krokowanie synchroniczne: bez znaczników czasu GPU (zapytania nie
@@ -910,7 +1075,9 @@ async function start() {
     pause: (v = true) => setPause(!!v),
     slow: (v = true) => setSlow(!!v),
     loop: (v = true) => setLoop(!!v),
-    fire: (kind = 'cruise', i = 0) => fire(kind, asTarget(hulls.pirates[i] || hulls.pirates[0])),
+    fire: (kind = 'cruise', i = 0) => (kind === 'supernova' ? fireBarrage : (t) => fire(kind, t))(asTarget(hulls.pirates[i] || hulls.pirates[0])),
+    // Odpalenie w dowolny cel: { isHull: true, hull } albo punkt { x, y, point: true } (narzędzia: wybuch w pustce).
+    fireAt: (kind, target, opts) => fire(kind, target, opts),
     setZoom: (z) => { S.manualZoom = true; S.cam.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(z) || 1)); },
     camTo: (x, y) => { S.camTarget.x = x; S.camTarget.y = y; S.cam.x = x; S.cam.y = y; },
     clear: clearAll,

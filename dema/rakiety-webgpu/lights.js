@@ -201,16 +201,19 @@ export class LightGrid {
   /**
    * TSL: pętla po światłach komórki punktu P (scena). cb dostaje dla każdego
    * światła w zasięgu: toL (wektor do światła, jednostkowy), att (tłumienie ×
-   * stożek × cień), col (barwa × moc), scatter, dist. skipOwner (węzeł) pomija
-   * światła tego właściciela.
+   * stożek × cień), col (barwa × moc), scatter, dist oraz — jak siatka świateł
+   * gry (src/3d/fx/lightGrid.js; czyta je marsz gazu wybuchu „Niszczyciela”,
+   * src/3d/gas/gasVolume.js) — flare, owner (właściciel, L3.w), x (odległość /
+   * zasięg), range. skipOwner (węzeł) pomija światła tego właściciela. Zmienna
+   * pętli ma jawną nazwę (`gridItem`) — można zagnieżdżać w innych `Loop`.
    */
   loop(P, cb, skipOwner = null) {
     const c = floor(P.xy.sub(this.origin).mul(this.invCell)).toVar();
     If(c.x.greaterThanEqual(0.0).and(c.y.greaterThanEqual(0.0)).and(c.x.lessThan(GRID_NX)).and(c.y.lessThan(GRID_NY)), () => {
       const cell = int(c.y).mul(GRID_NX).add(int(c.x));
       const range = this.cellNode.element(cell).toVar();
-      Loop({ start: range.x, end: range.x.add(range.y), type: 'uint', condition: '<' }, ({ i }) => {
-        const li = this.itemNode.element(i).mul(uint(4)).toVar();
+      Loop({ start: range.x, end: range.x.add(range.y), type: 'uint', condition: '<', name: 'gridItem' }, ({ gridItem }) => {
+        const li = this.itemNode.element(gridItem).mul(uint(4)).toVar();
         const L0 = this.lightNode.element(li).toVar();
         const d = L0.xyz.sub(P).toVar();
         const dist = length(d).toVar();
@@ -226,7 +229,7 @@ export class LightGrid {
           If(L2.w.greaterThan(-1.5), () => {
             att.mulAssign(smoothstep(L2.w, L3.x, dot(toL.negate(), normalize(L2.xyz))));
           });
-          cb({ toL, att, col: L1.xyz.mul(this.gain), scatter: L1.w, dist });
+          cb({ toL, att, col: L1.xyz.mul(this.gain), scatter: L1.w, dist, flare: L3.y, owner: L3.w, x, range: L0.w });
         });
       });
     });

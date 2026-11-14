@@ -5,15 +5,26 @@
 // wzorce strzału (lufa po lufie, obie lufy, salwa Yamato, ładowanie, wiązki,
 // salwy flak z zapalnikiem czasowym i zbliżeniowym), trafienia, przebicia,
 // ogień w wyrwach i zegar opóźnionych zdarzeń. Wszystko w świecie gry.
+//
+// Zgodność z grą (2026-11-10): smugi gazu tylko rodzinom TRAIL_FAMILIES (Hexlance, Mjolnir); Promień Śmierci
+// (wzorzec `ray`) — obraz jak WeaponFx.deathRay* / _stepRays gry (src/3d/weapons/weaponFx.js): ładowanie z kulą
+// energii, implozją i laserem naprowadzającym od połowy, wylot, wiązka BEAM.RAY z czołem 30 000 j/s, wejście,
+// rzaz (pas na mapie ran), wyjście i żar w punktach trafień przez czas trwania; jeden cel — promień kończy się
+// tuż za wyjściem z kadłuba (`singleTarget`, src/game/deathRay.js). Obrażeń w demie nie ma (cel się naprawia).
 
 import { ATLAS_EDITOR_DEFAULTS } from '../../src/data/atlasHardpointDefaults.js';
-import { RECIPES, burnStep, droneBlast } from './recipes.js';
-import { SIZE_POWER } from './arsenal.js';
+import { RECIPES, burnStep, droneBlast, deathRayPalette } from './recipes.js';
+import { SIZE_POWER, TRAIL_FAMILIES, hexHdr } from './arsenal.js';
 import { BEAM } from './beams.js';
 
 const BEAM_ON = 2.6;      // cykl wiązki ciągłej w trybie auto: włączona / przerwa [s]
 const BEAM_OFF = 1.1;
 const PULSE_SPEED = 42000;
+// Promień śmierci (src/game/deathRay.js DEATH_RAY_DEFAULTS + karta broni death_ray.deathRay; weaponFx.js RAY_*):
+const RAY_HDR = 1.3;           // barwa ciała = vfxColor liniowo × RAY_HDR
+const RAY_LIGHTS = 4;          // świateł wzdłuż wiązki (poza wylotem i końcem)
+const RAY_EXIT_PAD = 30;       // jeden cel: zapas za wyjściem z kadłuba [j.]
+const RAY_KERF_STEP = 40;      // co tyle j. czoła w materiale — znak rzazu i stempel pasa
 
 export class Gunnery {
   constructor({ fx, lights, trails, projectiles, beams, turrets, atlas, target, drones }) {
@@ -30,6 +41,7 @@ export class Gunnery {
     this.events = [];
     this.burners = [];
     this.pulses = [];
+    this.rays = [];
     this.weapon = null;
     this.recipe = null;
     this.mountsAll = false;
@@ -96,6 +108,17 @@ export class Gunnery {
     this.beamCycle = 0;
     this.drones.active = !!weapon.pd;
     this.pulses.length = 0;
+    this.rays.length = 0;
+    if (weapon.pattern === 'ray') {
+      const rc = weapon.def.deathRay || {};
+      const col = hexHdr(weapon.def.vfxColor || '#46ff8c', RAY_HDR);
+      this.rayConf = {
+        col, pal: deathRayPalette(col[0], col[1], col[2]),
+        width: rc.width || 150, speed: rc.frontSpeed || 30000, sustain: rc.sustain ?? 1.1, fade: rc.fade || 0.5,
+        halfWidth: rc.cutHalfWidth || 55, single: rc.singleTarget !== false
+      };
+      for (const t of this.turrets.turrets) t.rayState = { ringT: 0, pal: this.rayConf.pal };
+    }
   }
 
   _burn(hull, x, y, dur, power, pal) {
@@ -190,6 +213,10 @@ export class Gunnery {
         this._chargeStep(t, dt, wantFire, err);
         continue;
       }
+      if (w.pattern === 'ray') {
+        this._rayChargeStep(t, dt, wantFire);
+        continue;
+      }
       if (!wantFire || t.cooldown > 0 || err > 0.05) continue;
       if (w.pd && !input.aim && !t.lock && w.pattern !== 'salvo') continue;
       t.cooldown = def.cooldown * (0.92 + Math.random() * 0.16);
@@ -218,6 +245,8 @@ export class Gunnery {
       beamsNow.add(pu.x0, pu.y0, pu.x1, pu.y1, style, wdt, pu.col, power, pu.seed, pu.age);
       if (pu.hit && style === BEAM.PULSE) this.lights.point(pu.hit.x, pu.hit.y, 1.0, 0.3, 0.3, 2 * power, 180, 30);
     }
+    // promienie śmierci (wiązka, światła, emisja, rzaz, żar)
+    if (this.rays.length) this._stepRays(dt);
     // ogień w wyrwach
     for (let i = this.burners.length - 1; i >= 0; i--) {
       const b = this.burners[i];
@@ -287,6 +316,8 @@ export class Gunnery {
     this.stats.shots++;
     const conf = R.projectile ? R.projectile(w, m) : null;
     if (!conf) return;
+    // Smuga gazu tylko rodzinom z TRAIL_FAMILIES (jak gra: zwykłe pociski bez śladu).
+    if (!TRAIL_FAMILIES.has(w.fx)) conf.trailOpts = null;
     const spread = (Math.random() - 0.5) * (def.spread || 0) * (w.pattern === 'salvo' ? 2.2 : 1);
     const a = m.angle + spread;
     const speed = def.baseSpeed;
@@ -411,6 +442,152 @@ export class Gunnery {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Promień śmierci
+
+  /** Ładowanie (4 s): receptura co klatkę, laser naprowadzający od połowy, potem strzał (wylot z dziobu jak Hexlance). */
+  _rayChargeStep(t, dt, wantFire) {
+    const w = this.weapon;
+    const R = this.recipe;
+    if (t.charge < 0) {
+      if (!wantFire || t.cooldown > 0 || this.rays.length) return;
+      t.charge = 0;
+      t.rayState.ringT = 0;
+      this.stats.pre++;   // początek ładowania (narzędzie zrzutów: waitPre)
+    }
+    t.charge += dt;
+    const u = Math.min(1, t.charge / w.charge);
+    const m = this._builtinMuzzleOnly();
+    if (dt > 0) R.charge?.(this.ctx, m, u, dt, t.rayState);
+    // laser naprowadzający (BEAM.PD w barwie promienia) od połowy ładowania — do zasięgu broni
+    if (u > 0.5) {
+      const g = (u - 0.5) / 0.5;
+      const L = w.def.baseRange || 6000;
+      const fl = 0.55 + 0.45 * Math.sin(this.time * 40 + t.index) * Math.sin(this.time * 23 + t.index * 3);
+      const c = this.rayConf;
+      this.beams.add(m.x, m.y, m.x + Math.cos(m.angle) * L, m.y + Math.sin(m.angle) * L, BEAM.PD, 5 + 6 * g, c.col,
+        (0.2 + 0.6 * g) * fl, t.index * 0.37, this.time);
+    }
+    if (t.charge >= w.charge) {
+      t.charge = -1;
+      // przeładowanie z karty (45 s) skrócone w demie, żeby pokaz nie stał
+      t.cooldown = Math.min(w.def.cooldown || 6, 3.5);
+      this._fireRay(m);
+    }
+  }
+
+  _fireRay(m) {
+    const c = this.rayConf;
+    const def = this.weapon.def;
+    const range = def.baseRange || 6000;
+    const dx = Math.cos(m.angle);
+    const dy = Math.sin(m.angle);
+    const ray = {
+      x0: m.x, y0: m.y, dx, dy, len: range, age: 0, seed: Math.random() * 10,
+      entryD: -1, exitD: -1, entryDone: false, exitDone: false, kerfD: 0, hits: []
+    };
+    // wejście i wyjście w kadłubie celu (odczyt przed rzazem, jak w grze)
+    const tg = this.target;
+    const f = tg.raycast(m.x, m.y, m.x + dx * range, m.y + dy * range, 4);
+    if (f >= 0) {
+      ray.entryD = f * range;
+      let d = ray.entryD + 4;
+      while (d < range && tg.inside(m.x + dx * d, m.y + dy * d)) d += 6;
+      ray.exitD = Math.min(range, d);
+      if (c.single) ray.len = Math.min(range, ray.exitD + RAY_EXIT_PAD);
+      ray.kerfD = ray.entryD;
+    }
+    ray.fadeAt = ray.len / c.speed + c.sustain;
+    ray.life = ray.fadeAt + c.fade;
+    this.rays.push(ray);
+    this.stats.shots++;
+    this.recipe.muzzle?.(this.ctx, m, this.weapon, c.pal);
+  }
+
+  /** Punkt trafienia w układzie kadłuba (jedzie z celem; żar przez czas trwania wiązki). */
+  _rayRemember(ray, kind, x, y) {
+    const h = this.target;
+    const cs = Math.cos(h.angle), sn = Math.sin(h.angle);
+    const ex = x - h.x, ey = y - h.y;
+    ray.hits.push({ kind, lx: ex * cs + ey * sn, ly: -ex * sn + ey * cs });
+  }
+
+  _stepRays(dt) {
+    const c = this.rayConf;
+    const R = this.recipe;
+    const tg = this.target;
+    const time = this.time;
+    for (let i = this.rays.length - 1; i >= 0; i--) {
+      const ray = this.rays[i];
+      ray.age += dt;
+      if (ray.age >= ray.life) { this.rays.splice(i, 1); continue; }
+      const sx = ray.x0, sy = ray.y0;
+      const front = Math.min(ray.len, c.speed * ray.age);
+      const growing = front < ray.len - 1;
+      // wejście, rzaz po drodze w materiale, wyjście — gdy czoło do nich dojdzie
+      if (ray.entryD >= 0) {
+        if (!ray.entryDone && front >= ray.entryD) {
+          ray.entryDone = true;
+          const x = sx + ray.dx * ray.entryD, y = sy + ray.dy * ray.entryD;
+          R.entry(this.ctx, x, y, ray.dx, ray.dy, tg, c.pal, 1);
+          this._rayRemember(ray, 0, x, y);
+          this.lastImpact = { x, y, nx: -ray.dx, ny: -ray.dy };
+          this.stats.hits++;
+        }
+        const kEnd = Math.min(front, ray.exitD);
+        while (ray.entryDone && ray.kerfD + RAY_KERF_STEP <= kEnd) {
+          ray.kerfD += RAY_KERF_STEP;
+          const x = sx + ray.dx * ray.kerfD, y = sy + ray.dy * ray.kerfD;
+          R.kerf(this.ctx, x, y, ray.dx, ray.dy, c.pal);
+          this.ctx.stamp(tg, x, y, c.halfWidth, 3.6, 0.9, 1.0, 0.15, ray.dx, ray.dy, 2.2);
+        }
+        if (!ray.exitDone && front >= ray.exitD && ray.exitD < ray.len) {
+          ray.exitDone = true;
+          const x = sx + ray.dx * ray.exitD, y = sy + ray.dy * ray.exitD;
+          R.exit(this.ctx, x, y, ray.dx, ray.dy, c.pal);
+          this._rayRemember(ray, 1, x, y);
+        }
+      }
+      // obwiednia: wejście 0,05 s, trwanie, wygaszanie (wiązka zwęża się)
+      let k;
+      if (ray.age < ray.fadeAt) k = Math.min(1, ray.age / 0.05);
+      else { const u = Math.max(0, 1 - (ray.age - ray.fadeAt) / c.fade); k = u * u * (3 - 2 * u); }
+      const flick = 0.93 + 0.07 * Math.sin(time * 53 + ray.seed) * Math.sin(time * 31.7 + ray.seed * 2.1);
+      const power = k * flick;
+      const wMul = ray.age < ray.fadeAt ? 1 : 0.35 + 0.65 * k;
+      const width = c.width * wMul * (1 + 0.035 * Math.sin(time * 61 + ray.seed));
+      const ex = sx + ray.dx * front, ey = sy + ray.dy * front;
+      if (!(power > 0.002) || !(front > 1)) continue;
+      this.beams.add(sx, sy, ex, ey, BEAM.RAY, width, c.col, power, ray.seed, ray.age, growing ? 1 : 0, 1);
+      const L = c.pal.light;
+      this.lights.point(sx, sy, L[0], L[1], L[2], 4 * power, 1300, 40);
+      this.lights.point(ex, ey, L[0], L[1], L[2], (growing ? 5 : 3) * power, 1100, 40);
+      const nL = Math.min(RAY_LIGHTS, Math.floor(front / 1800));
+      for (let l = 1; l <= nL; l++) {
+        const fl = l / (nL + 1);
+        this.lights.point(sx + ray.dx * front * fl, sy + ray.dy * front * fl, L[0], L[1], L[2], 2 * power, 1000, 40);
+      }
+      // emisja: wylot, czoło (gdy rośnie), plazma z losowego miejsca osi
+      _rm.x = sx; _rm.y = sy; _rm.angle = Math.atan2(ray.dy, ray.dx); _rm.scale = 1;
+      if (growing) { _rf.x = ex; _rf.y = ey; }
+      const ft = Math.random();
+      if (dt > 0) R.emit(this.ctx, _rm, power, dt, c.pal, growing ? _rf : null, sx + ray.dx * front * ft, sy + ray.dy * front * ft, 1);
+      // żar przy trafieniach: punkt w układzie celu, póki leży w korytarzu wiązki
+      const cs = Math.cos(tg.angle), sn = Math.sin(tg.angle);
+      for (const h of ray.hits) {
+        const hx = tg.x + h.lx * cs - h.ly * sn;
+        const hy = tg.y + h.lx * sn + h.ly * cs;
+        const rx = hx - sx, ry = hy - sy;
+        const along = rx * ray.dx + ry * ray.dy;
+        const across = Math.abs(rx * -ray.dy + ry * ray.dx);
+        if (along < 0 || along > front + 50 || across > width * 0.9) continue;
+        _rh.x = hx; _rh.y = hy;
+        _rh.nx = h.kind === 1 ? ray.dx : -ray.dx; _rh.ny = h.kind === 1 ? ray.dy : -ray.dy;
+        if (dt > 0) R.burn(this.ctx, _rh, power, dt, tg, c.pal, 1);
+      }
+    }
+  }
+
   _impact(p, hull) {
     const n = hull.normalAt(p.x, p.y, { x: 0, y: 0 });
     const hit = { x: p.x, y: p.y, nx: n.x, ny: n.y };
@@ -460,8 +637,12 @@ export class Gunnery {
     this.events.length = 0;
     this.burners.length = 0;
     this.pulses.length = 0;
+    this.rays.length = 0;
   }
 }
 
 const _m = { x: 0, y: 0, angle: 0, scale: 1, barrel: 0 };
 const _a = { x: 0, y: 0 };
+const _rm = { x: 0, y: 0, angle: 0, scale: 1 };
+const _rf = { x: 0, y: 0 };
+const _rh = { x: 0, y: 0, nx: 0, ny: 0 };

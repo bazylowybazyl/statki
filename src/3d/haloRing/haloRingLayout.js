@@ -20,6 +20,7 @@ import {
   HALO_STATION_ANGLE,
   HALO_TAU,
   computeHaloEnvelope,
+  haloNormalizeFloorSites,
   resolveHabitatFacing
 } from './haloRingConfig.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
@@ -480,6 +481,8 @@ export function createHaloRingLayout(options = {}) {
     profile: Object.freeze({ vertices: Object.freeze(vertices), edges: Object.freeze(edges) }),
     sectors: Object.freeze(sectors),
     construction,
+    // miejsca podłogi spoza szablonu kompleksów (opcja `floorSites`, haloRingConfig.js) — [] bez opcji
+    floorSites: Object.freeze(haloNormalizeFloorSites(options.floorSites, floorMid)),
     sectorSpan,
     sectorStart,
     rivers: Object.freeze(rivers),

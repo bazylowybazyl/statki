@@ -34,6 +34,7 @@ import {
 import { WX_BANDS, WX_PHASE, WX_SEAM } from './planetGenBake.tsl.js';
 import { genObjectTexture, tinyTexture } from './planetGenNodes.js';
 import { cloudNoiseTexture } from './planetGenNoise3D.js';
+import { STORM_MAX, FLASH_MAX } from './planetGenStorms.js';
 import { SHELL_UNIFORM_KEYS, shellPerObject, shellRay, shellUniforms, shellMaterial, planetLit, pixelNoise } from './planetGenShell.tsl.js';
 
 const PI = Math.PI;
@@ -45,7 +46,11 @@ export const CLOUD_VOLUME_UNIFORM_KEYS = Object.freeze({
   uCvSky: 'vec4',      // rgb — światło nieba w chmurze, a — kąt teksela mapy chmur [rad]
   uCvWx: 'vec4',       // pogoda: bieżący czas [s] (kłęby jadą z pasami wiatru), wiatr [rad / s], 1 — włączona, czas mapy pogody [s]
   uCvMisc: 'vec4',     // najdłuższy odcinek marszu [R], rozjaśnienie pod słońce, krok [grubości powłoki], jasność słońca w chmurze
-  uCvKind: 'vec4'      // rodzaje chmur: wieże burzowe (0…1), warstwy cienkie (0…1), przesunięcie rodzaju (− ławy, + konwekcja), —
+  uCvKind: 'vec4',     // rodzaje chmur: wieże burzowe (0…1), warstwy cienkie (0…1), przesunięcie rodzaju (− ławy, + konwekcja), —
+  // BURZE (planetGenStorms.js): xyz — kierunek środka układu burzowego (układ kuli chmur), w — promień tarczy [rad] (0 — brak)
+  ...Object.fromEntries(Array.from({ length: STORM_MAX }, (_, i) => [`uCvSt${i}`, 'vec4'])),
+  // BŁYSKI PIORUNÓW: xyz — miejsce w układzie kuli chmur, w — jasność w tej chwili (0 — brak)
+  ...Object.fromEntries(Array.from({ length: FLASH_MAX }, (_, i) => [`uCvFl${i}`, 'vec4']))
 });
 export const CLOUD_VOLUME_STEPS = 44;
 export const CLOUD_VOLUME_STEPS_MIN = 20;
@@ -53,6 +58,11 @@ export const CLOUD_VOLUME_STEPS_MIN = 20;
 export const CLOUD_STEP_BIAS = 1.6;
 /** Udział szumu piksela w przesunięciu startu marszu (0 — stały start w połowie kroku, 1 — cały krok). */
 export const CLOUD_JITTER = 0.6;
+/**
+ * Błysk pioruna w chmurze: poświata o promieniu `glow` [R] (rozproszona w chmurze wokół kanału) i jasne jądro `core`,
+ * jasność w jednostkach grafu gry przy jasności błysku 1 (ponad progiem bloomu — błysk ma świecić).
+ */
+export const CLOUD_FLASH = Object.freeze({ glow: 0.014, core: 0.0035, gain: 3.6 });
 /** Dalekie próbki światła ku słońcu (do stropu powłoki) w każdej gęstej próbce marszu. */
 export const CLOUD_LIGHT_FAR = 4;
 const LUM = vec3(0.299, 0.587, 0.114);
@@ -144,13 +154,32 @@ export function cloudRegime(x, noise, time, bias) {
   return vec4(clamp(s.a.sub(0.5).mul(3.5).add(0.5).add(tropic.mul(0.16)).sub(0.06).add(bias), 0.0, 1.0), s.r, s.g, s.b);
 }
 
+/**
+ * BURZA w kierunku `dir` (układ kuli chmur): 0 — poza układami, 1 — w środku tarczy. `storms` — węzły vec4 (kierunek
+ * środka, promień [rad]); `edge` — szum 0…1 (mediana ~0,48: kanał Worleya próbki rodzaju chmur) — brzeg tarczy
+ * nieregularny (promień ± ~30%); `scale` — mnożnik promienia (otoczka burzy: tarcza chmur pierzastych).
+ */
+export function stormAt(dir, storms, edge, scale = 1) {
+  const st = float(0.0).toVar();
+  for (const S of storms) {
+    // cięciwa ≈ kąt od środka (tarcze mają po kilka stopni)
+    const ang = sqrt(max(float(2.0).sub(dot(dir, S.xyz).mul(2.0)), 0.0));
+    const r = S.w.mul(edge.sub(W_MED).mul(1.4).add(1.0)).mul(scale);
+    st.assign(max(st, float(1.0).sub(smoothstep(r.mul(0.5), max(r, 1e-4), ang)).mul(step(1e-4, S.w))));
+  }
+  return st;
+}
+/** Pokrycie w burzy: tarcza burzy jest zachmurzona niezależnie od mapy chmur. */
+export const stormCover = (cov, storm) => max(cov, storm.mul(0.92));
+
 // Zanik przy podstawie, stropie i tam, gdzie mapa jest pusta.
 const fadeOf = (cov, hN) => smoothstep(0.0, 0.06, hN).mul(float(1.0).sub(smoothstep(0.86, 1.0, hN))).mul(smoothstep(0.02, 0.12, cov));
 
 /**
  * KSZTAŁT CHMUR w punkcie x układu kuli chmur. `P` = { r0, thick — podstawa i grubość powłoki [R], freq — częstość
  * kłębów, time — czas szumu [s], noise — tekstura szumu 3D, wxv — pogoda (czas, wiatr, 1 — włączona), towers — wieże
- * burzowe 0…1 }; `cov` — pokrycie z mapy w tym miejscu, `reg` — `cloudRegime`.
+ * burzowe 0…1, storm — (opcjonalnie) burza 0…1 z `stormAt` }; `cov` — pokrycie z mapy w tym miejscu (w burzy
+ * podniesione przez wołającego: `stormCover`), `reg` — `cloudRegime` (w burzy niestabilność = 1).
  * Opcje: `puffs: false` (stała JS) — bez szumu kłębów (średnia gęstość masy + wieże: dalekie próbki światła);
  * `lodW` — węzeł 0…1: 1 — kłęby rozdzielone, 0 — mniejsze od piksela (wchodzą średnią); `sharp` — węzeł ≥ 1:
  * mnożnik stromości progu (z bliska brzeg kłębu ostrzejszy — przy stałej stromości przejście ma ~20 km i kłąb
@@ -186,7 +215,8 @@ export function cloudShape(x, P, cov, reg, opts = {}) {
   cum.assign(smoothstep(0.3, 0.5, reg.x));
   const slope = mix(float(M.slopeDeck), float(M.slopeCum), cum).toVar();
   // dno progu podstawy: wierzch masy (przy medianie szumu) nie wyżej niż `topDeck` / `topCum`
-  const thrFloor = float(N_MED).sub(slope.mul(mix(float(M.topDeck), float(M.topCum), cum))).toVar();
+  const storm = P.storm || float(0.0);
+  const thrFloor = float(N_MED).sub(slope.mul(mix(float(M.topDeck), mix(float(M.topCum), float(0.78), storm), cum))).toVar();
   const conv = float(0.0).toVar();
   conv.assign(smoothstep(0.68, 0.85, reg.x).mul(smoothstep(0.3, 0.6, cov)).mul(P.towers));
   // ponad najwyższym możliwym wierzchem (próg powyżej całego szumu) i poza strefą wież — bez próbek szumu
@@ -262,7 +292,12 @@ export function cloudShape(x, P, cov, reg, opts = {}) {
       const nT = float(0.0).toVar();
       nT.assign(tower(B.xr));
       If(B.seam.greaterThan(0.002), () => { nT.assign(mixNoise(nT, tower(B.x2), B.seam, N_MED)); });
-      const thrT = float(M.towerThr).add(hN.mul(M.towerTaper)).sub(smoothstep(0.7, 0.86, hN).mul(M.anvil)).add(float(1.0).sub(conv).mul(0.25));
+      // KOWADŁO: gruba płyta w pasie ~0,5–0,82 wysokości (próg niższy — szersza niż trzon; cienka płyta pod samym
+      // stropem była półprzezroczysta i ziarnista), PONAD nią próg rośnie — wybijają tylko rdzenie najmocniejszych
+      // wież (kopuły nad kowadłem, z własnym cieniem). Burza: więcej wież i szersze kowadło — zlewa się w tarczę
+      const anvilBand = smoothstep(0.45, 0.6, hN).mul(float(1.0).sub(smoothstep(0.78, 0.86, hN)));
+      const thrT = float(M.towerThr).sub(storm.mul(0.05)).add(hN.mul(M.towerTaper)).sub(anvilBand.mul(storm.mul(0.06).add(M.anvil)))
+        .add(smoothstep(0.84, 1.0, hN).mul(0.07)).add(float(1.0).sub(conv).mul(0.25));
       const dT = clamp(nT.add(v.w.sub(W_MED).mul(0.1)).add(det).sub(thrT).mul(kN.mul(1.6)), 0.0, 1.0);
       d.assign(max(d, lodW ? mix(conv.mul(0.07), dT, lodW) : dT));
     });
@@ -336,13 +371,23 @@ function build() {
     const g = float(0.55);
     const hg = float(1.0).sub(g.mul(g)).div(float(1.0).add(g.mul(g)).sub(g.mul(cosT).mul(2.0)).pow(1.5));
     const phase = mix(float(1.0), clamp(hg.mul(0.55).add(0.6), 0.72, 1.9), U.uCvMisc.y).toVar();
-    const P = { r0: U.uCvShape.x, thick, freq: U.uCvNoise.x, time: U.uCvNoise.w, noise, wxv: U.uCvWx, towers: U.uCvKind.x };
+    const P = { r0: U.uCvShape.x, thick, freq: U.uCvNoise.x, time: U.uCvNoise.w, noise, wxv: U.uCvWx, towers: U.uCvKind.x, storm: null };
     const Tr = float(1.0).toVar();
     const col = vec3(0.0).toVar();
     // środek odcinka: rodzaj chmur kolumny (jedna próbka na piksel) i test pustego nieba
     const xm = R.o.add(R.rd.mul(R.t0.add(seg.mul(0.5)))).toVar();
     const reg = vec4(0.0).toVar();
     reg.assign(cloudRegime(xm, noise, U.uCvNoise.w, U.uCvKind.z));
+    // BURZA kolumny (raz na piksel): tarcza układu burzowego — chmura lita, wysoka i ciemniejsza, niestabilność = 1
+    const storms = Array.from({ length: STORM_MAX }, (_, i) => U[`uCvSt${i}`]);
+    const flashes = Array.from({ length: FLASH_MAX }, (_, i) => U[`uCvFl${i}`]);
+    const st = float(0.0).toVar();
+    st.assign(stormAt(xm.div(max(length(xm), 1e-5)), storms, reg.w));
+    // otoczka burzy (1,7 promienia): kowadła rozwiewa wiatr — wokół układu tarcza chmur pierzastych
+    const stHalo = float(0.0).toVar();
+    stHalo.assign(stormAt(xm.div(max(length(xm), 1e-5)), storms, reg.w, 1.7));
+    reg.assign(vec4(max(reg.x, st), reg.yzw));
+    const flashOn = flashes.reduce((a, F) => a.add(F.w), float(0.0)).toVar();
     // światło słońca i nieba w punkcie x: `lightT` — osłabienie po drodze ku słońcu, `skyK` — udział światła nieba
     const lightAt = (x, mu, lightT, skyK) => {
       const sunCol = mix(vec3(1.0, 0.46, 0.2), vec3(1.0, 0.97, 0.93), smoothstep(-0.03, 0.26, mu)).mul(U.uShSun.w);
@@ -381,7 +426,7 @@ function build() {
       const smooth3 = (q) => texture3D(noise, q, float(0.0)).a;
       // WYSOKA: cirrus — długie miękkie smugi z jedwabistym włóknem, przy dużej ilości welon (cirrostratus)
       layer(M.hHigh, (xl, nl, covC, cosV) => {
-        const amt = clamp(covC.mul(0.7).add(reg.y.sub(0.56).mul(3.0)), 0.0, 1.0).mul(U.uCvKind.y).toVar();
+        const amt = clamp(covC.mul(0.7).add(reg.y.sub(0.56).mul(3.0)).add(stHalo.mul(0.7)), 0.0, 1.0).mul(U.uCvKind.y).toVar();
         If(amt.greaterThan(0.03), () => {
           const B = bandFrames(nl, U.uCvWx);
           const pat = (xq) => {
@@ -440,7 +485,8 @@ function build() {
     // grubość optyczna ku słońcu [R]
     const topTau = float(0.0).toVar();
     const topDone = float(0.0).toVar();
-    If(dt.greaterThan(1e-7).and(any.greaterThan(0.02)), () => {
+    P.storm = st;
+    If(dt.greaterThan(1e-7).and(max(any, st).greaterThan(0.02)), () => {
       Loop({ start: int(0), end: nS, type: 'int', condition: '<' }, ({ i }) => {
         // promień trafiający w planetę kończy się przy podstawie powłoki, gdzie leży większość chmur (ławy to ~1/5
         // jej grubości) — próbki gęstsze ku końcowi odcinka: równy krok dawał w cienkiej warstwie 2–3 próbki
@@ -457,7 +503,7 @@ function build() {
         // pokrycie z mapy raz na krok — służy też bliskiej próbce światła (leży ułamek teksela mapy dalej). Poziom
         // mipmapy co najmniej 1,2: grzbiet pokrycia o szerokości teksela mapy (obwódka układu chmur) dawał w bryle
         // cienki jasny obrys wzdłuż brzegu masy
-        const cov = coverAt(x, U, max(lod, 1.2)).toVar();
+        const cov = stormCover(coverAt(x, U, max(lod, 1.2)), st).toVar();
         const stepH = dtI.mul(abs(dot(R.rd, normalize(x)))).div(thick);
         const S0 = cloudShape(x, P, cov, reg, { lodW, sharp, detail: { w: detW, fine: U.uCvNoise.y }, stepH });
         const d = float(0.0).toVar();
@@ -485,7 +531,7 @@ function build() {
               const span = min(max(float(1.0).sub(S0.hN.add(S0.topUp)), 0.0).mul(thick).div(max(mu, 0.09)), 0.1).toVar();
               for (let k = 0; k < CLOUD_LIGHT_FAR; k++) {
                 const xs = xt.add(sun.mul(span.mul((k + 0.6) / CLOUD_LIGHT_FAR))).toVar();
-                const cs = coverAt(xs, U, lod.add(1.5)).toVar();
+                const cs = stormCover(coverAt(xs, U, lod.add(1.5)), st).toVar();
                 const Sf = cloudShape(xs, P, cs, reg, { puffs: false });
                 topTau.addAssign(max(Sf.sheet, Sf.d).mul(Sf.fade).mul(span.div(CLOUD_LIGHT_FAR)));
               }
@@ -493,12 +539,32 @@ function build() {
             // głębsze próbki: własna chmura nad próbką — z grubości optycznej przebytej po promieniu widzenia do
             // środka kroku (ciągła w obrazie)
             const selfOd = log2(max(Tr.mul(sqrt(float(1.0).sub(a))), 0.03)).mul(-0.6931472 * 0.5);
-            const od = topTau.mul(sigma).add(selfOd);
+            // (burza: chmura gęstsza optycznie — strona odsłoneczna i szczeliny wyraźnie ciemniejsze)
+            const od = topTau.mul(sigma).add(selfOd).mul(st.mul(0.8).add(1.0));
             // osłabienie wprost + wolniej gasnący człon (światło rozproszone wielokrotnie we wnętrzu chmury)
             const lightT = exp(od.negate()).mul(0.7).add(exp(od.mul(-0.14)).mul(0.3));
             // światło nieba: wierzchołki jaśniejsze niż podstawy, tylko po dziennej stronie; drobne kłębki: wypukłość
             // jaśniejsza, wklęsłość ciemniejsza (światło nieba nie dochodzi do szczelin)
-            S.assign(lightAt(x, mu, lightT.mul(clamp(S0.det.mul(2.2).add(1.0), 0.7, 1.2)), S0.hN.mul(0.7).add(0.3)));
+            // burza: poniżej kowadła barwa stalowa, mniej światła nieba
+            const dark = st.mul(float(1.0).sub(smoothstep(0.55, 0.85, S0.hN)));
+            S.assign(lightAt(x, mu, lightT.mul(clamp(S0.det.mul(2.2).add(1.0), 0.7, 1.2)), S0.hN.mul(0.7).add(0.3).mul(float(1.0).sub(st.mul(0.45))))
+              .mul(mix(vec3(1.0), vec3(0.7, 0.75, 0.84), dark.mul(0.6))));
+          });
+          // BŁYSKI PIORUNÓW: światło WEWNĄTRZ chmury (bez cienia, także po nocnej stronie) — poświata wokół miejsca
+          // błysku i jasne jądro; barwa niebieskawobiała
+          If(flashOn.greaterThan(0.001), () => {
+            const fl = float(0.0).toVar();
+            const rx = length(x);
+            for (const F of flashes) {
+              const dv = x.sub(F.xyz);
+              const d2 = dot(dv, dv);
+              // światło idzie z wnętrza chmury ku górze: wysokie kopuły nad błyskiem ciemniejsze niż szczeliny przy nim
+              const up = max(rx.sub(length(F.xyz)), 0.0).div(thick);
+              fl.addAssign(F.w.mul(exp(d2.div(-CLOUD_FLASH.glow * CLOUD_FLASH.glow)).mul(0.45).add(exp(d2.div(-CLOUD_FLASH.core * CLOUD_FLASH.core)))).mul(exp(up.mul(-1.6))));
+            }
+            // (drobne kłębki: wklęsłość jaśniejsza niż wypukłość — odwrotnie niż w świetle słońca; bez tego błysk
+            // jest gładką plamą jak lampa)
+            S.addAssign(U.uCvTint.mul(vec3(0.72, 0.84, 1.0)).mul(fl.mul(CLOUD_FLASH.gain)).mul(clamp(float(1.0).sub(S0.det.mul(5.0)), 0.5, 1.6)));
           });
           col.addAssign(S.mul(a).mul(Tr));
           Tr.mulAssign(float(1.0).sub(a));
@@ -544,6 +610,10 @@ export function cloudVolumeUniforms(spec, maps) {
     uCvMisc: { value: new THREE.Vector4(0.2, 0.65, 0.07, 0.74) },
     uCvWx: { value: new THREE.Vector4(0, 0, 0, 0) },
     // ziemskie: wszystkie rodzaje; pokład (toksyczna): ława z nielicznymi wieżami, bez warstw cienkich; pył: sama masa
-    uCvKind: { value: deck ? new THREE.Vector4(0.35, 0, -0.15, 0) : (dust ? new THREE.Vector4(0, 0, 0.1, 0) : new THREE.Vector4(1, 1, 0, 0)) }
+    uCvKind: { value: deck ? new THREE.Vector4(0.35, 0, -0.15, 0) : (dust ? new THREE.Vector4(0, 0, 0.1, 0) : new THREE.Vector4(1, 1, 0, 0)) },
+    // burze i błyski ustawia ciało co klatkę (planetGenNear.js). Wartości „brak” niezerowe jako wektor (pułapka 46
+    // reguły webgpu-tsl: wektor samych zer po kompilacji zostaje na GPU przy wartości z kompilacji)
+    ...Object.fromEntries(Array.from({ length: STORM_MAX }, (_, i) => [`uCvSt${i}`, { value: new THREE.Vector4(0, 1, 0, 0) }])),
+    ...Object.fromEntries(Array.from({ length: FLASH_MAX }, (_, i) => [`uCvFl${i}`, { value: new THREE.Vector4(2, 0, 0, 0) }]))
   };
 }

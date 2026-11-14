@@ -3,9 +3,12 @@
 // Geometria wstęg drogi (czysta — tylko dane; siatkę składa styl): jedna partia na całą sieć. Atrybuty:
 //   position  x, y, 0 (scena, lokalnie względem środka Ziemi),
 //   aSV       s wzdłuż ścieżki [j.], v w poprzek od osi [j.] (dodatnie po LEWEJ od kierunku próbkowania),
-//   aMeta     rodzaj (RODZAJ), pół szerokości właściwej [j.], kierunek ruchu względem s (+1 / −1), indeks węzła K-7 lub −1.
+//   aMeta     rodzaj (RODZAJ), pół szerokości właściwej [j.], kierunek ruchu względem s (+1 / −1; pas-pochylnia stoczni: 2),
+//             indeks węzła K-7 lub −1,
+//   aTan      (tylko z opcją `styczne`) jednostkowy kierunek próbkowania w scenie — połysk zależny od kąta do Słońca.
 // Główne jezdnie to dwa pierścienie i pas rozdziału; rampy, zawrotki, wrota, pasy K-7 i drogi ciężkich — osobne wstęgi.
 // Wstęga ma margines `MARGINES` poza szerokością właściwą (na poświatę i filtr linii); shader ucina go sam.
+// Układ sieci inny niż pierścień (`siec.geo`, np. rama): jezdnie główne idą po krzywych równoległych z `geo.obrys`.
 import { HW, complexes } from './siec.js';
 
 export const RODZAJ = Object.freeze({ WEWN: 0, ZEWN: 1, ROZDZIAL: 2, ZJAZD: 3, WJAZD: 4, ZAWROTKA: 5, WROTA_WE: 6, WROTA_WY: 7, PUDLO: 8, CIEZKI: 9 });
@@ -31,6 +34,7 @@ function dopiszWstege(out, xs, ys, ss, polSzer, rodzaj, kierunek, k7) {
       out.pos.push(xs[i] + nx * m * bok, ys[i] + ny * m * bok, 0);
       out.sv.push(ss[i], m * bok);
       out.meta.push(rodzaj, polSzer, kierunek, k7);
+      if (out.tan) out.tan.push(tx, ty);
     }
   }
   for (let i = 0; i < n - 1; i++) {
@@ -50,16 +54,21 @@ function pierscien(out, r, polSzer, rodzaj, kierunek, segmenty) {
   dopiszWstege(out, xs, ys, ss, polSzer, rodzaj, kierunek, -1);
 }
 
-/** Dane wstęg sieci: { pozycje, sv, meta, indeksy } jako tablice typowane. */
-export function zbudujWstegi(siec, { segmentyRing = 2400, tylko = null } = {}) {
-  const out = { pos: [], sv: [], meta: [], idx: [] };
+/** Dane wstęg sieci: { pozycje, sv, meta, indeksy [, styczne] } jako tablice typowane. */
+export function zbudujWstegi(siec, { segmentyRing = 2400, tylko = null, styczne = false } = {}) {
+  const out = { pos: [], sv: [], meta: [], idx: [], tan: styczne ? [] : null };
   const rWewn = (HW.edgeIn + HW.iL1 + HW.widths.L1 * 0.5) * 0.5;
   const pWewn = (HW.iL1 + HW.widths.L1 * 0.5 - HW.edgeIn) * 0.5;
   const rZewn = (HW.edgeOut + HW.oL1 - HW.widths.L1 * 0.5) * 0.5;
   const pZewn = (HW.edgeOut - (HW.oL1 - HW.widths.L1 * 0.5)) * 0.5;
-  if (!tylko || tylko.has(RODZAJ.WEWN)) pierscien(out, rWewn, pWewn, RODZAJ.WEWN, -1, segmentyRing);
-  if (!tylko || tylko.has(RODZAJ.ZEWN)) pierscien(out, rZewn, pZewn, RODZAJ.ZEWN, 1, segmentyRing);
-  if (!tylko || tylko.has(RODZAJ.ROZDZIAL)) pierscien(out, HW.median, (HW.oL1 - HW.iL1 - HW.widths.L1) * 0.5, RODZAJ.ROZDZIAL, 1, segmentyRing / 2);
+  const geo = siec.geo;
+  // Jezdnia główna: okrąg (pierścień) albo krzywa równoległa układu, zawsze próbkowana CCW.
+  const glowna = geo && geo.id !== 'pierscien'
+    ? (r, pol, rodzaj, kierunek, seg) => { const q = geo.obrys(r, seg); dopiszWstege(out, q.x, q.y, q.s, pol, rodzaj, kierunek, -1); }
+    : (r, pol, rodzaj, kierunek, seg) => pierscien(out, r, pol, rodzaj, kierunek, seg);
+  if (!tylko || tylko.has(RODZAJ.WEWN)) glowna(rWewn, pWewn, RODZAJ.WEWN, -1, segmentyRing);
+  if (!tylko || tylko.has(RODZAJ.ZEWN)) glowna(rZewn, pZewn, RODZAJ.ZEWN, 1, segmentyRing);
+  if (!tylko || tylko.has(RODZAJ.ROZDZIAL)) glowna(HW.median, (HW.oL1 - HW.iL1 - HW.widths.L1) * 0.5, RODZAJ.ROZDZIAL, 1, segmentyRing / 2);
   const katy = complexes();
   for (const p of siec.paths) {
     if (p.kind === 'main') continue;
@@ -67,12 +76,14 @@ export function zbudujWstegi(siec, { segmentyRing = 2400, tylko = null } = {}) {
     if (rodzaj === undefined || (tylko && !tylko.has(rodzaj))) continue;
     const q = p.probki;
     const k7 = p.kind === 'box' ? katy.indexOf(p.site) : -1;
-    dopiszWstege(out, q.x, q.y, q.s, SZER_SCIEZKI[p.kind], rodzaj, 1, k7);
+    dopiszWstege(out, q.x, q.y, q.s, SZER_SCIEZKI[p.kind], rodzaj, p.pochylnia ? 2 : 1, k7);
   }
-  return {
+  const wynik = {
     pozycje: new Float32Array(out.pos),
     sv: new Float32Array(out.sv),
     meta: new Float32Array(out.meta),
     indeksy: new Uint32Array(out.idx)
   };
+  if (out.tan) wynik.styczne = new Float32Array(out.tan);
+  return wynik;
 }

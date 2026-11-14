@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<base href="/">
+<title>Silniki — marki frakcji (WebGPU)</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #dde4ea; --muted: #7f8f99; --line: #b0c8d826; --panel: #080c12e8; --accent: #ffb070; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #root canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  #tytul { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 40; pointer-events: none; text-align: center; text-shadow: 0 0 10px #000, 0 0 3px #000; white-space: nowrap; }
+  #tytul .k { font: 600 22px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .16em; color: #fff; }
+  #tytul .f { color: var(--accent); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; margin-top: 2px; }
+  #tytul .d { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #tryb { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 40; pointer-events: none; padding: 6px 16px; background: #05080cd0; border: 1px solid var(--line); border-radius: 5px; font: 600 13px/1.3 "Segoe UI", system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+  #hud { position: fixed; left: 10px; bottom: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 250px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #etykiety { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
+  #etykiety div { position: absolute; transform: translate(0, -50%); text-shadow: 0 0 8px #000, 0 0 2px #000; white-space: nowrap; }
+  #etykiety b { display: block; font: 600 14px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .14em; }
+  #etykiety span { color: var(--muted); font-size: 11px; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 340px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .siatka { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 6px 0; }
+  .siatka.jedna { grid-template-columns: 1fr; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+  button { background: #10161f; color: var(--ink); border: 1px solid #2c3d4d; border-radius: 4px; padding: 6px 9px; font: inherit; cursor: pointer; text-align: left; }
+  button:hover { border-color: var(--accent); }
+  button.on { border-color: var(--accent); background: #2a1c10; }
+  button small { display: block; color: var(--muted); font-size: 10px; margin-top: 1px; }
+  button kbd { float: right; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; margin-left: 6px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 104px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 44px; text-align: right; font-variant-numeric: tabular-nums; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%); z-index: 60; max-width: 70vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #hud { display: none; }
+  body.czysto #panel, body.czysto #hud, body.czysto #tytul, body.czysto #tryb, body.czysto #etykiety { display: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="etykiety"></div>
+<div id="tytul"><div class="k" id="t-nazwa">—</div><div class="f" id="t-frakcja"></div><div class="d" id="t-typ"></div></div>
+<div id="tryb">—</div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Start WebGPU…</div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>SILNIKI — MARKI FRAKCJI</h1>
+  <div class="sub">Propozycja: sześć marek silników, każda z własną dyszą i własną strugą w czterech trybach. Jeden shader strugi dla wszystkich — marka i tryb to tylko liczby.</div>
+
+  <h2>Widok</h2>
+  <div class="siatka">
+    <button id="b-zblizenie" title="Jedna marka z bliska">Zbliżenie<kbd>G</kbd><small>jedna marka, duża dysza</small></button>
+    <button id="b-galeria" title="Wszystkie marki obok siebie">Porównanie<kbd>G</kbd><small>sześć marek naraz</small></button>
+  </div>
+
+  <h2>Tryb silnika</h2>
+  <div class="siatka" id="tryby">
+    <button data-tryb="normalny">Normalny<kbd>1</kbd><small>pełny ciąg</small></button>
+    <button data-tryb="boost">Boost<kbd>2</kbd><small>dopalacz</small></button>
+    <button data-tryb="hiper">Hipercruise<kbd>3</kbd><small>rozruch → zapłon → lot</small></button>
+    <button data-tryb="warp">Warp<kbd>4</kbd><small>ładowanie → skok → lot</small></button>
+    <button data-tryb="jalowy">Jałowy<kbd>0</kbd><small>płomyk dyżurny</small></button>
+    <button id="b-petla" class="on" title="Tryby i marki po kolei">Pętla pokazu<kbd>L</kbd><small>wszystko po kolei</small></button>
+  </div>
+
+  <h2>Marka <span style="text-transform:none;letter-spacing:0">(← →)</span></h2>
+  <div class="siatka jedna" id="marki"></div>
+
+  <h2>Czas i kadr</h2>
+  <div class="buttons">
+    <button id="b-pauza">Pauza<kbd>Spacja</kbd></button>
+    <button id="b-wolno">Zwolnienie ×0,25<kbd>T</kbd></button>
+    <button id="b-kamera" title="Kamera pochylona — bryły dysz w 3D">Kamera 3D<kbd>K</kbd></button>
+    <button id="b-czysto">Bez paneli<kbd>H</kbd></button>
+  </div>
+
+  <h2>Warstwy</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="w-struga" checked> struga</label>
+    <label><input type="checkbox" id="w-haze" checked> gorące powietrze</label>
+    <label><input type="checkbox" id="w-iskry" checked> iskry i blaski</label>
+    <label><input type="checkbox" id="w-bloom" checked> bloom</label>
+    <label><input type="checkbox" id="w-zar" checked> żar i lampy dysz</label>
+    <label><input type="checkbox" id="w-gwiazdy" checked> gwiazdy (prędkość)</label>
+  </div>
+
+  <h2>Suwaki</h2>
+  <div class="row"><label>jasność strugi</label><input id="s-gain" type="range" min="0.3" max="2" step="0.05" value="1"><output id="o-gain"></output></div>
+  <div class="row"><label>gorące powietrze</label><input id="s-haze" type="range" min="0" max="3" step="0.05" value="1"><output id="o-haze"></output></div>
+  <div class="row"><label>tempo czasu</label><input id="s-czas" type="range" min="0.05" max="1.5" step="0.05" value="1"><output id="o-czas"></output></div>
+
+  <div class="hint">Kółko — zoom, PPM z ruchem myszy — obrót kamery 3D. W (trzymaj) — ciąg, Shift+W — boost. A / D — wychylenie dysz (wektorowanie ciągu). Tryby przechodzą przez fazy jak w grze: hipercruise ma rozruch (sam żar osprzętu), warp ma ładowanie (struga cofa się do dyszy), a wyjście z warpa odrywa lancę od dyszy.</div>
+</div>
+<script type="module" src="/dema/silniki-marki.js"></script>
+</body>
+</html>
