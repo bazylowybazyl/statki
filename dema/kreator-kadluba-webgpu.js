@@ -50,6 +50,10 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { BRIDGE_DEMO_HULLS } from './mostki-webgpu/kadluby.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
+import {
+  SHELL_SLIDERS, SHELL_RHYTHM_LABELS, BOARD_VARIANT_LABELS, HD_SHELL_RHYTHM_KEYS, HD_BOARD_VARIANT_KEYS,
+  shellOf, shellToggle, shellSetRhythm, shellSetSlider, addAxisTrench, removeAxisTrench, boardOf, boardSet
+} from './kreator-kadluba-pancerz.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Bridge3D } from '../src/3d/bridge3D.js';
 import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
@@ -1298,6 +1302,44 @@ function updateNetInfo() {
 }
 
 // ---------------------------------------------------------------------------
+// PANCERZ Z OBRYSU i UKŁAD MASZYNOWNI (Warsztat; operacje wspólne ze Stocznią — dema/kreator-kadluba-pancerz.js)
+function syncShellPanel(d) {
+  const sh = shellOf(d);
+  $('btn-shell').classList.toggle('on', !!sh);
+  $('sel-shell-rhythm').value = (sh || shellOf({ ...d, shell: { ...(d.shell || {}), on: true } })).rhythm;
+  const shown = sh || shellOf({ ...d, shell: { ...(d.shell || {}), on: true } });
+  for (const sl of SHELL_SLIDERS) {
+    const v = sl.get(shown);
+    $(`inp-shell-${sl.k}`).value = String(v);
+    $(`lbl-shell-${sl.k}`).textContent = `${sl.label.toLowerCase()} ${sl.k === 'bands' ? v : (v > 0 ? `${Math.round(v)} jd` : 'brak')}`;
+  }
+  const b = boardOf(d);
+  $('sel-board').value = b.variant;
+  $('inp-board-glow').value = String(b.glow);
+  $('lbl-board-glow').textContent = `świecenie ${b.glow.toFixed(2)}`;
+}
+function bindShellPanel() {
+  const selR = $('sel-shell-rhythm');
+  for (const k of HD_SHELL_RHYTHM_KEYS) selR.add(new Option(`rytm: ${SHELL_RHYTHM_LABELS[k]}`, k));
+  selR.addEventListener('change', () => { shellSetRhythm(design(), selR.value); requestBuild(); syncPanel(); });
+  $('btn-shell').addEventListener('click', () => { shellToggle(design()); requestBuild(); syncPanel(); });
+  for (const sl of SHELL_SLIDERS) {
+    const inp = $(`inp-shell-${sl.k}`);
+    inp.min = String(sl.min); inp.max = String(sl.max); inp.step = String(sl.step);
+    inp.addEventListener('input', () => { shellSetSlider(design(), sl.k, inp.value); syncShellPanel(design()); requestBuild(true); });
+    inp.addEventListener('change', () => requestBuild(false));
+  }
+  $('btn-shell-trench').addEventListener('click', () => { if (addAxisTrench(design(), S.field?.bounds)) { requestBuild(); syncPanel(); } });
+  $('btn-shell-trench-del').addEventListener('click', () => { if (removeAxisTrench(design())) { requestBuild(); syncPanel(); } });
+  const selB = $('sel-board');
+  for (const k of HD_BOARD_VARIANT_KEYS) selB.add(new Option(`układ: ${BOARD_VARIANT_LABELS[k]}`, k));
+  selB.addEventListener('change', () => { boardSet(design(), { variant: selB.value }); requestBuild(); syncPanel(); });
+  const glow = $('inp-board-glow');
+  glow.addEventListener('input', () => { boardSet(design(), { glow: glow.value }); $('lbl-board-glow').textContent = `świecenie ${Number(glow.value).toFixed(2)}`; requestBuild(true); });
+  glow.addEventListener('change', () => requestBuild(false));
+}
+
+// ---------------------------------------------------------------------------
 // Panel
 function syncPanel() {
   const d = design();
@@ -1311,6 +1353,7 @@ function syncPanel() {
   $('sel-pipen').value = String(S.pipeN);
   $('sel-pipemat').value = S.pipeMat;
   $('inp-panels').value = String(d.panels ?? 1);
+  syncShellPanel(d);
   $('sel-part').value = S.partId;
   for (let L = 0; L < HD_LEVELS; L++) $(`lvl-${L}`).classList.toggle('on', S.level === L);
   $('btn-polycut').classList.toggle('on', !!S.polyCut);
@@ -1462,6 +1505,7 @@ function bindPanel() {
   const pan = $('inp-panels');
   pan.addEventListener('input', () => { design().panels = Number(pan.value); requestBuild(true); });
   pan.addEventListener('change', () => requestBuild(false));
+  bindShellPanel();
   const selPart = $('sel-part');
   for (const k of HD_PART_IDS) selPart.add(new Option(`część: ${HD_PARTS[k].label}`, k));
   selPart.addEventListener('change', () => { S.partId = selPart.value; S.tool = 'part'; syncPanel(); });
