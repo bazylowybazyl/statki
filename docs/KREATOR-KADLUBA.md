@@ -782,6 +782,36 @@ Wpięty jest B (`src/game/hullDesign/warships/hyperion.js`, klucz `hyperion`, gr
 i myśliwce wylatują bokiem), luk dziobowy na fregatę zwiadu, 5 gondol MAIN, 4 dysze SIDE, mostek v 2 VI na nadbudówce,
 rdzeń v 2 przed nią. Zrzuty z kompozytora: 0 pipeline'ów synchronicznych, 0 błędów strony.
 
+## Układ maszynowni „jak płytka drukowana” (2026-11-14)
+
+Temat 1 generatora kadłubów: podstawa (odsłonięta maszynownia) jako układ — szyny równoległe do ścian rowu, kręgosłup
+na osi, kwartały w klasach wielkości, dzielnice, ulice i ścieżki — zamiast komórek 18 jd z hasza. Propozycja i makieta
+CPU: `docs/PROPOZYCJA-kreator-plytka.md`; generator `src/game/hullDesign/hullDesignBoard.js`; zasady w regule
+`kreator-kadlubow` § „Układ maszynowni”. Ocena makiet przez użytkownika i odczytanie orkiestratora — reguła,
+„Decyzje użytkownika” (2026-11-14).
+
+Pomiary prototypu w kompozytorze (`node scripts/webgpu/kreator-plytka-ab.mjs`, headless Chrome, takt monitora; „dziś” —
+ten sam projekt z `board.variant = 'off'`; budowy na zimno, `S.timing.total` = worker + kompozytor + odczyt + ciało):
+
+| okręt | dziś | układ A | etap UKŁAD (worker) | tekstury układu |
+|---|---|---|---|---|
+| drednot | 2 972 ms | 2 745 ms (bez świecenia 2 874) | 316 ms | 23,3 MB |
+| drednot, otwarty rów (wariant skryptu) | 2 613 ms | 2 865 ms (2 776) | 354–604 ms | 23,3 MB |
+| Colossus | 388 ms | 416 ms | 84 ms | 2,1 MB |
+| Citadella | 291 ms | 365 ms | 73 ms | 2,0 MB |
+| Bellator | 408 ms | 492 ms | 98 ms | 3,0 MB |
+
+Pipeline'y synchroniczne w klatkach 0, błędy konsoli 0 (30 zrzutów). Rozrzut czasów drednota między przebiegami
+±0,2 s — „dziś” i „układ” mieszczą się w nim; cel ≤ ~3,3 s spełniony. Tekstury układu: siatka pół-kadłuba 1,5 jd
+(drednot 3 559 × 850: `boardA` + `boardB` RGBA8 po 12 MB, tabela elementów RGBA32F < 0,3 MB) — dla porównania
+tekstury sieci drednota ~81 MB.
+
+Budowa grafu kompozytora w Node (NodeBuilder, minimum z 3; pułapka 40): geo / base / emis 589 / 586 / 577 ms przed,
+625 / 650 / 608 ms z układem (razem 1,78 → 1,91 s, +7%); WGSL passów +7%.
+
+Generator w Node (`node scripts/kreator-plytka-makieta.mjs --pomiar`, CPU, minimum z 7; makieta, przed poprawkami
+dzielnic): drednot 250–330 ms, Colossus / Citadella / Bellator ≤ 31 ms (krok zegara CPU Windows ~15,6 ms).
+
 ## Demo — narzędzia
 
 **Stocznia** (domyślny interfejs, `dema/kreator-kadluba-stocznia.js`; prośba użytkownika 2026-10-21: „jak generator
