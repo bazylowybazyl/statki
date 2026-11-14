@@ -49,8 +49,8 @@ export const HD_TOWER_TUNE = Object.freeze({
   minSide: 1.5,       // najmniejsza pół-szerokość bryły
   minH: 1.2,          // najniższa bryła
   windowFill: 0.2,    // udział zapalonych okien (× gęstość świateł) — w grupach
-  seamFill: 0.3,      // udział zapalonych miejsc w szczelinach
-  baseFill: 0.07,     // udział zapalonych lamp u podstawy (z góry widać tylko je i szczeliny — oszczędnie)
+  seamFill: 0.26,     // udział zapalonych miejsc w szczelinach
+  baseFill: 0.05,     // udział zapalonych lamp u podstawy (z góry widać tylko je i szczeliny — oszczędnie)
   maxLights: 900      // na budynek
 });
 
@@ -487,8 +487,10 @@ function famHall(B, r) {
   const [qu, qv] = B.spec.axis === 'x' ? [q.hw, q.hh] : [q.hh, q.hw];
   const eave = B.box(0, 0, qu - 1.2, qv - 1.2, base.z1, base.z1 + 1.6, { mat: HD_TOWER_MAT.recess, ch: tnCh(qu, qv, 0.06), minH: 1 });
   if (eave) B.lightRow(eave, eave.z0 + 0.8, HD_TOWER_LIGHT.seam, { fill: 0.6, pitch: 2.6, up: 0.4 });
+  // dach: niski płaski hangar z pochylonymi bokami (nie dwuspad — z góry nie ma wyglądać jak dom)
   const zr = base.z1 + 1.6;
-  const roof = B.box(0, 0, qu - 0.6, qv - 0.6, zr, z0 + H, { mat: HD_TOWER_MAT.hall, ch: tnCh(qu, qv, 0.05), bat: Math.max(0, Math.min(qv, qu) - 2.2) * r.range(0.82, 0.96), tone: 0.92 });
+  const roofTop = Math.min(z0 + H, zr + Math.max(2.5, Math.min(qu, qv) * 0.35));
+  const roof = B.box(0, 0, qu - 0.6, qv - 0.6, zr, roofTop, { mat: HD_TOWER_MAT.hall, ch: tnCh(qu, qv, 0.05), bat: Math.min(qu, qv) * r.range(0.22, 0.32), tone: 0.92 });
   if (roof) {
     // wywietrzniki na kalenicy
     const nv = Math.max(1, Math.floor(qu / 18));
@@ -573,8 +575,12 @@ export function buildTower(spec) {
     const slim = s.H / (2 * Math.min(s.hw, s.hh));
     fam = slim > 2.2 ? r.pick(['spire', 'stepped']) : aspect > 1.8 && s.H > 30 ? r.pick(['twin', 'slab', 'hall']) : s.H < 16 ? r.pick(['slab', 'hall', 'wedge']) : r.pick(['slab', 'stepped', 'wedge']);
   }
-  // rodziny wymagające proporcji: bliźniaki — dłuższy bok ≥ 1,5 krótszego
+  // rodziny wymagające proporcji: bliźniaki — dłuższy bok ≥ 1,5 krótszego; klin i hala — nie smukłe (inaczej pagoda
+  // albo stodoła), wtedy wieża z uskokami / płyta-blok
+  const mside = 2 * Math.min(s.hw, s.hh);
   if (fam === 'twin' && Math.max(s.hw, s.hh) < 1.5 * Math.min(s.hw, s.hh)) fam = 'stepped';
+  if (fam === 'wedge' && s.H > 1.6 * mside) fam = 'stepped';
+  if (fam === 'hall' && s.H > 0.9 * mside) fam = 'slab';
   const B = builder(s);
   FAMILY_FN[fam](B, r);
   // światła wewnątrz innej bryły budynku (zasłonięte łącznikiem, płytą obok) — precz; limit na budynek

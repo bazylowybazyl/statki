@@ -641,7 +641,29 @@ export function buildHullCity(field, board, opts = {}) {
   }
   lap('dzialki');
 
-  // ── ZBIÓRKA: bryły, światła (bez zasłoniętych przez cudze bryły), limit ────────────────────────────────────────
+  // ── ZBIÓRKA i MAPA WYSOKOŚCI (wspólne z katalogiem budynków — packHullCity) ───────────────────────────────────
+  const pk = packHullCity(buildings, { maxLights: T.maxLights, hmCell: T.hmCell });
+  const { boxes, lights, height } = pk;
+  const nb = pk.nBoxes, top = pk.top;
+  lap('mapa');
+  stats.ms = Math.round((performance.now() - t0) * 10) / 10;
+  stats.boxes = nb; stats.lights = pk.nLights; stats.buildings = buildings.length; stats.levelRects = levelRects.length;
+  stats.plots = plots.length; stats.dominants = domPicked.size; stats.top = Math.round(top);
+  stats.grid = `${gw}×${gh} (${cg.toFixed(2)} j.)`;
+  return {
+    ok: nb > 0, reason: nb > 0 ? '' : 'brak działek', variant: V, boxes, nBoxes: nb, lights, nLights: pk.nLights, height,
+    bounds: pk.bounds,
+    plazas, buildings: buildings.map((b) => ({ ...b.spec, family: b.tower.family, flags: b.flags, mirror: !!b.mirror, top: b.tower.top })),
+    avenues, streets, stats
+  };
+}
+
+/**
+ * Pakowanie budynków ({ tower: wynik buildTower, flags }) do tablic obrazu: bryły (HD_CITY_BOX_STRIDE), światła
+ * (HD_CITY_LIGHT_STRIDE; bez zasłoniętych przez cudze bryły, ponad `maxLights` — przerzedzone haszem miejsca) i mapa
+ * wysokości (komórka `hmCell`; pochylone ściany jako rampy). Wspólne dla masywu i katalogu budynków (demo).
+ */
+export function packHullCity(buildings, opts = {}) {
   let nb = 0, nl = 0;
   for (const b of buildings) { nb += b.tower.boxes.length; nl += b.tower.lights.length; }
   const boxes = new Float32Array(nb * HD_CITY_BOX_STRIDE);
@@ -654,7 +676,7 @@ export function buildHullCity(field, board, opts = {}) {
       boxes[o + 4] = b.hw; boxes[o + 5] = b.hh; boxes[o + 6] = b.ch; boxes[o + 7] = b.bat;
       boxes[o + 8] = b.mat; boxes[o + 9] = b.tone;
       boxes[o + 10] = towerHash(Math.round(b.x * 4), Math.round(Math.abs(b.y) * 4), Math.round(b.z0 * 4));
-      boxes[o + 11] = bd.flags;
+      boxes[o + 11] = (bd.flags | 0);
       o += HD_CITY_BOX_STRIDE;
     }
   }
@@ -672,7 +694,8 @@ export function buildHullCity(field, board, opts = {}) {
       }
     }
   });
-  const keep = nl > T.maxLights ? T.maxLights / nl : 1;
+  const maxL = opts.maxLights ?? HD_CITY_TUNE.maxLights;
+  const keep = nl > maxL ? maxL / nl : 1;
   const lightsArr = [];
   for (const bd of buildings) {
     for (const l of bd.tower.lights) {
@@ -691,19 +714,18 @@ export function buildHullCity(field, board, opts = {}) {
     lights[o + 7] = l.k + 4 * l.c + 16 * Math.round(clamp(l.i, 0, 1) * 63);
     o += HD_CITY_LIGHT_STRIDE;
   }
-  lap('zbiorka');
 
-  // ── MAPA WYSOKOŚCI (obie burty) ────────────────────────────────────────────────────────────────────────────────
-  let mx0 = Infinity, mx1 = -Infinity, my1 = 0, top = 0;
+  // mapa wysokości
+  let mx0 = Infinity, mx1 = -Infinity, my0 = Infinity, my1 = -Infinity, top = 0;
   for (const b of allBoxes) {
     mx0 = Math.min(mx0, b.x - b.hw); mx1 = Math.max(mx1, b.x + b.hw);
-    my1 = Math.max(my1, Math.abs(b.y) + b.hh); top = Math.max(top, b.z1);
+    my0 = Math.min(my0, b.y - b.hh); my1 = Math.max(my1, b.y + b.hh); top = Math.max(top, b.z1);
   }
   let height = null;
   if (allBoxes.length) {
-    const hc = T.hmCell;
-    const hx0 = Math.floor((mx0 - 4) / hc) * hc, hy0 = -Math.ceil((my1 + 4) / hc) * hc;
-    const hw = Math.ceil((mx1 + 4 - hx0) / hc), hh = Math.ceil(-2 * hy0 / hc);
+    const hc = opts.hmCell ?? HD_CITY_TUNE.hmCell;
+    const hx0 = Math.floor((mx0 - 4) / hc) * hc, hy0 = Math.floor((my0 - 4) / hc) * hc;
+    const hw = Math.ceil((mx1 + 4 - hx0) / hc), hh = Math.ceil((my1 + 4 - hy0) / hc);
     const data = new Float32Array(hw * hh);
     for (const b of allBoxes) {
       const H = b.z1 - b.z0;
@@ -725,16 +747,9 @@ export function buildHullCity(field, board, opts = {}) {
     }
     height = { x0: hx0, y0: hy0, cell: hc, w: hw, h: hh, data, top };
   }
-  lap('mapa');
-  stats.ms = Math.round((performance.now() - t0) * 10) / 10;
-  stats.boxes = nb; stats.lights = lightsArr.length; stats.buildings = buildings.length; stats.levelRects = levelRects.length;
-  stats.plots = plots.length; stats.dominants = domPicked.size; stats.top = Math.round(top);
-  stats.grid = `${gw}×${gh} (${cg.toFixed(2)} j.)`;
   return {
-    ok: nb > 0, reason: nb > 0 ? '' : 'brak działek', variant: V, boxes, nBoxes: nb, lights, nLights: lightsArr.length, height,
-    bounds: allBoxes.length ? { x0: mx0, x1: mx1, y0: -my1, y1: my1, top } : null,
-    plazas, buildings: buildings.map((b) => ({ ...b.spec, family: b.tower.family, flags: b.flags, mirror: !!b.mirror, top: b.tower.top })),
-    avenues, streets, stats
+    boxes, nBoxes: nb, lights, nLights: lightsArr.length, height, top,
+    bounds: allBoxes.length ? { x0: mx0, x1: mx1, y0: my0, y1: my1, top } : null
   };
 }
 

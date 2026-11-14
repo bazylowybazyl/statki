@@ -7,6 +7,7 @@
 //
 // Serwowanie: `npm run dev` → /dema/miasto-3d.html
 //   ?widok=caly|row|blisko|ukos|nisko|rufa   ?wariant=A|B|C   ?ziarno=N   ?row=0 (drednot z pliku, bez otwartego rowu)
+//   ?katalog=1 — KATALOG BUDYNKÓW: wszystkie rodziny generatora wieżowców w czterech wielkościach na jasnej płycie
 //   ?clean=1 (bez panelu)   ?test=1 (klatki z __miasto.runFrames — scripts/webgpu/miasto-3d-zrzuty.mjs)
 import * as THREE from 'three/webgpu';
 import { Core3D } from '../src/3d/core3d.js';
@@ -21,7 +22,8 @@ import { SimClock } from '../src/game/simClock.js';
 import { hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { createHullDesignBuildClient } from '../src/game/hullDesign/hullDesignBuildClient.js';
 import { isBridgeSocket } from '../src/game/hullDesign/hullDesignSchema.js';
-import { HD_CITY_VARIANTS } from '../src/game/hullDesign/hullDesignCity.js';
+import { HD_CITY_VARIANTS, packHullCity } from '../src/game/hullDesign/hullDesignCity.js';
+import { buildTower } from '../src/game/hullDesign/hullDesignTowers.js';
 import { bridgeLevel } from '../src/data/bridgeLevels.js';
 import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
@@ -31,6 +33,7 @@ import { createBackdrop } from './rdzen-webgpu/tlo.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
+const KATALOG = params.get('katalog') === '1';
 if (params.get('clean') === '1') document.body.classList.add('clean');
 const $ = (id) => document.getElementById(id);
 function reportError(text) {
@@ -176,6 +179,8 @@ const bridgeOpts = { nowSec: 0, dt: 1 / 60, zoom: 1, cull: null, camera: null };
 function bridgesInit() {
   Bridge3D.attach(Core3D.scene);
   Core3D.warmup.add({ name: 'mostki 3D (bridge3D)', objects: () => Bridge3D.warmupMeshes(), layer: 0, phase: 'loading' });
+  // okna i lampy mostków leżą na warstwie FG (2) — rozgrzewka kamerą tego passa (inaczej pipeline w klatce przy zbliżeniu)
+  Core3D.warmup.add({ name: 'mostki 3D: okna (FG)', objects: () => Bridge3D.warmupMeshes().filter((m) => m.layers.isEnabled(2)), layer: 2, phase: 'loading' });
 }
 function bridgesAttach(field) {
   const e = ship.entity;
@@ -205,6 +210,7 @@ function cityInit() {
   window.__miasto.city3D = city3D;
 }
 async function buildCity(first = false) {
+  if (KATALOG) { buildCatalog(); return; }
   if (S.building) { S.pendingCity = true; return; }
   S.building = true;
   const id = ++cityReq;
@@ -225,6 +231,54 @@ async function buildCity(first = false) {
     S.cityData = r.city;
   }
   if (S.pendingCity) { S.pendingCity = false; buildCity(false); }
+}
+
+// ---------------------------------------------------------------------------
+// KATALOG BUDYNKÓW (?katalog=1): rodziny generatora wieżowców (wiersze) × cztery wielkości (kolumny) na jasnej płycie
+// (zamiast kadłuba — płyta pisze głębię, więc cień miasta kładzie się na niej jak na pancerzu).
+const CAT_FAMILIES = ['slab', 'stepped', 'twin', 'wedge', 'hall', 'spire'];
+const CAT_LABELS = { slab: 'płyta-blok', stepped: 'wieża z uskokami', twin: 'bliźniacze wieże', wedge: 'klin tarasów', hall: 'hala', spire: 'iglica' };
+const CAT_SIZES = [[18, 12, 28], [30, 20, 58], [48, 30, 105], [24, 24, 170]];
+const CAT_PITCH = [150, 120];
+const catalog = { labels: [], ground: null, w: 0, h: 0 };
+function buildCatalog() {
+  const towers = [];
+  catalog.labels.length = 0;
+  CAT_FAMILIES.forEach((fam, r) => {
+    CAT_SIZES.forEach(([hw, hh, H], c) => {
+      const x = (c - (CAT_SIZES.length - 1) / 2) * CAT_PITCH[0], y = (r - (CAT_FAMILIES.length - 1) / 2) * CAT_PITCH[1];
+      const t = buildTower({ x, y, hw, hh, H, family: fam, seed: S.city.seed * 97 + r * 13 + c, face: [0, 1] });
+      towers.push({ tower: t, flags: 0 });
+      if (c === 0) catalog.labels.push({ x: x - CAT_PITCH[0] * 0.5 + 6, y: y - CAT_PITCH[1] * 0.42, text: CAT_LABELS[fam] });
+    });
+  });
+  catalog.w = CAT_SIZES.length * CAT_PITCH[0];
+  catalog.h = CAT_FAMILIES.length * CAT_PITCH[1];
+  const pk = packHullCity(towers, { hmCell: 1 });
+  city3D.setCity(pk);
+  city3D.setPose(0, 0, 0);
+  S.cityData = pk;
+  S.gen = { ok: true, nBuildings: towers.length, cityMs: 0, boardMs: 0, uploadMs: 0 };
+}
+function catalogGround() {
+  const g = new THREE.PlaneGeometry(catalog.w + 200, catalog.h + 200);
+  const m = new THREE.MeshBasicNodeMaterial({ color: new THREE.Color(0.5, 0.5, 0.49) });
+  m.name = 'miasto-katalog:plyta';
+  const mesh = new THREE.Mesh(g, m);
+  mesh.name = 'miasto-katalog:plyta';
+  mesh.renderOrder = 10;
+  mesh.position.z = -0.05;
+  Core3D.scene.add(mesh);
+  catalog.ground = mesh;
+  Core3D.warmup.add({ name: 'miasto: płyta katalogu', objects: () => [mesh], layer: 0, phase: 'loading' });
+}
+function drawCatalogLabels() {
+  if (!KATALOG || S.view !== 'gra' || document.body.classList.contains('clean') && !S.labels) return;
+  ctx2d.save();
+  ctx2d.font = '600 13px "Segoe UI", system-ui, sans-serif';
+  ctx2d.fillStyle = '#1b2228';
+  for (const l of catalog.labels) ctx2d.fillText(l.text, (l.x - S.cam.x) * S.cam.zoom + W / 2, (l.y - S.cam.y) * S.cam.zoom + H / 2);
+  ctx2d.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +308,13 @@ const VIEWS = {
   nisko: () => { S.view = 'ukos'; S.orbit = { tx: -900, ty: 0, dist: 1500, yaw: Math.PI + 0.22, pitch: 0.2 }; },
   rufa: () => { S.view = 'ukos'; S.orbit = { tx: -1100, ty: 0, dist: 2100, yaw: 0.55, pitch: 0.42 }; }
 };
+const CATALOG_VIEWS = {
+  caly: () => { S.view = 'gra'; S.cam = { x: 0, y: 0, zoom: Math.min(W * 0.94 / catalog.w, H * 0.94 / catalog.h) }; },
+  ukos: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 30, dist: 1050, yaw: -1.95, pitch: 0.5 }; },
+  nisko: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 820, yaw: -1.6, pitch: 0.28 }; }
+};
 function setView(name) {
+  if (KATALOG && typeof name === 'string' && CATALOG_VIEWS[name]) { CATALOG_VIEWS[name](); S.viewName = name; placeSun(); return; }
   if (typeof name === 'object' && name) {
     if (name.orbit) { S.view = 'ukos'; Object.assign(S.orbit, name.orbit); } else { S.view = 'gra'; Object.assign(S.cam, name); }
   } else if (VIEWS[name]) { VIEWS[name](); S.viewName = name; }
@@ -302,6 +362,7 @@ function render() {
   bridgeOpts.nowSec = S.frame * PHYS_DT; bridgeOpts.zoom = cam.zoom; bridgeOpts.cull = cullInfo; bridgeOpts.camera = cam;
   Bridge3D.update(bridgeList, bridgeOpts);
   drawHexShips3D(ctx2d, W, H);
+  drawCatalogLabels();
   if (S.info) updateInfo();
 }
 function updateInfo() {
@@ -433,7 +494,7 @@ window.__miasto = {
   ready: false, error: null, startup: {}, S,
   setView, setCity: async (o) => { Object.assign(S.city, o); await buildCity(); while (S.building || S.pendingCity) await new Promise((r) => setTimeout(r, 30)); return S.gen; },
   setSun(az, elev) { if (az != null) S.sunAz = az; if (elev != null) HULL_CITY3D_TUNE.shadowElevDeg = elev; placeSun(); return true; },
-  toggleCity, toggleLights,
+  toggleCity, toggleLights, showLabels(on) { S.labels = !!on; return true; },
   async runFrames(n = 1) {
     for (let i = 0; i < n; i++) {
       // pułapka 44: rysunek tylko po rAF — symulacja co klatkę, obraz ostatniej
@@ -467,9 +528,15 @@ window.__miasto = {
     await composer.prewarm();
     T.kompozytor = Math.round(performance.now() - T0);
     bindPanel();
-    setView(params.get('widok') || 'caly');
-    await buildShip();
-    await buildCity(true);
+    if (KATALOG) {
+      buildCatalog();
+      catalogGround();
+      setView(params.get('widok') || 'caly');
+    } else {
+      setView(params.get('widok') || 'caly');
+      await buildShip();
+      await buildCity(true);
+    }
     T.miasto = Math.round(performance.now() - T0);
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });
     city3D.afterWarmup();

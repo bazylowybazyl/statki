@@ -107,15 +107,17 @@ function cityLib(ctx) {
     const topK = U.uHmTop.x;
     If(p.z.lessThan(topK), () => {
       const maxT = topK.sub(p.z).div(tanE).toVar();
-      const stepT = max(1.0, maxT.div(CITY_SHADOW_STEPS)).toVar();
-      const t = stepT.mul(jit.mul(0.7).add(0.3)).toVar();
+      // krok rośnie z odległością (~1 j. przy przeszkodzie, ~7,5% drogi dalej): ostry cień u stóp brył bez schodków,
+      // daleki koniec cienia wysokiej wieży — rzadziej, tam półcień i tak jest szeroki
+      const t = jit.mul(0.8).add(0.35).toVar();
       Loop(CITY_SHADOW_STEPS, () => {
         If(t.greaterThan(maxT), () => { Break(); });
         const rayZ = p.z.add(t.mul(tanE));
         const h = height(p.xy.add(dir.mul(t)));
-        lit.assign(min(lit, clamp(rayZ.sub(h).div(U.uShadow.z.mul(t).add(0.8)), 0.0, 1.0)));
+        // półcień proporcjonalny do drogi (stożek): płaski grunt — (t · tg) / (t · k) > 1, zawsze oświetlony
+        lit.assign(min(lit, clamp(rayZ.sub(h).div(t.mul(U.uShadow.z.add(0.12)).add(0.05)), 0.0, 1.0)));
         If(lit.lessThanEqual(0.001), () => { Break(); });
-        t.addAssign(stepT);
+        t.addAssign(max(0.9, t.mul(0.075)).mul(jit.mul(0.3).add(0.85)));
       });
     });
     return lit;

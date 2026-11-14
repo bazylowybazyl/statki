@@ -2,13 +2,16 @@
 // (w takcie monitora — bez setek klatek na sekundę), Vite z tego katalogu.
 //
 //   node scripts/webgpu/miasto-3d-zrzuty.mjs [--out .tmp/kreator/miasto-3d] [--tylko id1,id2] [--w 1600 --h 900]
-//        [--katalog 0] [--pomiar 0]
+//        [--katalog 0|1|tylko] [--pomiar 0]
 //
+// --katalog 1 (domyślnie) — także arkusz KATALOGU WIEŻOWCÓW (?katalog=1: z góry, z ukosa i nisko; arkusz z góry + ukos
+// w jednym PNG), --katalog tylko — sam katalog, --katalog 0 — bez.
 // Wynik: PNG kadrów + raport.json (czasy generatora i wypieku, bryły, światła, pamięć, ms GPU na klatkę w każdym kadrze,
 // pipeline'y synchroniczne — ma być 0, błędy konsoli).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, parseArgs, repo } from './wspolne.mjs';
+import { readPng, writePng } from './png.mjs';
 
 const args = parseArgs();
 const out = resolve(repo, String(args.out || '.tmp/kreator/miasto-3d'));
@@ -32,7 +35,8 @@ const KADRY = [
   { id: 'd-C-ukos', view: 'ukos', city: { variant: 'C' }, opis: 'kompozycja C (skupiska wież), z ukosa' },
   { id: 'd-B-row', view: 'row', city: { variant: 'B' }, opis: 'kompozycja B, rów 3 600 j.' },
   { id: 'd-C-row', view: 'row', city: { variant: 'C' }, opis: 'kompozycja C, rów 3 600 j.' }
-].filter((k) => !only || only.has(k.id) || only.has(k.id.split('-')[0]));
+].filter((k) => !only || only.has(k.id) || only.has(k.id.split('-')[0])).filter(() => String(args.katalog) !== 'tylko');
+const KATALOG = String(args.katalog ?? '1') !== '0' && (!only || only.has('katalog'));
 
 const vite = await startVite(5441);
 const chrome = await startChrome({ width: SW, height: SH, takt: true });
@@ -66,6 +70,65 @@ try {
     console.log('zrzut', k.id, 'GPU', st.gpuMs?.toFixed?.(2), 'sync', st.syncPipes);
   }
   raport.koniec = await ev('JSON.stringify(window.__miasto.stats())').then(JSON.parse);
+  if (String(args.pomiar ?? '1') !== '0' && KADRY.length) {
+    // koszt GPU miasta: ten sam kadr z miastem i bez (średnia z 6 odczytów zegara GPU Core3D, po 10 klatek)
+    await ev('window.__miasto.setCity({"variant":"A"})');
+    await ev('window.__miasto.toggleLights(true)');
+    raport.pomiar = {};
+    for (const view of ['caly', 'row', 'blisko', 'ukos']) {
+      const r = {};
+      for (const on of [true, false]) {
+        await ev(`window.__miasto.toggleCity(${on})`);
+        await ev(`window.__miasto.setView(${JSON.stringify(view)})`);
+        await ev('window.__miasto.runFrames(20)');
+        let sum = 0, n = 0;
+        for (let q = 0; q < 6; q++) {
+          await ev('window.__miasto.runFrames(10)');
+          const g = await ev('window.Core3D.gpuFrameMs || 0');
+          if (g > 0) { sum += g; n++; }
+        }
+        r[on ? 'zMiastem' : 'bezMiasta'] = n ? Math.round(sum / n * 1000) / 1000 : null;
+      }
+      r.miasto = r.zMiastem != null && r.bezMiasta != null ? Math.round((r.zMiastem - r.bezMiasta) * 1000) / 1000 : null;
+      raport.pomiar[view] = r;
+      console.log('pomiar GPU', view, JSON.stringify(r));
+    }
+    await ev('window.__miasto.toggleCity(true)');
+  }
+  if (KATALOG) {
+    // katalog wieżowców: nowa strona w trybie ?katalog=1
+    await cdp.send('Page.navigate', { url: `${vite.base}/dema/miasto-3d.html?test=1&clean=1&katalog=1` });
+    if (!await waitFor(cdp, '!!(window.__miasto && (window.__miasto.ready || window.__miasto.error))', 300000, 500)) throw new Error('katalog nie wstał');
+    await ev('window.__miasto.showLabels(true)');
+    const files = [];
+    for (const [id, view] of [['k1-katalog-z-gory', 'caly'], ['k2-katalog-z-ukosa', 'ukos'], ['k3-katalog-nisko', 'nisko']]) {
+      await ev(`window.__miasto.setView(${JSON.stringify(view)})`);
+      await ev('window.__miasto.runFrames(12)');
+      const file = join(out, `${id}.png`);
+      await screenshotPng(cdp, file);
+      files.push(file);
+      const st = await ev('JSON.stringify(window.__miasto.stats())').then(JSON.parse);
+      raport.kadry[id] = { opis: `katalog wieżowców (${view})`, gpuMs: st.gpuMs, syncPipes: st.syncPipes, city: st.city };
+      console.log('zrzut', id, 'sync', st.syncPipes);
+    }
+    // arkusz: z góry | z ukosa (połowa rozdzielczości każdy)
+    const a = readPng(files[0]), b = readPng(files[1]);
+    const half = (img) => {
+      const w = img.width >> 1, h = img.height >> 1, d = new Uint8Array(w * h * 4);
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) for (let c = 0; c < 4; c++) {
+        const s0 = ((2 * j) * img.width + 2 * i) * 4 + c, s1 = s0 + 4, s2 = s0 + img.width * 4, s3 = s2 + 4;
+        d[(j * w + i) * 4 + c] = (img.data[s0] + img.data[s1] + img.data[s2] + img.data[s3]) >> 2;
+      }
+      return { width: w, height: h, data: d };
+    };
+    const ha = half(a), hb = half(b);
+    const sheet = { width: ha.width + hb.width, height: Math.max(ha.height, hb.height), data: null };
+    sheet.data = new Uint8Array(sheet.width * sheet.height * 4);
+    for (const [img, ox] of [[ha, 0], [hb, ha.width]]) {
+      for (let j = 0; j < img.height; j++) sheet.data.set(img.data.subarray(j * img.width * 4, (j + 1) * img.width * 4), (j * sheet.width + ox) * 4);
+    }
+    writePng(join(out, 'k0-katalog-arkusz.png'), sheet);
+  }
 } catch (e) {
   console.error(e);
   raport.blad = String(e?.stack || e);

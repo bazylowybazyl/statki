@@ -99,9 +99,9 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
   na kadłubie (11), jak bryła mostka.
 - CIEŃ NA KADŁUB: jeden prostokąt pod kadłubem (z = −0,6, GREATER) w obrysie miasta wydłużonym o zasięg cienia, ten sam
   marsz.
-- ŚWIATŁA: partia kwadów zwróconych do kamery (punkt i krótka listwa) w miejscach z generatora, addytywnie, test głębi
-  (zasłania je bryła), HDR oszczędnie (rdzeń tuż nad progiem bloomu, słaba poświata), energia zachowana przy małych
-  rozmiarach na ekranie (z daleka cichy połysk zamiast kropek).
+- ŚWIATŁA: partia kwadów zwróconych do kamery w miejscach z generatora, addytywnie, test głębi (zasłania je bryła),
+  HDR oszczędnie (rdzeń tuż nad progiem bloomu, słaba poświata), energia zachowana przy małych rozmiarach na ekranie
+  (z daleka cichy połysk zamiast kropek).
 - ROZGRZEWKA: wszystkie trzy materiały w `Core3D.warmup` (faza `loading`), 0 pipeline'ów synchronicznych.
 
 ### Wpięcie do gry później (bez przepisywania)
@@ -115,4 +115,152 @@ GPU dostaje jeden graf TSL na rodzaj rysunku i dane w buforach. Tak, żeby wpię
 - Worker renderu: dane miasta (tablice typowane z generatora) idą do workera raz na projekt (rekord strumienia
   rozkazów z buforami przekazywanymi), poza z luster migawki; moduł nie czyta stanu gry.
 
-(Dalsze sekcje — parametry, koszty, otwarte decyzje — dopisywane w trakcie pracy.)
+## 3. Jak działa (stan 2026-11-14)
+
+### Generator wieżowców (`src/game/hullDesign/hullDesignTowers.js`)
+
+- `buildTower({ x, y, hw, hh, H, z0, family, seed, axis, sym, face, lights, tone, zMax })` → `{ family, cls, boxes,
+  lights, top }`. Bryła: graniastosłup ośmiokątny osiowy `{ x, y, hw, hh, z0, z1, ch, bat, mat, tone }` (faza 45°,
+  pochylenie = wcięcie wierzchu). Bryły nie wychodzą poza rzut budynku; `zMax` to twardy sufit (także masztów).
+- Rodziny (`HD_TOWER_FAMILIES`): `slab` płyta-blok (1–3 płyty z uskokami, wnęka-szczelina między płytami, maszyny na
+  dachu), `stepped` wieża z uskokami (cokół, 2–4 segmenty, korona, maszt), `twin` bliźniacze wieże z jednym albo dwoma
+  łącznikami, `wedge` klin tarasów (pochylone fronty schodzące ku ścianie), `hall` hala (niski hangar z pochylonymi
+  bokami i szczeliną przy okapie), `spire` iglica (dominanta: smukły ośmiokąt, kołnierz, maszt), `plate` płyta masywu
+  (tylko dla masywu). Zła proporcja wybiera rodzinę zastępczą (smukły klin → wieża, wysoka hala → płyta, krótkie
+  bliźniaki → wieża).
+- Światła (`HD_TOWER_LIGHT`): `window` rzędy okien w grupach (hasz piętra i grupy), `seam` szczelina u stopy wyższej
+  płyty, `base` podstawa ściany w kanionie, `beacon` czerwona lampa na boku masztu. Każde światło leży 0,45 j. przed
+  płaszczyzną ściany z jej normalną (okno na pionowej ścianie świeci w bok; szczelina i podstawa — z odchyleniem ku
+  górze), w pasie wysokości ściany poniżej górnej krawędzi; zasłonięte inną bryłą odpadają. Test pilnuje „na ścianie,
+  nigdy na dachu”.
+- Budynek na osi (`sym`) wychodzi w lustrze y: wybory po stronie ±y wspólne, klucze hasza świateł całkowite i liczone
+  od osi, zaokrąglenie w lustrze. Budynki burt masyw odbija (`mirrorTower`).
+
+### Masyw (`src/game/hullDesign/hullDesignCity.js`)
+
+- `buildHullCity(pole, płytka, { variant, seed, density, height, lights })` → tablice typowane (bryła 12 floatów,
+  światło 8), mapa wysokości obu burt, obrys, place, opis budynków, czasy etapów. `packHullCity(budynki)` — wspólne
+  pakowanie (masyw i katalog w demie), `hullCityHeightAt` — wysokość w punkcie.
+- Kolejno: siatka miasta na pół-kadłubie (komórka 2,6 · detal; drednot 3,9 j.) w pudle szerokiej części dziedziny
+  płytki → maski: rów (rama bez płyt) połączony z osią przejściami ≥ 0,35 · wMin, dziedzina płytki (bez wiązek, modułów,
+  kanałów) → odległości od ściany rowu `Dw` i od przeszkód `Do` → place (moduł + luz: rdzeń 48, mostek 34, projektor
+  i generator 30, inne 22 j.; pierścień wyższej zabudowy wokół rdzeni) i sufit (stożek ostrzału każdego gniazda broni:
+  wierzch wieży + 0,36 · odległość od brzegu wieży z luzem 12 j.; rampa mostka: 34 j. + 0,45 · odległość) → szerokość
+  przekroju `Wc(x)` i wysokość `Hs(x)` (0 poniżej `wMin` 70 j., pełna 190 j. przy `wRef` 460 j.) → GRZBIET tylko tam,
+  gdzie oś rowu jest otwarta (okno ±150 j., odcinek ≥ 900 j.) → aleje (co 440–700 j., 26 j.) i ulice (co 100–200 j.,
+  7 j.) → poziomy zigguratu (maska r = Dw / Wc ≥ próg poziomu, odsunięcie od brzegu poziomu niżej, zachłanne prostokąty
+  w odcinkach, wysokości wspólne w odcinku między alejami, front pochylony — `levelBat`) → działki tarasów i szczytu
+  (prostokąty dzielone wzdłuż osi na budynki z przerwą 1,2 j. — ciągła ściana, nie osobne domy) → dominanty w rytmie
+  `dom.pitch` na działkach szczytu przy osi → pakowanie (światła zasłonięte cudzymi bryłami odpadają; ponad 64 000 —
+  przerzedzone haszem miejsca) → mapa wysokości (2 j./komórkę, pochylone ściany jako rampy).
+- Warianty (`HD_CITY_VARIANTS`): A „grzbiet z dominantami” (3 poziomy, gęsty szczyt, dominanty co ~620 j.; domyślny),
+  B „tarasy” (5 niższych poziomów, mało wież), C „skupiska wież” (niski cokół, las wież, dominanty co ~380 j.).
+- Degradacja: Bellator, Citadella, Colossus i drednot z pliku (oś zakryta pokładem-klinem) — 0 brył (test).
+
+### Obraz (`src/3d/hullCity3D/`) i demo
+
+- `createHullCity3D({ scene })` → `setCity(miasto)`, `setPose(x, y, kąt)`, `setSun(x, y)`, `update(widoczność)`,
+  `warmupMeshes()`, `afterWarmup()`, `dispose()`, `stats`. Strojenie `HULL_CITY3D_TUNE`, pojemność mapy wysokości
+  `HULL_CITY3D_LIMITS` (2048 × 1024 r16f — większa mapa zmniejszana maksimum z komórek).
+- Światło: kierunek jak kadłub (słońce, z = 600 — niemal poziomo): ściany od słońca — rozproszone 1,18; dachy —
+  otoczenie × `roofLight` (ściany ½), ton dachu z wysokością (niskie tarasy ciemniej, grzbiet jaśniej — z góry forma
+  masywu), jasna faza krawędzi dachu (0,9 j.), AO kanionów (8 próbek mapy), cień rzucany: marsz 48 kroków od ~1 j.
+  rosnących o 7,5% drogi, półcień proporcjonalny do drogi, rozrzut startu w komórkach ~1 px (jak mostek). Okna: pasy
+  szyb co piętro (4 j.), rzadkie tlące się okna pod progiem bloomu; jasne punkty to osobne światła.
+- Światła z góry (kamera ortho): okna pionowych ścian gasną z kątem patrzenia, szczeliny i podstawy przygaszone
+  (`lightsTop` 0,22) — z góry miasto ma być ciemne; z ukosa świecą ściany.
+- Pułapka (r183): próbki tekstury w grafie to KLONY węzła (`.sample(uv)`) z wartością z chwili budowy — podmiana
+  `węzeł.value` do nich nie dochodzi, a zwykłej tekstury three nie przebuduje w miejscu na inny rozmiar. Dlatego mapa
+  wysokości to jedna tekstura o stałej pojemności, a nowe miasto pisze w nią dane.
+- Demo `dema/miasto-3d.html` (+ `.js`, worker `miasto-3d.worker.js`): drednot z otwartym rowem (w demie zdjęte płyty
+  grzbietu jak w makiecie płytki — plik drednota bez zmian; `?row=0` — drednot z pliku) z kompozytora kreatora na skórze
+  gry, mostki i reaktory gry w gniazdach, miasto z workera. Widoki 1–6 (z góry jak w grze: cały okręt, rów 3 600 j.,
+  1 200 j.; z ukosa: jak kadr odniesienia, nisko wzdłuż grzbietu, od dziobu; przeciąganie — orbita), suwaki:
+  kompozycja, ziarno, gęstość, wysokość, światła, słońce (azymut), cień (wysokość słońca cieni); M — miasto, L —
+  światła, I — liczby. `?katalog=1` — katalog wieżowców (rodziny × 4 wielkości na jasnej płycie).
+
+## 4. Koszty (drednot z otwartym rowem, wariant A, 2026-11-14; kadr 1 600 × 900)
+
+| Pozycja | Wartość |
+|---|---|
+| Budynki / bryły / światła | 1 157 / 2 843 / ~62 700 |
+| Trójkąty | bryły ~80 tys. (28 na bryłę), światła ~125 tys. (2 na kwad) |
+| Rysunki | 3 na miasto (bryły, cień, światła) — jeden pipeline na rodzaj |
+| Pamięć GPU | ~6,5 MB: mapa wysokości 4 MB (stała), światła ~2 MB (pojemność 65 536 × 32 B), bryły ~0,2 MB |
+| Generator (worker) | płytka 0,3–0,5 s (raz na kadłub) + masyw 0,43–0,65 s (siatka 1 334 × 315); wysyłka na GPU ~25–30 ms |
+| GPU na klatkę (z miastem − bez) | cały okręt +0,16 ms, rów 3 600 j. +0,37 ms, 1 200 j. +0,35 ms, z ukosa +0,23 ms |
+| Pipeline'y synchroniczne | 0 w każdym kadrze (rozgrzewka: bryły, cień, światła; okna mostków kamerą FG) |
+
+Koszt GPU rośnie z liczbą pikseli miasta (marsz cienia na każdym pikselu brył i cienia na kadłubie): przy 5 120 × 1 440
+(~5× pikseli) szacunkowo do ~1,5 ms w zbliżeniu — do zmierzenia w grze (PerfHUD, `Core3D.gpuFrameMs`). Tańsza droga,
+gdyby trzeba: mapa „wysokości oświetlenia” liczona compute raz na zmianę kierunku słońca w układzie okrętu (krok
+`Core3D.addFxStep`) — wtedy cień to jedna próbka zamiast marszu.
+
+## 5. Odstępstwa od kadru odniesienia i dlaczego
+
+- Z GÓRY nie ma perspektywy ani ścian (kamera gry ortho) — kadr odniesienia jest ukośny. Z góry wysokość niosą: cień
+  rzucany (na dachy niższych i na pancerz przy ścianie rowu), ton dachu z wysokością (umowny: wyższe jaśniej), jasna
+  faza krawędzi od słońca i POCHYLONE fronty poziomów (glacis cokołu 0,55 wysokości) — w kadrze odniesienia ściany są
+  pionowe. Z ukosa pochylenie frontów czyta się jak skośne płyty tarasów.
+- Cień „długi na kadłub” jest krótszy niż w kadrze odniesienia: masyw schodzi tarasami do ściany rowu (sufit stożków
+  ostrzału wież L przy ścianach rowu), a słońce cieni stoi na 26° (mostek — 30°). Suwak „Cień” w demie pokazuje dłuższe
+  cienie przy niższym słońcu.
+- Miasto jest w lustrze osi (okręt i sieć są w lustrze) — kadr odniesienia nie jest symetryczny.
+- Gęstość świateł ograniczona (uwaga o płytce „świecenie za jasne”): z ukosa okna w skupiskach, z góry przygaszone;
+  w kadrze odniesienia świateł jest więcej i są jaśniejsze — suwak „Światła” do 2,5×.
+- Dachy płaskie z drobną maszynerią; detal ścian (pasy okien) z bliska — bez modeli z Blendera.
+
+## 6. Wpięcie (do zrobienia, nie w tej pracy)
+
+### Do kreatora
+
+- Pole projektu `city: { variant: 'A' | 'B' | 'C' | 'off', seed, density, height }` w `normalizeHullDesign`
+  (domyślnie 'off'; projekt NPC drednota — 'A'), etap MIASTO po UKŁADZIE w `hullDesignBuild.js` (klucz = klucz układu +
+  pole `city`), wynik (tablice) z workera budowy bez kopii; w demie kreatora przycisk „Miasto” i wpis `Core3D.warmup`
+  jak mostek. Kompozytor NIE rysuje miasta (płaski obraz zostaje płytką pod miastem).
+- Przy przeciąganiu (`fast`) miasto z pamięci (jak `boardStale`), nie liczone na polu połowy rozdzielczości.
+
+### Do gry
+
+- Poza: `setPose` z pozy renderu kadłuba (strona `bridgeRenderPose`, worker `playerPoseOf`); układ projektu → świat
+  przez ramę kadłuba z projektu (środek obrazu, skala 1), obrót kadłuba w macierzy grupy.
+- Wiele okrętów: jeden `createHullCity3D` na okręt (3 rysunki, wspólne pipeline'y) albo partia z buforem póz (wzór
+  `turretBatch3D` / mostki) przy kilku drednotach w kadrze; mapa wysokości per okręt — warstwa tablicy tekstur
+  (`Core3D.uploadTextureLayer`).
+- Maskowanie i „Statki 3D”: `update(widoczność)` z `bridgeModelVisibility` × `entityCloakVisAt` (próg chowa grupę);
+  mgła wojny — tylko okręty z listy widocznych.
+- Zasilanie: jasność świateł z `shipPowerLook` — bez prądu ciemne miasto, czerwone lampy (`beacon`).
+- Zniszczenia: bryła stoi na komórkach siatki belek — maska martwych komórek pod bryłami przy śmierci węzła (jak blok
+  obrażeń mostka), flaga w `iC.w` chowa / osmala bryłę; wyrwa w mapie wysokości — przeliczenie wycinka. Rozpad miasta
+  z silnikiem belek (bryły jako ciała) — osobny temat.
+- Worker renderu: tablice miasta raz na kadłub rekordem strumienia rozkazów (bufory przekazywane), poza z luster
+  migawki; moduł nie czyta `window` / DOM / stanu gry (test).
+- Rozgrzewka: wpis `miasto 3D (hullCity3D)` (bryły, cień, światła) w fazie `loading`, strona i worker.
+- Słońce cieni: wspólne strojenie z mostkiem (`shadowElevDeg`) — dziś miasto 26°, mostek 30°.
+
+## 7. Otwarte decyzje (pytania do użytkownika, z rekomendacją)
+
+1. Która kompozycja domyślna: A (grzbiet z dominantami), B (tarasy, niższe) czy C (las wież)? — Rekomendacja: A dla
+   drednota TN; C jako wariant „miasto-stolica” dla okrętów fabularnych.
+2. Czy z góry (kamera gry) światła mają być widoczne? Dziś: przygaszone szczeliny i podstawy (drobne niebieskie punkty
+   w kanionach), okna tylko z ukosa. — Rekomendacja: zostawić przygaszone; zgasić z góry, jeśli kropki przeszkadzają
+   w czytaniu okrętu.
+3. Długość cienia (wysokość słońca cieni): 26° (dłuższy, wyraźniejszy grzbiet) czy 30° jak mostek? — Rekomendacja:
+   jedna wartość dla mostka i miasta, 26°.
+4. Wysokość miasta względem mostka głównego (VI, ~32 j.): rampa wokół mostka trzyma zabudowę nisko, grzbiet sięga
+   ~200 j., dominanty do ~300 j. — Rekomendacja: zostawić — mostek czytelny na placu, miasto wyższe.
+5. Pochylone fronty poziomów (glacis) — czytelność z góry kosztem podobieństwa do pionowych ścian kadru odniesienia. —
+   Rekomendacja: zostawić (bez nich masyw z góry był „ciemną fakturą”).
+6. Miasto tylko na otwartym rowie osi (przebudowa drednota w innej sesji), czy także w szerokich rowach bocznych? —
+   Rekomendacja: tylko oś (dziś tak; boczne rowy zostają maszynownią).
+7. Zniszczenia miasta: chować bryły nad wyrwą (prosto, tanio) czy rozpad brył jako odłamy? — Rekomendacja: najpierw
+   chowanie / osmalenie, rozpad później.
+
+## 8. Jak sprawdzić
+
+- Demo: `npm run dev` → `http://localhost:5173/dema/miasto-3d.html` (po scaleniu do main; w worktree — port jego serwera
+  dev), katalog wieżowców: `…/dema/miasto-3d.html?katalog=1`.
+- Zrzuty i pomiar: `node scripts/webgpu/miasto-3d-zrzuty.mjs --out .tmp/kreator/miasto-3d [--tylko id,…] [--katalog
+  0|1|tylko] [--pomiar 0]` (raport.json: czasy, bryły, światła, ms GPU z miastem i bez, pipeline'y sync, błędy).
+- Testy: `node --test tests/hullDesignTowers.test.mjs tests/hullDesignCity.test.mjs tests/hullDesignCity3D.test.mjs`
+  (w zestawie `node --test "tests/hullDesign*.test.mjs"`).

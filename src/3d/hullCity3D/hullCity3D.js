@@ -26,19 +26,19 @@ export const HULL_CITY3D_TUNE = {
   ambient: 0.38,         // otoczenie (kadłub: 0,24 + poduszkowa normalna)
   diffuse: 1.18,         // = SHIP_LIGHT_DEFAULTS.dayDiffuseMul
   specular: 0.3,
-  roofLight: 2.2,        // otoczenie dachów × (ściany × 0,5) — dachy ciemnoszare, ściany ciemne
+  roofLight: 1.7,        // otoczenie dachów × (ściany × 0,5) — dachy ciemnoszare, ściany ciemne
   sunZ: 600,             // wysokość słońca nad płaszczyzną jak w kadłubie (słońce ~60 000 j. dalej — niemal poziome)
   shadowElevDeg: 26,     // „słońce cieni” (mostek: 30°) — długość cienia = wysokość / tg
   shadowStrength: 0.62,  // przyciemnienie kadłuba w pełnym cieniu miasta
   shadowSoft: 0.05,      // półcień rośnie z odległością
   selfShadowAmbient: 0.6,
   brightness: 1,         // jasność masywu
-  heightTone: 0.6,       // jaśniejsze wyższe dachy (z góry: grzbiet jaśniejszy od tarasów)
+  heightTone: 0.5,       // jaśniejsze wyższe dachy (z góry: grzbiet jaśniejszy od tarasów)
   windowGlow: 0.05,      // udział tlących się okien na ścianach
   lights: 1,             // jasność świateł (0 — zgaszone)
   lightMinPx: 1.4,       // poniżej — światło słabnie zamiast maleć
   halo: 0.55,            // zasięg poświaty
-  lightsTop: 0.32,        // z góry (ortho): siła świateł szczelin i podstaw (okna na pionowych ścianach i tak gasną)
+  lightsTop: 0.22,        // z góry (ortho): siła świateł szczelin i podstaw (okna na pionowych ścianach i tak gasną)
   receiverZ: -0.6
 };
 
