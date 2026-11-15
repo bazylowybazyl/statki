@@ -26,7 +26,7 @@ export function lin(hex, k = 1) {
 // opór ruchu własnego [1/s], barwy żaru (gorący → chłodny) i czas stygnięcia,
 // turbulencja [j./s], wykładnik zaniku gęstości. Emisja w paśmie ciała —
 // świeci tylko świeży gaz przy dyszy.
-export const SMOKE_KIND = Object.freeze({ EXHAUST: 0, FAST: 1, CHEM: 2, SOOT: 3, VAPOR: 4, DEBRIS: 5 });
+export const SMOKE_KIND = Object.freeze({ EXHAUST: 0, FAST: 1, CHEM: 2, SOOT: 3, VAPOR: 4, DEBRIS: 5, BOOST: 6, SPRINT: 7 });
 
 export const SMOKE_PALETTES = [
   // 0 — spaliny rakiety manewrującej: jasnoszary dym, pomarańczowy żar.
@@ -40,7 +40,11 @@ export const SMOKE_PALETTES = [
   // 4 — zimny gaz wyrzutu (VLS): biała para, szybko rzednie.
   { albedo: lin('#e4ecf2', 0.95), drag: 4.0, hot: [0, 0, 0], warm: [0, 0, 0], tempTau: 0.1, turb: 36, turbScale: 140, fadeTau: 0.9, stretch: 0.2 },
   // 5 — dym płonących odłamków: szary z ciepłym żarem, cienki.
-  { albedo: lin('#8a827a', 0.9), drag: 1.2, hot: [3.0, 1.5, 0.5], warm: [1.0, 0.28, 0.06], tempTau: 0.1, turb: 50, turbScale: 200, fadeTau: 1.8, stretch: 0.5 }
+  { albedo: lin('#8a827a', 0.9), drag: 1.2, hot: [3.0, 1.5, 0.5], warm: [1.0, 0.28, 0.06], tempTau: 0.1, turb: 50, turbScale: 200, fadeTau: 1.8, stretch: 0.5 },
+  // 6 — człon startowy „Niszczyciela”: gęsty, jasny dym paliwa stałego, długo wisi, mocny żar przy dyszy.
+  { albedo: lin('#d9d5cf', 0.95), drag: 2.2, hot: [3.4, 2.0, 0.9], warm: [1.2, 0.36, 0.08], tempTau: 0.14, turb: 64, turbScale: 260, fadeTau: 3.6, stretch: 1.1 },
+  // 7 — człon sprintu „Niszczyciela”: cienka blada smuga z błękitnym żarem, szybko znika.
+  { albedo: lin('#dfe8f2', 0.9), drag: 3.4, hot: [1.5, 2.5, 3.6], warm: [0.22, 0.55, 1.3], tempTau: 0.1, turb: 40, turbScale: 170, fadeTau: 1.4, stretch: 1.8 }
 ];
 
 /**
@@ -75,6 +79,26 @@ export const MISSILE_VFX = Object.freeze({
     light: { color: [1.0, 0.3, 0.95], intensity: 0.6, range: 560 },
     trail: { kind: SMOKE_KIND.CHEM, spacing: 5.5, size0: 4.2, growth: 40, lives: [0.36, 2.6, 7.0], opacity: 0.36, temp: 1.0, exhaust: 1.03 },
     blast: { style: 'supernova', radius: 420, sparks: 1400, fragments: 0, smoke: 0, flash: 3.0, shock: 3.0 }
+  }),
+  // NISZCZYCIEL — jedna ciężka rakieta (karta broni: weaponsDemo.js). Dwa człony: startowy (gruby płomień
+  // z dyskami Macha, gęsty dym paliwa stałego) i sprintu (błękitna lanca, cienka smuga — `plume2`, `light2`,
+  // `trail2`; dysza penetratora `tail2` długości kadłubka za jego środkiem). `heavy` — ciężki wyrzut i zapłon,
+  // `gameFlight` — lot z gry (zawis, przechył, wysokość). Wybuch `heavy`: przebicie kadłuba i kula ognia
+  // z gazu na siatce 3D (gasBlast.js); radius — promień kuli ognia [j.].
+  niszczyciel: Object.freeze({
+    weaponId: 'niszczyciel_missile',
+    label: 'Niszczyciel',
+    heavy: true,
+    gameFlight: true,
+    body: { hull: lin('#8d949e'), band: lin('#ff4a1c'), glow: [2.4, 1.2, 0.5], tail2: 0.1 },
+    // gain — jasność ciała płomienia (duża struga: mniej, żeby z bliska nie zlewała się w białą plamę).
+    plume: { kind: 0, len: 3.6, width: 0.55, gain: 0.5, core: [10, 8.2, 5.4], hot: lin('#ffe0b0', 1.0), mid: lin('#ff7a22', 0.95), tail: lin('#b8380e', 0.55) },
+    plume2: { kind: 1, len: 5.6, width: 0.36, gain: 0.6, core: [9, 10.5, 13], hot: lin('#d6e8ff', 1.0), mid: lin('#4f9dff', 0.9), tail: lin('#2a4fd0', 0.5) },
+    light: { color: [1.0, 0.56, 0.24], intensity: 1.2, range: 950 },
+    light2: { color: [0.55, 0.78, 1.0], intensity: 2.4, range: 1200 },
+    trail: { kind: SMOKE_KIND.BOOST, spacing: 4.2, size0: 3.6, growth: 40, lives: [0.42, 3.2, 9.0], opacity: 0.4, temp: 1.1, exhaust: 1.04 },
+    trail2: { kind: SMOKE_KIND.SPRINT, spacing: 9.0, size0: 2.2, growth: 22, lives: [0.26, 1.1, 2.6], opacity: 0.22, temp: 1.0, exhaust: 1.02 },
+    blast: { style: 'heavy', radius: 300, sparks: 900, fragments: 16, smoke: 30, flash: 2.2, shock: 2.6 }
   })
 });
 

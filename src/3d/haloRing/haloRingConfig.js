@@ -323,6 +323,45 @@ export function haloTransitAngles() {
   return Array.from({ length: T.count }, (_, i) => wrap(HALO_STATION_ANGLE + T.phase + i * HALO_TAU / T.count));
 }
 
+// MIEJSCA PODŁOGI SPOZA SZABLONU KOMPLEKSÓW (opcja ringu `floorSites`, 2026-11-13 — demo dzielnic ringu:
+// strefa przemysłowa pod infrastrukturą i stopami pylonów). Gra jej nie podaje: bez opcji ring jest bit w bit jak
+// wcześniej (gałąź w wypieku dopinana tylko z opcją). Wpis: { theta0, theta1 } — łuk w kątach lokalnych ringu
+// (three, przed obrotem grupy; theta1 w kierunku rosnącego kąta, może przejść przez 0), zMin / zMax — pas w poprzek
+// podłogi (z świata), zoneInd / zoneRes — zasięg pasa fabrycznego i osad od pasa (jak miejsca portu), pad — płaska
+// płyta bez zabudowy na samym pasie (domyślnie nie), shield — teren niski od pasa do górnej ściany (domyślnie tak).
+export const HALO_FLOOR_SITES_MAX = 8;
+export function haloNormalizeFloorSites(list, floorMid) {
+  if (!Array.isArray(list) || !list.length) return [];
+  const R = Math.max(1, Number(floorMid) || 42252);
+  const wrap = (a) => ((a % HALO_TAU) + HALO_TAU) % HALO_TAU;
+  const out = [];
+  for (const f of list.slice(0, HALO_FLOOR_SITES_MAX)) {
+    const t0 = Number(f?.theta0);
+    const t1 = Number(f?.theta1);
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) continue;
+    let span = t1 - t0;
+    span -= HALO_TAU * Math.floor(span / HALO_TAU);
+    if (!(span > 0)) continue;
+    out.push(Object.freeze({
+      kind: 'floor',
+      index: out.length,
+      theta: wrap(t0 + span / 2),
+      halfS: (span / 2) * R,
+      zMin: Number.isFinite(Number(f.zMin)) ? Number(f.zMin) : -300,
+      zMax: Number.isFinite(Number(f.zMax)) ? Number(f.zMax) : 300,
+      zoneInd: Math.max(0, Number(f.zoneInd) || 0),
+      zoneRes: Math.max(0, Number(f.zoneRes) || 0),
+      pad: f.pad ? 1 : 0,
+      shield: f.shield === false ? 0 : 1
+    }));
+  }
+  return out;
+}
+// Miejsca podłogi z układu ringu (layout.floorSites — znormalizowane; [] bez opcji).
+export function haloFloorSites(layout) {
+  return layout?.floorSites || [];
+}
+
 // Kąty środków kompleksów portowych (hala K-7 w środku; pierwszy przy kącie stacji).
 export function haloPortComplexAngles() {
   const wrap = (a) => ((a % HALO_TAU) + HALO_TAU) % HALO_TAU;

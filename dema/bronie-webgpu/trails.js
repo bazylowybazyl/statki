@@ -189,7 +189,13 @@ export class TrailSystem {
     return h;
   }
 
-  /** Przesuwa smugę do (x, y) — emisja segmentów po drodze (czas w oknie klatki). */
+  /**
+   * Przesuwa smugę do (x, y) — emisja segmentów po drodze. Jak w grze (src/3d/weapons/trails.js): wszystko od
+   * OSTATNIEGO ZAPISANEGO węzła (pozycja, czas, droga wzoru) — następny węzeł co `spacing` j. od niego, czas
+   * liniowo od jego czasu do końca klatki (t1), droga = jego droga + d / pathUnit. Dawniej start `spacing − acc`
+   * i droga od pozy z poprzedniej klatki mieszały dwa układy: odstępy 2–36 j. i skok drogi na złączu każdej
+   * klatki — smuga rozpadała się na skośne kreski. t0 — nieużywany (zgodność wywołań).
+   */
   advance(h, x, y, t0, t1) {
     if (!h || !h.active) return;
     const sx = h.lx; const sy = h.ly;
@@ -197,23 +203,23 @@ export class TrailSystem {
     if (seg < 1e-6) return;
     const dx = (x - sx) / seg; const dy = (y - sy) / seg;
     h.dx = dx; h.dy = dy;
-    let d = h.spacing - h.acc;
-    let px = sx; let py = sy; let pt = h.lt; let ppath = h.path;
+    const ts = h.lt;
+    let d = h.spacing;
+    let px = sx; let py = sy; let pt = ts; let ppath = h.lpath;
+    const basePath = h.lpath;
     while (d <= seg) {
       const f = d / seg;
       const nx = sx + (x - sx) * f;
       const ny = sy + (y - sy) * f;
-      const nt = t0 + (t1 - t0) * f;
-      const npath = h.path + d / h.pathUnit;
+      const nt = ts + (t1 - ts) * f;
+      const npath = basePath + d / h.pathUnit;
       this._write(h, px, py, pt, ppath, nx, ny, nt, npath);
       px = nx; py = ny; pt = nt; ppath = npath;
       d += h.spacing;
     }
-    h.acc = seg - (d - h.spacing);
-    h.path += seg / h.pathUnit;
+    h.path = basePath + seg / h.pathUnit;
     // ostatni zapisany węzeł zostaje początkiem następnego segmentu
-    const wrote = px !== sx || py !== sy;
-    if (wrote) { h.lx = px; h.ly = py; h.lt = pt; h.lpath = ppath; }
+    if (px !== sx || py !== sy) { h.lx = px; h.ly = py; h.lt = pt; h.lpath = ppath; }
     h._curX = x; h._curY = y; h._curT = t1;
   }
 

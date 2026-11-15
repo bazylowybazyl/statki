@@ -27,7 +27,7 @@
 // ścianie = front, kamera gry), u w górę mieszkańców (od placu). Części jak
 // w ECUMENE (podium, wieże, mosty mieszkalne, tarasy, rdzenie), front ECUMENE
 // (−z) → +q. Materiały są symboliczne — kody nadaje plan dachu.
-import { HALO_TAU, haloPortSites } from './haloRingConfig.js';
+import { HALO_TAU, haloFloorSites, haloPortSites } from './haloRingConfig.js';
 
 export const HALO_LANDMARK = Object.freeze({
   maxCount: 12,          // limit uniformów bake'u (haloRingWorldGen.js)
@@ -124,7 +124,8 @@ export function haloCivicContext(layout, options = {}) {
     tBot: P.wallGap,
     tTop: crosses ? (-P.planeGap - layout.z.botIn) / tz : layout.floor.length - P.wallGap,
     heightAt: typeof options.heightAt === 'function' ? options.heightAt : null,
-    sites: portOn ? haloPortSites(layout.radii.floorMid) : [],
+    // + miejsca podłogi spoza szablonu (opcja `floorSites`): bez megabudowli i kopuł na pasie i w jego strefach
+    sites: portOn ? [...haloPortSites(layout.radii.floorMid), ...haloFloorSites(layout)] : [],
     placed: []
   };
 }

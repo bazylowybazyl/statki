@@ -73,13 +73,15 @@ export class Path {
   hubArc(a, cx, cz, R, p0, p1) { this.segs.push({ t: 'hubArc', a, cx, cz, R, p0, p1 }); return this; }
   /** Łuk w scenie: środek (cx, cy), R, kąt (stopnie). */
   circ(cx, cy, R, a0, a1) { this.segs.push({ t: 'circ', cx, cy, R, a0, a1 }); return this; }
+  /** Klin w hubie miejsca a: x liniowo, z gładko (S5) — zmiana pasa wzdłuż prostej jezdni. */
+  hubS(a, x0, z0, x1, z1) { this.segs.push({ t: 'hubS', a, x0, z0, x1, z1 }); return this; }
 }
 
 function segLen(g) {
   switch (g.t) {
     case 'arc': return Math.abs(g.a1 - g.a0) * DEG * g.r;
     case 'taper': { const m = Math.abs(g.a1 - g.a0) * DEG * (g.r0 + g.r1) * 0.5; return Math.hypot(m, Math.abs(g.r1 - g.r0)); }
-    case 'hubLine': return Math.hypot(g.x1 - g.x0, g.z1 - g.z0);
+    case 'hubLine': case 'hubS': return Math.hypot(g.x1 - g.x0, g.z1 - g.z0);
     case 'hubArc': return Math.abs(g.p1 - g.p0) * g.R;
     case 'circ': return Math.abs(g.a1 - g.a0) * DEG * g.R;
     default: return 0;
@@ -90,6 +92,7 @@ function segPt(g, u) {
     case 'arc': return polar(g.r, g.a0 + (g.a1 - g.a0) * u);
     case 'taper': return polar(g.r0 + (g.r1 - g.r0) * S5(u), g.a0 + (g.a1 - g.a0) * u);
     case 'hubLine': return hubToWorld(g.a, g.x0 + (g.x1 - g.x0) * u, g.z0 + (g.z1 - g.z0) * u);
+    case 'hubS': return hubToWorld(g.a, g.x0 + (g.x1 - g.x0) * u, g.z0 + (g.z1 - g.z0) * S5(u));
     case 'hubArc': { const p = g.p0 + (g.p1 - g.p0) * u; return hubToWorld(g.a, g.cx + g.R * Math.cos(p), g.cz + g.R * Math.sin(p)); }
     case 'circ': { const p = (g.a0 + (g.a1 - g.a0) * u) * DEG; return { x: g.cx + g.R * Math.cos(p), y: g.cy + g.R * Math.sin(p) }; }
     default: return null;
@@ -225,13 +228,13 @@ function gateOut(a, id, meta = {}) {
 }
 
 /** Droga ciężkich: pas K-7 x = +2430 (w dół) → łuk r = roadIn (+θ) → pas MEGA zatoki w hubie a (x = xb, w dół). */
-function heavyRoadIn(c, a, xb, id) {
+export function heavyRoadIn(c, a, xb, id, xPas = 2430, rDaleko = 84000) {
   const N = NODE; const R = N.roadR;
-  const t0 = tangentOutside(2430, N.roadIn, R, +1);
+  const t0 = tangentOutside(xPas, N.roadIn, R, +1);
   const t1 = tangentInside(xb, N.roadIn, R, -1);
   const a0 = c + t0.delta; const a1 = a + t1.delta;
   const p = new Path(id, { kind: 'heavy', dir: 'in', beamMax: 912, vmax: 350 });
-  p.hubLine(c, 2430, 84000 - R0, 2430, t0.cz);
+  p.hubLine(c, xPas, rDaleko - R0, xPas, t0.cz);
   p.hubArc(c, t0.cx, t0.cz, R, Math.PI, t0.phi < 0 ? t0.phi + 2 * Math.PI : t0.phi);
   p.arc(N.roadIn, a0, a1);
   p.hubArc(a, t1.cx, t1.cz, R, t1.phi, 0);
@@ -241,22 +244,22 @@ function heavyRoadIn(c, a, xb, id) {
   return p;
 }
 /** Wyjazd ciężkich: pas MEGA (x = xb z odbiciem) → łuk r = roadOut (−θ) → pas K-7 x = +810 (w górę). */
-function heavyRoadOut(c, a, xb, id, lane) {
+export function heavyRoadOut(c, a, xb, id, lane, xPas = 810, rDaleko = 84000) {
   const N = NODE; const R = N.roadR;
   const X = lane === 'i' ? xb - N.megaOutSide : xb + N.megaOutSide;
   const t0 = tangentInside(X, N.roadOut, R, -1);
-  const t1 = tangentOutside(810, N.roadOut, R, +1);
+  const t1 = tangentOutside(xPas, N.roadOut, R, +1);
   const a0 = a + t0.delta; const a1 = c + t1.delta;
   const p = new Path(id, { kind: 'heavy', dir: 'out', beamMax: 912, vmax: 350 });
   p.hubLine(a, X, N.heavyWaitZ, X, t0.cz);
   p.hubArc(a, t0.cx, t0.cz, R, 0, t0.phi);
   p.arc(N.roadOut, a0, a1);
   p.hubArc(c, t1.cx, t1.cz, R, t1.phi < 0 ? t1.phi + 2 * Math.PI : t1.phi, Math.PI);
-  p.hubLine(c, 810, t1.cz, 810, 84000 - R0);
+  p.hubLine(c, xPas, t1.cz, xPas, rDaleko - R0);
   return p;
 }
 /** Lustro ścieżki względem osi kompleksu c (strona −): x → −x, kąty a → 2c − a. */
-function mirrorPath(p, c, side) {
+export function mirrorPath(p, c, side) {
   if (side > 0) return p;
   p.segs = p.segs.map((g) => {
     if (g.t === 'hubLine') return { ...g, a: 2 * c - g.a, x0: -g.x0, x1: -g.x1 };
@@ -339,19 +342,75 @@ export function buildNetwork() {
 }
 
 /**
+ * GEOMETRIA PASÓW GŁÓWNYCH — jedyne miejsce, w którym ruch i obraz pytają „gdzie leży pas”. Pas główny to krzywa zamknięta
+ * wokół planety; pojazd ma na niej drogę `s` (rośnie z jazdą, osobna miara na jezdnię) i współrzędną boczną `r`
+ * („promień równoważny”: wartości z `HW`, także gdy droga nie jest okręgiem). Układ sieci podaje własną geometrię w `siec.geo`:
+ *   OBWOD[cw]                 długość pasa odniesienia jezdni (L2),
+ *   sKata(cw, katDeg)         droga punktu pasa odniesienia na promieniu pod kątem biegunowym,
+ *   sWzdluz(cw, katDeg, d)    to samo, przesunięte o d j. z kierunkiem jazdy (d < 0 — pod prąd),
+ *   sPunktu(cw, x, y)         droga rzutu punktu na pas odniesienia,
+ *   rPunktu(x, y)             współrzędna boczna punktu,
+ *   rzut(cw, x, y, out)       out.s, out.r, out.h (kurs jazdy pasa w tym miejscu),
+ *   poza(cw, s, r, out)       out.x, out.y, out.h (kurs jazdy), out.kr (krzywizna ze znakiem),
+ *   thetaOf(cw, s)            kąt biegunowy punktu pasa odniesienia [rad].
+ * Ta — okręgi współśrodkowe (sieć pierścienia). Wzory przepisane 1:1 z dawnego ruch.js: ten sam wynik co do bitu.
+ */
+export function geoPierscien() {
+  const RREF = Object.freeze([HW.iL2, HW.oL2]);
+  const OBWOD = Object.freeze([TAU * RREF[0], TAU * RREF[1]]);
+  const sKata = (cw, thetaDeg) => {
+    const t = ((thetaDeg % 360) + 360) % 360;
+    return cw === 0 ? ((360 - t) % 360) * DEG * RREF[0] : t * DEG * RREF[1];
+  };
+  const thetaOf = (cw, s) => (cw === 0 ? -s / RREF[0] : s / RREF[1]);
+  return Object.freeze({
+    id: 'pierscien', RREF, OBWOD, sKata, thetaOf,
+    sWzdluz: (cw, katDeg, d) => sKata(cw, cw === 0 ? katDeg - d / RREF[0] / DEG : katDeg + d / RREF[1] / DEG),
+    sPunktu: (cw, x, y) => sKata(cw, Math.atan2(y, x) / DEG),
+    rPunktu: (x, y) => Math.sqrt(x * x + y * y),
+    rzut(cw, x, y, out) {
+      const th = Math.atan2(y, x);
+      out.s = sKata(cw, th / DEG);
+      out.r = Math.sqrt(x * x + y * y);
+      out.h = th + (cw === 0 ? -1 : 1) * Math.PI * 0.5;
+    },
+    poza(cw, s, r, out) {
+      const th = thetaOf(cw, s);
+      const c = Math.cos(th);
+      const sn = Math.sin(th);
+      const kier = cw === 0 ? -1 : 1;
+      out.x = r * c;
+      out.y = r * sn;
+      out.h = th + kier * Math.PI * 0.5;
+      out.kr = kier / r;
+    }
+  });
+}
+
+/**
  * Sieć gotowa dla ruchu i obrazu: każda ścieżka bez łuku 360° ma próbki (`probki`: x, y, s, h, k, n, len) i profil prędkości
  * `vp` (limit z krzywizny i rodzaju ścieżki, przejście wstecz z hamowaniem); węzły, sygnalizacje, słownik `poId`.
  */
-export function zbudujSiec({ krok = 40, aLat = 150, bProfil = 140 } = {}) {
+export function zbudujSiec(opcje = {}) {
   const net = buildNetwork();
+  net.uklad = 'pierscien';
+  net.geo = geoPierscien();
+  return przygotujSiec(net, opcje);
+}
+
+/** Próbki, współrzędna boczna próbek (`rb`) i profile prędkości ścieżek sieci o dowolnym układzie (`net.geo`). */
+export function przygotujSiec(net, { krok = 40, aLat = 150, bProfil = 140 } = {}) {
   const poId = new Map();
+  const okregi = net.geo.id === 'pierscien';
   for (const p of net.paths) {
     poId.set(p.id, p);
     p.probki = sample(p, p.kind === 'main' ? 200 : krok);
     const q = p.probki;
     const vp = new Float32Array(q.n);
+    const rb = new Float64Array(q.n);
     for (let i = 0; i < q.n; i++) {
-      const r = Math.hypot(q.x[i], q.y[i]);
+      const r = okregi ? Math.hypot(q.x[i], q.y[i]) : net.geo.rPunktu(q.x[i], q.y[i]);
+      rb[i] = r;
       let lim = limitRodzaju(p, r);
       if (q.k[i] > 1e-5 && p.kind !== 'main') lim = Math.min(lim, Math.sqrt(aLat / q.k[i]));
       vp[i] = lim;
@@ -362,6 +421,7 @@ export function zbudujSiec({ krok = 40, aLat = 150, bProfil = 140 } = {}) {
       vp[i] = Math.min(vp[i], Math.sqrt(vp[i + 1] * vp[i + 1] + 2 * bProfil * ds));
     }
     q.vp = vp;
+    q.rb = rb;
   }
   net.poId = poId;
   return net;

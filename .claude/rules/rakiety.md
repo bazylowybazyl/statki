@@ -56,7 +56,10 @@ paths:
   życie wzdłuż obracającej się osi (podwójna spirala), kładzione wzdłuż śladu strumienia; reżyser rysuje tę samą oś jako
   wirujące SNOPY z jądra (`pushStreak`). Parametry wiru per wybuch w cząstkach (`nE.w`, dżety w `nA` / `nE.x`), sekwencja
   `NOVA_SEQ_END` = 2,8 s (2026-10-05, user: wir był za długi — pozostałość 2,2 s; wybuch × `NOVA_SCALE` 2 względem dema,
-  rażenie `explosionRadius` 1200 j.).
+  rażenie `explosionRadius` 1200 j.). Demo `dema/rakiety-webgpu` ma KOPIĘ tej Supernowej (wybuch, wir, dżety,
+  salwa 4 przez `planBarrageTargets`, wyrzut i lot z `_update` — od 2026-11-09): zmiana wyglądu albo lotu
+  Supernowej w grze → przenieś też do `dema/rakiety-webgpu/effects.js` / `nebula.js` / `flight.js` (`_stepGame`;
+  `docs/webgpu/DEMO-RAKIETY.md`).
 
 - **Supernova Barrage** (2026-10-05, user: „4 naraz — do niszczenia grup przeciwników”; id dalej `supernova_missile`):
   salwa 4 głowic, każda na INNY okręt grupy — pole broni `barrage: { radius, spacing }` → `planBarrageSalvo` (`index.html`,
@@ -109,3 +112,18 @@ paths:
   przechwycenia (`solveTorpedoLead` — układ wyrzutni) z czasem dolotu, pasek trybu. Kilwater torped = dym rakiet
   (`RocketEffects.torpedoWake`, z pętli pocisków — też przy pocisku rysowanym w 3D). Haki `?dev`: `DevScene.mountMissile(id)`,
   `DevScene.pointerAt(x, y)`, `window.setTorpedoMode`, `window.fireTorpedoSalvos`.
+
+- **„Niszczyciel” z wybuchem „Fala” — tylko demo, niewpięte** (2026-11-10; podział ról z decyzji użytkownika:
+  Supernowa w salwach zdejmuje tarcze, „Niszczyciel” to JEDNA potężna rakieta przeciw kadłubowi). W grze nie ma jeszcze
+  karty broni, lotu ani efektów — wszystko jest w `dema/rakiety-webgpu/` (opis: `docs/webgpu/DEMO-RAKIETY.md`,
+  „Niszczyciel i jego wybuchy”): karta `weaponsDemo.js` (układ `MASTER_WEAPONS`, nowe pola `sprint` i `penetration`),
+  lot dwuczłonowy w `flight.js` (człon startowy → sprint 4600 j./s z odrzuceniem członu, bez zwalniania przed celem),
+  przebicie kadłuba i wybuch w środku (`effects.js`), kadłubki z własnych siatek (`missileBodies.js`). Trzy głowice
+  do wyboru (panel dema, `?glowica=fala|pulsar|gaz`): **Fala** (`waveBlast.js`, domyślna — błysk, miękka kula światła
+  i duża rozmyta chmura błękitnego haze rosnąca od środka, trzy kręgi refrakcji i gorące powietrze, ~1,4 s, bez compute),
+  **Pulsar** (`pulsar.js`, `pulsarParticles.js` — miniaturowy pulsar w 3D) i **gaz 3D** (`gasBlast.js` — moduły
+  `src/3d/gas/` wprost). Kierunek wyglądu z ocen użytkownika: wybuch tej rakiety robi się OD ZERA, nie ze złożenia
+  gotowych efektów gry (po wersji na gazie), i ma być PROSTY — „duże haze, od środka narastający, fala refrakcyjna,
+  bez kombinowanych zawinięć i przecięć, prostsze, szybsze, bardziej wybuchowe” (po „Pulsarze”); starsze głowice
+  zostają jako warianty. Zrzuty, koszt i świeża strona: `node scripts/webgpu/niszczyciel-demo.mjs`. Lista rzeczy pod
+  wpięcie (rekordy RKT_*, krok `Core3D.addFxStep`, rozgrywka do decyzji) — w opisie dema.

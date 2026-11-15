@@ -128,6 +128,13 @@ paths:
   oktawy szumu kłębów (~22, ~5, ~1,3 km) w PROGU, wchodzące z rozmiarem piksela, czytane w KOLUMNIE (szczegół 3D
   drobniejszy niż krok marszu daje ziarno), amplitudy jak w szeregu fraktalnym (mniejsze nie przebijają rampy),
   próbki tylko przy powierzchni chmury (w każdej próbce marszu podwajały koszt). Z bliska brzeg ostrzejszy (`sharp`).
+- BURZE (`planetGenStorms.js`, opis § 10.24): jawne układy z ziarna planety (kierunek, promień; najwyżej
+  `STORM_MAX`), nie skutek szumu — program wie, gdzie są; wiatr pasa przenosi je z chmurami. W tarczy burzy
+  (`stormAt`, `stormCover`) chmura jest lita niezależnie od mapy, niestabilność = 1, kowadło grubą płytą z kopułami
+  ponad nim, barwa stalowa. BŁYSKI = funkcja (ziarno, czas) liczona na CPU (`stormFlashes`), w bryle światło
+  WEWNĄTRZ chmury poza gałęzią słońca (widać w nocy), jaśniej w szczelinach. Uniformy „brak” niezerowe jako wektor
+  (pułapka 46). Zrzut wybranej chwili: `body.stormPace = 0`, `body.stormTime = t` (zegar dema biegnie — błysk
+  gaśnie przed zrzutem). Demo: burza przy bohaterze (`?burza=0` — z ziarna), przycisk „Burza”.
 - Zmiana modelu = zmiana cienia na gruncie: materiał powierzchni woła `cloudCover`, `cloudRegime`, `cloudShape` na
   trzech wysokościach; wieże i przesunięcie rodzaju przechodzą do cienia w `setCloudMode` (`uGnCloudVol3.y / z`).
 - Gęstość „pokrycie × profil wysokości + szum” daje gładką masę (wygląd bitej śmietany); kłęby jednej skali —

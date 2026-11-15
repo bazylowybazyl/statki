@@ -16,7 +16,9 @@ import {
   varyingProperty, texture, If, select, mix, clamp, smoothstep, exp, sin, max, min, abs, length, pow
 } from 'three/tsl';
 
-export const BEAM = Object.freeze({ CONT: 0, PULSE: 1, PD: 2 });
+// RAY — promień śmierci (z gry, src/3d/weapons/beams.js — 2026-10-19): gruba wiązka HDR — biało-gorące jądro, ciało
+// w barwie broni płynące szumem, pierścienie energii biegnące do celu, poświata, rozbłysk czoła i soczewka emitera.
+export const BEAM = Object.freeze({ CONT: 0, PULSE: 1, PD: 2, RAY: 3 });
 const MAX = 64;
 const sq = (x) => x.mul(x);
 
@@ -37,6 +39,7 @@ export class BeamSystem {
     const vL = varyingProperty('vec4', 'vBmL');   // wzdłuż, w poprzek, długość, szerokość
     const vA = varyingProperty('vec4', 'vBmA');   // barwa ciała, moc
     const vB = varyingProperty('vec4', 'vBmB');   // styl, ziarno, wiek, szer. jądra [j.]
+    const vC = varyingProperty('vec2', 'vBmC');   // RAY: rozbłysk czoła, soczewka emitera (inne style: nieczytane)
     const mat = new THREE.NodeMaterial();
     mat.transparent = true;
     mat.depthWrite = false;
@@ -67,6 +70,7 @@ export class BeamSystem {
       vA.assign(C);
       // jądro: ≥ 1,2 px, rośnie z szerokością wiązki
       vB.assign(vec4(D.x, D.y, D.z, max(W.mul(0.16), float(1.2).div(U.zoom))));
+      vC.assign(B.xy);
       return vec3(A.xy.add(dir.mul(along)).add(perp.mul(across)), 16.0);
     })();
     mat.fragmentNode = Fn(() => {
@@ -109,11 +113,32 @@ export class BeamSystem {
         const body = exp(sq(d.div(W.mul(0.45))).negate()).mul(n.mul(0.6).add(0.6));
         const sheath = exp(sq(d.div(W.mul(1.1))).negate()).mul(0.2);
         out.assign(vec3(1.0).mul(core.mul(5.0)).add(col.mul(body.add(sheath))).mul(reached).add(col.add(0.8).mul(head.mul(2.0))));
-      }).Else(() => {
+      }).ElseIf(style.lessThan(2.5), () => {
         // PD: cienki impuls
         const core = exp(sq(d.div(coreW.mul(0.8))).negate());
         const body = exp(sq(d.div(W.mul(0.6))).negate()).mul(0.7);
         out.assign(vec3(1.0).mul(core.mul(4.0)).add(col.mul(body)));
+      }).Else(() => {
+        // RAY: promień śmierci — jądro, ciało z płynącą plazmą, pierścienie energii, poświata, czoło i soczewka
+        const flowU = along.div(W.mul(6.0)).sub(t.mul(4.5));
+        const n1 = texture(noise, vec2(flowU, across.div(W).mul(0.45).add(seed))).r;
+        const n2 = texture(noise, vec2(flowU.mul(2.7).sub(t.mul(2.3)), across.div(W).mul(0.9).sub(seed))).g;
+        const flow = n1.mul(0.6).add(n2.mul(0.4));
+        // Pasma HDR (próg bloomu ~0,9): wąskie jądro ponad progiem (biel), środek ciała przy progu, ciało i poświata pod nim.
+        const core = exp(sq(d.div(max(W.mul(0.16), coreW))).negate());
+        const inner = exp(sq(d.div(W.mul(0.3))).negate());
+        const body = exp(sq(d.div(W.mul(0.5))).negate()).mul(flow.mul(0.7).add(0.5));
+        const sheath = exp(sq(d.div(W.mul(1.0))).negate()).mul(n2.mul(0.45).add(0.65));
+        // pierścienie energii biegnące od emitera do celu (sin·0,5 + 0,5 ≥ 0 — bez ujemnej podstawy potęgi)
+        const ring = pow(sin(along.div(W.mul(1.9)).sub(t.mul(42.0)).add(seed.mul(7.0))).mul(0.5).add(0.5), 8.0)
+          .mul(exp(sq(d.div(W.mul(0.45))).negate()));
+        // czoło (gdy wiązka rośnie) i soczewka emitera — plamy okrągłe
+        const head = exp(sq(len.sub(along).div(W.mul(0.9))).negate()).mul(exp(sq(across.div(W.mul(0.8))).negate())).mul(vC.x);
+        const lens = exp(sq(length(vec2(along, across)).div(W.mul(1.1))).negate()).mul(vC.y);
+        out.assign(vec3(1.0).mul(core.mul(3.0))
+          .add(col.mul(0.55).add(0.25).mul(inner))
+          .add(col.mul(body.mul(0.55).add(sheath.mul(0.07)).add(ring.mul(0.5))))
+          .add(col.add(1.0).mul(head.mul(1.6).add(lens.mul(1.2)))));
       });
       return vec4(max(out.mul(power).mul(endFade), vec3(0.0)), 0.0);
     })();
@@ -129,13 +154,13 @@ export class BeamSystem {
 
   begin() { this.count = 0; }
 
-  /** Wiązka na tę klatkę (świat gry). */
-  add(x0, y0, x1, y1, style, width, col, power, seed = 0, age = 0) {
+  /** Wiązka na tę klatkę (świat gry); head / lens — RAY: rozbłysk czoła i soczewka emitera 0..1. */
+  add(x0, y0, x1, y1, style, width, col, power, seed = 0, age = 0, head = 1, lens = 1) {
     if (this.count >= MAX) return;
     const o = this.count++ * 16;
     const D = this.data;
     D[o] = x0; D[o + 1] = -y0; D[o + 2] = x1; D[o + 3] = -y1;
-    D[o + 4] = 1; D[o + 5] = 1; D[o + 6] = 1; D[o + 7] = width;
+    D[o + 4] = head; D[o + 5] = lens; D[o + 6] = 1; D[o + 7] = width;
     D[o + 8] = col[0]; D[o + 9] = col[1]; D[o + 10] = col[2]; D[o + 11] = power;
     D[o + 12] = style; D[o + 13] = seed; D[o + 14] = age; D[o + 15] = 0;
   }

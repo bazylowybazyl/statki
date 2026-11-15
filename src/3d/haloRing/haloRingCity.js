@@ -29,7 +29,7 @@ import {
   attribute, varyingProperty, uniform, instanceIndex, positionGeometry, normalGeometry,
   abs, clamp, cos, dot, floor, fract, length, max, mix, mod, normalize, sin, smoothstep, step
 } from 'three/tsl';
-import { HALO_TAU, haloPortSites, haloQualityLod } from './haloRingConfig.js';
+import { HALO_TAU, haloFloorSites, haloPortSites, haloQualityLod } from './haloRingConfig.js';
 import { HALO_MEGA_AIR_STEPS, haloNodeMaterial, haloPrimVaryings, makeHaloPrimFragment } from './haloRingMegastructure.js';
 import { IND_PARTS, haloIndKitTSL } from './haloRingIndustryKit.js';
 import { haloFma, haloHash12, haloHash22, haloRingSurfaceTSL, haloRingTSL, haloSmooth, haloWrapI } from './haloRingTSL.js';
@@ -780,7 +780,8 @@ export class HaloCityChunkSet {
     // budynki stoją tam niezależnie od typu sektora (+ zapas na zafalowanie 700 j.)
     if (layout.sigma > 0 && layout.flightLevel !== 'roof') {
       const R = layout.radii.floorMid;
-      for (const site of haloPortSites(R)) {
+      // + miejsca podłogi spoza szablonu (opcja `floorSites`; bez niej lista jak dawniej)
+      for (const site of [...haloPortSites(R), ...haloFloorSites(layout)]) {
         const zone = cls === 'industrial' ? site.zoneInd : Math.max(site.zoneRes, site.zoneInd);
         if (!(zone > 0)) continue;
         const halfA = (site.halfS + zone * 1.2 + 700) / R + this.chunkAngle;

@@ -4,6 +4,8 @@
 // (planet3d.assets.js), ring „Halo” z halami K-7 (HaloRingWorld + HaloRingGame), proxy statków ruchu (ShipProxyBatch3D) i kadłub
 // Atlasa na belkach. Jeden świat, kilka sposobów rysowania: ruch i sygnalizacja (dema/autostrada/ruch.js) są wspólne, a style wyglądu
 // (dema/autostrada/styl-*.js) przełącza się na żywo w tej samej chwili sekwencji. Zasada: nic z tego nie jest wpięte do gry.
+// Dwa UKŁADY drogi (każdy z własną siecią, ruchem i bazą obrazu; liczy się tylko czynny): „pierścień” — style 1–4, „rama” — styl 5
+// (kwadrat czterech prostych, naroża opływają stocznie wystające daleko od ringu; ?zasieg= [j. od początku huba] — głowica stoczni).
 //
 // Serwowanie: `npm run dev` → /dema/autostrada.html   ?styl=klisza   ?clean=1 (bez paneli)   ?ring=0 (bez ringu — szybkie strojenie)
 //   ?test=1 (klatki tylko z __autostrada.klatki — harness: scripts/webgpu/autostrada-demo.mjs)
@@ -22,7 +24,9 @@ import { World, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { HaloRingWorld } from '../src/game/haloRingWorld.js';
 import { HaloRingGame } from '../src/3d/haloRing/haloRingGame.js';
 import { utworzRuch, KLASY } from './autostrada/ruch.js';
-import { zbudujSiec, hubToWorld, HW, DEG } from './autostrada/siec.js';
+import { zbudujSiec, hubToWorld, HW, DEG, R0 } from './autostrada/siec.js';
+import { zbudujSiecRamy } from './autostrada/siec-rama.js';
+import { zbudujInfrastruktureRamy } from './autostrada/infrastruktura-rama.js';
 import { U, zapiszSygnaly } from './autostrada/wspolne.tsl.js';
 import { STYLE } from './autostrada/style.js';
 import { utworzBaze } from './autostrada/baza3d.js';
@@ -103,6 +107,9 @@ let swiat = null;
 let atlasEnt = null;
 let haloWorld = null;
 let haloRings = null;
+// Czynny układ drogi: `ruch`, `siec`, `baza`, `ciagniki` wskazują jego części (przełącza `ustawStyl`).
+const uklady = new Map();
+let uklad = null;
 let ruch = null;
 let siec = null;
 let grupa = null;
@@ -276,10 +283,45 @@ function klatka(realDt) {
 // ---------------------------------------------------------------------------
 // Style, kamera, galeria
 
+function utworzUklad(id, siecUkladu, opcje = {}) {
+  const r = utworzRuch({ siec: siecUkladu, gestosc: Number(params.get('gestosc')) || 1, idOd: opcje.idOd });
+  r.rozruch();
+  for (let i = 0; i < 300; i++) r.step();    // 30 s rozruchu: zgęstnienie przy zjazdach, zanim ktoś spojrzy
+  r.odswiezPozy(0);
+  // Kontekst układu dziedziczy wspólne nastawy (ślady, barwy, siły podkładu) i dokłada własny ruch, sieć i bazę obrazu.
+  const ktx = Object.assign(Object.create(kontekst), { ruch: r, siec: siecUkladu }, opcje.ctx);
+  const b = utworzBaze(ktx);
+  ktx.baza = b;
+  const c = utworzCiagniki(ktx);
+  const u = { id, siec: siecUkladu, ruch: r, kontekst: ktx, baza: b, ciagniki: c };
+  uklady.set(id, u);
+  Core3D.warmup.add({ name: `autostrada: baza (${id})`, objects: () => b.siatki, phase: 'loading' });
+  Core3D.warmup.add({ name: `autostrada: ciągniki (${id})`, objects: () => c.siatki, phase: 'loading' });
+  return u;
+}
+
 function ustawStyl(id) {
   const st = style.get(id);
   if (!st) return false;
   for (const q of style.values()) for (const m of q.siatki) m.visible = q === st;
+  const zmianaUkladu = uklad !== st.uklad;
+  uklad = st.uklad;
+  ruch = uklad.ruch;
+  siec = uklad.siec;
+  baza = uklad.baza;
+  ciagniki = uklad.ciagniki;
+  for (const u of uklady.values()) {
+    for (const m of u.baza.siatki) m.visible = u === uklad;
+    for (const m of u.ciagniki.siatki) m.visible = u === uklad;
+  }
+  if (zmianaUkladu) {
+    S.sledz = null;
+    S.akum = 0;
+    ruch.odswiezPozy(0);
+    for (const b of document.querySelectorAll('#galeria button')) b.style.display = !b.dataset.uklad || b.dataset.uklad === uklad.id ? '' : 'none';
+    // Ten sam kadr galerii w nowym układzie (droga leży gdzie indziej); kadr ustawiony ręcznie zostaje.
+    if (S.kadr) pokazKadr(S.kadr);
+  }
   S.styl = st;
   kontekst.silaPodkladu = st.podklad ?? 0.55;
   kontekst.silaRamp = st.podkladRamp ?? 0.75;
@@ -305,19 +347,48 @@ function patrzNa(sx, sy, zoom) {
 }
 const skala = (z) => z * Math.max(0.6, H / 1080);
 
+// Kadry galerii: te same nazwy w obu układach, miejsca z geometrii czynnego układu (`rama` — z sieci ramy).
+const _kadrP = { x: 0, y: 0, h: 0, kr: 0 };
+const kinoNa = (o) => { S.tryb = 'kino'; S.sledz = null; S.sledzKlasa = null; Object.assign(S.kino, o); odswiezPrzyciski(); };
+const wRamie = () => uklad.id === 'rama';
+const naPasie = (cw, s, r) => { siec.geo.poza(cw, s, r, _kadrP); return _kadrP; };
+const wezelRamy = (id) => siec.nodes.find((n) => n.id === id);
+const zBoku = (r) => r + siec.rama.dz - R0;
 const GALERIA = [
-  { id: 'wezel', tytul: 'Skrzyżowanie z K-7', ustaw: () => { const p = naKat(315, 58500); patrzNa(p.x, p.y, skala(0.06)); } },
-  { id: 'kolejka', tytul: 'Linia stopu, kolejka', ustaw: () => { const p = naKat(315 + 5.5, HW.iL3); patrzNa(p.x, p.y, skala(0.3)); } },
-  { id: 'zatoka', tytul: 'Zatoka: wjazd i zjazd', ustaw: () => { const p = naKat(301.846, 56500); patrzNa(p.x, p.y, skala(0.11)); } },
-  { id: 'wrota', tytul: 'Wrota: dolot z kosmosu', ustaw: () => { const p = naKat(329, 69000); patrzNa(p.x, p.y, skala(0.06)); } },
-  { id: 'zawrotka', tytul: 'Zawrotka w pasie rozdziału', ustaw: () => { const p = naKat(343, HW.median); patrzNa(p.x, p.y, skala(0.3)); } },
+  { id: 'wezel', tytul: 'Skrzyżowanie z K-7 / stocznią', ustaw: () => {
+    if (wRamie()) { const p = naKat(315, siec.rama.wierzcholek - 7000); patrzNa(p.x, p.y, skala(0.042)); } else { const p = naKat(315, 58500); patrzNa(p.x, p.y, skala(0.06)); }
+  } },
+  { id: 'stocznia', tytul: 'Stocznia: od ringu po głowicę', uklad: 'rama', ustaw: () => { const p = naKat(315, R0 + siec.rama.zasieg * 0.56); patrzNa(p.x, p.y, skala(0.027)); } },
+  { id: 'kolejka', tytul: 'Linia stopu, kolejka', ustaw: () => {
+    if (wRamie()) { const p = naPasie(0, ruch.K7[3].sStop[0] - 900, HW.iL2); patrzNa(p.x, p.y, skala(0.3)); } else { const p = naKat(315 + 5.5, HW.iL3); patrzNa(p.x, p.y, skala(0.3)); }
+  } },
+  { id: 'zatoka', tytul: 'Zatoka: wjazd i zjazd', ustaw: () => {
+    if (wRamie()) { const w = wezelRamy('C3.Z-'); const p = hubToWorld(w.bok, (w.xIn + w.xOut) * 0.5, zBoku(HW.edgeIn - 3200)); patrzNa(p.x, p.y, skala(0.085)); } else { const p = naKat(301.846, 56500); patrzNa(p.x, p.y, skala(0.11)); }
+  } },
+  { id: 'wrota', tytul: 'Wrota: dolot z kosmosu', ustaw: () => {
+    if (wRamie()) { const w = wezelRamy('C3.D_IN'); const p = hubToWorld(w.bok, w.xg + 2500, zBoku(HW.edgeOut + 6500)); patrzNa(p.x, p.y, skala(0.06)); } else { const p = naKat(329, 69000); patrzNa(p.x, p.y, skala(0.06)); }
+  } },
+  { id: 'zawrotka', tytul: 'Zawrotka w pasie rozdziału', ustaw: () => {
+    if (wRamie()) { const w = wezelRamy('C3.U1'); const p = hubToWorld(w.bok, w.xu, zBoku(HW.median)); patrzNa(p.x, p.y, skala(0.3)); } else { const p = naKat(343, HW.median); patrzNa(p.x, p.y, skala(0.3)); }
+  } },
   { id: 'tranzyt', tytul: 'Tranzyt: zjazd ku Ziemi', ustaw: () => { const p = naKat(0, 52500); patrzNa(p.x, p.y, skala(0.07)); } },
-  { id: 'bramownica', tytul: 'Bramownica z bliska', ustaw: () => { const p = naKat(315 + 3.92, HW.iL2); patrzNa(p.x, p.y, skala(0.8)); } },
-  { id: 'luk', tytul: 'Łuk wokół Ziemi', ustaw: () => { const p = naKat(270, 52000); patrzNa(p.x, p.y, skala(0.03)); } },
-  { id: 'calosc', tytul: 'Cały pierścień z góry', ustaw: () => patrzNa(0, 0, H / (2.25 * HW.edgeOut)) },
-  { id: 'kino', tytul: 'Kamera kinowa', ustaw: () => { S.tryb = 'kino'; S.sledz = null; S.kino.az = -0.9; S.kino.el = 0.32; S.kino.dist = 175000; S.kino.cel = { x: 0, y: 0, z: 0 }; odswiezPrzyciski(); } },
-  { id: 'kinoBlisko', tytul: 'Kino: nad węzłem K-7', ustaw: () => { const p = naKat(315, 62000); S.tryb = 'kino'; S.sledz = null; S.kino.az = -1.35; S.kino.el = 0.22; S.kino.dist = 22000; S.kino.cel = { x: p.x, y: p.y, z: 0 }; odswiezPrzyciski(); } }
+  { id: 'bramownica', tytul: 'Bramownica z bliska', ustaw: () => {
+    if (wRamie()) { const p = naPasie(0, ruch.K7[3].sStop[0] - 70, HW.iL2); patrzNa(p.x, p.y, skala(0.8)); } else { const p = naKat(315 + 3.92, HW.iL2); patrzNa(p.x, p.y, skala(0.8)); }
+  } },
+  { id: 'luk', tytul: 'Łuk wokół Ziemi / prospekt', ustaw: () => { const p = naKat(270, wRamie() ? 55000 : 52000); patrzNa(p.x, p.y, skala(0.03)); } },
+  { id: 'calosc', tytul: 'Cała droga z góry', ustaw: () => patrzNa(0, 0, H / (2.25 * (wRamie() ? siec.rama.wierzcholek + 2240 : HW.edgeOut))) },
+  { id: 'kino', tytul: 'Kamera kinowa', ustaw: () => kinoNa({ az: -0.9, el: 0.32, dist: wRamie() ? 215000 : 175000, cel: { x: 0, y: 0, z: 0 } }) },
+  { id: 'kinoBlisko', tytul: 'Kino: nad węzłem', ustaw: () => {
+    if (wRamie()) { const p = naKat(315, siec.rama.wierzcholek - 5000); kinoNa({ az: -1.35, el: 0.24, dist: 34000, cel: { x: p.x, y: p.y, z: 0 } }); } else { const p = naKat(315, 62000); kinoNa({ az: -1.35, el: 0.22, dist: 22000, cel: { x: p.x, y: p.y, z: 0 } }); }
+  } }
 ];
+function pokazKadr(id) {
+  const g = GALERIA.find((q) => q.id === id && (!q.uklad || q.uklad === uklad.id));
+  if (!g) return false;
+  g.ustaw();
+  S.kadr = id;
+  return true;
+}
 
 const JEDNOSTKI = [
   { id: 'ciezarowka', tytul: 'Ciężarówka', z: 1.1 },
@@ -329,6 +400,7 @@ const JEDNOSTKI = [
 ];
 
 function sledzKlase(id, zoom) {
+  S.kadr = null;
   S.tryb = 'gra';
   S.sledzKlasa = id;
   S.sledz = null;
@@ -363,10 +435,10 @@ const klawisze = new Set();
 function sterowanieKlawiszami(realDt) {
   if (S.tryb !== 'gra') return;
   const sp = 900 / cam.zoom * realDt * (klawisze.has('shift') ? 3 : 1);
-  if (klawisze.has('w')) { cam.y -= sp; S.sledzKlasa = null; }
-  if (klawisze.has('s')) { cam.y += sp; S.sledzKlasa = null; }
-  if (klawisze.has('a') && !klawisze.has('shift')) { cam.x -= sp; S.sledzKlasa = null; }
-  if (klawisze.has('d')) { cam.x += sp; S.sledzKlasa = null; }
+  if (klawisze.has('w')) { cam.y -= sp; S.sledzKlasa = null; S.kadr = null; }
+  if (klawisze.has('s')) { cam.y += sp; S.sledzKlasa = null; S.kadr = null; }
+  if (klawisze.has('a') && !klawisze.has('shift')) { cam.x -= sp; S.sledzKlasa = null; S.kadr = null; }
+  if (klawisze.has('d')) { cam.x += sp; S.sledzKlasa = null; S.kadr = null; }
 }
 
 function odswiezPrzyciski() {
@@ -388,7 +460,8 @@ function zbudujPanel() {
   GALERIA.forEach((g) => {
     const b = document.createElement('button');
     b.textContent = g.tytul;
-    b.addEventListener('click', g.ustaw);
+    if (g.uklad) { b.dataset.uklad = g.uklad; b.style.display = 'none'; }
+    b.addEventListener('click', () => pokazKadr(g.id));
     boxG.appendChild(b);
   });
   const boxJ = $('jednostki');
@@ -410,7 +483,7 @@ function zbudujPanel() {
   const gest = $('gestosc');
   const tempo = $('tempo');
   const sync = () => {
-    ruch.cfg.gestosc = Number(gest.value);
+    for (const u of uklady.values()) u.ruch.cfg.gestosc = Number(gest.value);
     S.tempo = Number(tempo.value);
     $('gestosc-v').textContent = `×${Number(gest.value).toFixed(2)}`;
     $('tempo-v').textContent = `×${Number(tempo.value).toFixed(2)}`;
@@ -434,8 +507,7 @@ function ustawBarwy(id) {
 function startAtlasa(dopalacz) {
   S.autoAtlas = false;
   if (!ruch.atlasStart({ dopalacz })) return false;
-  const p = naKat(315, 58500);
-  patrzNa(p.x, p.y, skala(0.06));
+  pokazKadr('wezel');
   return true;
 }
 
@@ -471,6 +543,7 @@ function podepnijWejscie() {
     const dy = e.clientY - ly;
     lx = e.clientX;
     ly = e.clientY;
+    S.kadr = null;
     if (S.tryb === 'gra') {
       cam.x -= dx / cam.zoom;
       cam.y -= dy / cam.zoom;
@@ -483,6 +556,7 @@ function podepnijWejscie() {
   });
   canvas2d.addEventListener('wheel', (e) => {
     e.preventDefault();
+    S.kadr = null;
     if (S.tryb === 'gra') S.zoomBaza = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, S.zoomBaza * Math.exp(-e.deltaY * 0.0012)));
     else S.kino.dist = Math.max(2000, Math.min(400000, S.kino.dist * Math.exp(e.deltaY * 0.0012)));
   }, { passive: false });
@@ -512,6 +586,7 @@ function pokazHud() {
     `K-7 Atlasa <span class="${kl}">${NAZWY_FAZ[w.faza]}</span> · stoi ${w.stoi[0]} + ${w.stoi[1]}, ogon ${(w.kolejka[0] / 1000).toFixed(1)} / ${(w.kolejka[1] / 1000).toFixed(1)} km · Atlas: ${ruch.atlas.stan}`,
     S.tryb === 'gra' ? `kamera gry · zoom ${cam.zoom.toFixed(3)}` : `kamera kinowa · ${(S.kino.dist / 1000).toFixed(0)} km od celu`
   ];
+  if (uklad.id === 'rama') linie.push(`układ „rama” · makieta stoczni: głowica ${(siec.rama.zasieg / 1000).toFixed(1)} tys. j. od ringu (hala K-7 dziś: 7,4), odstęp do jezdni ${((siec.rama.wierzcholek - (HW.median - HW.edgeIn) - siec.rama.glowica) / 1000).toFixed(1)} tys. j.`);
   $('hud').innerHTML = linie.join('\n');
 }
 
@@ -531,8 +606,9 @@ window.__autostrada = {
   gotowe: false, S, cam,
   get ruch() { return ruch; },
   get siec() { return siec; },
+  get uklad() { return uklad?.id; },
   ustawStyl, ustawSlady, ustawBarwy,
-  galeria(id) { const g = GALERIA.find((q) => q.id === id); if (g) g.ustaw(); return !!g; },
+  galeria(id) { return pokazKadr(id); },
   patrz(sx, sy, zoom) { patrzNa(sx, sy, zoom); },
   kino(k) { S.tryb = 'kino'; Object.assign(S.kino, k); },
   sledz(id, z) { sledzKlase(id, z); },
@@ -557,7 +633,7 @@ window.__autostrada = {
     const w = ruch.K7[ruch.atlas.K];
     return {
       czas: +ruch.czas.toFixed(1), n: ruch.pojazdy.length, faza: w.faza, stoi: [...w.stoi], ogon: w.kolejka.map((x) => x | 0), atlas: ruch.atlas.stan, z: ruch.atlas.z | 0,
-      styl: S.styl?.id, cpu: +S.cpuMs.toFixed(2), gpu: +(Number(Core3D.gpuFrameMs) || 0).toFixed(2), stat: { ...ruch.stat }
+      styl: S.styl?.id, uklad: uklad?.id, cpu: +S.cpuMs.toFixed(2), gpu: +(Number(Core3D.gpuFrameMs) || 0).toFixed(2), stat: { ...ruch.stat }
     };
   }
 };
@@ -587,31 +663,29 @@ window.__autostrada = {
     atlasEnt = swiat.add('atlas', { x: ziemia.x + 40000, y: ziemia.y + 40000, angle: 0, throttle: 0 });
     window.ship = atlasEnt;
 
-    siec = zbudujSiec();
-    ruch = utworzRuch({ siec, gestosc: Number(params.get('gestosc')) || 1 });
-    ruch.rozruch();
-    for (let i = 0; i < 300; i++) ruch.step();    // 30 s rozruchu: zgęstnienie przy zjazdach, zanim ktoś spojrzy
-    ruch.odswiezPozy(0);
-
     grupa = new THREE.Group();
     grupa.name = 'Autostrada';
     grupa.position.set(ziemia.x, -ziemia.y, -30);
     Core3D.scene.add(grupa);
-    Object.assign(kontekst, { grupa, ruch, siec, Core3D, ziemia });
-    baza = utworzBaze(kontekst);
-    ciagniki = utworzCiagniki(kontekst);
+    Object.assign(kontekst, { grupa, Core3D, ziemia });
+    utworzUklad('pierscien', zbudujSiec());
+    // Rama: własne identyfikatory pojazdów (partia proxy pamięta kadłub po id), infrastruktura z geometrii ramy, styczne wstęg.
+    utworzUklad('rama', zbudujSiecRamy({ zasieg: Number(params.get('zasieg')) || undefined }), {
+      idOd: 100000, ctx: { zbudujInfrastrukture: zbudujInfrastruktureRamy, styczneWsteg: true }
+    });
     for (const utworz of STYLE) {
-      const st = utworz(kontekst);
+      const u = uklady.get(utworz.swiat || 'pierscien');
+      const st = utworz(u.kontekst);
+      st.uklad = u;
       style.set(st.id, st);
       Core3D.warmup.add({ name: `autostrada: ${st.id}`, objects: () => st.siatki, phase: 'loading' });
     }
-    Core3D.warmup.add({ name: 'autostrada: baza', objects: () => baza.siatki, phase: 'loading' });
-    Core3D.warmup.add({ name: 'autostrada: ciągniki', objects: () => ciagniki.siatki, phase: 'loading' });
     zbudujPanel();
     podepnijWejscie();
-    GALERIA[0].ustaw();
     const wybrany = params.get('styl');
+    S.kadr = 'wezel';
     ustawStyl(style.has(wybrany) ? wybrany : style.keys().next().value);
+    pokazKadr('wezel');
     klatka(1 / 60);
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });
     $('loading').style.display = 'none';

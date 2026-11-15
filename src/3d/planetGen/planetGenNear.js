@@ -15,6 +15,7 @@ import { createPlumeMaterial, plumeUniforms } from './planetGenPlume.tsl.js';
 import { PlanetGenPatches, patchToDir } from './planetGenPatch.js';
 import { PlanetGenRegionStreams } from './planetGenRegion.js';
 import { PlanetGenWeather, bandRateAt } from './planetGenWeather.js';
+import { planetStorms, stormFlashes, rotateY, STORM_MAX, FLASH_MAX } from './planetGenStorms.js';
 
 /** Wygląd lawy wg rodzaju i stylu: częstość płyt skorupy [1/promień], szerokość szwu [komórki], albedo skorupy, połysk. */
 export function lavaLookFor(spec) {
@@ -51,6 +52,8 @@ export function nearSurfaceUniforms(spec, maps, { lava = 0, size = 0 } = {}) {
     uGnCloudVol: { value: new THREE.Vector4(0.003, 0.017, 1.15, 23) },
     uGnCloudVol2: { value: new THREE.Vector4(0, 0, 0, 0) },
     uGnCloudVol3: { value: new THREE.Vector4(0, 0, 0, 0) },
+    // burze bryły chmur (ustawia ciało co klatkę); „brak” niezerowy jako wektor (pułapka 46 reguły webgpu-tsl)
+    ...Object.fromEntries(Array.from({ length: STORM_MAX }, (_, i) => [`uGnStorm${i}`, { value: new THREE.Vector4(0, 1, 0, 0) }])),
     // sieci świateł miast (planety z miastami): siła, częstość arterii, pół szerokości nitki [rad]
     uGnCity: { value: new THREE.Vector4(spec.night?.cities > 0 ? 1.1 + 1.3 * spec.night.cities : 0, 34, 0, 0) },
     [GEN_NEAR_DATA_KEYS.cloudShadow]: { value: maps.clouds || null },
@@ -175,6 +178,38 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
     cloudVol = shell(mesh, createGenCloudVolumeMaterial(cloudVolumeUniforms(spec, maps)), 5);
     cloudVol.visible = false;
   }
+  // BURZE (planetGenStorms.js): układy z ziarna planety — kierunki w układzie kuli chmur w chwili 0 pogody; wiatr
+  // pasa szerokości przenosi burzę razem z jej chmurami. Błyski piorunów z własnego zegara (czas rzeczywisty).
+  let storms0 = cloudVol ? planetStorms(spec) : [];
+  let stormsNow = storms0.map((s) => ({ ...s, dir: s.dir.slice() }));
+  const flashBuf = new Float32Array(FLASH_MAX * 4);
+  let stormClock = 0;
+  let stormPace = 1;
+  const stormDrift = (s0) => {
+    const shown = weather ? weather.shown : null;
+    return shown ? bandRateAt(Math.asin(Math.max(-1, Math.min(1, s0.dir[1]))), shown.wind) * shown.time : 0;
+  };
+  const bindStorms = () => {
+    if (!cloudVol) return;
+    const CU = cloudVol.material.uniforms;
+    for (let i = 0; i < STORM_MAX; i++) {
+      const s0 = storms0[i];
+      const v = CU[`uCvSt${i}`].value;
+      if (s0) {
+        rotateY(s0.dir, stormDrift(s0), stormsNow[i].dir);
+        v.set(stormsNow[i].dir[0], stormsNow[i].dir[1], stormsNow[i].dir[2], s0.radius);
+      } else v.set(0, 1, 0, 0);
+      U[`uGnStorm${i}`].value.copy(v);
+    }
+    const cs = CU.uCvShape.value;
+    stormFlashes(stormsNow, stormClock, { seed: spec.seed >>> 0, base: cs.x, thick: cs.y - cs.x, out: flashBuf });
+    for (let k = 0; k < FLASH_MAX; k++) {
+      const w = flashBuf[k * 4 + 3];
+      if (w > 0) CU[`uCvFl${k}`].value.set(flashBuf[k * 4], flashBuf[k * 4 + 1], flashBuf[k * 4 + 2], w);
+      else CU[`uCvFl${k}`].value.set(2, 0, 0, 0);
+    }
+  };
+  bindStorms();
   // atmosfera: rozpraszanie po promieniu (krawędź tarczy, mgiełka pod kątem, czerwień terminatora)
   let atm = null;
   if (halo && (spec.halo.coef > 0.2 || spec.haze.strength > 0.05)) atm = shell(group, createGenAtmosphereMaterial(atmosphereUniforms(spec)), 6);
@@ -301,6 +336,27 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
       }
     },
     get cloudMode() { return cloudMode; },
+    /** Układy burzowe w tej chwili: [{ dir — kierunek środka w układzie kuli chmur, radius [rad], rate }]. */
+    get storms() { return stormsNow; },
+    /**
+     * Podmienia układy burzowe (najwyżej STORM_MAX): `list` jak z `planetStorms`, kierunki w układzie kuli chmur
+     * W TEJ CHWILI (przeniesienie wiatrem od chwili 0 pogody odejmuje ciało).
+     */
+    setStorms(list) {
+      storms0 = (list || []).slice(0, STORM_MAX).map((s) => {
+        const s0 = { dir: s.dir.slice(), radius: s.radius, rate: s.rate ?? 1 };
+        rotateY(s.dir, -stormDrift(s0), s0.dir);
+        return s0;
+      });
+      stormsNow = storms0.map((s) => ({ ...s, dir: s.dir.slice() }));
+      bindStorms();
+    },
+    /** Zegar błysków piorunów [s] (harness: ta sama chwila = te same błyski). */
+    get stormTime() { return stormClock; },
+    set stormTime(t) { stormClock = Math.max(0, t) % 3600; bindStorms(); },
+    /** Tempo zegara błysków (1 — czas rzeczywisty, 0 — zatrzymany: zrzut wybranej chwili). */
+    get stormPace() { return stormPace; },
+    set stormPace(v) { stormPace = Math.max(0, v); },
     /** Powłoka atmosfery włączona / wyłączona (wyłączona: mgiełkę nad tarczą liczy sam graf gry, bez krawędzi). */
     setAtmosphere(on) {
       if (!atm) return;
@@ -360,6 +416,7 @@ export function createGenNearBody(spec, baked, baker, { segments = 384, halo = t
         U.uGnCloudVol2.value.x = cu.w;
       }
       if (aurora) aurora.material.uniforms.uAuTime.value.x = (aurora.material.uniforms.uAuTime.value.x + dt) % 4096;
+      if (cloudVol) { stormClock = (stormClock + dt * stormPace) % 3600; bindStorms(); }
       if (eruption.on) {
         eruption.t += dt;
         const t = eruption.t;

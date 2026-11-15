@@ -330,7 +330,8 @@ function frame(nowMs, forcedDt = null) {
   target.update(dt);
   fx.update(dt, S.cam.zoom);
   trails.update(dt);
-  projectiles.commit(S.cam.zoom);
+  // migawka pocisków z kroku symulacji tej klatki (zwolnienie / pauza — krótsza / bez migawki)
+  projectiles.commit(S.cam.zoom, dt);
   beams.commit(gun.time, S.cam.zoom);
 
   // światła: efekty → siatka nad kadrem → dym i odłamki
@@ -386,6 +387,7 @@ const FX_NOTE = {
   hexlance: 'Hexlance (receptura z gry): ładowanie szynami, lanca plazmy, płatki sabotu jako bryły, pocisk tnie kadłub na wylot.',
   mjolnir: 'Mjolnir: 3 s ładowania (chargeTime z danych gry), kanał plazmy wiszący kilka sekund, przebicie na wylot.',
   valkyrie: 'Valkyrie: magentowy railgun (barwa z danych gry), krótkie ładowanie, igła ze stożkiem Macha, przebicie.',
+  deathRay: 'Gungnir (z gry, tylko NPC): 4 s ładowania z laserem naprowadzającym, wiązka z czołem 30 000 j/s, rzaz przez kadłub na wylot, żar trafień.',
   beamC: 'Wiązka ciągła: płynąca plazma, pakiety energii, cięcie burty ze stopionym rowem i strugą iskier.',
   beamP: 'Wiązka pulsacyjna: front impulsu biegnie do celu, trafienie po dojściu.',
   laserPD: 'Laser obrony punktowej: szybkie impulsy do dronów.',

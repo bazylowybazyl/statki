@@ -107,8 +107,10 @@ export class HaloRingGame {
    * @param {object} o
    * @param {import('../../game/haloRingWorld.js').HaloRingWorld} o.world świat ringów gry (kolidery, rejestr hal, automat)
    */
-  constructor({ world, quality = 'high', renderer = null, scene = null } = {}) {
+  constructor({ world, quality = 'high', renderer = null, scene = null, ringOptions = null } = {}) {
     this.world = world;
+    // Dodatkowe opcje budowy ringu na klucz planety (np. { earth: { floorSites } } — dema; gra ich nie podaje).
+    this.ringOptions = ringOptions || null;
     // Renderer Core3D powstaje asynchronicznie (urządzenie WebGPU) — bierzemy go
     // w chwili budowy ringu, nie przy konstrukcji (kolidery działają od razu).
     this._renderer = renderer;
@@ -190,6 +192,7 @@ export class HaloRingGame {
     // to samo API, geometria przekroju z profilu (jak kolizje i ruch v2)
     const archetype = resolveHaloProfile(spec.profile).archetype || 'halo';
     const ring = (archetype === 'halo' ? createHaloRing : createArchRing)({
+      ...(this.ringOptions?.[e.key] || {}),
       planetRadius: resolveRingPlanetWorldRadius(e.planet),
       seed: spec.seed,
       profile: spec.profile,

@@ -250,12 +250,12 @@ function zbudujSwiatlaPojazdow() {
 // ---------------------------------------------------------------------------
 // Bryły: bramownice i wieże, ciemne, matowe, pass FG (z > 0)
 
-function bryla(lx, ly, lz, ox = 0, oy = 0, oz = 0) {
+export function bryla(lx, ly, lz, ox = 0, oy = 0, oz = 0) {
   const b = new THREE.BoxGeometry(lx, ly, lz);
   b.translate(ox, oy, oz);
   return b;
 }
-function polacz(geo) {
+export function polacz(geo) {
   let nVert = 0;
   let nIdx = 0;
   for (const g of geo) { nVert += g.getAttribute('position').count; nIdx += g.index.count; }
@@ -280,7 +280,7 @@ function polacz(geo) {
   return out;
 }
 
-function zbudujBryly(lista, geometria, nazwa) {
+export function zbudujBryly(lista, geometria, nazwa, barwa = [0.05, 0.056, 0.064]) {
   // Instancja: x, y, kąt, skala X (promieniowo), z.
   const g = new THREE.InstancedBufferGeometry();
   g.setAttribute('position', geometria.getAttribute('position'));
@@ -309,7 +309,7 @@ function zbudujBryly(lista, geometria, nazwa) {
   m.fog = false;
   m.positionNode = pozycja;
   // Bez fazek i połysku: tylko sylwetka; światło niosą lampy (L ≤ 0,08).
-  m.fragmentNode = vec4(vec3(0.05, 0.056, 0.064).mul(wiatlo), 1);
+  m.fragmentNode = vec4(vec3(barwa[0], barwa[1], barwa[2]).mul(wiatlo), 1);
   m.depthTest = true;
   m.depthWrite = true;
   m.side = THREE.FrontSide;
@@ -348,14 +348,16 @@ function geometriaWiezy() {
 
 export function utworzBaze(ctx) {
   const { ruch, siec, grupa } = ctx;
-  const inf = zbudujInfrastrukture();
+  // Układ inny niż pierścień podaje własne rozmieszczenie infrastruktury (ten sam kształt danych) i prosi o styczne wstęg.
+  const inf = ctx.zbudujInfrastrukture ? ctx.zbudujInfrastrukture(siec) : zbudujInfrastrukture();
   const pole = utworzPole(ruch);
   ctx.pole = pole;
-  const dane = zbudujWstegi(siec);
+  const dane = zbudujWstegi(siec, { styczne: !!ctx.styczneWsteg });
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(dane.pozycje, 3));
   geom.setAttribute('aSV', new THREE.BufferAttribute(dane.sv, 2));
   geom.setAttribute('aMeta', new THREE.BufferAttribute(dane.meta, 4));
+  if (dane.styczne) geom.setAttribute('aTan', new THREE.BufferAttribute(dane.styczne, 2));
   geom.setIndex(new THREE.BufferAttribute(dane.indeksy, 1));
   ctx.geomWstegi = geom;
   ctx.RODZAJ = RODZAJ;
@@ -381,6 +383,8 @@ export function utworzBaze(ctx) {
   return {
     siatki: [podklad, lampy, lampyFG, sw.mesh, bram, wieze],
     infrastruktura: inf,
+    /** Zegar błysków policji (styl może zgrać z nim własne światło). */
+    get blysk() { return bBlysk; },
     aktualizuj(kl) {
       pole.odswiez(kl.dt);
       U.podklad.value = (ctx.silaPodkladu ?? 0.55);

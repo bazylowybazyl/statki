@@ -1,9 +1,11 @@
 // dema/bronie-webgpu/arsenal.js
 //
-// Katalog broni dema: działa (Capital, L, M, S), obrona punktowa i lasery.
-// Rakiety i torpedy są poza zakresem (osobne zadanie). Statystyki (prędkość,
-// kadencja, rozrzut, lufy, zasięg, salwy flak) biorę z MASTER_WEAPONS gry, a
-// dane wizualne (odrzut, wstrząs) z FX_PROFILE w src/vfx/turret2D.js.
+// Katalog broni dema: działa (Capital, L, M, S), obrona punktowa i lasery — te same co
+// WEAPON_FX gry (src/3d/weapons/weaponFxTable.js, stan 2026-11-10: 27 broni dema + warianty
+// rozmiarowe broni specjalnej, Lance, działko kanonierki, Promień Śmierci „Gungnir”).
+// Rakiety i torpedy są poza zakresem (osobne demo). Statystyki (prędkość, kadencja, rozrzut,
+// lufy, zasięg, salwy flak) oraz odrzut i wstrząs (`recoil`, `shake`) biorę z MASTER_WEAPONS gry
+// (jak gra od 18-D); FX_PROFILE (dawne src/vfx/turret2D.js) zostaje zapasem dla broni bez tych pól.
 //
 // Pola:
 //   fx      — rodzina receptury (recipes.js)
@@ -33,7 +35,9 @@ const FX_PROFILE = {
 const E = (id, o) => {
   const def = MASTER_WEAPONS[id];
   if (!def) throw new Error(`Brak broni ${id} w MASTER_WEAPONS`);
-  const [recoil, shake] = FX_PROFILE[id] || [3, 1.8];
+  const [recoil0, shake0] = FX_PROFILE[id] || [3, 1.8];
+  const recoil = Number.isFinite(def.recoil) ? def.recoil : recoil0;
+  const shake = Number.isFinite(def.shake) ? def.shake : shake0;
   return { id, def, recoil, shake, ...o };
 };
 
@@ -45,7 +49,14 @@ export const GROUPS = [
       E('siege_railgun', { fx: 'mjolnir', mount: 'special', pattern: 'charge', charge: 3.0, short: 'Mjolnir' }),
       E('special_valkyrie_railgun', { fx: 'valkyrie', mount: 'special', pattern: 'charge', charge: 0.28, alt: true, short: 'Valkyrie' }),
       E('special_goliath_autocannon', { fx: 'goliath', mount: 'special', pattern: 'alt', short: 'Goliath' }),
-      E('special_plasma_gatling', { fx: 'plasmaGatling', mount: 'special', pattern: 'single', short: 'Plasma Gatling' })
+      E('special_plasma_gatling', { fx: 'plasmaGatling', mount: 'special', pattern: 'single', short: 'Plasma Gatling' }),
+      // warianty rozmiarowe broni specjalnej (gra: receptury rodziców)
+      E('special_yamato_l', { fx: 'yamato', mount: 'special', pattern: 'twin', short: 'Yamato L' }),
+      E('special_valkyrie_m', { fx: 'valkyrie', mount: 'special', pattern: 'charge', charge: 0.25, alt: true, short: 'Oszczep' }),
+      E('special_valkyrie_s', { fx: 'valkyrie', mount: 'special', pattern: 'charge', charge: 0.2, alt: true, short: 'Kolec' }),
+      // Promień Śmierci (gra: wieża Colossusa Terra Nova, tylko NPC — src/game/deathRay.js): 4 s ładowania, wiązka
+      // rośnie z czołem 30 000 j/s, przecina cel na wylot (jeden cel), trwa 1,1 s, gaśnie 0,5 s
+      E('death_ray', { fx: 'deathRay', mount: 'builtin', pattern: 'ray', charge: 4.0, short: 'Gungnir' })
     ]
   },
   {
@@ -53,7 +64,8 @@ export const GROUPS = [
       E('armata_mk1', { fx: 'armata', mount: 'main', pattern: 'single', short: 'Armata' }),
       E('tempest_ion_l', { fx: 'tempest', mount: 'main', pattern: 'single', short: 'Tempest L' }),
       E('helios_lance_l', { fx: 'helios', mount: 'main', pattern: 'alt', short: 'Helios Lance' }),
-      E('heavy_autocannon_l', { fx: 'autocannon', mount: 'main', pattern: 'single', short: 'Autokanon L' })
+      E('heavy_autocannon_l', { fx: 'autocannon', mount: 'main', pattern: 'single', short: 'Autokanon L' }),
+      E('lance_rail_l', { fx: 'valkyrie', mount: 'main', pattern: 'single', short: 'Lanca L' })
     ]
   },
   {
@@ -64,14 +76,17 @@ export const GROUPS = [
       E('vulcan_minigun', { fx: 'vulcan', mount: 'main', pattern: 'single', short: 'Vulcan' }),
       E('heavy_autocannon', { fx: 'autocannon', mount: 'main', pattern: 'single', short: 'Autokanon' }),
       E('beam_continuous', { fx: 'beamC', mount: 'main', pattern: 'beam', short: 'Wiązka ciągła' }),
-      E('beam_pulse', { fx: 'beamP', mount: 'main', pattern: 'alt', short: 'Wiązka puls' })
+      E('beam_pulse', { fx: 'beamP', mount: 'main', pattern: 'alt', short: 'Wiązka puls' }),
+      E('lance_rail_m', { fx: 'valkyrie', mount: 'main', pattern: 'single', short: 'Lanca' })
     ]
   },
   {
     key: 'S', label: 'S', items: [
       E('tempest_ion_s', { fx: 'tempest', mount: 'main', pattern: 'single', short: 'Tempest S' }),
       E('helios_laser_s', { fx: 'helios', mount: 'main', pattern: 'alt', short: 'Helios S' }),
-      E('gatling_s', { fx: 'vulcan', mount: 'main', pattern: 'single', short: 'Gatling S' })
+      E('gatling_s', { fx: 'vulcan', mount: 'main', pattern: 'single', short: 'Gatling S' }),
+      // broń maszyn eskadr (gra: gniazdo `fighter`) — w demie na gnieździe main Atlasa
+      E('gunship_autocannon', { fx: 'autocannon', mount: 'main', pattern: 'single', short: 'Kanonierka' })
     ]
   },
   {
@@ -89,6 +104,12 @@ export const GROUPS = [
 
 export const WEAPONS = GROUPS.flatMap((g) => g.items.map((w) => ({ ...w, group: g.key })));
 export const WEAPON_BY_ID = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
+
+/**
+ * Rodziny, których pociski zostawiają smugę gazu — jak w grze (TRAIL_FAMILIES, weaponFxTable.js; decyzja
+ * użytkownika 2026-10-04: zwykłe pociski NIE zostawiają śladu, zostają ładowane strzały superbroni).
+ */
+export const TRAIL_FAMILIES = Object.freeze(new Set(['hexlance', 'mjolnir']));
 
 /** Skala efektu z rozmiaru broni (poza skalą wieżyczki) — S lżej, Capital ciężej. */
 export const SIZE_POWER = Object.freeze({ S: 0.8, M: 1.0, L: 1.25, Capital: 1.6 });

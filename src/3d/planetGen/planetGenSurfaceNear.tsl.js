@@ -31,7 +31,8 @@ import { ruinsShade } from './planetGenRuins.tsl.js';
 import { GEN_SOLID_UNIFORM_KEYS, GEN_SOLID_DATA_KEYS } from './planetGenSurface.tsl.js';
 import { plumeShadowAt, PLUME_UNIFORM_KEYS } from './planetGenPlume.tsl.js';
 import { cloudNoiseTexture } from './planetGenNoise3D.js';
-import { cloudCover, cloudRegime, cloudShape, wxGlideU } from './planetGenCloudVolume.tsl.js';
+import { cloudCover, cloudRegime, cloudShape, stormAt, stormCover, wxGlideU } from './planetGenCloudVolume.tsl.js';
+import { STORM_MAX } from './planetGenStorms.js';
 
 const PI = Math.PI;
 
@@ -52,6 +53,8 @@ export const GEN_NEAR_UNIFORM_KEYS = Object.freeze({
   uGnCloudVol: 'vec4',  // bryła chmur (jak uCvShape / uCvNoise materiału bryły): podstawa i strop powłoki [R nad gruntem], wzmocnienie pokrycia, częstość kłębów
   uGnCloudVol2: 'vec4', // czas szumu kłębów [s]; pogoda: bieżący czas [s], wiatr [rad / s], 1 — włączona
   uGnCloudVol3: 'vec4', // pogoda: czas mapy pogody w użyciu [s]; rodzaje chmur bryły: wieże burzowe (0…1), przesunięcie rodzaju, —
+  // burze bryły chmur (jak uCvSt materiału bryły): kierunek środka w układzie kuli chmur, promień tarczy [rad]
+  ...Object.fromEntries(Array.from({ length: STORM_MAX }, (_, i) => [`uGnStorm${i}`, 'vec4'])),
   uGnCity: 'vec4',      // sieci świateł miast: siła (0 — brak), częstość pierwszej oktawy żyłek [1 / R], —, —
   ...PLUME_UNIFORM_KEYS
 });
@@ -386,6 +389,7 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
       const cP = { r0: U.uGnCloudVol.x.add(1.0), thick: U.uGnCloudVol.y.sub(U.uGnCloudVol.x), freq: U.uGnCloudVol.w, time: U.uGnCloudVol2.x, noise: noise3, wxv: vec4(U.uGnCloudVol2.yzw, 0.0), towers: U.uGnCloudVol3.y };
       // kłęby mniejsze od piksela wchodzą średnią (jak w bryle)
       const cLod = float(1.0).sub(smoothstep(0.004, 0.012, pixL)).toVar();
+      const gStorms = Array.from({ length: STORM_MAX }, (_, i) => U[`uGnStorm${i}`]);
       for (const [hN, puffs] of [[0.2, true], [0.5, true], [0.85, false]]) {
         const rr = U.uGnCloudVol.x.add(U.uGnCloudVol.y.sub(U.uGnCloudVol.x).mul(hN)).add(1.0);
         // droga od gruntu do kuli o promieniu rr wzdłuż promienia słońca (nisko nad horyzontem — przycięta)
@@ -398,8 +402,13 @@ function genNearSurface({ U, uv: vUv, local, worldPos, dayTex, specTex, nightTex
         const vuv = vec2(atan(dc.z.negate(), dc.x.add(step(abs(dc.x).add(abs(dc.z)), 1e-7).mul(1e-6))).div(2 * PI).add(0.5)
           .add(wxGlideU(latC, vec4(U.uGnCloudVol2.yzw, 0.0), U.uGnCloudVol3.x)), latC.div(PI).add(0.5));
         const cov = cloudCover(dot(cloudShadowTex.sample(vuv).level(lodC.sub(1.0)).rgb, vec3(0.299, 0.587, 0.114)), U.uGnCloudVol.z).toVar();
-        If(cov.greaterThan(0.02), () => {
-          const cS = cloudShape(xc, cP, cov, cloudRegime(xc, noise3, U.uGnCloudVol2.x, U.uGnCloudVol3.z), puffs ? { lodW: cLod } : { puffs: false });
+        // (burza: tarcza zachmurzona niezależnie od mapy — próbka rodzaju chmur także w jej największym zasięgu)
+        If(cov.greaterThan(0.02).or(stormAt(dc, gStorms, float(0.65)).greaterThan(0.001)), () => {
+          const regS = vec4(0.0).toVar();
+          regS.assign(cloudRegime(xc, noise3, U.uGnCloudVol2.x, U.uGnCloudVol3.z));
+          const stS = float(0.0).toVar();
+          stS.assign(stormAt(dc, gStorms, regS.w));
+          const cS = cloudShape(xc, { ...cP, storm: stS }, stormCover(cov, stS).toVar(), vec4(max(regS.x, stS), regS.yzw), puffs ? { lodW: cLod } : { puffs: false });
           // (cienka ława wokół mas — słaby, miękki cień)
           sh.addAssign(max(cS.d, cS.sheet.mul(1.4)).mul(cS.fade));
         });
