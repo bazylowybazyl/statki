@@ -435,7 +435,7 @@ export function createOreStation(opts = {}) {
       const w = 9 - lay;
       for (let q = 0; q < w && s < SLOTS; q++) {
         const off = ((q + 1) >> 1) * (q & 1 ? 1 : -1);          // 0, +1, −1, +2, −2…
-        slotLat[s] = off + (w % 2 === 0 ? 0.5 : 0);
+        slotLat[s] = off - (w % 2 === 0 ? 0.5 : 0);            // warstwa parzysta: −3,5…+3,5 (symetrycznie do osi taśmy)
         slotLay[s] = lay;
         s++;
       }
@@ -1179,20 +1179,19 @@ export function createOreStation(opts = {}) {
     }
     return k;
   }
-  // taśma: punkt i osie odcinka
-  const bp = geo.belt.pts;
-  const incLen = geo.belt.len1;
-  const incTy = (bp[2][1] - bp[1][1]) / incLen;
-  const incTz = (bp[2][2] - bp[1][2]) / incLen;
+  // taśma: tor z zestawu (`kit/tasmociag.js`) — punkt przekroju z (droga po taśmie, bok, wysokość nad taśmą)
+  const beltTrack = geo.belt.track;
+  const beltIn = new Float64Array(3);            // wejście `pointFrom`: droga, bok, wysokość (przez tablicę — bez alokacji)
   /**
    * Ziarna na taśmie: rekordy 12 × f32 (rodzaj 4). Ziarno leży w przekroju taśmy (do 9 w rzędzie, 4 warstwy) i jedzie
-   * z komórką taśmy. Zwraca liczbę zapisanych ziaren.
+   * z komórką taśmy PO TORZE — także po łuku; miejsce w poprzek i warstwę ma stałe od zasuwy do galerii pieca.
+   * Zwraca liczbę zapisanych ziaren. `coords` (testy): 4 liczby na ziarno w tej samej kolejności — numer ziarna
+   * (stały, póki ziarno jedzie taśmą), droga po taśmie, bok, wysokość nad taśmą.
    */
-  function writeBelt(out, at) {
+  function writeBelt(out, at, coords = null) {
     let w = at * MOVING_STRIDE;
     const lim = out.length - MOVING_STRIDE;
     const back = reg[BTRAVEL] - reg[BTRAVEL0];
-    const len0 = geo.belt.len0;
     let k = 0;
     const jLow = Math.ceil(-reg[BTRAVEL] / beltCell);
     for (let J = beltHead; J >= jLow; J--) {
@@ -1206,17 +1205,12 @@ export function createOreStation(opts = {}) {
         const s = sBase + ((hsh & 255) / 255 - 0.5) * 2.4;
         const lat = slotLat[i] * a + (((hsh >>> 8) & 255) / 255 - 0.5) * 1.6;
         const hgt = 3 + slotLay[i] * hL;
-        // pozycja poprzednia: wstecz po osi TEGO SAMEGO odcinka (na przesypie ziarno nie rysuje smugi przez róg)
-        if (s <= len0) {
-          const x = bp[0][0] - (s < 0 ? 0 : s);
-          out[w] = x; out[w + 1] = bp[0][1] + hgt; out[w + 2] = bp[0][2] + lat;
-          out[w + 3] = x + back; out[w + 4] = out[w + 1]; out[w + 5] = out[w + 2];
-        } else {
-          const d = s - len0 > incLen ? incLen : s - len0;
-          // normalna pochylni: (0, −tz, ty) (w górę i ku zasiekowi)
-          out[w] = bp[1][0] + lat; out[w + 1] = bp[1][1] + incTy * d - incTz * hgt; out[w + 2] = bp[1][2] + incTz * d + incTy * hgt;
-          out[w + 3] = out[w]; out[w + 4] = out[w + 1] - incTy * back; out[w + 5] = out[w + 2] - incTz * back;
-        }
+        // pozycja bieżąca i z początku kroku: ten sam punkt przekroju, droga cofnięta o przejazd taśmy w kroku
+        beltIn[0] = s; beltIn[1] = lat; beltIn[2] = hgt;
+        beltTrack.pointFrom(beltIn, out, w);
+        beltIn[0] = s - back;
+        beltTrack.pointFrom(beltIn, out, w + 3);
+        if (coords !== null) { const q = k * 4; coords[q] = J * 32 + i; coords[q + 1] = s; coords[q + 2] = lat; coords[q + 3] = hgt; }
         const qa = ((hsh >>> 16) & 255) - 127.5;
         const qb = (hsh >>> 24) - 127.5;
         const qc = ((hsh >>> 4) & 255) - 127.5;

@@ -2,13 +2,15 @@
 //
 // Trzy budowle w układzie stanowiska (x od osi toru, z jak w dzielnicy huty, y = wysokość K-7):
 //   • `buildOreYardScene`  — zasiek z murami, nabrzeże, stacja dmuchawy z cyklonem, kanał zrzutowy w klatce i wylot
-//     z klapą (grupa ruchoma), zasuwy w dnie (grupy), koryto taśmy pod kratą, pochylnia do galerii pieca;
+//     z klapą (grupa ruchoma), zasuwy w dnie (grupy), szczelina wyjścia taśmy, kozły taśmociągu, brama w murze,
+//     galeria pieca z okapem wlotu;
 //   • `buildOrePierScene`  — pirs z rurą ssącą (odcinki oszklone = klatki z obręczy, w których widać ziarna);
 //   • `buildOreVacScene`   — odkurzacz (zestaw FG, nad statkiem): suwnica, wózek, wąż teleskopowy, dzwon-klatka
 //     i zrębnica ładowni jadąca ze statkiem (grupy ruchome; macierze ustawia strona ze stanu symulacji).
 // Geometria z `geometria.js` (te same liczby co symulacja). To tło dla ziaren — ruda, podkład stosu i taśma są
 // w `obraz.js`.
 import { PB_FX, PB_MAT, PB_MAX_GROUPS, k7HeightToZ, newScene, sceneOf, xzTools } from '../../kit/sceny.js';
+import { CONVEYOR_FRAME, conveyorSection } from '../../kit/tasmociag.js';
 
 const M = PB_MAT;
 const FLOOR = 18;               // nabrzeże
@@ -139,7 +141,17 @@ export function buildOreYardScene(geo, style) {
 
   // --- mury zasieku: korona 150, wnętrze do dna; przypory od środka, bloki naroży, znaki poziomu
   const WT = { top: B.wallTop, t: B.wallT };
-  wall(Q, [B.x0 - B.wallT, n0 + 30], [B.x1 + B.wallT, n0 + 30], WT);
+  // mur od części gorącej ma BRAMĘ TAŚMY: wycięcie korony z niskim progiem, przez które taśmociąg wychodzi do galerii
+  const WG = Bt.wallGate;
+  wall(Q, [B.x0 - B.wallT, n0 + 30], [WG.x - WG.half, n0 + 30], WT);
+  wall(Q, [WG.x + WG.half, n0 + 30], [B.x1 + B.wallT, n0 + 30], WT);
+  wall(Q, [WG.x - WG.half, n0 + 30], [WG.x + WG.half, n0 + 30], { top: WG.sill, t: B.wallT, cap: M.rail });
+  for (const s of [-1, 1]) {
+    Q.box([WG.x + s * (WG.half - 5), n0 + 30], (WG.sill + 158) / 2, 10, 158 - WG.sill, B.wallT + 10, M.yellow);
+    Q.box([WG.x + s * (WG.half - 5), n0 + 30], 161, 16, 6, B.wallT + 16, M.rail);
+  }
+  // siodło taśmy na progu bramy
+  Q.box([WG.x, n0 + 30], (WG.sill + WG.y - 19) / 2, 92, WG.y - 19 - WG.sill, 16, M.yellow);
   wall(Q, [B.x0 - B.wallT, q0 - 30], [B.x1 + B.wallT, q0 - 30], WT);
   wall(Q, [B.x0 - 30, B.z0], [B.x0 - 30, B.z1], WT);
   wall(Q, [B.x1 + 30, B.z0], [B.x1 + 30, B.z1], WT);
@@ -148,14 +160,18 @@ export function buildOreYardScene(geo, style) {
     Q.box([x, z], 169, 76, 6, 76, M.rail);
   }
   for (let x = B.x0 + 142; x < B.x1 - 60; x += 142) {
-    for (const [z, s] of [[B.z0, 1], [B.z1, -1]]) Q.box([x, z + s * 5], (B.floorEdge + 136) / 2, 16, 136 - B.floorEdge, 10, M.rail);
+    for (const [z, s] of [[B.z0, 1], [B.z1, -1]]) {
+      if (z === B.z0 && Math.abs(x - WG.x) < WG.half + 14) continue;        // w bramie taśmy przypory nie ma
+      Q.box([x, z + s * 5], (B.floorEdge + 136) / 2, 16, 136 - B.floorEdge, 10, M.rail);
+    }
   }
   for (let z = B.z0 + 133; z < B.z1 - 60; z += 133) {
     for (const [x, s] of [[B.x0, 1], [B.x1, -1]]) Q.box([x + s * 5, z], (B.floorEdge + 136) / 2, 10, 136 - B.floorEdge, 16, M.rail);
   }
   // znaki poziomu zasypu na murach (żółta kreska = pełny zasiek, biała = połowa)
   for (const [y, mat] of [[95, M.yellow], [-10, M.pale]]) {
-    Q.seg([B.x0 + 30, B.z0 + 1.5], [B.x1 - 30, B.z0 + 1.5], y, 5, 3, mat);
+    Q.seg([B.x0 + 30, B.z0 + 1.5], [WG.x - WG.half, B.z0 + 1.5], y, 5, 3, mat);
+    Q.seg([WG.x + WG.half, B.z0 + 1.5], [B.x1 - 30, B.z0 + 1.5], y, 5, 3, mat);
     Q.seg([B.x0 + 30, B.z1 - 1.5], [B.x1 - 30, B.z1 - 1.5], y, 5, 3, mat);
     Q.seg([B.x0 + 1.5, B.z0 + 30], [B.x0 + 1.5, B.z1 - 30], y, 5, 3, mat);
     Q.seg([B.x1 - 1.5, B.z0 + 30], [B.x1 - 1.5, B.z1 - 30], y, 5, 3, mat);
@@ -183,91 +199,83 @@ export function buildOreYardScene(geo, style) {
     gates.push(group);
   }
 
-  // --- koryto taśmy zbiorczej pod kratą (ostatnie 270 j. przed przesypem) i szyb pochylni
-  const tro = Bt.sections.find((s) => s.name === 'koryto');
-  const bz = Bt.pts[0][2];
-  const tx0 = Bt.pts[0][0] - tro.s1;
-  const tx1 = Bt.pts[0][0] - tro.s0;
-  const by = Bt.pts[0][1];
-  for (const s of [-1, 1]) Q.seg([tx0 - 30, bz + s * 35], [tx1 + 4, bz + s * 35], (by - 22 + B.floorEdge) / 2, B.floorEdge - by + 22, 10, M.dark);
-  Q.box([tx1 + 2, bz], (by - 22 + B.floorEdge) / 2, 6, B.floorEdge - by + 22, 70, M.dark);
-  Q.seg([tx0 - 30, bz], [tx1 + 4, bz], by - 16, 12, 70, M.black);
-  // rolki pod taśmą (widać je między progami) i krata nad korytem
-  for (let x = tx0 + 14; x < tx1; x += 28) Q.box([x, bz], by - 5, 5, 5, 62, M.rail);
-  for (const s of [-1, 1]) Q.seg([tx0 + 30, bz + s * 31], [tx1 + 2, bz + s * 31], B.floorEdge + 1.5, 3, 5, M.yellow);
-  for (let x = tx0 + 44; x < tx1; x += 17) Q.box([x, bz], B.floorEdge + 0.8, 2.6, 2.6, 62, M.rail);
-  // szyb pochylni: ściany, krawężnik
-  const inc = Bt.sections.find((s) => s.name === 'pochylnia');
-  const cosI = Math.cos(Bt.incline);
-  const sinI = Math.sin(Bt.incline);
-  const bx = Bt.pts[1][0];
-  const zPit = bz - (inc.s0 - Bt.len0) * cosI;
-  for (const s of [-1, 1]) Q.seg([bx + s * 35, zPit - 8], [bx + s * 35, bz + 34], (by - 22 + B.floorEdge) / 2, B.floorEdge - by + 22, 10, M.dark);
-  Q.box([bx, bz + 37], (by - 22 + B.floorEdge) / 2, 80, B.floorEdge - by + 22, 8, M.dark);
-  Q.seg([bx, zPit - 8], [bx, bz + 34], by - 16, 12, 70, M.black);
-  for (const s of [-1, 1]) Q.seg([bx + s * 38, zPit - 10], [bx + s * 38, bz + 40], B.floorEdge + 2.5, 5, 6, M.yellow);
-  Q.box([bx, bz + 40], B.floorEdge + 2.5, 82, 5, 6, M.yellow);
-
-  // --- pochylnia do galerii pieca: podłużnice, łoże, kozły, poręcz; załamanie skali wysokości na y = 116
-  const a = Bt.pts[1];
-  const b = Bt.pts[2];
-  const at = (t) => [a[0], a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-  const t116 = (116 - a[1]) / (b[1] - a[1]);
-  const tEnd = 1 + 24 / Bt.len1;
-  const spans = [[-24 / Bt.len1, t116], [t116, tEnd]];
-  for (const [u0, u1] of spans) {
-    const p = at(u0);
-    const q = at(u1);
-    for (const s of [-1, 1]) {
-      Q.beam([p[0] + s * 35, p[2]], p[1] + 4, [q[0] + s * 35, q[2]], q[1] + 4, 9, M.yellow);
-      Q.beam([p[0] + s * 37, p[2]], p[1] + 30, [q[0] + s * 37, q[2]], q[1] + 30, 3, M.rail);
+  // --- TAŚMOCIĄG do galerii pieca: bryła taśmy (nitki, krążniki, rama, burty) jest w `kit/tasmociag3d.js`; tu stoi
+  // wszystko, na czym taśma leży i przez co przechodzi — szczelina w posadzce, kozły pod łukiem i pochylnią, galeria.
+  const track = Bt.track;
+  const SEC = conveyorSection(Bt.width / 2);
+  const F = new Float64Array(CONVEYOR_FRAME);
+  const pt = (s, lat, h) => { track.frame(s, F); return [F[0] + F[6] * lat + F[9] * h, F[1] + F[10] * h, F[2] + F[8] * lat + F[11] * h]; };
+  const bz = Bt.start[2];
+  const SL = Bt.slot;
+  const pitH = B.floorEdge - (KEEL + 22);
+  const pitY = (KEEL + 22 + B.floorEdge) / 2;
+  const sw = SL.z1 - bz;
+  // szczelina, którą taśma wychodzi spod dna: ściany (dalej, w tunelu pod kopcem, niższe — dno zasieku opada tam lejem),
+  // nadproże wylotu tunelu, pochyłe dno pod ramą taśmy, krawężnik na posadzce z trzech stron (od strony wyjazdu taśmy
+  // otwarte)
+  for (const s of [-1, 1]) {
+    Q.seg([SL.x0, bz + s * (sw - 3)], [SL.x1 + 6, bz + s * (sw - 3)], pitY, pitH, 6, M.dark);
+    Q.seg([SL.x1 + 6, bz + s * (sw - 3)], [SL.x1 + 90, bz + s * (sw - 3)], pitY - 12, pitH - 24, 6, M.dark);
+  }
+  Q.box([SL.x1 + 4, bz], B.floorEdge - 5, 8, 10, 2 * sw, M.yellow);
+  Q.box([SL.x1 + 9, bz], B.floorEdge - 1.5, 4, 3, 2 * sw, M.black);
+  // dno z listew o przekroju kwadratowym (szeroka belka zestawu stawałaby na sztorc)
+  for (let k = -3; k <= 3; k++) f.beam(pt(Bt.sections[0].s1 - 90, k * 12, SEC.bottom - 12), pt(Bt.sClear, k * 12, SEC.bottom - 12), 12.3, M.black);
+  for (const s of [-1, 1]) Q.seg([SL.x0 - 6, bz + s * (sw + 4)], [SL.x1 + 10, bz + s * (sw + 4)], B.floorEdge + 2.5, 5, 6, M.yellow);
+  Q.box([SL.x1 + 13, bz], B.floorEdge + 2.5, 6, 5, 2 * sw + 14, M.yellow);
+  // kozły: od miejsca, gdzie rama jest nad dnem, co ~96 j. po torze (także pod łukiem) do bramy w murze. Niski kozioł to
+  // poprzeczka na dwóch słupkach, wysoki — rozkraczone nogi ze stężeniem; stopy na dnie zasieku.
+  const base = B.floorEdge;
+  const s0k = Bt.sClear + 44;
+  const s1k = WG.s - 70;
+  const nk = Math.max(1, Math.round((s1k - s0k) / 96));
+  for (let k = 0; k <= nk; k++) {
+    const s = s0k + (s1k - s0k) * k / nk;
+    const top = pt(s, 0, SEC.bottom - 4);
+    const H = top[1] - base;
+    const splay = Math.min(26, 6 + H * 0.16);
+    f.beam(pt(s, -(SEC.outer + 6), SEC.bottom - 4), pt(s, SEC.outer + 6, SEC.bottom - 4), 8, M.yellow);
+    for (const sd of [-1, 1]) {
+      const a = pt(s, sd * (SEC.outer - 2), SEC.bottom - 7);
+      const foot = pt(s, sd * (SEC.outer - 2 + splay), 0);
+      f.beam(a, [foot[0], base + 2, foot[2]], 7, M.yellow);
+      Q.box([foot[0], foot[2]], base + 2, 22, 4, 22, M.dark);
     }
-    f.beam([p[0], p[1] - 9, p[2]], [q[0], q[1] - 9, q[2]], 62, M.dark, 8);
-  }
-  // słupki poręczy i rolki pod taśmą co 50 j. wzdłuż pochylni
-  for (let d = 20; d < Bt.len1; d += 50) {
-    const p = at(d / Bt.len1);
-    if (p[1] < B.floorEdge + 6) continue;
-    for (const s of [-1, 1]) f.beam([p[0] + s * 37, p[1] + 4, p[2]], [p[0] + s * 37 - 0, p[1] + 30, p[2] - 0], 3, M.rail);
-    f.beam([p[0] - 31, p[1] - 4, p[2]], [p[0] + 31, p[1] - 4, p[2]], 5, M.rail);
-  }
-  // kozły: w zasieku z dna, na murze, za murem z nabrzeża
-  for (const d of [220, 370, 520, 690]) {
-    const p = at(d / Bt.len1);
-    const base = p[2] > B.z0 ? B.floorEdge : p[2] > n0 ? B.wallTop : FLOOR;
-    for (const s of [-1, 1]) {
-      Q.beam([p[0] + s * 62, p[2] + 26], base, [p[0] + s * 33, p[2]], p[1] - 10, 9, M.yellow);
-      Q.beam([p[0] + s * 62, p[2] - 26], base, [p[0] + s * 33, p[2]], p[1] - 10, 9, M.yellow);
+    if (H > 70) {
+      // stężenie w połowie nóg
+      const mid = (sd) => { const a = pt(s, sd * (SEC.outer - 2), SEC.bottom - 7); const b = pt(s, sd * (SEC.outer - 2 + splay), 0); return [(a[0] + b[0]) / 2, (a[1] + base + 2) / 2, (a[2] + b[2]) / 2]; };
+      f.beam(mid(-1), mid(1), 5, M.rail);
     }
-    Q.box([p[0], p[2]], base + 3, 150, 6, 70, M.dark);
   }
-  // galeria pieca: wieża, kosz przyjmujący, zabudowany przenośnik dalej ku piecowi
-  const gz = b[2];
-  // wieża kończy się 30 j. przed końcem taśmy od strony zasieku — pochylnia przechodzi NAD jej dachem, nie przez niego
-  Q.box([bx, gz - 47.5], (FLOOR + 262) / 2, 210, 262 - FLOOR, 155, M.steel);
-  Q.box([bx, gz - 50], 266, 228, 8, 168, M.rail);
-  Q.box([bx, gz - 47.5], 150, 214, 26, 159, M.glass);
-  // kosz przyjmujący pod końcem taśmy i OKAP PRZESYPU nad nim: taśma z ziarnami wjeżdża pod okap (otwarty od strony
-  // zasieku), ziarna spadają do kosza w jego wnętrzu — koniec taśmy i znikanie ziaren są zasłonięte z każdej strony
-  // (kosz stoi ZA końcem taśmy i poniżej niego — taśma nie wchodzi w jego bryłę)
-  Q.box([bx, gz - 24], 283, 100, 26, 40, M.dark);
-  Q.box([bx, gz - 38], 306, 96, 72, 12, M.black);
-  for (const s of [-1, 1]) Q.box([bx + s * 54, gz + 4], 306, 8, 74, 98, M.yellow);
-  Q.box([bx, gz + 2], 346, 124, 7, 104, M.steel);
-  Q.box([bx, gz + 2], 351, 100, 4, 84, M.pale);
-  Q.box([bx, gz + 53], 340, 124, 12, 6, M.yellow);
-  Q.seg([bx, gz - 60], [bx, NZ], 300, 64, 84, M.pale);
-  Q.seg([bx, gz - 60], [bx, NZ], 334, 6, 92, M.rail);
-  for (let z = gz - 90; z > NZ + 20; z -= 44) Q.box([bx, z], 300, 86, 22, 14, M.glass);
-  // lampa ostrzegawcza galerii: świecąca kostka na słupku (lampa-krążek zestawu rysowała się tu ziarnistą płytką —
-  // także na wolno stojącym słupku, więc to wygląd krążka w trybie błysku, nie nakładające się ściany)
-  Q.cyl([bx - 76, gz + 56], 274, 3, 20, M.rail);
+  // galeria pieca: wieża podnośnika, OKAP WLOTU od strony zasieku, zabudowany przenośnik dalej ku piecowi.
+  // Taśma z ziarnami wjeżdża pod okap (otwarty od strony zasieku) i kończy się 20 j. przed czarnym wlotem w licu wieży:
+  // koniec taśmy i znikanie ziaren są zasłonięte z góry i z boków (kosz stoi poniżej końca taśmy, nie w jej bryle).
+  const bx = Bt.end[0];
+  const fz = geo.furnace.faceZ;
+  const hz = geo.furnace.hoodZ;
+  const tz = fz - 77.5;
+  const hm = (fz + hz) / 2;
+  Q.box([bx, tz], (FLOOR + 262) / 2, 210, 262 - FLOOR, 155, M.steel);
+  Q.box([bx, tz - 2.5], 266, 228, 8, 168, M.rail);
+  Q.box([bx, tz], 206, 214, 26, 159, M.glass);
+  Q.box([bx, fz + 3], 112, 96, 96, 6, M.black);
+  Q.box([bx, fz + 12], 72, 100, 16, 24, M.dark);
+  for (const s of [-1, 1]) Q.box([bx + s * 54, hm], 115, 8, 90, hz - fz, M.yellow);
+  Q.box([bx, hm + 2], 162, 124, 7, hz - fz + 8, M.steel);
+  Q.box([bx, hm + 2], 167, 100, 4, hz - fz - 14, M.pale);
+  Q.box([bx, hz + 3], 156, 124, 12, 6, M.yellow);
+  Q.seg([bx, fz - 40], [bx, NZ], 300, 64, 84, M.pale);
+  Q.seg([bx, fz - 40], [bx, NZ], 334, 6, 92, M.rail);
+  for (let z = fz - 70; z > NZ + 20; z -= 44) Q.box([bx, z], 300, 86, 22, 14, M.glass);
+  // lampy ostrzegawcze na narożach okapu: świecąca kostka na słupku (lampa-krążek zestawu rysowała się tu ziarnistą
+  // płytką — także na wolno stojącym słupku, więc to wygląd krążka w trybie błysku, nie nakładające się ściany)
+  Q.cyl([bx - 70, hz - 4], 176, 3, 20, M.rail);
   f.fx(1.0, PB_FX.blink, 0.3, 0.5);
-  Q.box([bx - 76, gz + 56], 288, 10, 6, 10, M.red);
+  Q.box([bx - 70, hz - 4], 190, 10, 6, 10, M.red);
   f.nofx();
-  Q.cyl([bx + 76, gz + 56], 274, 3, 20, M.rail);
+  Q.cyl([bx + 70, hz - 4], 176, 3, 20, M.rail);
   f.fx(0.9, PB_FX.status, 0, 1);
-  Q.box([bx + 76, gz + 56], 288, 10, 6, 10, M.status);
+  Q.box([bx + 70, hz - 4], 190, 10, 6, 10, M.status);
   f.nofx();
   // napisy biegną wzdłuż −z stanowiska: w obróconym kadrze z góry (statek z lewej, piec z prawej) czytają się poziomo
   Q.label('DO PIECA', [bx + 330, NZ + 150], 250, 80, style.labels.berthLead, 'GALERIA WSADU', FLOOR + 3, 'bg', 0, -1);
@@ -355,7 +363,7 @@ export function buildOreYardScene(geo, style) {
   Q.label('TOR 1', [840, q0 + 250], 240, 90, style.labels.berthLead, 'PIRS RUDY', FLOOR + 3, 'bg', 0, -1);
   addLamp(lamps, S.target.x, S.target.z, 340, 2);
   addLamp(lamps, blx - 160, blz + 60, 300, 1);
-  addLamp(lamps, bx + 60, gz + 80, 380, 1);
+  addLamp(lamps, bx + 60, hz + 40, 300, 1);
   addLamp(lamps, -810, q0 + 240, 260, 1);
 
   if (group + 1 > PB_MAX_GROUPS) throw new Error(`ruda, zasiek: ${group} grup`);

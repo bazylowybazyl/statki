@@ -7,12 +7,13 @@
 // Tor: statek (dziób ku −z) → ładownia (krata 42 × 78 kolumn, GŁĘBOKA: dno 50 j. pod pokładem, ładunek 14 warstw) →
 // dzwon ssawy na wózku suwnicy → rura (wysięgnik, noga,
 // pirs, dmuchawa, kanał zrzutowy) → wylot nad zasiekiem → kopiec w zasieku z dnem-lejem → pięć zasuw w dnie pod osią
-// kopca → taśma zbiorcza pod dnem → taśma pochyła do galerii pieca.
+// kopca → taśma (jedna, ciągła): pod dnem, łukiem w górę, przez bramę w murze do galerii pieca.
 //
 // Zmiany względem układu huty (SPEC, „dodatki”): dno zasieku obniżone z −60 do −120 i zagłębione lejem do −150 przy
 // zasuwach (cały kopiec leży pod y = 116); odbiór przeniesiony pod oś kopca (dawna krata leżała 670 j. obok);
-// taśma pochyła biegnie pustą, zachodnią częścią zasieku i nad murem wchodzi w galerię pieca.
+// taśma wychodzi spod dna w pustej, zachodniej części zasieku, skręca łukiem i przez bramę w murze wchodzi do galerii pieca.
 import { GRAIN } from './rudy.js';
+import { createConveyorTrack } from '../../kit/tasmociag.js';
 
 /**
  * Ładownia ciężkiego frachtowca: 4 × 2 pola 117 × 126 j. (wzdłuż statku × w poprzek), środek 129 j. za środkiem statku
@@ -132,35 +133,59 @@ export function createStationGeometry({ Z0 = 6300, depth = 5150 } = {}) {
     target: Object.freeze({ x: 60, z: gateZ }), landY: -40, swingPeriod: 7.3
   });
 
-  // --- taśma: zbiorcza pod zasuwami (ku −x), przesyp, pochyła do galerii pieca (ku −z, w górę)
-  const beltY = floorGate - 30;                // −180: powierzchnia taśmy zbiorczej (dno −150, płyta, ziarna na taśmie)
-  const beltPts = [
-    [gx1 + gateHalf + 18, beltY, gateZ],       // 0 początek (18 j. za ostatnią zasuwą)
-    [-560, beltY, gateZ],                      // 1 przesyp na taśmę pochyłą
-    [-560, 300, Z0 + 3610]                     // 2 galeria pieca (koniec elementu)
-  ];
-  const len0 = beltPts[0][0] - beltPts[1][0];
-  const runZ = beltPts[1][2] - beltPts[2][2];
-  const rise = beltPts[2][1] - beltPts[1][1];
-  const len1 = Math.sqrt(runZ * runZ + rise * rise);
-  const sFloor = len0 + len1 * ((floorEdge - beltY) / rise);       // tu taśma pochyła wychodzi nad dno zasieku
-  const sWall = len0 + len1 * ((beltPts[1][2] - bz0) / runZ);      // tu mija mur od części gorącej
-  const belt = Object.freeze({
-    pts: Object.freeze(beltPts.map((p) => Object.freeze(p))), len0, len1, length: len0 + len1,
-    width: 60, cell: a, slots: 30,
-    gateS: Object.freeze(gateXs.map((x) => beltPts[0][0] - x)),
-    incline: Math.atan2(rise, runZ),
-    // odcinki do rysunku: tunel pod kopcem, koryto pod kratą (widać taśmę z góry), przesyp, pochylnia pod dnem,
-    // pochylnia odkryta (w zasieku), pomost nad murem do galerii
-    sections: Object.freeze([
-      Object.freeze({ name: 'tunel', s0: 0, s1: len0 - 270, visible: false }),
-      Object.freeze({ name: 'koryto', s0: len0 - 270, s1: len0, visible: true }),
-      Object.freeze({ name: 'pochylnia-pod-dnem', s0: len0, s1: sFloor, visible: false }),
-      Object.freeze({ name: 'pochylnia', s0: sFloor, s1: sWall, visible: true }),
-      Object.freeze({ name: 'pomost', s0: sWall, s1: len0 + len1, visible: true })
-    ])
+  // --- taśma: JEDNA ciągła taśma (`kit/tasmociag.js`) od zasuw do galerii pieca. Pod zasuwami płasko wzdłuż −x (tunel
+  // pod dnem), za ostatnią zasuwą łagodnie w górę (łuk pionowy, potem stałe ~14,4°), wyjście spod dna szczeliną w posadzce,
+  // ŁUK w planie o promieniu 220 j. ku −z (w pustej, zachodniej części zasieku, na kozłach), prosta przez BRAMĘ w murze
+  // od części gorącej i wlot pod okap galerii pieca. Ziarno jedzie tą samą taśmą całą drogę — nie ma przesypu.
+  const beltY = floorGate - 30;                // −180: powierzchnia taśmy pod zasuwami (dno −150, płyta, ziarna na taśmie)
+  const beltX0 = gx1 + gateHalf + 18;          // 228: początek (18 j. za ostatnią zasuwą)
+  const beltTurnX = -700;                      // oś taśmy po zakręcie
+  const beltEnd = [beltTurnX, 96, Z0 + 3580];  // koniec taśmy pod okapem galerii pieca (z = 9 880); ładunek pod y = 116
+  const beltW = 60;
+  const track = createConveyorTrack({
+    pts: [
+      [beltX0, beltY, gateZ],                  // 0 początek
+      [-200, beltY, gateZ],                    // 1 załamanie niwelety: 110 j. za ostatnią zasuwą taśma zaczyna się wznosić
+      [beltTurnX, null, gateZ],                // 2 zakręt 90° (łuk; pochylenie bez zmian)
+      beltEnd                                  // 3 galeria pieca
+    ],
+    radius: 220, vertical: 160, width: beltW, step: 2
   });
-  const furnace = Object.freeze({ gallery: Object.freeze(beltPts[2].slice()) });
+  const turn = track.corners[0];
+  const _bp = [0, 0, 0];
+  const wallU = turn.u1 + (gateZ - turn.r - (bz0 - 30));                 // droga w planie do osi muru od części gorącej
+  const sWall = track.sAtPlan(wallU);
+  const sFloor = track.sAtHeight(floorEdge);                            // tu powierzchnia taśmy mija poziom dna zasieku
+  const sClear = track.sAtHeight(floorEdge + 24);                       // tu cała konstrukcja taśmy jest już nad dnem
+  // szczelina w posadzce, którą taśma wychodzi spod dna: od wylotu tunelu (x = −270, kopiec 900 t sięga do x ≈ −231)
+  // do miejsca, gdzie rama taśmy jest nad dnem
+  const mouthX = -270;
+  const slot = Object.freeze({ x0: track.point(sClear, 0, 0, _bp)[0] - 8, x1: mouthX, z0: gateZ - 46, z1: gateZ + 46 });
+  const sMouth = beltX0 - mouthX;                                       // taśma pod zasuwami jest płaska: s = droga po x
+  // brama w murze: taśma przechodzi przez wycięcie korony muru (próg `sill` pod ramą taśmy)
+  const wallY = track.point(sWall, 0, 0, _bp)[1];
+  const wallGate = Object.freeze({ x: beltTurnX, half: 64, sill: Math.floor(wallY - 34), s: sWall, y: wallY });
+  const belt = Object.freeze({
+    track, length: track.length, width: beltW, cell: a, slots: 30,
+    start: Object.freeze([beltX0, beltY, gateZ]), end: Object.freeze(beltEnd.slice()),
+    gateS: Object.freeze(gateXs.map((x) => beltX0 - x)),
+    turn, slot, wallGate,
+    // odcinki do rysunku: tunel pod kopcem (niewidoczny), wyjście szczeliną spod dna, łuk na kozłach, prosta do bramy
+    // w murze, wlot pod okap galerii
+    sections: Object.freeze([
+      Object.freeze({ name: 'tunel', s0: 0, s1: sMouth, visible: false }),
+      Object.freeze({ name: 'wyjscie', s0: sMouth, s1: sClear, visible: true }),
+      Object.freeze({ name: 'luk', s0: turn.s0, s1: turn.s1, visible: true }),
+      Object.freeze({ name: 'pochylnia', s0: turn.s1, s1: sWall, visible: true }),
+      Object.freeze({ name: 'wlot', s0: sWall, s1: track.length, visible: true })
+    ]),
+    sFloor, sClear
+  });
+  const furnace = Object.freeze({
+    gallery: Object.freeze(beltEnd.slice()),
+    // wieża galerii: lico od strony zasieku 20 j. za końcem taśmy, okap wlotu od lica do 65 j. przed końcem taśmy
+    faceZ: beltEnd[2] - 20, hoodZ: beltEnd[2] + 65
+  });
 
   /**
    * Punkty rury dla bieżącego położenia ssawy: `pts` (9 × xyz) od wylotu do gardzieli, `cum` — droga od wylotu do

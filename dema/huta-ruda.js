@@ -323,7 +323,8 @@ const VIEWS = [
   { key: 1, name: 'Z góry', sub: 'całe stanowisko jak w grze', top: [-1030, 9640, 1030, 13470] },
   { key: 2, name: 'Ładownia i ssawa', sub: 'dzwon kopie lej, ziarna jadą po zboczu pod krawędź', cine: { follow: true, y: 106, az: 2.45, el: 0.8, dist: 185 } },
   { key: 3, name: 'Kopiec z ukosa', sub: 'struga, osypania, krater nad zasuwami', cine: { at: [50, -70, 10550], az: 2.5, el: 0.24, dist: 640 } },
-  { key: 4, name: 'Wylot i lądowanie', sub: 'łuk ziaren z wylotu, odbicia, pył', cine: { at: [170, 40, 10700], az: 2.75, el: 0.3, dist: 640 } }
+  { key: 4, name: 'Wylot i lądowanie', sub: 'łuk ziaren z wylotu, odbicia, pył', cine: { at: [170, 40, 10700], az: 2.75, el: 0.3, dist: 640 } },
+  { key: 5, name: 'Taśmociąg', sub: 'wyjście spod dna, łuk, brama w murze, wlot do galerii pieca', cine: { at: [-610, -50, 10430], az: 0.75, el: 0.5, dist: 430 } }
 ];
 // kino: kamera wokół punktu stanowiska; `az` — kąt od +x ku +z (skąd patrzy kamera), `el` — nad poziomem
 const cine = { cam: null, persp: new THREE.PerspectiveCamera(42, 1, 5, 400000), target: new THREE.Vector3(), at: [0, 0, 11000], az: 2, el: 0.5, dist: 1500, follow: false, followY: 150 };
@@ -496,7 +497,7 @@ canvas2d.addEventListener('wheel', (e) => {
 }, { passive: false });
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
-  if (/^Digit[1-4]$/.test(e.code)) applyView(Number(e.code.slice(5)));
+  if (/^Digit[1-5]$/.test(e.code)) applyView(Number(e.code.slice(5)));
   else if (e.code === 'Space') { setSpeed(state.paused ? state.speed : 0); e.preventDefault(); }
 });
 document.addEventListener('visibilitychange', () => {

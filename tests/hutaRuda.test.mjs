@@ -122,7 +122,7 @@ test('ruda: masa ziarna 1/128 t, pięć rud jak tory huty, geometria toru', () =
   // światło rury na każdym odcinku mieści największą bryłkę każdej rudy
   assert.equal(geo.pipe.light.length, PIPE_POINTS - 1);
   for (const o of ORES) for (const s of [PIPE_SEG.chute, PIPE_SEG.pier, PIPE_SEG.boom]) assert.ok(geo.pipe.light[s] - grainHalfMax(o) > 8, `ruda ${o.id}: bryłka mieści się w rurze odcinka ${s}`);
-  // zasiek: dno-lej pod y = −120, zasuwy i wylot w murach, taśma kończy się w galerii pieca nad murem
+  // zasiek: dno-lej pod y = −120, zasuwy i wylot w murach, taśma kończy się w galerii pieca za murem (brama w murze)
   const B = geo.bunker;
   assert.equal(B.floor(geo.gates.xs[2], geo.gates.z), B.floorGate);
   assert.equal(B.floor(B.x0 + 10, B.z0 + 10), B.floorEdge);
@@ -130,8 +130,10 @@ test('ruda: masa ziarna 1/128 t, pięć rud jak tory huty, geometria toru', () =
   for (const x of geo.gates.xs) assert.ok(x - geo.gates.half > B.x0 && x + geo.gates.half < B.x1);
   assert.ok(geo.spout.x > B.x0 && geo.spout.x < B.x1 && geo.spout.z > B.z0 && geo.spout.z < B.z1, 'wylot nad zasiekiem');
   assert.ok(geo.spout.y > B.wallTop);
-  assert.ok(geo.belt.pts[2][1] > B.wallTop && geo.belt.pts[2][2] < B.z0, 'galeria pieca nad murem, po stronie części gorącej');
-  assert.ok(geo.belt.incline < 40 * Math.PI / 180, 'taśma pochyła nie stromsza niż 40°');
+  assert.ok(geo.belt.end[2] < B.z0 - B.wallT && geo.belt.end[1] > B.floorEdge, 'galeria pieca za murem, po stronie części gorącej');
+  assert.ok(geo.belt.wallGate.sill < geo.belt.wallGate.y - 20 && geo.belt.wallGate.y + 40 < B.wallTop, 'taśma mieści się w bramie muru (próg pod ramą, ładunek pod koroną)');
+  assert.ok(geo.belt.end[1] + 3 + 3 * GRAIN.layer < 116, 'cała taśma ze środkami ziaren pod y = 116 (bez załamania skali wysokości)');
+  assert.equal(geo.belt.length, geo.belt.track.length);
   for (let k = 1; k < geo.belt.gateS.length; k++) assert.ok(geo.belt.gateS[k] > geo.belt.gateS[k - 1], 'zasuwy po kolei wzdłuż taśmy');
   // rura: droga rośnie od wylotu do gardzieli
   const pts = new Float64Array(PIPE_POINTS * 3);
@@ -399,6 +401,150 @@ test('ruda: odbiór — krater nad zasuwami, zbocza sypią się ciałami, taśma
   assert.equal(st.balance(), 0);
 });
 
+test('ruda: taśmociąg — tor z łagodnym łukiem i łagodną niweletą; ziarno jedzie jedną taśmą od zasuwy do galerii bez skoków', async () => {
+  const { createConveyorTrack, conveyorSection, CONVEYOR_FRAME } = await import('../dema/ring-dzielnice/kit/tasmociag.js');
+  const geo = createStationGeometry();
+  const Bt = geo.belt;
+  const tr = Bt.track;
+  const SEC = conveyorSection(Bt.width / 2);
+  // --- tor: promień łuku ≥ 3 szerokości taśmy, nachylenie ≤ 16°, jedna taśma (bez przesypu)
+  const R_MIN = 3 * Bt.width;
+  const SLOPE_MAX = 16 * Math.PI / 180;
+  assert.ok(tr.minRadius >= R_MIN, `promień łuku ${tr.minRadius} j. (minimum ${R_MIN})`);
+  assert.ok(tr.maxSlope <= SLOPE_MAX && tr.maxSlope > 10 * Math.PI / 180, `nachylenie ${(tr.maxSlope * 180 / Math.PI).toFixed(1)}°`);
+  assert.equal(tr.corners.length, 1);
+  assert.ok(Math.abs(tr.corners[0].phi - Math.PI / 2) < 1e-9, 'jeden zakręt o 90°');
+  // niezależnie od pól toru: z próbek co 4 j. — promień okręgu przez trzy punkty planu, nachylenie z pozycji, brak załamań
+  // (kąt między stycznymi sąsiednich próbek najwyżej łuk / promień + łuk pionowy), ramka ortonormalna
+  const F = new Float64Array(CONVEYOR_FRAME);
+  const G = new Float64Array(CONVEYOR_FRAME);
+  const H = new Float64Array(CONVEYOR_FRAME);
+  const D = 4;
+  let rMin = Infinity;
+  let slopeMax = 0;
+  let kinkMax = 0;
+  for (let s = D; s + D <= tr.length; s += D) {
+    tr.frame(s - D, F); tr.frame(s, G); tr.frame(s + D, H);
+    const ax = G[0] - F[0]; const az = G[2] - F[2]; const bx = H[0] - G[0]; const bz = H[2] - G[2];
+    const cross = Math.abs(ax * bz - az * bx);
+    const ca = Math.hypot(ax, az); const cb = Math.hypot(bx, bz); const cc = Math.hypot(H[0] - F[0], H[2] - F[2]);
+    if (cross > 1e-9) rMin = Math.min(rMin, ca * cb * cc / (2 * cross));
+    slopeMax = Math.max(slopeMax, Math.abs(Math.atan2(H[1] - G[1], cb)));
+    kinkMax = Math.max(kinkMax, Math.acos(Math.min(1, G[3] * H[3] + G[4] * H[4] + G[5] * H[5])));
+    assert.ok(Math.abs(Math.hypot(G[3], G[4], G[5]) - 1) < 1e-9 && Math.abs(Math.hypot(G[6], G[7], G[8]) - 1) < 1e-9 && Math.abs(Math.hypot(G[9], G[10], G[11]) - 1) < 1e-9);
+    assert.ok(Math.abs(G[3] * G[6] + G[5] * G[8]) < 1e-9 && Math.abs(G[3] * G[9] + G[4] * G[10] + G[5] * G[11]) < 1e-9 && G[7] === 0 && G[10] > 0.9, 'normalna boczna pozioma, normalna taśmy ku górze');
+    assert.ok(Math.abs(Math.hypot(H[0] - G[0], H[1] - G[1], H[2] - G[2]) - D) < 0.01, 's jest długością po taśmie');
+  }
+  assert.ok(rMin >= R_MIN && rMin > tr.minRadius * 0.98 && rMin < tr.minRadius * 1.02, `promień z próbek ${rMin.toFixed(1)} j.`);
+  assert.ok(slopeMax <= SLOPE_MAX, `nachylenie z próbek ${(slopeMax * 180 / Math.PI).toFixed(1)}°`);
+  assert.ok(kinkMax < D / tr.minRadius + D / 400, `największa zmiana kierunku na ${D} j.: ${(kinkMax * 180 / Math.PI).toFixed(2)}° (bez narożników)`);
+  // końce toru i miejsca z geometrii
+  const p = [0, 0, 0];
+  tr.point(0, 0, 0, p);
+  assert.ok(Math.hypot(p[0] - Bt.start[0], p[1] - Bt.start[1], p[2] - Bt.start[2]) < 1e-6);
+  tr.point(tr.length, 0, 0, p);
+  assert.ok(Math.hypot(p[0] - Bt.end[0], p[1] - Bt.end[1], p[2] - Bt.end[2]) < 1e-6);
+  assert.ok(Math.abs(tr.nearest(Bt.end[0], Bt.end[2] + 100) - (tr.length - 100 / Math.cos(tr.maxSlope))) < 1);
+  for (const s of Bt.gateS) { tr.point(s, 0, 0, p); assert.equal(p[1], Bt.start[1], 'pod zasuwami taśma jest płaska'); }
+  assert.ok(Bt.sFloor > Bt.sections[0].s1 && Bt.sClear > Bt.sFloor && Bt.sClear < Bt.wallGate.s, 'tunel → wyjście spod dna → brama w murze');
+  tr.point(Bt.sClear, 0, 0, p);
+  assert.ok(p[0] > Bt.slot.x0 && p[0] < Bt.slot.x1 && Math.abs(p[2] - geo.gates.z) + SEC.outer < (Bt.slot.z1 - Bt.slot.z0) / 2, 'rama taśmy mieści się w szczelinie posadzki do miejsca, gdzie jest nad dnem');
+  // tor odrzuca zakręt bez promienia i punkty bez wysokości na końcach
+  assert.throws(() => createConveyorTrack({ pts: [[0, 0, 0], [100, 0, 0], [100, 0, 100]], radius: 0 }));
+  assert.throws(() => createConveyorTrack({ pts: [[0, null, 0], [100, 0, 0]] }));
+  // za ciasny odcinek zmniejsza promień (pole minRadius mówi prawdę)
+  assert.ok(createConveyorTrack({ pts: [[0, 0, 0], [100, 0, 0], [100, 0, 100]], radius: 400 }).minRadius < 100.001);
+
+  // --- ziarna: wsad 90 t przejeżdża całą taśmę; każde ziarno śledzone po numerze od zasuwy do galerii
+  const st = createOreStation({ ore: 0, seed: 7, auto: false, start: 'away' });
+  st.order(90);
+  const out = new Float32Array(MOVING_STRIDE * 12000);
+  const co = new Float64Array(4 * 12000);
+  const last = new Map();               // numer ziarna → [s, bok, wysokość, x, y, z]
+  const vStep = TUNE.beltSpeed * DT;
+  const HALF = Math.max(...ORES.map(grainHalfMax));       // największa bryłka każdej rudy mieści się między burtami
+  let seen = 0;
+  let turned = 0;
+  let jumpMax = 0;
+  let sMaxSeen = 0;
+  let steps = 0;
+  for (; steps < 60 * 60; steps++) {
+    st.step(DT);
+    const n = st.writeBelt(out, 0, co);
+    assert.equal(n, st.counters().belt);
+    for (let i = 0; i < n; i++) {
+      const o = i * MOVING_STRIDE;
+      const s = co[i * 4 + 1];
+      const lat = co[i * 4 + 2];
+      const hgt = co[i * 4 + 3];
+      assert.ok(Math.abs(lat) <= Bt.width / 2 && Math.abs(lat) + HALF <= SEC.skirt0, `ziarno na taśmie: bok ${lat.toFixed(1)} j.`);
+      assert.ok(s > -2 && s < tr.length + GRAIN.cell, `droga ${s.toFixed(1)} j. w długości taśmy`);
+      // krok: pozycja z początku kroku → bieżąca nie dalej niż przejazd taśmy (z zapasem na łuk i f32)
+      const dq = Math.hypot(out[o] - out[o + 3], out[o + 1] - out[o + 4], out[o + 2] - out[o + 5]);
+      assert.ok(dq <= vStep * 1.2 + 0.05, `krok ${steps}: ziarno przesunięte o ${dq.toFixed(2)} j. w kroku`);
+      const prev = last.get(co[i * 4]);
+      if (prev) {
+        assert.ok(s > prev[0] - 1e-9 && s - prev[0] <= vStep + 1e-6, `droga rośnie: ${prev[0].toFixed(2)} → ${s.toFixed(2)}`);
+        assert.ok(lat === prev[1] && hgt === prev[2], 'ziarno trzyma miejsce w poprzek i warstwę');
+        const jump = Math.hypot(out[o] - prev[3], out[o + 1] - prev[4], out[o + 2] - prev[5]);
+        if (jump > jumpMax) jumpMax = jump;
+        assert.ok(jump <= vStep * 1.2 + 0.05, `krok ${steps}: skok ziarna ${jump.toFixed(2)} j. (s = ${s.toFixed(0)})`);
+        // pozycja z początku kroku to pozycja z poprzedniego kroku
+        assert.ok(Math.hypot(out[o + 3] - prev[3], out[o + 4] - prev[4], out[o + 5] - prev[5]) < 0.02);
+        if (prev[0] < tr.corners[0].s0 && s >= tr.corners[0].s0) turned++;
+        prev[0] = s; prev[3] = out[o]; prev[4] = out[o + 1]; prev[5] = out[o + 2];
+      } else {
+        last.set(co[i * 4], [s, lat, hgt, out[o], out[o + 1], out[o + 2]]);
+        assert.ok(s < Bt.gateS[Bt.gateS.length - 1] + GRAIN.cell + vStep, 'ziarno pojawia się tylko pod zasuwami');
+        seen++;
+      }
+      if (s > sMaxSeen) sMaxSeen = s;
+    }
+    if (st.balance() !== 0) assert.fail(`bilans ${st.balance()}`);
+    if (st.state().furnace.want === 0 && st.counters().belt === 0 && steps > 60) break;
+  }
+  assert.equal(seen, 11520, 'każde ziarno wsadu widziane na taśmie');
+  assert.equal(turned, 11520, 'każde przejechało zakręt jako to samo ziarno');
+  assert.equal(st.counters().furnace, 11520);
+  assert.ok(sMaxSeen > tr.length - GRAIN.cell * 2, 'ziarna dojeżdżają do końca taśmy');
+  assert.ok(jumpMax > vStep * 0.8, `największy skok ${jumpMax.toFixed(2)} j. ≈ przejazd taśmy w kroku ${vStep.toFixed(2)} j.`);
+});
+
+test('ruda: taśmociąg 3D — jeden graf węzłów dla wielu taśm, bryła po torze bez NaN, wzór jedzie z taśmą', async () => {
+  const THREE = await import('three/webgpu');
+  const { createConveyorTrack } = await import('../dema/ring-dzielnice/kit/tasmociag.js');
+  const { createConveyor3D, CONVEYOR_PATTERN } = await import('../dema/ring-dzielnice/kit/tasmociag3d.js');
+  const light = { sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunColor: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.1, 0.1, 0.1) }, light: { value: new THREE.Vector4(1, 1, 0, 0) } };
+  const geo = createStationGeometry();
+  const a = createConveyor3D({ track: geo.belt.track, light, name: 'A' });
+  const b = createConveyor3D({ track: createConveyorTrack({ pts: [[0, 0, 0], [600, null, 0], [600, 80, 500]], radius: 240, width: 40 }), light, name: 'B' });
+  assert.ok(a.material !== b.material && a.material.vertexNode === b.material.vertexNode && a.material.fragmentNode === b.material.fragmentNode, 'wspólne węzły, osobne wartości');
+  assert.ok(a.uniforms.travel !== b.uniforms.travel);
+  for (const c of [a, b]) {
+    const pos = c.mesh.geometry.getAttribute('position').array;
+    const aS = c.mesh.geometry.getAttribute('aS').array;
+    let bad = 0;
+    for (const v of pos) if (!Number.isFinite(v)) bad++;
+    for (const v of aS) if (!Number.isFinite(v)) bad++;
+    assert.equal(bad, 0);
+    assert.ok(c.triangles > 2000 && c.triangles < 40000, `${c.mesh.name}: ${c.triangles} trójkątów`);
+    const idx = c.mesh.geometry.getIndex().array;
+    let top = 0;
+    for (const i of idx) if (i > top) top = i;
+    assert.equal(top, pos.length / 3 - 1, 'indeksy w zakresie wierzchołków');
+  }
+  // bryła leży przy torze: każdy wierzchołek najwyżej o przekrój od osi
+  const tr = geo.belt.track;
+  const pos = a.mesh.geometry.getAttribute('position').array;
+  const p = [0, 0, 0];
+  for (let i = 0; i < pos.length; i += 3 * 97) {
+    tr.point(tr.nearest(pos[i], pos[i + 2]), 0, 0, p);
+    assert.ok(Math.hypot(pos[i] - p[0], pos[i + 2] - p[2]) < a.section.outer + 8 && Math.abs(pos[i + 1] - p[1]) < 30);
+  }
+  a.setTravel(CONVEYOR_PATTERN * 1000 + 7.5);
+  assert.ok(Math.abs((a.uniforms.travel.value.x % CONVEYOR_PATTERN) - 7.5) < 1e-6 && a.uniforms.travel.value.x < CONVEYOR_PATTERN * 120, 'droga taśmy modulo okres wzoru');
+});
+
 test('ruda: sterowanie z zewnątrz (auto: false) — wezwanie statku, podejście z ładunkiem w kracie, zamówienie i wydanie wsadu', () => {
   const st = createOreStation({ ore: 1, seed: 2, auto: false, start: 'away', prewarm: false });
   assert.equal(st.shipState, 'away');
@@ -480,11 +626,11 @@ test('ruda: dane dla obrazu (ciała, rura, taśma, krata, zdarzenia pyłu, stan 
     // pozycja z początku kroku leży blisko bieżącej (krok 1/60 s przy suficie prędkości i prędkości rury)
     assert.ok(Math.hypot(out[o] - out[o + 3], out[o + 1] - out[o + 4], out[o + 2] - out[o + 5]) < 30);
   }
-  // ziarna na taśmie: na łamanej taśmy (pod dnem zasieku albo na pochylni do galerii)
+  // ziarna na taśmie: w obrysie toru taśmy (pod dnem zasieku, na łuku albo na pochylni do galerii)
   for (let i = nh + nb + np; i < total; i++) {
     const o = i * MOVING_STRIDE;
-    assert.ok(out[o + 1] > st.geo.belt.pts[0][1] - 1 && out[o + 1] < st.geo.belt.pts[2][1] + 40);
-    assert.ok(out[o] > -600 && out[o] < 260 && out[o + 2] > B.z0 - 160 && out[o + 2] < B.z1);
+    assert.ok(out[o + 1] > st.geo.belt.start[1] - 1 && out[o + 1] < st.geo.belt.end[1] + 40);
+    assert.ok(out[o] > st.geo.belt.end[0] - 40 && out[o] < 260 && out[o + 2] > st.geo.belt.end[2] - 10 && out[o + 2] < B.z1);
   }
   // okna rury: podzbiór ziaren w rurze
   const nw = st.writePipe(out, 0, true);
@@ -866,7 +1012,7 @@ test('ruda: obraz — WGSL wszystkich materiałów buduje się w Node; sceny bry
     assert.ok(m.name && m.material.name, 'siatka i materiał mają nazwy (lista pipeline’ów w demie)');
   }
   const names = [...seen.keys()].map((m) => m.name).sort();
-  assert.deepEqual(names, ['RudaCienDzwonu', 'RudaCienZiarna', 'RudaLukGlebia', 'RudaPodkladLadownia', 'RudaPodkladZasiek', 'RudaPokladGlebia', 'RudaPyl', 'RudaTasma', 'RudaWykladzinaLadowni', 'RudaZiarnoRuch', 'RudaZiarnoStos']);
+  assert.deepEqual(names, ['RudaCienDzwonu', 'RudaCienZiarna', 'RudaLukGlebia', 'RudaPodkladLadownia', 'RudaPodkladZasiek', 'RudaPokladGlebia', 'RudaPyl', 'RudaWykladzinaLadowni', 'RudaZiarnoRuch', 'RudaZiarnoStos', 'Tasmociag']);
   // „gumka głębi” luku pisze głębię dalekiej płaszczyzny, znaczek pokładu — zwykłą; obie bez koloru
   assert.ok(seen.get(obraz.eraser.material).fragment.includes('frag_depth'), 'gumka głębi luku pisze głębię fragmentu');
   assert.ok(!seen.get(obraz.deckStamp.material).fragment.includes('frag_depth'));

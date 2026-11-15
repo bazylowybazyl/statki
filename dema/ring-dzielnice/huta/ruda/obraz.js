@@ -35,6 +35,7 @@ import { scalZakresy, zbierzZakres, zbierzZakresy, zbierzZakresyCaly } from '../
 import { PORT_SPACE_LIGHT } from '../../../../src/3d/portBuildings/portBuildings3D.js';
 import { GRAIN, GRAIN_DRAW_R, TRAIT_BIG, TRAIT_SCALES } from './rudy.js';
 import { SNAP } from './ruda.worker.js';
+import { createConveyor3D } from '../../kit/tasmociag3d.js';
 
 const MOVING_STRIDE = 12;
 const COL_STRIDE = 32;            // instancja kolumny: x, z, y wierzchu, n | otwarcie, cień, nachylenie, wklęsłość | 3 × (przesunięcie, cechy + 256 · głębokość | kwaternion)
@@ -389,7 +390,7 @@ function pileMaterial(U) {
 
 /**
  * Podkład: pole wysokości kraty (wierzchołek = kolumna). Pod ziarnami — ciemne wnętrze stosu, w pustych kolumnach —
- * dno (płyty z fugami, rdzawy nalot rudy). `F`: barwy dna, podziałka płyt, wycięcia (koryto taśmy pod kratą).
+ * dno (płyty z fugami, rdzawy nalot rudy). `F`: barwy dna, podziałka płyt, wycięcia (szczelina, którą taśma wychodzi spod dna).
  */
 function underlayMaterial(U, F, name) {
   const vP = varyingProperty('vec3', 'vRpP');
@@ -414,7 +415,7 @@ function underlayMaterial(U, F, name) {
     fw.assign(max(length(dFdx(vX)), length(dFdy(vX))));
     const ore = float(0.0).toVar();
     ore.assign(smoothstep(0.4, 0.95, vD.z));
-    // wycięcia dna (koryto taśmy, szyb pochylni) — tylko tam, gdzie nie leży ruda
+    // wycięcia dna (szczelina wyjścia taśmy) — tylko tam, gdzie nie leży ruda
     const inCut = (r) => step(r.x, vX.x).mul(step(vX.x, r.z)).mul(step(r.y, vX.y)).mul(step(vX.y, r.w));
     const cut = float(0.0).toVar();
     cut.assign(max(inCut(F.cut0), inCut(F.cut1)));
@@ -644,55 +645,6 @@ function depthOnlyMaterial(name, erase) {
     m.depthNode = float(1.0);
     m.depthFunc = THREE.AlwaysDepth;
   }
-  return m;
-}
-
-/** Taśma: guma z progami jadącymi z taśmą (`U.belt.x` — droga taśmy), żółte krawędzie; aS = (droga, bok −1…1). */
-function beltMaterial(U) {
-  const vP = varyingProperty('vec3', 'vRbP');
-  const vS = varyingProperty('vec2', 'vRbS');
-  const vertex = Fn(() => {
-    const p = attribute('position', 'vec3');
-    const mv = vec4(0.0).toVar();
-    mv.assign(modelViewMatrix.mul(vec4(p, 1.0)));
-    vP.assign(mv.xyz);
-    vS.assign(attribute('aS', 'vec2'));
-    return cameraProjectionMatrix.mul(mv);
-  })();
-  const fragment = Fn(() => {
-    const dx = vec3(0.0).toVar();
-    dx.assign(dFdx(vP));
-    const dy = vec3(0.0).toVar();
-    dy.assign(dFdy(vP));
-    const fw = float(0.0).toVar();
-    fw.assign(max(abs(dFdx(vS.x)), abs(dFdy(vS.x))));
-    const V = vec3(0.0).toVar();
-    V.assign(normalize(vP.negate()));
-    const N0 = vec3(0.0).toVar();
-    const cr = vec3(0.0).toVar();
-    cr.assign(cross(dx, dy));
-    N0.assign(cr.div(max(length(cr), 1e-9)));
-    const N = vec3(0.0).toVar();
-    N.assign(N0.mul(sign(dot(N0, V).add(1e-5))));
-    const L = vec3(0.0).toVar();
-    L.assign(normalize(cameraViewMatrix.mul(vec4(U.sunDir, 0.0)).xyz));
-    const ndl = float(0.0).toVar();
-    ndl.assign(max(dot(N, L), 0.0));
-    // próg co 36 j. (zabierak ziaren na pochylni), szerokość 5 j.
-    const ph = float(0.0).toVar();
-    ph.assign(fract(vS.x.sub(U.belt.x).div(36.0)).mul(36.0));
-    const cleat = float(0.0).toVar();
-    cleat.assign(float(1.0).sub(smoothstep(2.5, fw.mul(1.5).add(3.2), abs(ph.sub(18.0)))));
-    const rim = float(0.0).toVar();
-    rim.assign(step(0.86, abs(vS.y)));
-    const col = vec3(0.0).toVar();
-    col.assign(mix(vec3(0.035, 0.037, 0.042), vec3(0.11, 0.115, 0.125), cleat));
-    col.assign(mix(col, vec3(0.5, 0.33, 0.05), rim));
-    const lightv = U.sunColor.mul(ndl).mul(U.light.x).mul(0.8).add(U.ambient.mul(U.light.y));
-    return vec4(max(col.mul(lightv), vec3(0.0)), 1.0);
-  })();
-  const m = nodeMaterial('RudaTasma', vertex, fragment);
-  m.side = THREE.DoubleSide;
   return m;
 }
 
@@ -954,7 +906,6 @@ export class RudaObraz {
       sheen: uniform(0.5),
       grain: uniform(new THREE.Vector4(3.5, 0.1, 0.86, 0.9)),           // promień bryłki, rozjaśnienie w locie, jasność barwy, siła nachylenia stosu
       frame: uniform(new THREE.Vector4(1, 1000, 1.5, 1)),               // alfa kroku, px na j. × odległość, min px, siła połysku
-      belt: uniform(new THREE.Vector4(0, 0, 0, 0)),
       sunSt: uniform(new THREE.Vector3(-0.6, 0.75, 0.25)),              // kierunek ku słońcu w układzie stanowiska (x, y w górę, z)
       shadow: uniform(new THREE.Vector4(0.8, -0.3, 3.2, 0.34)),         // cień ziarna: przesunięcie x, z na jednostkę prześwitu, uniesienie nad stos, krycie
       bell: uniform(new THREE.Vector4(0, 0, 0, 34)),                    // cień dzwonu: x, wysokość powierzchni, z, promień
@@ -962,20 +913,16 @@ export class RudaObraz {
     };
     const U = this.U;
     this.bases = { near: chunkGeometry(11, 20261114), far: chunkGeometry(6, 20261115) };
-    this.mats = { moving: movingMaterial(U), pile: pileMaterial(U), belt: beltMaterial(U), shadow: shadowMaterial(U), bellShadow: bellShadowMaterial(U) };
+    this.mats = { moving: movingMaterial(U), pile: pileMaterial(U), shadow: shadowMaterial(U), bellShadow: bellShadowMaterial(U) };
     const B = geo.bunker;
     const Bt = geo.belt;
-    const trough = Bt.sections.find((s) => s.name === 'koryto');
-    const pitTop = Bt.sections.find((s) => s.name === 'pochylnia');
-    const bx = Bt.pts[1][0];
-    const bz = Bt.pts[1][2];
-    const zPit = bz - (pitTop.s0 - Bt.len0) * Math.cos(Bt.incline);
+    const slot = Bt.slot;                 // szczelina w posadzce, którą taśma wychodzi spod dna
     this.F = {
       bunker: {
         colA: uniform(new THREE.Vector3(0.04, 0.043, 0.05)), colB: uniform(new THREE.Vector3(0.062, 0.065, 0.072)),
         pitch: uniform(new THREE.Vector4(142, 1.1, 0.12, 0.5)),
-        cut0: uniform(new THREE.Vector4(Bt.pts[0][0] - trough.s1, bz - 30, Bt.pts[0][0] - trough.s0, bz + 30)),
-        cut1: uniform(new THREE.Vector4(bx - 30, zPit - 6, bx + 30, bz + 30)),
+        cut0: uniform(new THREE.Vector4(slot.x0, slot.z0, slot.x1, slot.z1)),
+        cut1: uniform(new THREE.Vector4(1, 1, -1, -1)),
         // nalot rudy na posadzce: środek (cel strugi), promień pełnego nalotu, promień zaniku
         stain: uniform(new THREE.Vector4(geo.spout.target.x, geo.spout.target.z, 260, 760)),
         zone: uniform(0)
@@ -1053,7 +1000,7 @@ export class RudaObraz {
       this.fgGroup.add(this.bellShadow);
     }
 
-    // taśma: zbiorcza pod dnem (widać ją w korycie pod kratą) i pochyła do galerii (załamanie skali wysokości na y = 116)
+    // taśma: jedna bryła taśmociągu po całym torze (tunel pod dnem, wyjście szczeliną, łuk, brama w murze, galeria)
     this.beltMesh = this._beltMesh();
     this.bgGroup.add(this.beltMesh);
 
@@ -1130,36 +1077,15 @@ export class RudaObraz {
     for (const m of [this.liner, this.eraser, this.deckStamp]) { m.frustumCulled = false; this.holdGroup.add(m); }
   }
 
+  /** Taśmociąg z zestawu (`kit/tasmociag3d.js`): jedna bryła po całym torze, wysokości ściskane jak reszta obrazu. */
   _beltMesh() {
-    const Bt = this.geo.belt;
-    const hw = Bt.width / 2;
-    const kz = (y) => (y > 116 ? (y - 116) * 0.42 : y - 116);
-    const P = [];
-    const S = [];
-    const I = [];
-    const row = (x, y, z, ax, az, s) => {
-      P.push(x - ax * hw, kz(y), z - az * hw, x + ax * hw, kz(y), z + az * hw);
-      S.push(s, -1, s, 1);
-    };
-    // zbiorcza: wzdłuż −x, szerokość po z; odrobinę pod ziarnami (ziarno leży 3 j. nad taśmą)
-    row(Bt.pts[0][0] + 40, Bt.pts[0][1], Bt.pts[0][2], 0, 1, -40);
-    row(Bt.pts[1][0] - 26, Bt.pts[1][1], Bt.pts[1][2], 0, 1, Bt.len0 + 26);
-    // pochyła: wzdłuż −z w górę, szerokość po x; punkt załamania na y = 116
-    const a = Bt.pts[1];
-    const b = Bt.pts[2];
-    const t116 = (116 - a[1]) / (b[1] - a[1]);
-    const at = (t) => [a[0], a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-    const t0 = -30 / Bt.len1;
-    for (const t of [t0, t116, 1 + 20 / Bt.len1]) { const q = at(t); row(q[0], q[1], q[2], 1, 0, Bt.len0 + Bt.len1 * t); }
-    for (const base of [0, 4, 6]) I.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
-    g.setAttribute('aS', new THREE.BufferAttribute(new Float32Array(S), 2));
-    g.setIndex(I);
-    const m = new THREE.Mesh(g, this.mats.belt);
-    m.name = 'Ruda_tasma';
-    m.frustumCulled = false;
-    return m;
+    const U = this.U;
+    this.conveyor = createConveyor3D({
+      track: this.geo.belt.track, name: 'Ruda_tasma',
+      mapY: (y) => (y > 116 ? (y - 116) * 0.42 : y - 116),
+      light: { sunDir: U.sunDir, sunColor: U.sunColor, ambient: U.ambient, light: U.light }
+    });
+    return this.conveyor.mesh;
   }
 
   /** Kierunek ku słońcu w układzie stanowiska (x, y w górę, z) — do nachylenia stosu; przed pierwszą migawką. */
@@ -1287,7 +1213,7 @@ export class RudaObraz {
     f.y = pxK;
     f.z = minPx;
     f.w = this.lodFar ? 0.3 : 1;
-    this.U.belt.value.x = beltTravel;
+    this.conveyor.setTravel(beltTravel);
     this.holdGroup.visible = shipVisible;
     const sh = this.U.shadow.value;
     this.U.bell.value.set(bellX + sh.x * 10, bellSurf + sh.z, bellZ + sh.y * 10, this.geo.bell.r + 5);

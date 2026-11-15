@@ -1,7 +1,7 @@
 // Zrzuty dema „stanowisko rudy” huty (headless Chrome z GPU przez CDP, własny Vite na porcie 5457).
 //
 //   node scripts/webgpu/huta-ruda-demo.mjs [--out .tmp/huta/ruda/zrzuty] [--ruda 0,3] [--rozmiar 1600x900]
-//        [--tylko start,ssawa,lot,odbior,kopiec,pusta,krater,rudy,panel] [--widok 3 --czas 38]  [--kod "wyrażenie JS przed zrzutem"]
+//        [--tylko start,ssawa,lot,odbior,kopiec,pusta,krater,rudy,panel,tasmociag] [--widok 3 --czas 38]  [--kod "wyrażenie JS przed zrzutem"]
 //        [--query worker=0] (dopisek do adresu strony, np. symulacja na wątku strony) [--raport nazwa.json]
 //
 // Domyślnie: seria chwil z kryteriów odbioru SPEC (.tmp/huta/ruda/SPEC.md) dla każdej rudy z `--ruda`:
@@ -161,16 +161,52 @@ try {
       note(await advanceTo(21));
       await cine(1.25, 0.62, 520, 60, -110, 10546);
       await shot(`${id}-21-krater`);
-      await cine(2.2, 0.5, 560, -520, -40, 10420);
+      await cine(1.0, 0.5, 620, -560, -50, 10400);
       await shot(`${id}-21-tasma`);
-      await top(-560, 9965, 2.8);
+      await top(-700, 9960, 2.8);
       await shot(`${id}-21-wlot-pieca-gora`);
-      await cine(1.25, 0.42, 330, -560, 290, 9950);
+      await cine(1.25, 0.42, 330, -700, 95, 9950);
       await shot(`${id}-21-wlot-pieca-ukos`);
-      await cine(1.25, 0.16, 300, -560, 290, 9950);
+      await cine(1.25, 0.16, 300, -700, 95, 9950);
       await shot(`${id}-21-wlot-pieca-nisko`);
       await top(0, 10525, 0.86);
       await shot(`${id}-21-zasiek-gora`);
+    }
+    // taśmociąg (tylko na żądanie: --tylko tasmociag): pierwszy wsad pieca rusza w t = 14 s, taśma wiezie do ~29 s
+    if (only && only.includes('tasmociag')) {
+      note(await advanceTo(15.2));              // taśma jedzie, czoło rudy wychodzi z tunelu, łuk jeszcze pusty
+      await top(-560, 10380, 2.6);
+      await shot(`${id}-tasma-15-luk-pusty-gora`);
+      await cine(1.15, 0.5, 400, -420, -130, 10546);
+      await shot(`${id}-tasma-15-wyjscie-ukos`);
+      note(await advanceTo(20.5));              // taśma pełna od zasuw do galerii
+      await top(-560, 10360, 2.0);              // kadr jak na zrzucie użytkownika (zakręt z góry)
+      await shot(`${id}-tasma-20-zakret-gora`);
+      await cine(0.75, 0.5, 430, -610, -50, 10430);
+      await shot(`${id}-tasma-20-zakret-ukos`);
+      await cine(0.2, 0.2, 400, -610, -60, 10430);
+      await shot(`${id}-tasma-20-zakret-nisko`);
+      await top(-300, 10230, 0.85);
+      await shot(`${id}-tasma-20-cala-gora`);
+      await cine(1.15, 0.5, 400, -420, -130, 10546);
+      await shot(`${id}-tasma-20-wyjscie-ukos`);
+      await top(-700, 9960, 2.8);
+      await shot(`${id}-tasma-20-wlot-gora`);
+      await cine(1.25, 0.42, 330, -700, 95, 9950);
+      await shot(`${id}-tasma-20-wlot-ukos`);
+      await cine(1.3, 0.14, 300, -700, 95, 9950);
+      await shot(`${id}-tasma-20-wlot-nisko`);
+      await cine(1.1, 0.4, 560, -690, 30, 10120);
+      await shot(`${id}-tasma-20-brama-ukos`);
+      // seria co 0,1 s na zakręcie: te same ziarna jadą po łuku
+      for (let k = 0; k < 4; k++) {
+        if (k) note(await advanceTo(20.5 + k * 0.1));
+        await top(-620, 10440, 4.2);
+        await shot(`${id}-tasma-luk-seria-${k}`);
+      }
+      note(await advanceTo(31));                // po wsadzie: taśma stoi pusta
+      await top(-560, 10360, 2.0);
+      await shot(`${id}-tasma-31-pusta-gora`);
     }
     if (want('kopiec')) {
       note(await advanceTo(40));
