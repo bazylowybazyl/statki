@@ -1490,7 +1490,8 @@ export function installShipyard(api) {
       <div class="ychips"><button class="ychip${S.camMode === 'plaska' ? ' on' : ''}" data-cam="plaska">Płaska</button><button class="ychip${S.camMode === 'gra' ? ' on' : ''}" data-cam="gra">Widok gry</button><button class="ychip${S.camMode === 'perspektywa' ? ' on' : ''}" data-cam="perspektywa">Perspektywa</button><button class="ychip${S.lean.byZoom ? ' on' : ''}" data-leanzoom="1" title="przesada rośnie z oddaleniem: 1× w zbliżeniu (~1 200 j.), pełna przy całym okręcie; wyłączone — stała">Przesada z oddaleniem</button></div>
       <label class="yslider"><span>Pochylenie ścian <b data-v="view:lean">${S.lean.gain.toFixed(2)}×</b></span><input type="range" data-k="view:lean" min="0" max="8" step="0.25" value="${S.lean.gain}"></label>
       <div class="yoptl">Bryła 3D <span class="ydim">· ujęcia kamerą 3D; klik w okręt — z powrotem z góry</span></div>
-      <div class="ychips">${[['przod', 'Przód'], ['tyl', 'Tył'], ['spod', 'Spód'], ['bok', 'Bok']].map(([k, l]) => `<button class="ychip${S.orbitView === k ? ' on' : ''}" data-orbit="${k}">${l}</button>`).join('')}</div>`;
+      <div class="ychips">${[['przod', 'Przód'], ['tyl', 'Tył'], ['spod', 'Spód'], ['bok', 'Bok']].map(([k, l]) => `<button class="ychip${S.orbitView === k ? ' on' : ''}" data-orbit="${k}">${l}</button>`).join('')}</div>
+      <label class="yslider"><span>Spadek wierzchu <b data-v="view:drop">${S.topDrop} j.</b></span><input type="range" data-k="view:drop" min="0" max="400" step="5" value="${S.topDrop}"></label>`;
   }
   function renderOpts() {
     let h = '';
@@ -1565,6 +1566,10 @@ export function installShipyard(api) {
         if (lb) lb.textContent = Number(t.value).toFixed(2);
         S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true);
       }
+      if (t.dataset.k === 'view:drop') {
+        const lb = el.opts.querySelector('[data-v="view:drop"]');
+        if (lb) lb.textContent = `${t.value} j.`;
+      }
       if (t.dataset.k === 'view:lean') {
         // widok (nie projekt): bez przebudowy i bez cofania
         api.setLean(Number(t.value));
@@ -1583,6 +1588,7 @@ export function installShipyard(api) {
     el.opts.addEventListener('change', (e) => {
       const k = e.target.dataset.k;
       if (k?.startsWith('city:')) { citySet(design(), { [k.slice(5)]: Number(e.target.value) }); commit(); return; }
+      if (k === 'view:drop') { api.setTopDrop(Number(e.target.value)); return; }   // widok: przebudowa samej bryły
       // koniec przeciągania (myszą zamyka je już pointerup niżej — wtedy bez drugiej budowy)
       if ((k === 'detail' || k === 'pipes' || k === 'load' || isLiveSlider(k)) && S.drag) { S.drag = null; commit(); }
     });

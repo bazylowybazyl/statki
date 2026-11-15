@@ -57,7 +57,9 @@ const KADRY_BRYLA = [
   { id: 'b3-spod', view: 'spod', opis: 'od spodu (wcięcia spodu — etap 2)' },
   { id: 'b4-bok', view: 'bok', opis: 'z boku — burta z rowem na całej długości' },
   { id: 'b5-burta-z-bliska', view: 'burta', opis: 'burta z bliska: faza, ściana, rów ze światłami, dolna faza' },
-  { id: 'b6-ukos', view: 'ukos', opis: 'z ukosa (dawny kadr) — miasto na bryle' }
+  { id: 'b6-ukos', view: 'ukos', opis: 'z ukosa (dawny kadr) — miasto na bryle' },
+  { id: 'b7-grzbiet', view: 'grzbiet', opis: 'grzbiet ku dziobowi — miasto schodzi z pochyłym wierzchem' },
+  { id: 'b8-przod-plasko', view: 'przod', drop: 0, opis: 'od przodu nisko, spadek wierzchu 0 (płasko — dawny wygląd) — A/B' }
 ];
 /** Kadry: widok (nazwa z dema albo obiekt), parametry miasta, słońce, światła. */
 const KADRY_V3 = [
@@ -103,6 +105,7 @@ try {
     }
     await ev(`window.__miasto.toggleCity(${k.city === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.toggleBody?.(${k.body === false ? 'false' : 'true'})`);
+    if (BRYLA) await ev(`window.__miasto.setTopDrop?.(${k.drop ?? (args.spadek ?? 225)})`);
     await ev(`window.__miasto.toggleLights(${k.lights === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.setTopGlow(${k.glow ? 'true' : 'false'})`);
     await ev(`window.__miasto.setCamMode(${JSON.stringify(k.cam || (k.persp === false ? 'plaska' : 'persp'))})`);

@@ -57,7 +57,7 @@ export const HULL_CITY3D_TUNE = {
  * Pojemność mapy wysokości (teksele): 3072 × 1024 r16f = 6 MB (+ 2 MB mipmap); drednot 8 km (miasto ~5 200 j.) mieści
  * się przy 2 j./teksel. `levels` — poziomy mipmap MAKSIMUM (2 × 2 → 1) dla marszu cienia na kadłubie.
  */
-export const HULL_CITY3D_LIMITS = Object.freeze({ hmW: 3072, hmH: 1024, levels: 5 });
+export const HULL_CITY3D_LIMITS = Object.freeze({ hmW: 3072, hmH: 1024, levels: 5, topW: 512, topH: 256 });
 
 const BOX_ORDER = 12;
 const RECV_ORDER = 11;
@@ -164,7 +164,9 @@ export function createHullCity3D({ scene } = {}) {
   const T = HULL_CITY3D_TUNE;
   const LIM = HULL_CITY3D_LIMITS;
   const heightTex = makeHeightTexture(LIM.hmW, LIM.hmH, LIM.levels);
-  const nodes = createCityNodes(heightTex);
+  // wysokość WIERZCHU kadłuba (bryła 3D, pochyły wierzch) — stała pojemność, pisana w miejscu (jak mapa wysokości)
+  const topTex = makeHeightTexture(LIM.topW, LIM.topH, 1);
+  const nodes = createCityNodes(heightTex, topTex);
   const group = new THREE.Group();
   group.name = 'HullCity3D';
   group.matrixAutoUpdate = true;
@@ -177,11 +179,17 @@ export function createHullCity3D({ scene } = {}) {
   boxMesh.name = 'HullCity3D:bryly';
   boxMesh.frustumCulled = false;
   boxMesh.renderOrder = BOX_ORDER;
-  // cień na kadłubie
+  // cień na kadłubie: siatka RN × RM pod obrysem miasta (na pochyłym wierzchu bryły 3D idzie za jego wysokością)
+  const RN = 64, RM = 24;
   const recvGeo = new THREE.BufferGeometry();
-  const recvPos = new THREE.Float32BufferAttribute(new Float32Array(12), 3);
+  const recvPos = new THREE.Float32BufferAttribute(new Float32Array((RN + 1) * (RM + 1) * 3), 3);
   recvGeo.setAttribute('position', recvPos);
-  recvGeo.setIndex([0, 1, 2, 0, 2, 3]);
+  const recvIdx = [];
+  for (let j = 0; j < RM; j++) for (let i = 0; i < RN; i++) {
+    const a = j * (RN + 1) + i, b = a + 1, c = a + RN + 2, d = a + RN + 1;
+    recvIdx.push(a, b, c, a, c, d);
+  }
+  recvGeo.setIndex(recvIdx);
   recvGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
   const recvMesh = new THREE.Mesh(recvGeo, createCityReceiverMaterial(nodes, T.receiverZ));
   recvMesh.name = 'HullCity3D:cien';
@@ -296,7 +304,10 @@ export function createHullCity3D({ scene } = {}) {
     // obrys w scenie: y sceny = −y
     let x0 = bounds.x0 - 8, x1 = bounds.x1 + 8, y0 = -bounds.y1 - 8, y1 = -bounds.y0 + 8;
     x0 = Math.min(x0, x0 + ox); x1 = Math.max(x1, x1 + ox); y0 = Math.min(y0, y0 + oy); y1 = Math.max(y1, y1 + oy);
-    a.set([x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1, 0]);
+    for (let j = 0; j <= RM; j++) for (let i = 0; i <= RN; i++) {
+      const o = (j * (RN + 1) + i) * 3;
+      a[o] = x0 + (x1 - x0) * i / RN; a[o + 1] = y0 + (y1 - y0) * j / RM; a[o + 2] = 0;
+    }
     recvPos.needsUpdate = true;
   }
 
@@ -326,8 +337,29 @@ export function createHullCity3D({ scene } = {}) {
    * Raz na klatkę: uniformy ze strojenia i słońca; widoczność 0–1 (maskowanie, „Statki 3D”); `opts.topView` 0–1 — kamera
    * perspektywy patrzy z góry (poświata i przygaszanie świateł jak w kamerze ortho; ortho shader rozpoznaje sam).
    */
+  /**
+   * Wysokość WIERZCHU kadłuba (bryła 3D: `body3D.topGrid` — { x0, y0, cell, nx, ny, data }, układ sceny względem środka
+   * okrętu) albo null. Miasto stoi na niej tylko przy `update(…, { topOn: true })` (kamera 3D z pochyłym wierzchem).
+   */
+  function setTopHeight(grid) {
+    const D = topTex.image.data;
+    D.fill(0);
+    if (grid && grid.nx > 0 && grid.ny > 0) {
+      const k = Math.max(1, Math.ceil(grid.nx / LIM.topW), Math.ceil(grid.ny / LIM.topH));
+      const w = Math.ceil(grid.nx / k), h = Math.ceil(grid.ny / k);
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+        const v = grid.data[Math.min(grid.ny - 1, j * k) * grid.nx + Math.min(grid.nx - 1, i * k)];
+        D[j * LIM.topW + i] = THREE.DataUtils.toHalfFloat(v);
+      }
+      const cell = grid.cell * k;
+      nodes.U.uTop.value.set(grid.x0 - cell / 2, grid.y0 - cell / 2, 1 / (LIM.topW * cell), 1 / (LIM.topH * cell));
+    }
+    topTex.needsUpdate = true;
+  }
+
   function update(visibility = 1, opts = null) {
     const U = nodes.U;
+    U.uTopOn.value.set(opts?.topOn ? 1 : 0, 0, 0, 0);
     const L = localSun();
     U.uSunL.value.set(L[0], L[1], L[2]);
     U.uLight.value.set(T.ambient, T.diffuse, T.specular, T.roofLight);
@@ -372,11 +404,12 @@ export function createHullCity3D({ scene } = {}) {
     boxGeo.dispose(); lightGeo.dispose(); recvGeo.dispose();
     boxMat.dispose(); recvMesh.material.dispose(); lightMesh.material.dispose();
     heightTex.dispose();
+    topTex.dispose();
   }
 
   return {
     group, nodes, stats, tune: T, palette: CITY_MAT_PALETTE,
-    setCity, setPose, setSun, update, warmupMeshes, afterWarmup, dispose,
+    setCity, setPose, setSun, setTopHeight, update, warmupMeshes, afterWarmup, dispose,
     get meshes() { return { boxes: boxMesh, receiver: recvMesh, lights: lightMesh }; }
   };
 }

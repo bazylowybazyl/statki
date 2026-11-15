@@ -34,6 +34,10 @@ export const HULL_BODY_TUNE = Object.freeze({
   grooveRing: 4,            // pierścień tylnej ściany rowu (światła)
   lights: Object.freeze({ step: 9, w: 4, h: 3, z: -50, z2: -43, group: 12, groupOn: 0.34, slotOn: 0.62, blue: 0.3, row2: 0.18 }),
   bottom: Object.freeze({ cell: 24, dMin: 60, dFlat: 100, zFlat: -110, slope: 0.28, depth: 560 }),
+  // WIERZCH jako płytki dach (etap 1b — „góra kompletnie płaska, musi opuścić górę w dół”): spadek przy burcie [j.],
+  // plateau (z = 0) od tej odległości od burty w głąb, pas pierścieni przy krawędzi, siatka dalej (brzeg pod pasem,
+  // uniesiona o lift), cokoły pod modelami gry (mostki, rdzenie): z = 0 do r + pinIn, potem zbocze pinSlope
+  top: Object.freeze({ drop: 225, plateau: 900, cell: 24, strip: Object.freeze([0, 30, 60]), gridMin: 20, resample: 40, pinIn: 24, pinSlope: 1.1, lift: 0.3 }),
   miterMax: 8,              // najdłuższe przesunięcie narożnika (× przesunięcie)
   reachK: 0.48              // pierścień nie przechodzi dalej niż ten ułamek drogi do przeciwnej burty (wąskie zęby)
 });
@@ -198,13 +202,6 @@ function ringFrames(poly, T) {
   return fr;
 }
 
-function ringAt(fr, o) {
-  return fr.map((f) => {
-    const s = Math.min(o * f.k, f.reach);
-    return [f.x + f.mx * s, f.y + f.my * s];
-  });
-}
-
 /** Odległość punktu od boków wielokąta (bez znaku). */
 function edgeDistance(segs, px, py) {
   let best = Infinity;
@@ -219,135 +216,228 @@ function edgeDistance(segs, px, py) {
   return Math.sqrt(best);
 }
 
+/** Zagęszczenie łamanej zamkniętej: boki dłuższe niż `step` dzielone równo (wysokość wierzchu zmienia się wzdłuż burty). */
+function densify(poly, step) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+    for (let s = 0; s < n; s++) out.push([a[0] + (b[0] - a[0]) * s / n, a[1] + (b[1] - a[1]) * s / n]);
+  }
+  return out;
+}
+
+/** Siatka wysokości (z, normalne, wierzchołki wspólne) w pudle; `zAt(x, y, d)`, `inc(d)` — czy wierzchołek należy. */
+function heightGrid(box, cell, segs, poly, inc, zAt, down) {
+  const [x0, y0, x1, y1] = box;
+  const nx = Math.max(2, Math.ceil((x1 - x0) / cell) + 1), ny = Math.max(2, Math.ceil((y1 - y0) / cell) + 1);
+  const D = new Float32Array(nx * ny).fill(-1);
+  const Z = new Float32Array(nx * ny);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const x = x0 + i * cell, y = y0 + j * cell;
+      if (!pointInPoly(x, y, poly)) continue;
+      const d = edgeDistance(segs, x, y);
+      D[j * nx + i] = d;
+      Z[j * nx + i] = zAt(x, y, d);
+    }
+  }
+  const pos = [], nrm = [], idx = [];
+  const vid = new Int32Array(nx * ny).fill(-1);
+  const ok = (q) => D[q] >= 0 && inc(D[q]);
+  const vertex = (i, j) => {
+    const q = j * nx + i;
+    if (vid[q] >= 0) return vid[q];
+    const x = x0 + i * cell, y = y0 + j * cell, z = Z[q];
+    const zl = i > 0 && ok(q - 1) ? Z[q - 1] : z, zr = i < nx - 1 && ok(q + 1) ? Z[q + 1] : z;
+    const zd = j > 0 && ok(q - nx) ? Z[q - nx] : z, zu = j < ny - 1 && ok(q + nx) ? Z[q + nx] : z;
+    const fx = (zr - zl) / (2 * cell), fy = (zu - zd) / (2 * cell);
+    const l = Math.hypot(fx, fy, 1);
+    vid[q] = pos.length / 3;
+    pos.push(x, y, z);
+    if (down) nrm.push(fx / l, fy / l, -1 / l); else nrm.push(-fx / l, -fy / l, 1 / l);
+    return vid[q];
+  };
+  let cells = 0;
+  for (let j = 0; j < ny - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const q = j * nx + i;
+      if (!ok(q) || !ok(q + 1) || !ok(q + nx) || !ok(q + nx + 1)) continue;
+      const a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1);
+      // w dół: zgodnie z ruchem wskazówek widziane z góry; w górę — przeciwnie
+      if (down) idx.push(a, c, b, a, d, c); else idx.push(a, b, c, a, c, d);
+      cells++;
+    }
+  }
+  return { pos, nrm, idx, cells, grid: { x0, y0, cell, nx, ny, D, Z } };
+}
+
 /**
- * Bryła pod wierzchem: `loops0` — łamane poziomu 0 z pola kreatora (`field.loops[0]`, układ projektu). Opcje:
- * `scale` (domyślnie z szerokości sylwetki / refWidth, ≤ 1), `bottom: false` — bez spodu, `lights: false` — bez świateł.
+ * Bryła pod wierzchem i (z `opts.top`) sam WIERZCH. `loops0` — łamane poziomu 0 z pola kreatora (układ projektu).
+ * Opcje: `scale` (domyślnie z szerokości sylwetki / refWidth, ≤ 1), `bottom: false`, `lights: false`,
+ * `top: { drop, plateau, pins: [{ x, y, r }] (układ sceny), image: { minX, minY, w, h } (układ projektu) }` — wierzch jako
+ * PŁYTKI DACH: najwyżej (z = 0) od `plateau` j. w głąb od burty, w dół liniowo do −`drop` przy burcie (j. przy szerokości
+ * odniesienia); pod modelami gry (mostki, rdzenie — `pins`) cokół na z = 0 ze zboczem `pinSlope`. Burta, światła i spód
+ * zaczynają się od obniżonej krawędzi. Wierzch ma materiał DECK z uv obrazu kompozytora (pudło `image`).
  * Zwraca dane budowniczego ({ position, normal, uv, mat, index (Uint32), vertexCount, triangleCount }) + `stats`
- * albo null (brak obrysu).
+ * + `topGrid` (wysokość wierzchu na siatce — dla miasta) albo null (brak obrysu).
  */
 export function buildHullBodyGeometry(loops0, opts = {}) {
-  const T = HULL_BODY_TUNE;
-  const poly = hullBodyOutline(loops0);
-  if (!poly) return null;
+  const T = HULL_BODY_TUNE, TT = T.top;
+  const poly0 = hullBodyOutline(loops0);
+  if (!poly0) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const [x, y] of poly) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  for (const [x, y] of poly0) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
   const k = opts.scale ?? Math.max(0.05, Math.min(1, (y1 - y0) / T.refWidth));
+  const top = opts.top || null;
+  const drop = top ? Math.max(0, top.drop ?? TT.drop) * k : 0;
+  const plateau = Math.max(1, (top?.plateau ?? TT.plateau) * k);
+  const pins = top?.pins || [];
+  const segs = [];
+  for (let i = 0; i < poly0.length; i++) {
+    const a = poly0[i], b = poly0[(i + 1) % poly0.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const l2 = ex * ex + ey * ey;
+    segs.push(a[0], a[1], ex, ey, l2 > 0 ? 1 / l2 : 0, 0);
+  }
+  // wysokość wierzchu: dach od burty (−drop) do plateau (0), cokoły pod modelami gry
+  const zTop = (x, y, d) => {
+    if (drop <= 0) return 0;
+    let z = -drop * Math.max(0, 1 - d / plateau);
+    for (const p of pins) {
+      const allow = Math.max(0, Math.hypot(x - p.x, y - p.y) - p.r - TT.pinIn * k) * TT.pinSlope;
+      if (-allow > z) z = -allow;
+    }
+    return z;
+  };
+  const poly = top ? densify(poly0, TT.resample * k) : poly0;
   const B = new MeshBuilder3D();
   const fr = ringFrames(poly, T);
-  // ── BURTA: ściany między kolejnymi pierścieniami profilu ──────────────────────────────────────────────────────
-  const rings = T.profile.map(([o, z]) => ({ pts: ringAt(fr, o * k), z: z * k }));
+  const zEdge = fr.map((f) => zTop(f.x, f.y, 0));
+  // pierścień o przesunięciu o: [x, y, osiągnięta odległość od burty, indeks wierzchołka]
+  const ring = (o) => fr.map((f, i) => { const s = Math.min(o * f.k, f.reach); return [f.x + f.mx * s, f.y + f.my * s, s / f.k, i]; });
+  const quads = (up, lo, zu, zl, mat, hintUp) => {
+    const n = up.length;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const pts = [[lo[i][0], lo[i][1], zl(lo[i])], [lo[j][0], lo[j][1], zl(lo[j])], [up[j][0], up[j][1], zu(up[j])], [up[i][0], up[i][1], zu(up[i])]]
+        .filter((p, q, arr) => { const r = arr[(q + 3) % 4]; return Math.hypot(p[0] - r[0], p[1] - r[1], p[2] - r[2]) > 1e-7; });
+      if (pts.length < 3) continue;
+      let ex = lo[j][0] - lo[i][0], ey = lo[j][1] - lo[i][1];
+      if (Math.hypot(ex, ey) < 1e-9) { ex = up[j][0] - up[i][0]; ey = up[j][1] - up[i][1]; }
+      B.face(pts, mat, hintUp ? [0, 0, 1] : [ey, -ex, 0]);
+    }
+  };
+  // ── BURTA: od obniżonej krawędzi wierzchu w dół ───────────────────────────────────────────────────────────────
+  const rings = T.profile.map(([o, z]) => ({ pts: ring(o * k), z: z * k }));
   for (let r = 1; r < rings.length; r++) {
     const up = rings[r - 1], lo = rings[r];
-    B.walls(lo.pts, lo.z, up.pts, up.z, T.profile[r][2]);
+    quads(up.pts, lo.pts, (p) => zEdge[p[3]] + up.z, (p) => zEdge[p[3]] + lo.z, T.profile[r][2], false);
   }
-  // ── ŚWIATŁA w rowie: rzadkie grupy na tylnej ścianie (krótkie kwadraty lekko przed ścianą) ─────────────────────
+  // ── ŚWIATŁA w rowie ───────────────────────────────────────────────────────────────────────────────────────────
   let nLights = 0;
   if (opts.lights !== false) {
     const L = T.lights;
     const g = rings[T.grooveRing].pts;
     const zA = L.z * k, zB = L.z2 * k, hh = L.h * k * 0.5, hw = L.w * k * 0.5, stepL = L.step * k;
-    let slot = 0;
+    // światła liczone po bokach obrysu bez zagęszczenia (ten sam rytm co dawniej), wysokość z krawędzi w tym miejscu
+    let slot = 0, carry = 0;   // droga od ostatniego miejsca na światło
     for (let i = 0; i < g.length; i++) {
       const a = g[i], b = g[(i + 1) % g.length];
       const ex = b[0] - a[0], ey = b[1] - a[1];
       const len = Math.hypot(ex, ey);
-      if (len < stepL * 1.5) continue;
+      if (len < 1e-6) continue;
       const ux = ex / len, uy = ey / len;
-      // na zewnątrz (CCW: prawa strona) — kwadrat 0,4 j. przed ścianą
       const ox = uy * 0.4 * k, oy = -ux * 0.4 * k;
-      for (let s = stepL; s < len - stepL * 0.5; s += stepL, slot++) {
+      const za = zEdge[a[3]], zb = zEdge[b[3]];
+      let s = stepL - carry;
+      if (s >= len) { carry += len; continue; }
+      for (; s < len; s += stepL, slot++) {
         const grp = Math.floor(slot / L.group);
         if (hash1(grp * 3.1) > L.groupOn) continue;
         if (hash1(slot * 1.7 + 0.3) > L.slotOn) continue;
         const mat = hash1(grp * 5.3 + 1.1) < L.blue ? M.E_ICE : M.E_WINDOW;
-        const cx = a[0] + ux * s + ox, cy = a[1] + uy * s + oy;
+        const cx = a[0] + ux * s + ox, cy = a[1] + uy * s + oy, ze = za + (zb - za) * (s / len);
         for (const [zc, on] of [[zA, true], [zB, hash1(slot * 2.9) < L.row2]]) {
           if (!on) continue;
           B.face([
-            [cx - ux * hw, cy - uy * hw, zc - hh], [cx + ux * hw, cy + uy * hw, zc - hh],
-            [cx + ux * hw, cy + uy * hw, zc + hh], [cx - ux * hw, cy - uy * hw, zc + hh]
+            [cx - ux * hw, cy - uy * hw, ze + zc - hh], [cx + ux * hw, cy + uy * hw, ze + zc - hh],
+            [cx + ux * hw, cy + uy * hw, ze + zc + hh], [cx - ux * hw, cy - uy * hw, ze + zc + hh]
           ], mat, [uy, -ux, 0]);
           nLights++;
         }
       }
+      carry = len - (s - stepL);
     }
   }
+  // ── WIERZCH: pas pierścieni przy burcie (dokładna krawędź) + siatka wysokości dalej (jej brzeg pod pasem) ─────
+  let topGrid = null, topCells = 0;
+  const extra = [];   // { pos, nrm, idx, mat }
+  if (top) {
+    const strip = TT.strip.map((o) => ring(o * k));
+    for (let r = 1; r < strip.length; r++) {
+      quads(strip[r - 1], strip[r], (p) => zTop(p[0], p[1], p[2]), (p) => zTop(p[0], p[1], p[2]), M.DECK, true);
+    }
+    const lift = TT.lift;
+    const tg = heightGrid([x0, y0, x1, y1], TT.cell * k, segs, poly0, (d) => d >= TT.gridMin * k, (x, y, d) => zTop(x, y, d) + lift, false);
+    topCells = tg.cells;
+    extra.push({ pos: tg.pos, nrm: tg.nrm, idx: tg.idx, mat: M.DECK });
+    // dla miasta: wysokość wierzchu na siatce (poza sylwetką — wysokość krawędzi)
+    const G = tg.grid;
+    const H = new Float32Array(G.nx * G.ny);
+    for (let j = 0; j < G.ny; j++) for (let i = 0; i < G.nx; i++) {
+      const q = j * G.nx + i;
+      H[q] = G.D[q] >= 0 ? G.Z[q] - lift : zTop(G.x0 + i * G.cell, G.y0 + j * G.cell, 0);
+    }
+    topGrid = { x0: G.x0, y0: G.y0, cell: G.cell, nx: G.nx, ny: G.ny, data: H, drop: Math.round(drop) };
+  }
   const side = B.build();
-  // ── SPÓD: siatka wysokości z odległości od burty (płaski pod okapem, dalej w dół ku osi do `depth`) ─────────────
-  const pos = [], nrm = [], uvs = [], mats = [], idx = [];
+  // ── SPÓD: siatka wysokości z odległości od burty, od poziomu krawędzi ─────────────────────────────────────────
   let cells = 0, deepest = 0;
   if (opts.bottom !== false) {
     const Bt = T.bottom;
-    const cell = Bt.cell * k, dMin = Bt.dMin * k, dFlat = Bt.dFlat * k, zFlat = Bt.zFlat * k, depth = Bt.depth * k;
-    const segs = [];
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i], b = poly[(i + 1) % poly.length];
-      const ex = b[0] - a[0], ey = b[1] - a[1];
-      const l2 = ex * ex + ey * ey;
-      segs.push(a[0], a[1], ex, ey, l2 > 0 ? 1 / l2 : 0, 0);
-    }
-    const nx = Math.max(2, Math.ceil((x1 - x0) / cell) + 1), ny = Math.max(2, Math.ceil((y1 - y0) / cell) + 1);
-    const D = new Float32Array(nx * ny).fill(-1);
-    const Z = new Float32Array(nx * ny);
-    const zOf = (d) => (d < dFlat ? zFlat : Math.max(-depth, zFlat - Bt.slope * (d - dFlat)));
-    for (let j = 0; j < ny; j++) {
-      for (let i = 0; i < nx; i++) {
-        const x = x0 + i * cell, y = y0 + j * cell;
-        if (!pointInPoly(x, y, poly)) continue;
-        const d = edgeDistance(segs, x, y);
-        D[j * nx + i] = d;
-        Z[j * nx + i] = zOf(d);
-      }
-    }
-    const vid = new Int32Array(nx * ny).fill(-1);
-    const vertex = (i, j) => {
-      const q = j * nx + i;
-      if (vid[q] >= 0) return vid[q];
-      const x = x0 + i * cell, y = y0 + j * cell, z = Z[q];
-      // normalna spodu (w dół) z różnic wysokości sąsiadów w środku
-      const zl = D[q - 1] >= 0 && i > 0 ? Z[q - 1] : z, zr = i < nx - 1 && D[q + 1] >= 0 ? Z[q + 1] : z;
-      const zd = j > 0 && D[q - nx] >= 0 ? Z[q - nx] : z, zu = j < ny - 1 && D[q + nx] >= 0 ? Z[q + nx] : z;
-      const fx = (zr - zl) / (2 * cell), fy = (zu - zd) / (2 * cell);
-      const l = Math.hypot(fx, fy, 1);
-      vid[q] = pos.length / 3;
-      pos.push(x, y, z);
-      nrm.push(fx / l, fy / l, -1 / l);
-      uvs.push(x, y);
-      mats.push(M.PAINT);
-      if (z < deepest) deepest = z;
-      return vid[q];
-    };
-    for (let j = 0; j < ny - 1; j++) {
-      for (let i = 0; i < nx - 1; i++) {
-        const q = j * nx + i;
-        if (D[q] < dMin || D[q + 1] < dMin || D[q + nx] < dMin || D[q + nx + 1] < dMin) continue;
-        const a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1);
-        // ściana w dół: kolejność zgodna z ruchem wskazówek widziana z góry
-        idx.push(a, c, b, a, d, c);
-        cells++;
-      }
-    }
+    const dFlat = Bt.dFlat * k, zFlat = Bt.zFlat * k, depth = Bt.depth * k;
+    const zOf = (x, y, d) => zTop(x, y, 0) + (d < dFlat ? zFlat : Math.max(-depth, zFlat - Bt.slope * (d - dFlat)));
+    const bg = heightGrid([x0, y0, x1, y1], Bt.cell * k, segs, poly0, (d) => d >= Bt.dMin * k, zOf, true);
+    cells = bg.cells;
+    for (let i = 2; i < bg.pos.length; i += 3) if (bg.pos[i] < deepest) deepest = bg.pos[i];
+    extra.push({ pos: bg.pos, nrm: bg.nrm, idx: bg.idx, mat: M.PAINT });
   }
   // ── złożenie ─────────────────────────────────────────────────────────────────────────────────────────────────
-  const vs = side.vertexCount, vb = pos.length / 3;
+  let nv = side.vertexCount, ni = side.index.length;
+  for (const e of extra) { nv += e.pos.length / 3; ni += e.idx.length; }
   const out = {
-    position: new Float32Array((vs + vb) * 3),
-    normal: new Float32Array((vs + vb) * 3),
-    uv: new Float32Array((vs + vb) * 2),
-    mat: new Float32Array(vs + vb),
-    index: new Uint32Array(side.index.length + idx.length)
+    position: new Float32Array(nv * 3), normal: new Float32Array(nv * 3), uv: new Float32Array(nv * 2),
+    mat: new Float32Array(nv), index: new Uint32Array(ni)
   };
-  out.position.set(side.position); out.position.set(pos, vs * 3);
-  out.normal.set(side.normal); out.normal.set(nrm, vs * 3);
-  out.uv.set(side.uv); out.uv.set(uvs, vs * 2);
-  out.mat.set(side.mat); out.mat.set(mats, vs);
+  out.position.set(side.position); out.normal.set(side.normal); out.uv.set(side.uv); out.mat.set(side.mat);
   out.index.set(side.index);
-  for (let i = 0; i < idx.length; i++) out.index[side.index.length + i] = idx[i] + vs;
-  out.vertexCount = vs + vb;
-  out.triangleCount = out.index.length / 3;
+  let vo = side.vertexCount, io = side.index.length;
+  for (const e of extra) {
+    const n = e.pos.length / 3;
+    out.position.set(e.pos, vo * 3); out.normal.set(e.nrm, vo * 3);
+    for (let i = 0; i < n; i++) { out.mat[vo + i] = e.mat; out.uv[(vo + i) * 2] = e.pos[i * 3]; out.uv[(vo + i) * 2 + 1] = e.pos[i * 3 + 1]; }
+    for (let i = 0; i < e.idx.length; i++) out.index[io + i] = e.idx[i] + vo;
+    vo += n; io += e.idx.length;
+  }
+  // uv pokładu (DECK) = obraz kompozytora: u = (x − x0) / w, v = (y projektu − y0) / h (tekstura skóry: flipY = false)
+  // (pudło obrazu pola: { minX, minY, w, h } — `field.image`)
+  const im = top?.image;
+  if (im) {
+    const ix0 = im.minX ?? im.x0, iy0 = im.minY ?? im.y0;
+    for (let i = 0; i < nv; i++) {
+      if (out.mat[i] !== M.DECK) continue;
+      out.uv[i * 2] = (out.position[i * 3] - ix0) / im.w;
+      out.uv[i * 2 + 1] = (-out.position[i * 3 + 1] - iy0) / im.h;
+    }
+  }
+  out.vertexCount = nv;
+  out.triangleCount = ni / 3;
+  out.topGrid = topGrid;
   out.stats = {
     scale: Math.round(k * 1000) / 1000, outline: poly.length, rings: rings.length, lights: nLights, bottomCells: cells,
-    edgeDepth: Math.round(-rings[rings.length - 1].z), depth: Math.round(-deepest), triangles: out.triangleCount,
+    topCells, drop: Math.round(drop), plateau: Math.round(plateau), pins: pins.length,
+    edgeDepth: Math.round(-(rings[rings.length - 1].z - drop)), depth: Math.round(-deepest), triangles: out.triangleCount,
     box: [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)]
   };
   return out;

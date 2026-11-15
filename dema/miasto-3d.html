@@ -56,6 +56,7 @@
       <button data-view="spod">Od spodu <kbd>9</kbd></button>
       <button data-view="bok">Z boku <kbd>0</kbd></button>
       <button data-view="burta">Burta z bliska <kbd>-</kbd></button>
+      <button data-view="grzbiet">Grzbiet ku dziobowi <kbd>=</kbd></button>
     </div>
     <h2>Kamera z góry (P — po kolei)</h2>
     <div class="btns">
@@ -65,6 +66,7 @@
     </div>
     <div class="row"><label>Pochylenie ścian</label><input id="lean" type="range" min="0" max="8" step="0.25" value="6"><output id="leanO"></output></div>
     <div class="btns"><button id="leanZoom" class="on" title="przesada rośnie z oddaleniem: 1× (prawdziwa perspektywa gry) w zbliżeniu ~1 200 j., pełna przy całym okręcie; wyłączone — stała">Przesada z oddaleniem</button></div>
+    <div class="row"><label title="wierzch jako płytki dach: o ile niżej krawędź burty niż grzbiet (0 — płasko); widać w kamerze 3D">Spadek wierzchu</label><input id="topDrop" type="range" min="0" max="400" step="5" value="225"><output id="topDropO"></output></div>
     <h2>Miasto</h2>
     <div class="row"><label>Kompozycja</label><select id="variant"></select></div>
     <div class="row"><label>Ziarno</label><input id="seed" type="number" value="1" step="1"><button id="seedNext">Następne</button></div>

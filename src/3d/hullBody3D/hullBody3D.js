@@ -7,7 +7,7 @@
 // Nie czyta `window`, DOM ani stanu gry: wołający podaje obrys (pole kreatora), pozę i widoczność.
 
 import * as THREE from 'three/webgpu';
-import { diffuseColor, dot, max, normalWorld, uniform } from 'three/tsl';
+import { diffuseColor, dot, max, normalWorld, texture, uniform, uv } from 'three/tsl';
 import { MeshBuilder3D, SHIP3D_MAT as M } from '../ships3d/meshBuilder3D.js';
 import { createShipMaterial } from '../ships3d/shipMaterials3D.tsl.js';
 import { buildHullBodyGeometry, hullBodyLoopsFromField } from './hullBodyGeometry.js';
@@ -24,6 +24,17 @@ export const HULL_BODY_PALETTE = Object.freeze({
   [M.E_WINDOW]: { color: '#2b2518', rough: 0.3, metal: 0.1, emissive: '#ffd7a0', power: 2.4, seams: 0 },
   [M.E_ICE]: { color: '#10262b', rough: 0.4, metal: 0.2, emissive: '#9fd6ff', power: 2.6, seams: 0 }
 });
+
+/** Zastępcza tekstura pokładu (jak tekstura skóry kadłuba: sRGB, filtr z mipmapami) — ten sam shader przed i po. */
+function placeholderDeck() {
+  const t = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1, THREE.RGBAFormat);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
+}
 
 /** Zastępcza geometria (ten sam układ atrybutów co bryła — rozgrzewka przed pierwszym okrętem). */
 function placeholderGeometry() {
@@ -54,9 +65,13 @@ export function createHullBody3D({ scene } = {}) {
   const uSun = uniform(new THREE.Vector3(-0.7, 0.7, 0.01));
   const uFill = uniform(new THREE.Vector4(0.3, 1.05, 0.1, 1));
   const fill = uFill.x.add(uFill.y.mul(max(dot(normalWorld, uSun), 0.0))).add(uFill.z.mul(normalWorld.z.mul(0.5).add(0.5)));
+  // WIERZCH (materiał DECK): obraz kompozytora — ta sama tekstura GPU co skóra kadłuba (acquireHullVisualTexture po
+  // stronie wołającego), podmieniana wartością węzła (graf bez zmian)
+  const deckEmpty = placeholderDeck();
+  const deckNode = texture(deckEmpty, uv());
   const mat = createShipMaterial({
     name: 'bryła kadłuba (hullBody3D)', palette: HULL_BODY_PALETTE, panelW: 46, panelH: 12, rim: 0.7,
-    emissiveAdd: diffuseColor.rgb.mul(fill).mul(uFill.w)
+    deckMapNode: deckNode, emissiveAdd: diffuseColor.rgb.mul(fill).mul(uFill.w)
   });
   const mesh = new THREE.Mesh(placeholderGeometry(), mat);
   mesh.name = 'HullBody3D';
@@ -69,7 +84,7 @@ export function createHullBody3D({ scene } = {}) {
   group.visible = false;
   if (scene) scene.add(group);
   const stats = { triangles: 0, lights: 0, setMs: 0, outlineMs: 0, depth: 0, edgeDepth: 0 };
-  let built = false;
+  let built = false, topGrid = null;
   const pose = { x: 0, y: 0 };
 
   /** Bryła z łamanych poziomu 0 (układ projektu). */
@@ -81,16 +96,29 @@ export function createHullBody3D({ scene } = {}) {
     mesh.geometry = geometryOf(d);
     old.dispose();
     built = true;
+    topGrid = d.topGrid || null;
     Object.assign(stats, d.stats, { setMs: Math.round(performance.now() - t0) });
     return stats;
   }
 
-  /** Bryła z pola kreatora (obrys ramy z izolinii pola poziomu 0). */
+  /**
+   * Bryła z pola kreatora (obrys ramy z izolinii pola poziomu 0) z WIERZCHEM jako płytkim dachem: `opts.drop` — spadek
+   * przy burcie [j.] (0 — płasko), cokoły pod gniazdami modeli gry (mostki i rdzenie v 2), uv z pudła obrazu pola.
+   */
   function setFromField(field, opts = {}) {
     const t0 = performance.now();
     const loops = hullBodyLoopsFromField(field);
     stats.outlineMs = Math.round(performance.now() - t0);
-    return setOutline(loops, opts);
+    const pins = (field?.expanded?.modules || [])
+      .filter((m) => (m.type === 'bridge' || m.type === 'reactor') && (m.v ?? 0) >= 2)
+      .map((m) => ({ x: m.x, y: -m.y, r: m.type === 'reactor' ? (m.r || 40) : Math.max(m.w || 40, m.h || 40) }));
+    const top = { drop: opts.drop, plateau: opts.plateau, pins, image: field?.image || null };
+    return setOutline(loops, { ...opts, top });
+  }
+
+  /** Tekstura wierzchu (obraz kompozytora na GPU — tekstura skóry kadłuba) albo null. */
+  function setTopTexture(tex) {
+    deckNode.value = tex || deckEmpty;
   }
 
   /** Poza kadłuba [świat gry]: środek okrętu (układ projektu = środek obrazu) i kąt (jak miasto 3D). */
@@ -113,9 +141,11 @@ export function createHullBody3D({ scene } = {}) {
   }
 
   return {
-    setOutline, setFromField, setPose, setSun, update, stats, group, mesh, uniforms: { uSun, uFill },
+    setOutline, setFromField, setTopTexture, setPose, setSun, update, stats, group, mesh, uniforms: { uSun, uFill },
     get built() { return built; },
+    /** Wysokość wierzchu na siatce (układ sceny względem środka okrętu) — dla miasta: { x0, y0, cell, nx, ny, data }. */
+    get topGrid() { return topGrid; },
     warmupMeshes() { return [mesh]; },
-    dispose() { scene?.remove(group); mesh.geometry.dispose(); mat.dispose(); }
+    dispose() { scene?.remove(group); mesh.geometry.dispose(); mat.dispose(); deckEmpty.dispose(); }
   };
 }

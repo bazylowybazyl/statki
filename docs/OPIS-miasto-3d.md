@@ -498,3 +498,37 @@ zostaje domyślne. Etap 1 to BRYŁA; spód z wcięciami (etap 2) i silniki (etap
      kadru.
   4. Duże płaszczyzny spodu z daleka jednolite (szwy paneli gasną z odległością) — detal dojdzie z wcięciami (etap 2).
   5. Nadbudówki wierzchu (klin z napisem, grzbiety, plac mostka) dalej są obrazem kompozytora — w ujęciach 3D płaskie.
+
+### Etap 1b — wierzch jako płytki dach (2026-11-15)
+
+Użytkownik o etapie 1: „nie, góra jest kompletnie płaska, musi »opuścić« górę w dół, żeby była pochyła 3D”
+(`.tmp/drednot-wzor/uwaga-plaska-gora.png`; kadr odniesienia `miasto-executor.webp` — wierzch opada od grzbietu ku
+krawędziom, miasto siedzi w grzbiecie).
+
+- WIERZCH to w kamerze 3D własna siatka bryły (materiał DECK z obrazem kompozytora — ta sama tekstura GPU co skóra
+  kadłuba, `acquireHullVisualTexture`; uv z pudła obrazu pola `{ minX, minY, w, h }`), a skóra kadłuba z gry jest wtedy
+  ukryta (`hideHexVisual`). Z góry (widok gry, perspektywa, płaska) — dawna skóra, bryły nie ma: obraz bez zmian (a1 = a2).
+- KSZTAŁT: z odległości od burty d — z = −spadek · max(0, 1 − d / plateau): przy burcie −spadek, od `plateau` (900 j.)
+  w głąb płasko na z = 0 (oś w szerokiej części i odsłonięty środek z miastem), ku dziobowi i zębom niżej (tam d
+  maleje). Burta z rowem, światła i spód zaczynają się od obniżonej krawędzi (okręt grubszy: krawędź 341 j., oś 664 j.).
+  Budowa: pas pierścieni przy burcie (0 / 30 / 60 j. — dokładna krawędź) + siatka wysokości co 24 j. dalej (jej brzeg
+  pod pasem, uniesiona o 0,3 j.; ten sam obraz — styk niewidoczny).
+- CO STOI NA KADŁUBIE: miasto idzie za wysokością wierzchu (mapa wysokości wierzchu `setTopHeight` w module miasta —
+  bryły z wysokością w swoim środku, światła, cień na kadłubie jako siatka 64 × 24; tylko przy `topOn` w kamerze 3D):
+  w szerokiej części stoi na plateau, ku dziobowi schodzi razem z wierzchem po stoku (ujęcie „Grzbiet ku dziobowi”).
+  Modele gry (mostki, rdzenie — moduły ładowane przez grę, bez przesunięć) stoją na COKOŁACH: wierzch pod gniazdami
+  mostków i rdzeni v 2 zostaje na z = 0 (promień gniazda + 24 j.), dalej zbocze 1,1 : 1 do dachu — mostki skrzydłowe
+  (257 j. od burty) stoją na białych kopcach ~160 j. Nadbudówki z obrazu kompozytora (klin, grzbiety) leżą na
+  powierzchni.
+- SPADEK: domyślnie 225 j. przy burcie (~14° na 900 j.), suwak „Spadek wierzchu” 0–400 j. (0 — płasko jak etap 1):
+  demo — panel pod „Widokami”, `?spadek=`; generator — Warsztat „Miasto 3D” (spadek wierzchu), Stocznia — Kształty,
+  „Bryła 3D”. Zmiana przebudowuje bryłę (~0,1 s) i mapę wysokości miasta.
+- KOSZT: 98 tys. trójkątów (wierzch +43 tys., spód 40 tys., burta i światła 6 tys.), 1 rysunek, budowa ~0,1 s (obrys
+  24 ms + geometria 85 ms), mapa wysokości wierzchu dla miasta 512 × 256 r16f (256 KB). GPU: w ujęciach 3D bryła
+  z wierzchem tańsza niż skóra kadłuba, którą zastępuje (pomiar z bryłą i bez: −0,07…−0,15 ms), z góry 0; 0 pipeline'ów
+  synchronicznych, 0 błędów konsoli.
+- Ujęcia: demo — 7 przód nisko, 8 tył, 0 bok, 4 z ukosa, = grzbiet ku dziobowi; zrzuty `.tmp/kreator/bryla-3d/etap1b/`
+  (`--zestaw bryla`, A/B `b8-przod-plasko` — spadek 0), generator `…/etap1b/generator`.
+- Odstaje: wierzch w 3D nie ma reliefu skóry gry (mapa powierzchni HullSurface — sam obraz albedo, światło z materiału
+  floty); cokoły to gładkie kopce (do decyzji: ostrzejsza wieża pod mostkiem albo mostek bez cokołu, gdy gra dostanie
+  wysokość per gniazdo); plateau przy szerokości 900 j. jest dla drednota — inny okręt może potrzebować innej wartości.

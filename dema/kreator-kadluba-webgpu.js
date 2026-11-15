@@ -114,6 +114,7 @@ const S = {
   persp: false,
   // ujęcie BRYŁY kamerą 3D ('przod' | 'tyl' | 'spod' | 'bok'; null — widok edytora z góry); klik w okręt wraca
   orbitView: null,
+  topDrop: params.has('spadek') ? Number(params.get('spadek')) : 225,   // spadek wierzchu bryły przy burcie [j.]
   lean: leanFromPage()
 };
 S.persp = S.camMode === 'perspektywa';
@@ -1371,6 +1372,7 @@ function syncCityPanel(d) {
   $('lbl-lean').textContent = `pochylenie ${S.lean.gain.toFixed(2)}×`;
   $('btn-lean-zoom').classList.toggle('on', S.lean.byZoom);
   for (const k of Object.keys(ORBIT_VIEWS)) $(`btn-orb-${k}`)?.classList.toggle('on', S.orbitView === k);
+  if ($('inp-top-drop')) { $('inp-top-drop').value = String(S.topDrop); $('lbl-top-drop').textContent = `spadek wierzchu ${S.topDrop} j.`; }
 }
 function bindCityPanel() {
   const sel = $('sel-city');
@@ -1393,6 +1395,8 @@ function bindCityPanel() {
   $('inp-lean').addEventListener('input', () => setLean(Number($('inp-lean').value)));
   $('btn-lean-zoom').addEventListener('click', () => setLean(null, !S.lean.byZoom));
   for (const k of Object.keys(ORBIT_VIEWS)) $(`btn-orb-${k}`)?.addEventListener('click', () => setOrbitView(S.orbitView === k ? null : k));
+  $('inp-top-drop')?.addEventListener('input', () => { $('lbl-top-drop').textContent = `spadek wierzchu ${$('inp-top-drop').value} j.`; });
+  $('inp-top-drop')?.addEventListener('change', () => setTopDrop($('inp-top-drop').value));
 }
 function bindShellPanel() {
   const selR = $('sel-shell-rhythm');
@@ -2623,6 +2627,8 @@ window.__kreator = {
   get view() { return { camMode: S.camMode, lean: { ...S.lean }, orbitView: S.orbitView }; },
   /** Ujęcie bryły 3D ('przod' | 'tyl' | 'spod' | 'bok' | null); liczby bryły. */
   setOrbitView(name) { return setOrbitView(name); },
+  /** Spadek wierzchu bryły [j.]; zwraca liczby bryły. */
+  setTopDrop(v) { return setTopDrop(v); },
   get body() { return cityDemo.body3D ? { built: cityDemo.body3D.built, stats: { ...cityDemo.body3D.stats } } : null; },
   /** Miasto 3D: stan i liczby; `cityIdle()` — czeka, aż worker odda miasto bieżącego projektu. */
   get city() { return { on: cityOn(S.design), key: cityDemo.key, shownKey: cityDemo.shownKey, stats: cityDemo.city3D?.stats || null, gen: cityDemo.gen }; },
@@ -2743,7 +2749,7 @@ function bridgeDemoSync(cam) {
 // cityDemoInit() przy starcie (rozgrzewka), cityDemoAfterBuild() po pełnej budowie, cityDemoCheck(projekt) na ścieżce
 // barw (pole `city` jest poza kluczem kształtu), cityDemoSync() w render(); w trakcie podglądu przeciągania miasto
 // znika (kadłub w podglądzie nie jest jeszcze tym, na którym stoi).
-const cityDemo = { city3D: null, body3D: null, key: 'off', shownKey: 'off', busy: false, pending: false, gen: null };
+const cityDemo = { city3D: null, body3D: null, topVisual: null, key: 'off', shownKey: 'off', busy: false, pending: false, gen: null };
 function cityDemoInit() {
   cityDemo.city3D = createHullCity3D({ scene: Core3D.scene });
   cityDemo.city3D.setPose(0, 0, 0);
@@ -2755,7 +2761,12 @@ function cityDemoInit() {
   Core3D.warmup.add({ name: 'miasto 3D (hullCity3D)', objects: () => cityDemo.city3D.warmupMeshes(), layer: 0, phase: 'loading' });
 }
 function cityDemoAfterBuild() {
-  if (cityDemo.body3D && S.field?.levels) cityDemo.body3D.setFromField(S.field);
+  if (cityDemo.body3D && S.field?.levels) {
+    // wierzch bryły: ta sama tekstura GPU co skóra kadłuba (obraz kompozytora)
+    if (cityDemo.topVisual && cityDemo.topVisual !== ship.visual) { releaseHullVisualTexture(cityDemo.topVisual); cityDemo.topVisual = null; }
+    if (ship.visual && !cityDemo.topVisual) { cityDemo.topVisual = ship.visual; cityDemo.body3D.setTopTexture(acquireHullVisualTexture(ship.visual)); }
+    bodyDemoBuild();
+  }
   // nowy kadłub — miasto od nowa (płytka mogła się zmienić), także przy tym samym kluczu ustawień
   cityDemo.shownKey = null;
   cityDemoCheck(normalizeHullDesign(S.design), true);
@@ -2789,11 +2800,26 @@ async function cityDemoRequest(c) {
     if (nd.city?.on && cityBuildKey(nd.city) !== cityDemo.shownKey) cityDemoRequest(nd.city);
   }
 }
+function bodyDemoBuild() {
+  if (!cityDemo.body3D || !S.field?.levels) return;
+  cityDemo.body3D.setFromField(S.field, { drop: S.topDrop });
+  cityDemo.city3D?.setTopHeight(cityDemo.body3D.topGrid);
+}
+/** Spadek wierzchu bryły [j.] (0 — płasko) — przebudowa bryły (~0,1 s). */
+function setTopDrop(v) {
+  S.topDrop = Math.max(0, Math.min(400, Number(v) || 0));
+  bodyDemoBuild();
+  syncCityPanel(S.design);
+  return cityDemo.body3D?.stats || null;
+}
 function cityDemoSync() {
   const B3 = cityDemo.body3D;
   if (B3) {
     B3.setSun(window.SUN.x, window.SUN.y);
-    B3.update(S.orbitView && !previewQuad?.visible ? 1 : 0);
+    const v3 = !!S.orbitView && !previewQuad?.visible;
+    B3.update(v3 ? 1 : 0);
+    // w ujęciu bryły skóra kadłuba ustępuje pochyłemu wierzchowi (podgląd przeciągania zarządza nią sam)
+    if (ship.entity && !previewQuad?.visible) ship.entity.hideHexVisual = v3;
   }
   const C3 = cityDemo.city3D;
   if (!C3) return;
@@ -2802,7 +2828,7 @@ function cityDemoSync() {
   HULL_CITY3D_TUNE.topGlow = nd?.glow ? 1 : 0;
   C3.setSun(window.SUN.x, window.SUN.y);
   const vis = nd?.on && !previewQuad?.visible && cityDemo.shownKey !== 'off' ? 1 : 0;
-  C3.update(vis, { topView: S.camMode !== 'plaska' ? 1 : 0, lean: { on: S.camMode === 'gra', gain: S.lean.gain, byZoom: S.lean.byZoom } });
+  C3.update(vis, { topOn: !!S.orbitView, topView: !S.orbitView && S.camMode !== 'plaska' ? 1 : 0, lean: { on: S.camMode === 'gra', gain: S.lean.gain, byZoom: S.lean.byZoom } });
 }
 
 // KAMERA WIDOKU: płaska (ortho passa gry — jak dotąd) albo PERSPEKTYWA Z GÓRY = Core3D.cameraPersp passa FG gry (35°,
@@ -2892,7 +2918,7 @@ function shipyardApi() {
     pick, isLocked, mirrorOn, polyLoopOf, partWorldBox, removePicked, rotateObj, scaleObj,
     paletteBlock, paletteBox, snapBlock, blkGrid, blockLabel, classModuleLabel,
     newModule, newCastle, newPart, newDecal,
-    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp, setCamMode, setLean, setOrbitView
+    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp, setCamMode, setLean, setOrbitView, setTopDrop
   };
 }
 

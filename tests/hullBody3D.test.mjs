@@ -54,6 +54,35 @@ test('bryła: pod płaszczyzną i w sylwetce, spód w dół, światła w rowie, 
   assert.equal(g2.triangleCount, g.triangleCount);
 });
 
+test('bryła: wierzch jako płytki dach — z ≤ 0, krawędź o spadek niżej, cokoły pod modelami gry, uv w obrazie', () => {
+  const loops = hullBodyLoopsFromField(field);
+  const pins = [{ x: -1900, y: 0, r: 75 }];
+  const g = buildHullBodyGeometry(loops, { top: { drop: 225, pins, image: field.image } });
+  const flat = buildHullBodyGeometry(loops, { top: { drop: 0, image: field.image } });
+  assert.equal(g.stats.drop, 225);
+  assert.ok(g.stats.topCells > 5000, `komórki wierzchu ${g.stats.topCells}`);
+  assert.ok(g.triangleCount > flat.triangleCount * 0.9 && g.topGrid && g.topGrid.nx > 100);
+  let maxZ = -Infinity, deckOut = 0, deck = 0;
+  for (let i = 0; i < g.vertexCount; i++) {
+    const z = g.position[i * 3 + 2];
+    if (z > maxZ) maxZ = z;
+    if (g.mat[i] === SHIP3D_MAT.DECK) {
+      deck++;
+      const u = g.uv[i * 2], v = g.uv[i * 2 + 1];
+      if (u < 0 || u > 1 || v < 0 || v > 1) deckOut++;
+    }
+  }
+  assert.ok(maxZ <= HULL_BODY_TUNE.top.lift + 1e-4, `wierzch nie wyżej niż skóra (${maxZ})`);
+  assert.ok(deck > 10000 && deckOut === 0, `uv pokładu w obrazie (${deckOut} / ${deck})`);
+  // wysokość wierzchu: przy osi w szerokim miejscu plateau 0, pod mostkiem cokół 0, przy burcie −spadek
+  const G = g.topGrid;
+  const at = (x, y) => G.data[Math.round((y - G.y0) / G.cell) * G.nx + Math.round((x - G.x0) / G.cell)];
+  assert.ok(Math.abs(at(-1000, 0)) < 1, `plateau ${at(-1000, 0)}`);
+  assert.ok(Math.abs(at(-1900, 0)) < 1, `cokół mostka ${at(-1900, 0)}`);
+  assert.ok(at(3000, 0) < -100, `dziób niżej ${at(3000, 0)}`);
+  assert.ok(Math.abs(flat.stats.drop) === 0 && flat.topGrid.data.every((v) => Math.abs(v) < 1e-6), 'spadek 0 — płasko');
+});
+
 test('bryła: materiał modeli floty z wypełnieniem buduje WGSL w Node; moduł nie czyta window / DOM', () => {
   const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
   const renderer = new THREE.WebGPURenderer({ canvas });

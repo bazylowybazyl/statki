@@ -16,7 +16,7 @@
 //   ?clean=1 (bez panelu)   ?test=1 (klatki z __miasto.runFrames — scripts/webgpu/miasto-3d-zrzuty.mjs)
 import * as THREE from 'three/webgpu';
 import { Core3D } from '../src/3d/core3d.js';
-import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D } from '../src/3d/hexShips3D.js';
+import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D, acquireHullVisualTexture, releaseHullVisualTexture } from '../src/3d/hexShips3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { HullSurface } from '../src/3d/hullSurface.js';
 import { HullLighting } from '../src/3d/hullLighting.js';
@@ -60,6 +60,7 @@ const S = {
   city: { variant: params.get('wariant') || 'A', seed: Number(params.get('ziarno') || 1), density: 1, height: 1, lights: 1 },
   cityOn: true, lightsOn: true, info: false,
   bodyOn: params.get('bryla') !== '0',          // bryła kadłuba pod wierzchem (burta z rowem, spód) — B
+  topDrop: params.has('spadek') ? Number(params.get('spadek')) : 225,   // spadek wierzchu przy burcie [j.] — płytki dach
   topGlow: params.get('zgory') === 'poswiata',   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
   // widoki z góry: 'gra' — ortho + pochylenie miasta (przesada `lean`), 'persp' — kamera FG gry (free3d), 'plaska' — ortho
   camMode: ({ plaska: 'plaska', perspektywa: 'persp' })[params.get('kamera')] || 'gra',
@@ -95,7 +96,7 @@ let city3D = null;
 const builder = createHullDesignBuildClient();
 const cullInfo = { x: 0, y: 0, halfW: 1e5, halfH: 1e5, drawHalfW: 1e5, drawHalfH: 1e5 };
 const renderList = [];
-const ship = { entity: null, field: null };
+const ship = { entity: null, field: null, visual: null };
 
 function makeCanvas(w, h, data) {
   const c = document.createElement('canvas');
@@ -145,7 +146,14 @@ async function buildShip() {
   ship.entity = e;
   ship.field = field;
   T.kadlub = Math.round(performance.now() - t);
-  if (body3D) { body3D.setFromField(field); body3D.setPose(0, 0, 0); T.bryla = body3D.stats.setMs + body3D.stats.outlineMs; }
+  if (ship.visual) releaseHullVisualTexture(ship.visual);
+  ship.visual = visual;
+  if (body3D) {
+    // wierzch bryły: ta sama tekstura GPU co skóra kadłuba (obraz kompozytora)
+    body3D.setTopTexture(acquireHullVisualTexture(visual));
+    bodyBuild();
+    T.bryla = body3D.stats.setMs + body3D.stats.outlineMs;
+  }
   reactorCoresFrom(field);
   bridgesAttach(field);
 }
@@ -214,6 +222,19 @@ function bodyInit() {
   body3D = createHullBody3D({ scene: Core3D.scene });
   Core3D.warmup.add({ name: 'bryła kadłuba (hullBody3D)', objects: () => body3D.warmupMeshes(), layer: 0, phase: 'loading' });
   window.__miasto.body3D = body3D;
+}
+/** Bryła z obecnym spadkiem wierzchu; miasto dostaje wysokość wierzchu (stoi na nim w kamerze 3D). */
+function bodyBuild() {
+  if (!body3D || !ship.field) return;
+  body3D.setFromField(ship.field, { drop: S.topDrop });
+  body3D.setPose(0, 0, 0);
+  city3D?.setTopHeight(body3D.topGrid);
+}
+function setTopDrop(v) {
+  S.topDrop = Math.max(0, Math.min(400, Number(v) || 0));
+  const el = $('topDrop'); if (el) { el.value = S.topDrop; $('topDropO').textContent = `${S.topDrop} j.`; }
+  bodyBuild();
+  return body3D?.stats || null;
 }
 function cityInit() {
   city3D = createHullCity3D({ scene: Core3D.scene });
@@ -344,7 +365,9 @@ const VIEWS = {
   tyl: () => { S.view = 'ukos'; S.orbit = { tx: -600, ty: 0, dist: 5600, yaw: Math.PI, pitch: 0.06 }; },
   spod: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8800, yaw: -Math.PI / 2, pitch: -1.42 }; },
   bok: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8200, yaw: -Math.PI / 2, pitch: 0.07 }; },
-  burta: () => { S.view = 'ukos'; S.orbit = { tx: 1500, ty: 560, dist: 820, yaw: -Math.PI / 2 + 0.35, pitch: 0.12 }; }
+  burta: () => { S.view = 'ukos'; S.orbit = { tx: 1500, ty: 560, dist: 820, yaw: -Math.PI / 2 + 0.35, pitch: 0.12 }; },
+  // grzbiet ku dziobowi: miasto schodzi z wierzchem po stoku
+  grzbiet: () => { S.view = 'ukos'; S.orbit = { tx: 1300, ty: 0, dist: 2600, yaw: 0.62, pitch: 0.16 }; }
 };
 const CATALOG_VIEWS = {
   caly: () => { S.view = 'gra'; S.cam = { x: 0, y: 0, zoom: Math.min(W * 0.94 / catalog.w, H * 0.94 / catalog.h) }; },
@@ -397,14 +420,18 @@ function render() {
     city3D.setSun(window.SUN.x, window.SUN.y);
     const top = S.view !== 'ukos';
     city3D.update(S.cityOn && S.cityData ? 1 : 0, {
+      topOn: !top && S.bodyOn,                     // kamera 3D z bryłą: miasto na pochyłym wierzchu
       topView: top && S.camMode !== 'plaska' ? 1 : 0,
       lean: { on: top && S.camMode === 'gra', gain: S.lean.gain, byZoom: S.lean.byZoom }
     });
   }
   if (body3D) {
     body3D.setSun(window.SUN.x, window.SUN.y);
-    // z góry (widok gry, perspektywa z góry) bryłę zasłania skóra kadłuba — rysunek tylko w kamerze 3D
-    body3D.update(S.bodyOn && !KATALOG && S.view === 'ukos' ? 1 : 0);
+    // z góry (widok gry, perspektywa z góry) — płaska skóra kadłuba jak w grze, bryły nie widać; w kamerze 3D bryła
+    // z pochyłym wierzchem (obraz kompozytora na nim) zamiast skóry
+    const v3 = S.bodyOn && !KATALOG && S.view === 'ukos';
+    if (ship.entity) ship.entity.hideHexVisual = v3;
+    body3D.update(v3 ? 1 : 0);
   }
   if (reactor3D) {
     reactorOpts.origin.x = cam.x; reactorOpts.origin.y = cam.y; reactorOpts.view = cullInfo; reactorOpts.zoom = cam.zoom;
@@ -475,7 +502,7 @@ canvas2d.addEventListener('wheel', (e) => {
 }, { passive: false });
 addEventListener('keydown', (e) => {
   if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return;
-  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta' }[e.key];
+  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta', '=': 'grzbiet' }[e.key];
   if (v) setView(v);
   else if (e.key === 'm' || e.key === 'M') toggleCity();
   else if (e.key === 'b' || e.key === 'B') toggleBody();
@@ -537,6 +564,10 @@ function bindPanel() {
   $('cityOn').onclick = () => toggleCity();
   $('bodyOn').onclick = () => toggleBody();
   toggleBody(S.bodyOn);
+  const td = $('topDrop');
+  td.value = S.topDrop; $('topDropO').textContent = `${S.topDrop} j.`;
+  td.oninput = () => { $('topDropO').textContent = `${td.value} j.`; };
+  td.onchange = () => setTopDrop(td.value);
   $('lightsOn').onclick = () => toggleLights();
   $('camGame').onclick = () => setCamMode('gra');
   $('camPersp').onclick = () => setCamMode('persp');
@@ -588,7 +619,7 @@ window.__miasto = {
   ready: false, error: null, startup: {}, S,
   setView, setCity: async (o) => { Object.assign(S.city, o); await buildCity(); while (S.building || S.pendingCity) await new Promise((r) => setTimeout(r, 30)); return S.gen; },
   setSun(az, elev) { if (az != null) S.sunAz = az; if (elev != null) HULL_CITY3D_TUNE.shadowElevDeg = elev; placeSun(); return true; },
-  toggleCity, toggleLights, toggleBody, setTopGlow, setPersp, setCamMode, setLean, showLabels(on) { S.labels = !!on; return true; },
+  toggleCity, toggleLights, toggleBody, setTopDrop, setTopGlow, setPersp, setCamMode, setLean, showLabels(on) { S.labels = !!on; return true; },
   async runFrames(n = 1) {
     for (let i = 0; i < n; i++) {
       // pułapka 44: rysunek tylko po rAF — symulacja co klatkę, obraz ostatniej

@@ -67,7 +67,7 @@ const cHash = /*@__PURE__*/ Fn(([p]) => fract(sin(dot(p, vec2(127.1, 311.7))).mu
  * Wspólne węzły modułu: uniformy (grupa render — jeden zapis na klatkę), paleta, mapa wysokości. Mapa to stała tekstura
  * (próbki w grafie są klonami węzła z wartością z chwili budowy) — nowe miasto pisze w nią dane, nie podmienia obiektu.
  */
-export function createCityNodes(heightTex) {
+export function createCityNodes(heightTex, topTex = null) {
   const shared = (v) => uniform(v).setGroup(renderGroup);
   const U = {
     uLight: shared(new THREE.Vector4(0.24, 1.18, 0.3, 2.0)),   // otoczenie, rozproszone, połysk, mnożnik otoczenia dachów
@@ -82,7 +82,11 @@ export function createCityNodes(heightTex) {
     // WIDOK GRY Z POCHYLENIEM (kamera ortho; docs/OPIS-miasto-3d.md § 9, wariant B): wł. 0 / 1, przesada g, przesada
     // z oddaleniem 0 / 1, najmniejsze s; uLeanZ: Hc bliskie (przesada 1×), Hc dalekie (pełne g), tg(½ FOV kamery FG), —
     uLean: shared(new THREE.Vector4(0, 6, 1, 0.15)),
-    uLeanZ: shared(new THREE.Vector4(1200, 7000, Math.tan(17.5 * Math.PI / 180), 0))
+    uLeanZ: shared(new THREE.Vector4(1200, 7000, Math.tan(17.5 * Math.PI / 180), 0)),
+    // WIERZCH POCHYŁY (bryła kadłuba, src/3d/hullBody3D/ — kamera 3D): mapa wysokości wierzchu x0, y0 (układ miasta,
+    // z połową komórki), 1 / szer., 1 / wys. [j.]; uTopOn.x — 1: miasto stoi na wysokości wierzchu w swoim miejscu
+    uTop: shared(new THREE.Vector4(0, 0, 1, 1)),
+    uTopOn: shared(new THREE.Vector4(0, 0, 0, 0))
   };
   const pal = [];
   for (const c of CITY_MAT_PALETTE) pal.push(new THREE.Vector4(c[0], c[1], c[2], c[3]));
@@ -91,7 +95,8 @@ export function createCityNodes(heightTex) {
   for (const c of CITY_LIGHT_COLORS) lc.push(new THREE.Vector4(c[0], c[1], c[2], 0));
   const lightColors = uniformArray(lc, 'vec4').setName('cityLightColors');
   const heightNode = texture(heightTex, vec2(0));
-  return { U, palette, paletteValues: pal, lightColors, lightColorValues: lc, heightNode, heightTex };
+  const topNode = topTex ? texture(topTex, vec2(0)) : null;
+  return { U, palette, paletteValues: pal, lightColors, lightColorValues: lc, heightNode, heightTex, topNode, topTex };
 }
 
 /** Biblioteka marszu: wysokość miasta w punkcie, cień w stronę słońca cieni, AO kanionu. */
@@ -170,6 +175,17 @@ const leanParams = (U) => {
   hcEff.assign(hc.div(max(g, 1e-4)));
   return { on, hcEff };
 };
+/** Wysokość wierzchu kadłuba w punkcie xy (układ miasta) × wł. — wołać w Fn wierzchołka; bez mapy — 0. */
+const topZOf = (ctx, xy) => {
+  const { U, topNode } = ctx;
+  const z = float(0).toVar();
+  if (!topNode) return z;
+  const t = xy.sub(U.uTop.xy).mul(U.uTop.zw).toVar();
+  If(U.uTopOn.x.greaterThan(0.5).and(t.x.greaterThan(0.0)).and(t.y.greaterThan(0.0)).and(t.x.lessThan(1.0)).and(t.y.lessThan(1.0)), () => {
+    z.assign(topNode.sample(t).level(0).x);
+  });
+  return z;
+};
 /** s pochylenia dla wysokości z (1 — bez pochylenia). */
 const leanS = (lean, U, z) => mix(float(1.0), max(U.uLean.w, float(1.0).sub(z.div(lean.hcEff))), lean.on);
 
@@ -214,8 +230,9 @@ export function createCityBoxMaterial(ctx) {
   const vBoxB = varying(iB, 'vCityB').setInterpolation('flat');
   const vBoxC = varying(iC, 'vCityC').setInterpolation('flat');
   const vertexNode = Fn(() => {
+    const zt = topZOf(ctx, vec2(iA.x, iA.y));
     const c = vec4(0).toVar();
-    c.assign(cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(P, 1.0)));
+    c.assign(cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(P.x, P.y, P.z.add(zt), 1.0)));
     const s = float(1).toVar();
     s.assign(leanS(leanParams(U), U, z));
     return vec4(c.xy, c.z.mul(s), c.w.mul(s));
@@ -353,7 +370,11 @@ export function createCityBoxMaterial(ctx) {
 export function createCityReceiverMaterial(ctx, receiverZ) {
   const { U } = ctx;
   const vP = varying(positionGeometry.xy, 'vCityRecv');
-  const vertexNode = cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(positionGeometry.xy, receiverZ, 1.0));
+  // siatka pod kadłubem — na pochyłym wierzchu (bryła 3D) idzie za jego wysokością
+  const vertexNode = Fn(() => {
+    const zt = topZOf(ctx, positionGeometry.xy);
+    return cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(positionGeometry.xy, zt.add(receiverZ), 1.0));
+  })();
   const fragmentNode = Fn(() => {
     const L3 = cityLib(ctx);
     const p = vec3(vP, 0.0).toVar();
@@ -395,7 +416,7 @@ export function createCityLightMaterial(ctx) {
     const lB = attribute('lB', 'vec4');
     const corner = positionGeometry.xy;
     const mvc = vec4(0).toVar();
-    mvc.assign(modelViewMatrix.mul(vec4(lA.xyz, 1.0)));
+    mvc.assign(modelViewMatrix.mul(vec4(lA.x, lA.y, lA.z.add(topZOf(ctx, lA.xy)), 1.0)));
     const ortho = float(0).toVar();
     ortho.assign(step(0.5, cameraProjectionMatrix.element(3).w));
     // widok gry z pochyleniem: kamera ortho, ale kierunek „do kamery” od wirtualnej kamery FG nad środkiem kadru
