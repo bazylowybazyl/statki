@@ -452,3 +452,49 @@ Próba pokazuje wariant B z PRZESADĄ, żeby użytkownik dobrał jej wielkość 
   w demie, wybór pamięta `localStorage` (`kreator.kamera`, `kreator.pochylenie`).
 - Zrzuty: `node scripts/webgpu/miasto-3d-zrzuty.mjs --zestaw v4` (demo), `node scripts/webgpu/miasto-3d-kreator.mjs
   --kamery perspektywa,gra --pochylenie 6 --out .tmp/kreator/miasto-3d-v4/generator` (generator).
+
+## 11. Bryła kadłuba 3D — etap 1 (2026-11-15, demo miasta i generator, bez zmian w grze)
+
+Użytkownik po próbie pochylenia: „6x, spróbuj domodelować […] model 3d — centrum masz. brakuje ci — bryły statku,
+wcięcia/miasta na dole oraz silników” (kadry odniesienia w `.tmp/drednot-wzor/bryla-*`). Pochylenie 6× z oddaleniem
+zostaje domyślne. Etap 1 to BRYŁA; spód z wcięciami (etap 2) i silniki (etap 3) — osobno.
+
+- Wierzch zostaje obrazem kompozytora na skórze kadłuba (z = 0: pancerz, odsłonięty środek, miasto). Pod nim
+  `src/3d/hullBody3D/`: `hullBodyGeometry.js` (czysty JS na budowniczym modeli gry `MeshBuilder3D`) i `hullBody3D.js`
+  (materiał modeli floty `createShipMaterial` z paletą bryły, jeden rysunek, rozgrzewka `bryła kadłuba (hullBody3D)`).
+- OBRYS: izolinia 0 pola poziomu 0 (`field.levels[0]` — ta sama sylwetka co alfa i kompozytor; rama drednota to suma
+  brył, `field.loops[0]` jest puste): marching squares co 4 j., Douglas–Peucker 0,6 j. — drednot 158 wierzchołków, 26 ms.
+- BURTA: pierścienie przesunięte do środka wzdłuż dwusiecznych (mnożnik narożnika do 8×, zasięg najwyżej 0,48 drogi
+  do przeciwnej burty — wąskie zęby rufy zbiegają się do osi zęba zamiast się wywijać). Profil (j. przy szerokości
+  3 816, mniejszy okręt cieńszy proporcjonalnie): faza krawędzi 3 → górna ściana do −34 → ROW (sufit −38, tylna ściana
+  17 j. w głąb do −62, warga −66) → dolna ściana −92 → dolna faza −112 → okap do 130 j. w głąb, −116.
+- ŚWIATŁA w rowie: kwadraty 4 × 3 j. na tylnej ścianie co 9 j. w grupach (34% grup, 62% miejsc w grupie, drugi rząd
+  18%), ciepłe (`E_WINDOW`) i chłodne (`E_ICE`, 30% grup) — drednot 673; rzadkie, jak życzenie „świecenie słabsze
+  i rzadsze”.
+- SPÓD: siatka wysokości co 24 j. z odległości od burty: pod okapem płasko (−110, ukryte — brzeg siatki nie widać), dalej
+  w dół 0,28 j. na j. do 560 j.: odwrócony daszek z grzbietami wzdłuż osi i zębów (szkielet sylwetki), drednot 444 j.
+  w osi. Normalne z różnic wysokości.
+- Cała bryła leży pod z = 0 i w sylwetce (test), więc z góry zasłania ją skóra kadłuba: rysunek tylko w kamerze 3D
+  (demo — widoki z ukosa, generator — ujęcia bryły); widok gry z góry bez zmian (a1 / a2, 0 ms).
+- ŚWIATŁO w demie: materiał floty + wypełnienie w emisji (barwa × (otoczenie 0,3 + słońce 1,05 · n·L + niebo 0,1),
+  słońce jak kadłub i miasto — z = 600); w grze w to miejsce wejdzie mapa otoczenia modeli (`applyShip3DEnv`, leniwa —
+  przed kompilacją) i paleta bryły w `SHARED_PALETTES` (reguła `modele-3d`).
+- Koszt (drednot, 1 600 × 900): 43,5 tys. trójkątów (burta 2,5 tys., światła 1,3 tys., spód 39,6 tys.), 1 rysunek,
+  ~1,5 MB geometrii, budowa ~60 ms na stronie po pełnej budowie (obrys 26 + geometria 33), GPU w ujęciach 3D
+  +0,003–0,007 ms; 0 pipeline'ów synchronicznych, 0 błędów konsoli (demo i generator).
+- Ujęcia: demo `dema/miasto-3d.html` — klawisze 7 (od przodu nisko), 8 (od tyłu), 9 (od spodu), 0 (z boku), − (burta
+  z bliska), B — bryła wł. / wył., przyciski w panelu „Widoki”; przeciąganie w widoku z ukosa obraca także pod spód.
+  Generator — Warsztat, sekcja „Miasto 3D”: przyciski „przód / tył / spód / bok”; Stocznia, zakładka Kształty, „Bryła
+  3D”: Przód / Tył / Spód / Bok; klik w okręt wraca do edytora z góry.
+- Zrzuty: `node scripts/webgpu/miasto-3d-zrzuty.mjs --zestaw bryla` (`.tmp/kreator/bryla-3d/etap1/`),
+  `node scripts/webgpu/miasto-3d-kreator.mjs --kamery gra --bryla 1 --out .tmp/kreator/bryla-3d/etap1/generator`;
+  test `tests/hullBody3D.test.mjs`.
+- ODSTAJE od kadrów odniesienia (kolejne etapy i strojenie):
+  1. Spód gładki — bez ciemnych wcięć i zabudowy (etap 2); dwie okrągłe wypukłości pod rdzeniami R7 to modele reaktora
+     gry, które sięgają głębiej niż spód (do decyzji w etapie 2: płytszy model albo wnęka w spodzie).
+  2. Rufa bez silników — sama burta z rowem na zębach (etap 3).
+  3. Burta niższa i spokojniejsza niż płyta z kadru „od przodu” (tam gruba ściana gęsto nabita światłami): rów ma jeden
+     profil na całym obwodzie, światła rzadkie — do strojenia wysokością burty i gęstością świateł, jeśli ma być bliżej
+     kadru.
+  4. Duże płaszczyzny spodu z daleka jednolite (szwy paneli gasną z odległością) — detal dojdzie z wcięciami (etap 2).
+  5. Nadbudówki wierzchu (klin z napisem, grzbiety, plac mostka) dalej są obrazem kompozytora — w ujęciach 3D płaskie.

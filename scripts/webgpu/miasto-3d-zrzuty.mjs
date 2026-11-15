@@ -2,7 +2,11 @@
 // (w takcie monitora — bez setek klatek na sekundę), Vite z tego katalogu.
 //
 //   node scripts/webgpu/miasto-3d-zrzuty.mjs [--out .tmp/kreator/miasto-3d-v3] [--tylko id1,id2] [--w 1600 --h 900]
-//        [--katalog 0|1|tylko] [--pomiar 0] [--zestaw v3|v4]
+//        [--katalog 0|1|tylko] [--pomiar 0] [--zestaw v3|v4|bryla]
+//
+// --zestaw bryla — BRYŁA KADŁUBA (docs/OPIS-miasto-3d.md § 11): widok gry z góry z bryłą i bez (ma być bez zmian),
+// od przodu nisko, od tyłu, od spodu, z boku, burta z bliska; pomiar GPU z bryłą i bez; domyślnie
+// .tmp/kreator/bryla-3d/etap1.
 //
 // --zestaw v4 — WIDOK GRY Z POCHYLENIEM (kamera płaska + pochylenie ścian miasta z przesadą; docs/OPIS-miasto-3d.md
 // § 10): cały okręt, 3 600 j. i 1 200 j. dla kilku przesad (z oddaleniem i stałej) + perspektywa do porównania, miasto
@@ -19,7 +23,8 @@ import { readPng, writePng } from './png.mjs';
 
 const args = parseArgs();
 const V4 = String(args.zestaw || 'v3') === 'v4';
-const out = resolve(repo, String(args.out || (V4 ? '.tmp/kreator/miasto-3d-v4' : '.tmp/kreator/miasto-3d-v3')));
+const BRYLA = String(args.zestaw || 'v3') === 'bryla';
+const out = resolve(repo, String(args.out || (BRYLA ? '.tmp/kreator/bryla-3d/etap1' : V4 ? '.tmp/kreator/miasto-3d-v4' : '.tmp/kreator/miasto-3d-v3')));
 const only = args.tylko ? new Set(String(args.tylko).split(',')) : null;
 const SW = Number(args.w || 1600), SH = Number(args.h || 900);
 mkdirSync(out, { recursive: true });
@@ -43,6 +48,17 @@ KADRY_V4.push(
   { id: 'd3-mostek-1200-perspektywa', view: { x: -1700, y: -150, zoom: SW / 1200 }, cam: 'persp', opis: 'to samo miejsce w perspektywie (mostek i rdzenie też pochylone) — porównanie' },
   { id: 'd4-mostek-500-gra-6x-zoom', view: { x: -1900, y: -120, zoom: SW / 500 }, cam: 'gra', lean: { gain: 6, byZoom: true }, opis: 'mostek z bliska (500 j.) — przesada z oddaleniem = 1×' }
 );
+/** Kadry bryły kadłuba. */
+const KADRY_BRYLA = [
+  { id: 'a1-gra-z-gory-bryla', view: 'caly', cam: 'gra', opis: 'widok gry z góry (6× z oddaleniem), z bryłą' },
+  { id: 'a2-gra-z-gory-bez-bryly', view: 'caly', cam: 'gra', body: false, opis: 'ten sam kadr bez bryły — ma być ten sam obraz' },
+  { id: 'b1-przod-nisko', view: 'przod', opis: 'od przodu nisko (jak kadr odniesienia)' },
+  { id: 'b2-tyl', view: 'tyl', opis: 'od tyłu (rufa; silniki — etap 3)' },
+  { id: 'b3-spod', view: 'spod', opis: 'od spodu (wcięcia spodu — etap 2)' },
+  { id: 'b4-bok', view: 'bok', opis: 'z boku — burta z rowem na całej długości' },
+  { id: 'b5-burta-z-bliska', view: 'burta', opis: 'burta z bliska: faza, ściana, rów ze światłami, dolna faza' },
+  { id: 'b6-ukos', view: 'ukos', opis: 'z ukosa (dawny kadr) — miasto na bryle' }
+];
 /** Kadry: widok (nazwa z dema albo obiekt), parametry miasta, słońce, światła. */
 const KADRY_V3 = [
   { id: 'a1-caly-perspektywa', view: 'caly', opis: 'drednot cały z góry, kamera perspektywy (jak pass FG gry)' },
@@ -58,9 +74,9 @@ const KADRY_V3 = [
   { id: 'c3-nisko', view: 'nisko', opis: 'nisko wzdłuż środka' },
   { id: 'c4-od-dziobu', view: 'rufa', opis: 'z ukosa od dziobu' }
 ];
-const KADRY = (V4 ? KADRY_V4 : KADRY_V3)
+const KADRY = (BRYLA ? KADRY_BRYLA : V4 ? KADRY_V4 : KADRY_V3)
   .filter((k) => !only || only.has(k.id) || only.has(k.id.split('-')[0])).filter(() => String(args.katalog) !== 'tylko');
-const KATALOG = !V4 && String(args.katalog ?? '1') !== '0' && (!only || only.has('katalog'));
+const KATALOG = !V4 && !BRYLA && String(args.katalog ?? '1') !== '0' && (!only || only.has('katalog'));
 
 const vite = await startVite(5441);
 const chrome = await startChrome({ width: SW, height: SH, takt: true });
@@ -75,6 +91,8 @@ try {
   if (err) throw new Error(`demo: ${err}`);
   raport.start = await ev('JSON.stringify(window.__miasto.stats())').then(JSON.parse);
   console.log('start', JSON.stringify(raport.start.startup), JSON.stringify(raport.start.gen));
+  raport.bryla = await ev('JSON.stringify(window.__miasto.body3D?.stats || null)').then(JSON.parse);
+  if (raport.bryla) console.log('bryła', JSON.stringify(raport.bryla));
   let cityKey = 'A';
   for (const k of KADRY) {
     const want = { variant: 'A', ...(typeof k.city === 'object' ? k.city : {}) };
@@ -84,6 +102,7 @@ try {
       cityKey = key;
     }
     await ev(`window.__miasto.toggleCity(${k.city === false ? 'false' : 'true'})`);
+    await ev(`window.__miasto.toggleBody?.(${k.body === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.toggleLights(${k.lights === false ? 'false' : 'true'})`);
     await ev(`window.__miasto.setTopGlow(${k.glow ? 'true' : 'false'})`);
     await ev(`window.__miasto.setCamMode(${JSON.stringify(k.cam || (k.persp === false ? 'plaska' : 'persp'))})`);
@@ -103,14 +122,17 @@ try {
     await ev('window.__miasto.toggleLights(true)');
     await ev('window.__miasto.setTopGlow(false)');
     raport.pomiar = {};
-    const POMIAR = V4 ? [['caly', 'gra'], ['row', 'gra'], ['blisko', 'gra']]
-      : [['caly', 'persp'], ['row', 'persp'], ['blisko', 'persp'], ['blisko', 'plaska'], ['ukos', 'persp']];
+    const POMIAR = BRYLA ? [['caly', 'gra'], ['przod', 'gra'], ['spod', 'gra'], ['bok', 'gra']]
+      : V4 ? [['caly', 'gra'], ['row', 'gra'], ['blisko', 'gra']]
+        : [['caly', 'persp'], ['row', 'persp'], ['blisko', 'persp'], ['blisko', 'plaska'], ['ukos', 'persp']];
+    // zestaw bryla: włączana i wyłączana jest BRYŁA (miasto zostaje)
+    const toggle = BRYLA ? 'toggleBody' : 'toggleCity';
     if (V4) await ev('window.__miasto.setLean(6, true)');
     for (const [view, cam] of POMIAR) {
       const persp = cam !== 'plaska';
       const r = {};
       for (const on of [true, false]) {
-        await ev(`window.__miasto.toggleCity(${on})`);
+        await ev(`window.__miasto.${toggle}(${on})`);
         await ev(`window.__miasto.setCamMode(${JSON.stringify(cam)})`);
         await ev(`window.__miasto.setView(${JSON.stringify(view)})`);
         await ev('window.__miasto.runFrames(20)');
@@ -123,10 +145,12 @@ try {
         r[on ? 'zMiastem' : 'bezMiasta'] = n ? Math.round(sum / n * 1000) / 1000 : null;
       }
       r.miasto = r.zMiastem != null && r.bezMiasta != null ? Math.round((r.zMiastem - r.bezMiasta) * 1000) / 1000 : null;
+      if (BRYLA) { r.zBryla = r.zMiastem; r.bezBryly = r.bezMiasta; r.bryla = r.miasto; delete r.zMiastem; delete r.bezMiasta; delete r.miasto; }
       raport.pomiar[`${view}-${cam}`] = r;
       console.log('pomiar GPU', view, cam, persp ? '' : '(płaska)', JSON.stringify(r));
     }
     await ev('window.__miasto.toggleCity(true)');
+    if (BRYLA) await ev('window.__miasto.toggleBody(true)');
   }
   if (KATALOG) {
     // katalog wieżowców: nowa strona w trybie ?katalog=1

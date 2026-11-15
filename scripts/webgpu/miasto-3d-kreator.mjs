@@ -3,7 +3,9 @@
 // preset bez miasta (Colossus). Jedna przeglądarka headless w takcie monitora, Vite z tego katalogu.
 //
 //   node scripts/webgpu/miasto-3d-kreator.mjs [--out .tmp/kreator/miasto-3d-v3/generator] [--w 1600 --h 900]
-//        [--kamery plaska,perspektywa,gra] [--pochylenie 6] [--pochylenieZoom 0]
+//        [--kamery plaska,perspektywa,gra] [--pochylenie 6] [--pochylenieZoom 0] [--bryla 1]
+//
+// --bryla 1 — także ujęcia BRYŁY kadłuba kamerą 3D (przód, tył, spód, bok; docs/OPIS-miasto-3d.md § 11).
 //
 // --kamery — kamery widoku kreatora po kolei (domyślnie płaska i perspektywa); „gra” — widok gry z pochyleniem miasta
 // (przesada --pochylenie, z oddaleniem albo stała — docs/OPIS-miasto-3d.md § 10); panele w ostatniej kamerze z listy.
@@ -62,6 +64,15 @@ try {
       await ev(`window.__kreator.setCamera(${x}, ${y}, ${z})`);
       await shot(`${id}-${camId[cam]}`, `${opis}, kamera ${camOpis[cam]}`);
     }
+  }
+  if (String(args.bryla ?? '0') === '1') {
+    raport.bryla = await ev('JSON.stringify(window.__kreator.body)').then(JSON.parse);
+    console.log('bryła', JSON.stringify(raport.bryla));
+    for (const k of ['przod', 'tyl', 'spod', 'bok']) {
+      await ev(`window.__kreator.setOrbitView(${JSON.stringify(k)})`);
+      await shot(`b-bryla-${k}`, `bryła kadłuba, ujęcie: ${k}`);
+    }
+    await ev('window.__kreator.setOrbitView(null)');
   }
   // panele z sekcją „Miasto 3D”: Warsztat i Stocznia (zakładka Kształty)
   await ev('document.body.classList.remove("clean")');

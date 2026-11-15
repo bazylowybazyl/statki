@@ -638,6 +638,7 @@ export function installShipyard(api) {
 
   function onPointerDown(e) {
     if (S.ui !== 'stocznia') return;
+    if (S.orbitView) { api.setOrbitView(null); return; }   // ujęcie bryły 3D: klik wraca do edytora z góry
     e.preventDefault();
     canvas.focus({ preventScroll: true });
     try { canvas.setPointerCapture(e.pointerId); } catch { /* bez przechwycenia */ }
@@ -1487,7 +1488,9 @@ export function installShipyard(api) {
       ${CITY_SLIDERS.map((sl) => `<label class="yslider"><span>${sl.label} <b data-v="city:${sl.k}">${citySliderText(sl.k, c[sl.k])}</b></span><input type="range" data-k="city:${sl.k}" min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${c[sl.k]}"></label>`).join('')}
       <div class="yoptl">Kamera <span class="ydim">· widok gry — ściany miasta pochylone jak w perspektywie gry, z przesadą</span></div>
       <div class="ychips"><button class="ychip${S.camMode === 'plaska' ? ' on' : ''}" data-cam="plaska">Płaska</button><button class="ychip${S.camMode === 'gra' ? ' on' : ''}" data-cam="gra">Widok gry</button><button class="ychip${S.camMode === 'perspektywa' ? ' on' : ''}" data-cam="perspektywa">Perspektywa</button><button class="ychip${S.lean.byZoom ? ' on' : ''}" data-leanzoom="1" title="przesada rośnie z oddaleniem: 1× w zbliżeniu (~1 200 j.), pełna przy całym okręcie; wyłączone — stała">Przesada z oddaleniem</button></div>
-      <label class="yslider"><span>Pochylenie ścian <b data-v="view:lean">${S.lean.gain.toFixed(2)}×</b></span><input type="range" data-k="view:lean" min="0" max="8" step="0.25" value="${S.lean.gain}"></label>`;
+      <label class="yslider"><span>Pochylenie ścian <b data-v="view:lean">${S.lean.gain.toFixed(2)}×</b></span><input type="range" data-k="view:lean" min="0" max="8" step="0.25" value="${S.lean.gain}"></label>
+      <div class="yoptl">Bryła 3D <span class="ydim">· ujęcia kamerą 3D; klik w okręt — z powrotem z góry</span></div>
+      <div class="ychips">${[['przod', 'Przód'], ['tyl', 'Tył'], ['spod', 'Spód'], ['bok', 'Bok']].map(([k, l]) => `<button class="ychip${S.orbitView === k ? ' on' : ''}" data-orbit="${k}">${l}</button>`).join('')}</div>`;
   }
   function renderOpts() {
     let h = '';
@@ -1534,6 +1537,7 @@ export function installShipyard(api) {
       else if (b.dataset.cityglow) { citySet(design(), { glow: !cityShown(design()).glow }); commit(); }
       else if (b.dataset.cam) { api.setCamMode(b.dataset.cam); }
       else if (b.dataset.leanzoom) { api.setLean(null, !S.lean.byZoom); }
+      else if (b.dataset.orbit) { api.setOrbitView(S.orbitView === b.dataset.orbit ? null : b.dataset.orbit); }
       else if (b.dataset.k === 'windows') { design().windows = (design().windows ?? 1) > 0.5 ? 0 : 1; commit(); }
       else if (b.dataset.k === 'round') { design().round = (design().round ?? 0) > 0.5 ? 0 : 1; commit(); }
       renderOpts();

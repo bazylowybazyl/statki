@@ -34,6 +34,7 @@ import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Bridge3D } from '../src/3d/bridge3D.js';
 import { createHullCity3D, HULL_CITY3D_TUNE } from '../src/3d/hullCity3D/hullCity3D.js';
+import { createHullBody3D } from '../src/3d/hullBody3D/hullBody3D.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
 
 const params = new URLSearchParams(location.search);
@@ -58,6 +59,7 @@ const S = {
   orbit: { tx: -700, ty: 0, dist: 2600, yaw: -2.45, pitch: 0.36 },
   city: { variant: params.get('wariant') || 'A', seed: Number(params.get('ziarno') || 1), density: 1, height: 1, lights: 1 },
   cityOn: true, lightsOn: true, info: false,
+  bodyOn: params.get('bryla') !== '0',          // bryła kadłuba pod wierzchem (burta z rowem, spód) — B
   topGlow: params.get('zgory') === 'poswiata',   // światła z góry: punkty (false) albo miękka poświata kanionów (true)
   // widoki z góry: 'gra' — ortho + pochylenie miasta (przesada `lean`), 'persp' — kamera FG gry (free3d), 'plaska' — ortho
   camMode: ({ plaska: 'plaska', perspektywa: 'persp' })[params.get('kamera')] || 'gra',
@@ -143,6 +145,7 @@ async function buildShip() {
   ship.entity = e;
   ship.field = field;
   T.kadlub = Math.round(performance.now() - t);
+  if (body3D) { body3D.setFromField(field); body3D.setPose(0, 0, 0); T.bryla = body3D.stats.setMs + body3D.stats.outlineMs; }
   reactorCoresFrom(field);
   bridgesAttach(field);
 }
@@ -205,6 +208,13 @@ cityWorker.onmessage = (e) => {
   cityWaiters.delete(e.data.id);
   if (w) w(e.data);
 };
+// Bryła kadłuba pod wierzchem (src/3d/hullBody3D/, docs/OPIS-miasto-3d.md § 11) — obrys z pola kreatora.
+let body3D = null;
+function bodyInit() {
+  body3D = createHullBody3D({ scene: Core3D.scene });
+  Core3D.warmup.add({ name: 'bryła kadłuba (hullBody3D)', objects: () => body3D.warmupMeshes(), layer: 0, phase: 'loading' });
+  window.__miasto.body3D = body3D;
+}
 function cityInit() {
   city3D = createHullCity3D({ scene: Core3D.scene });
   Core3D.warmup.add({ name: 'miasto 3D (hullCity3D)', objects: () => city3D.warmupMeshes(), layer: 0, phase: 'loading' });
@@ -328,7 +338,13 @@ const VIEWS = {
   // ujęcie jak kadr odniesienia: nisko z boku-rufy, wzdłuż grzbietu ku dziobowi
   ukos: () => { S.view = 'ukos'; S.orbit = { tx: -350, ty: 60, dist: 2300, yaw: -2.62, pitch: 0.33 }; },
   nisko: () => { S.view = 'ukos'; S.orbit = { tx: -150, ty: 0, dist: 1500, yaw: Math.PI + 0.22, pitch: 0.2 }; },
-  rufa: () => { S.view = 'ukos'; S.orbit = { tx: -900, ty: 0, dist: 2100, yaw: 0.55, pitch: 0.42 }; }
+  rufa: () => { S.view = 'ukos'; S.orbit = { tx: -900, ty: 0, dist: 2100, yaw: 0.55, pitch: 0.42 }; },
+  // BRYŁA (jak kadry odniesienia): od przodu nisko, od tyłu, od spodu, z boku, burta z rowem z bliska
+  przod: () => { S.view = 'ukos'; S.orbit = { tx: 200, ty: 0, dist: 6200, yaw: 0.5, pitch: 0.05 }; },
+  tyl: () => { S.view = 'ukos'; S.orbit = { tx: -600, ty: 0, dist: 5600, yaw: Math.PI, pitch: 0.06 }; },
+  spod: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8800, yaw: -Math.PI / 2, pitch: -1.42 }; },
+  bok: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8200, yaw: -Math.PI / 2, pitch: 0.07 }; },
+  burta: () => { S.view = 'ukos'; S.orbit = { tx: 1500, ty: 560, dist: 820, yaw: -Math.PI / 2 + 0.35, pitch: 0.12 }; }
 };
 const CATALOG_VIEWS = {
   caly: () => { S.view = 'gra'; S.cam = { x: 0, y: 0, zoom: Math.min(W * 0.94 / catalog.w, H * 0.94 / catalog.h) }; },
@@ -385,6 +401,11 @@ function render() {
       lean: { on: top && S.camMode === 'gra', gain: S.lean.gain, byZoom: S.lean.byZoom }
     });
   }
+  if (body3D) {
+    body3D.setSun(window.SUN.x, window.SUN.y);
+    // z góry (widok gry, perspektywa z góry) bryłę zasłania skóra kadłuba — rysunek tylko w kamerze 3D
+    body3D.update(S.bodyOn && !KATALOG && S.view === 'ukos' ? 1 : 0);
+  }
   if (reactor3D) {
     reactorOpts.origin.x = cam.x; reactorOpts.origin.y = cam.y; reactorOpts.view = cullInfo; reactorOpts.zoom = cam.zoom;
     reactor3D.sync(reactorCores, 0, PHYS_DT, reactorOpts);
@@ -433,7 +454,7 @@ canvas2d.addEventListener('pointermove', (e) => {
     o.ty += (ry * dx - fy * dy) * k;
   } else {
     S.orbit.yaw -= dx * 0.005;
-    S.orbit.pitch = Math.max(0.05, Math.min(1.45, S.orbit.pitch + dy * 0.004));
+    S.orbit.pitch = Math.max(-1.45, Math.min(1.45, S.orbit.pitch + dy * 0.004));
   }
   S.viewName = null;
 });
@@ -454,15 +475,17 @@ canvas2d.addEventListener('wheel', (e) => {
 }, { passive: false });
 addEventListener('keydown', (e) => {
   if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return;
-  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa' }[e.key];
+  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta' }[e.key];
   if (v) setView(v);
   else if (e.key === 'm' || e.key === 'M') toggleCity();
+  else if (e.key === 'b' || e.key === 'B') toggleBody();
   else if (e.key === 'l' || e.key === 'L') toggleLights();
   else if (e.key === 'g' || e.key === 'G') setTopGlow(!S.topGlow);
   else if (e.key === 'p' || e.key === 'P') setCamMode(CAM_MODES[(CAM_MODES.indexOf(S.camMode) + 1) % CAM_MODES.length]);
   else if (e.key === 'i' || e.key === 'I') { S.info = !S.info; $('info').style.display = S.info ? 'block' : 'none'; }
 });
 function toggleCity(on = !S.cityOn) { S.cityOn = on; $('cityOn').classList.toggle('on', on); }
+function toggleBody(on = !S.bodyOn) { S.bodyOn = on; $('bodyOn')?.classList.toggle('on', on); return true; }
 function toggleLights(on = !S.lightsOn) { S.lightsOn = on; $('lightsOn').classList.toggle('on', on); }
 const CAM_MODES = ['gra', 'persp', 'plaska'];
 function setCamMode(mode) {
@@ -512,6 +535,8 @@ function bindPanel() {
   range('sun', () => S.sunAz, (v) => { S.sunAz = v; placeSun(); }, (v) => `${v}°`, false);
   range('elev', () => HULL_CITY3D_TUNE.shadowElevDeg, (v) => { HULL_CITY3D_TUNE.shadowElevDeg = v; }, (v) => `${v}°`, false);
   $('cityOn').onclick = () => toggleCity();
+  $('bodyOn').onclick = () => toggleBody();
+  toggleBody(S.bodyOn);
   $('lightsOn').onclick = () => toggleLights();
   $('camGame').onclick = () => setCamMode('gra');
   $('camPersp').onclick = () => setCamMode('persp');
@@ -563,7 +588,7 @@ window.__miasto = {
   ready: false, error: null, startup: {}, S,
   setView, setCity: async (o) => { Object.assign(S.city, o); await buildCity(); while (S.building || S.pendingCity) await new Promise((r) => setTimeout(r, 30)); return S.gen; },
   setSun(az, elev) { if (az != null) S.sunAz = az; if (elev != null) HULL_CITY3D_TUNE.shadowElevDeg = elev; placeSun(); return true; },
-  toggleCity, toggleLights, setTopGlow, setPersp, setCamMode, setLean, showLabels(on) { S.labels = !!on; return true; },
+  toggleCity, toggleLights, toggleBody, setTopGlow, setPersp, setCamMode, setLean, showLabels(on) { S.labels = !!on; return true; },
   async runFrames(n = 1) {
     for (let i = 0; i < n; i++) {
       // pułapka 44: rysunek tylko po rAF — symulacja co klatkę, obraz ostatniej
@@ -593,6 +618,7 @@ window.__miasto = {
     composer = new HullComposer(Core3D.renderer);
     reactorInit();
     bridgesInit();
+    bodyInit();
     cityInit();
     await composer.prewarm();
     T.kompozytor = Math.round(performance.now() - T0);

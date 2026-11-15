@@ -59,6 +59,7 @@ import {
   CITY_SLIDERS, CITY_VARIANT_LABELS, HD_CITY_VARIANT_KEYS, cityBuildKey, cityOf, cityOn, citySet, cityShown, citySliderText, cityToggle
 } from './kreator-kadluba-miasto.js';
 import { createHullCity3D, HULL_CITY3D_TUNE } from '../src/3d/hullCity3D/hullCity3D.js';
+import { createHullBody3D } from '../src/3d/hullBody3D/hullBody3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Bridge3D } from '../src/3d/bridge3D.js';
 import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
@@ -111,6 +112,8 @@ const S = {
   // § 10; kadłub, mostki, wieże i rdzenie płaskie), 'perspektywa' — cała scena kamerą passa FG gry; `persp` = ta ostatnia
   camMode: cameraFromPage(),
   persp: false,
+  // ujęcie BRYŁY kamerą 3D ('przod' | 'tyl' | 'spod' | 'bok'; null — widok edytora z góry); klik w okręt wraca
+  orbitView: null,
   lean: leanFromPage()
 };
 S.persp = S.camMode === 'perspektywa';
@@ -678,6 +681,7 @@ function worldOf(sx, sy) {
 
 function onDown(e) {
   if (S.ui === 'stocznia') return;   // stocznia ma własną obsługę myszy i klawiszy (dema/kreator-kadluba-stocznia.js)
+  if (S.orbitView) { setOrbitView(null); return; }   // ujęcie bryły 3D: klik wraca do edytora z góry
   const m = S.mouse;
   m.lastX = e.clientX; m.lastY = e.clientY;
   const w = worldOf(e.clientX, e.clientY);
@@ -923,7 +927,7 @@ function render(realDt, list) {
   const cam = viewCamera();
   cullInfo.x = cam.x; cullInfo.y = cam.y;
   // perspektywa z góry: płaszczyzna jak w ortho, bryły nad nią wychodzą ku brzegom kadru — kadr z zapasem
-  const leanView = S.camMode !== 'plaska';
+  const leanView = S.camMode !== 'plaska' || !!S.orbitView;
   const pad = leanView ? 900 : 600, kk = leanView ? 0.6 : 0.5;
   cullInfo.drawHalfW = W * kk / cam.zoom + pad; cullInfo.drawHalfH = H * kk / cam.zoom + pad;
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
@@ -935,7 +939,7 @@ function render(realDt, list) {
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
-  if (!document.body.classList.contains('clean')) {
+  if (!document.body.classList.contains('clean') && !S.orbitView) {
     if (S.ui === 'stocznia') shipyard?.draw(cam);
     else { drawEditor(cam); drawBlocks(cam); }
   }
@@ -1366,6 +1370,7 @@ function syncCityPanel(d) {
   $('inp-lean').value = String(S.lean.gain);
   $('lbl-lean').textContent = `pochylenie ${S.lean.gain.toFixed(2)}×`;
   $('btn-lean-zoom').classList.toggle('on', S.lean.byZoom);
+  for (const k of Object.keys(ORBIT_VIEWS)) $(`btn-orb-${k}`)?.classList.toggle('on', S.orbitView === k);
 }
 function bindCityPanel() {
   const sel = $('sel-city');
@@ -1387,6 +1392,7 @@ function bindCityPanel() {
   $('btn-cam-persp').addEventListener('click', () => setCamMode('perspektywa'));
   $('inp-lean').addEventListener('input', () => setLean(Number($('inp-lean').value)));
   $('btn-lean-zoom').addEventListener('click', () => setLean(null, !S.lean.byZoom));
+  for (const k of Object.keys(ORBIT_VIEWS)) $(`btn-orb-${k}`)?.addEventListener('click', () => setOrbitView(S.orbitView === k ? null : k));
 }
 function bindShellPanel() {
   const selR = $('sel-shell-rhythm');
@@ -2614,7 +2620,10 @@ window.__kreator = {
   /** Kamera widoku 'plaska' | 'gra' | 'perspektywa'; przesada pochylenia widoku gry (g, z oddaleniem). */
   setCamMode(mode) { return setCamMode(mode); },
   setLean(gain, byZoom) { return setLean(gain, byZoom); },
-  get view() { return { camMode: S.camMode, lean: { ...S.lean } }; },
+  get view() { return { camMode: S.camMode, lean: { ...S.lean }, orbitView: S.orbitView }; },
+  /** Ujęcie bryły 3D ('przod' | 'tyl' | 'spod' | 'bok' | null); liczby bryły. */
+  setOrbitView(name) { return setOrbitView(name); },
+  get body() { return cityDemo.body3D ? { built: cityDemo.body3D.built, stats: { ...cityDemo.body3D.stats } } : null; },
   /** Miasto 3D: stan i liczby; `cityIdle()` — czeka, aż worker odda miasto bieżącego projektu. */
   get city() { return { on: cityOn(S.design), key: cityDemo.key, shownKey: cityDemo.shownKey, stats: cityDemo.city3D?.stats || null, gen: cityDemo.gen }; },
   async cityIdle(timeoutMs = 60000) {
@@ -2734,13 +2743,19 @@ function bridgeDemoSync(cam) {
 // cityDemoInit() przy starcie (rozgrzewka), cityDemoAfterBuild() po pełnej budowie, cityDemoCheck(projekt) na ścieżce
 // barw (pole `city` jest poza kluczem kształtu), cityDemoSync() w render(); w trakcie podglądu przeciągania miasto
 // znika (kadłub w podglądzie nie jest jeszcze tym, na którym stoi).
-const cityDemo = { city3D: null, key: 'off', shownKey: 'off', busy: false, pending: false, gen: null };
+const cityDemo = { city3D: null, body3D: null, key: 'off', shownKey: 'off', busy: false, pending: false, gen: null };
 function cityDemoInit() {
   cityDemo.city3D = createHullCity3D({ scene: Core3D.scene });
   cityDemo.city3D.setPose(0, 0, 0);
+  // BRYŁA kadłuba pod wierzchem (src/3d/hullBody3D/, docs/OPIS-miasto-3d.md § 11): obrys z pola pełnej budowy, rysunek
+  // tylko w ujęciach 3D (z góry zasłania ją skóra kadłuba)
+  cityDemo.body3D = createHullBody3D({ scene: Core3D.scene });
+  cityDemo.body3D.setPose(0, 0, 0);
+  Core3D.warmup.add({ name: 'bryła kadłuba (hullBody3D)', objects: () => cityDemo.body3D.warmupMeshes(), layer: 0, phase: 'loading' });
   Core3D.warmup.add({ name: 'miasto 3D (hullCity3D)', objects: () => cityDemo.city3D.warmupMeshes(), layer: 0, phase: 'loading' });
 }
 function cityDemoAfterBuild() {
+  if (cityDemo.body3D && S.field?.levels) cityDemo.body3D.setFromField(S.field);
   // nowy kadłub — miasto od nowa (płytka mogła się zmienić), także przy tym samym kluczu ustawień
   cityDemo.shownKey = null;
   cityDemoCheck(normalizeHullDesign(S.design), true);
@@ -2775,6 +2790,11 @@ async function cityDemoRequest(c) {
   }
 }
 function cityDemoSync() {
+  const B3 = cityDemo.body3D;
+  if (B3) {
+    B3.setSun(window.SUN.x, window.SUN.y);
+    B3.update(S.orbitView && !previewQuad?.visible ? 1 : 0);
+  }
   const C3 = cityDemo.city3D;
   if (!C3) return;
   const nd = S.design ? cityOf(S.design) : null;
@@ -2791,7 +2811,40 @@ function cityDemoSync() {
 const VIEW_FOV = 35;
 const _vEye = new THREE.Vector3(), _vTgt = new THREE.Vector3(), _vUp = new THREE.Vector3(0, 1, 0), _vM = new THREE.Matrix4(), _vQ = new THREE.Quaternion();
 const perspCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: VIEW_FOV, near: 10, far: 400000 };
+// UJĘCIA BRYŁY (kamera 3D wokół okrętu, w ułamkach długości kadłuba; jak kadry odniesienia w demie miasta)
+const ORBIT_VIEWS = Object.freeze({
+  przod: { tx: 0.025, yaw: 0.5, pitch: 0.05, dist: 0.78 },
+  tyl: { tx: -0.075, yaw: Math.PI, pitch: 0.06, dist: 0.7 },
+  spod: { tx: 0, yaw: -Math.PI / 2, pitch: -1.42, dist: 1.1 },
+  bok: { tx: 0, yaw: -Math.PI / 2, pitch: 0.07, dist: 1.03 }
+});
+const _oUp = new THREE.Vector3(0, 0, 1);
+const orbitCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: 38, near: 4, far: 400000 };
+function orbitCamera() {
+  const o = ORBIT_VIEWS[S.orbitView];
+  const box = cityDemo.body3D?.stats?.box || [-500, -200, 500, 200];
+  const L = Math.max(100, box[2] - box[0]);
+  const tx = (box[0] + box[2]) / 2 + L * o.tx, dist = L * o.dist, cp = Math.cos(o.pitch);
+  _vTgt.set(tx, 0, 0);
+  _vEye.set(tx + dist * cp * Math.cos(o.yaw), dist * cp * Math.sin(o.yaw), dist * Math.sin(o.pitch));
+  _vM.lookAt(_vEye, _vTgt, _oUp);
+  _vQ.setFromRotationMatrix(_vM);
+  orbitCam.position.x = _vEye.x; orbitCam.position.y = _vEye.y; orbitCam.position.z = _vEye.z;
+  orbitCam.quaternion.x = _vQ.x; orbitCam.quaternion.y = _vQ.y; orbitCam.quaternion.z = _vQ.z; orbitCam.quaternion.w = _vQ.w;
+  orbitCam.x = tx; orbitCam.y = 0;
+  orbitCam.zoom = Math.max(0.01, H / (2 * dist * Math.tan(orbitCam.fov * Math.PI / 360)));
+  orbitCam.near = Math.max(4, dist * 0.02);
+  return orbitCam;
+}
+/** Ujęcie bryły: 'przod' | 'tyl' | 'spod' | 'bok' albo null (edytor z góry). */
+function setOrbitView(name) {
+  S.orbitView = ORBIT_VIEWS[name] ? name : null;
+  syncCityPanel(S.design);
+  shipyard?.refresh();
+  return true;
+}
 function viewCamera() {
+  if (S.orbitView) return orbitCamera();
   const c = S.cam;
   if (!S.persp) return { x: c.x, y: c.y, zoom: c.zoom };
   const h = (H / 2) / Math.tan(VIEW_FOV * Math.PI / 360) / c.zoom;
@@ -2839,7 +2892,7 @@ function shipyardApi() {
     pick, isLocked, mirrorOn, polyLoopOf, partWorldBox, removePicked, rotateObj, scaleObj,
     paletteBlock, paletteBox, snapBlock, blkGrid, blockLabel, classModuleLabel,
     newModule, newCastle, newPart, newDecal,
-    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp, setCamMode, setLean
+    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive, setPersp, setCamMode, setLean, setOrbitView
   };
 }
 

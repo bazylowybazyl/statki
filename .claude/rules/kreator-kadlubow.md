@@ -339,8 +339,11 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   (ortho), „widok gry” — ortho + pochylenie ścian samego miasta wg perspektywy FG z przesadą (`S.lean`, suwak
   „Pochylenie ścian”, domyślnie 6× z oddaleniem — próba wariantu B, docs § 10) albo perspektywa = `cameraPersp` passa
   FG (35°) jako free3d (`viewCamera`); płaszczyzna z = 0 w tej samej skali — nakładki edytora bez zmian.
+- BRYŁA pod wierzchem (`src/3d/hullBody3D/`, docs § 11): burta z rowem i spód z obrysu ramy = izolinia 0
+  `field.levels[0]` (rama drednota to suma brył — `field.loops[0]` puste), na `MeshBuilder3D` i materiale floty
+  (`createShipMaterial`); cała pod z = 0 i w sylwetce — rysunek tylko w ujęciach 3D (`S.orbitView`; klik wraca).
 - Zrzuty: `node scripts/webgpu/miasto-3d-kreator.mjs` (generator), `node scripts/webgpu/miasto-3d-zrzuty.mjs` (demo
-  `dema/miasto-3d.html`); test `tests/hullDesignCity*.test.mjs`, `tests/hullDesignTowers.test.mjs`.
+  `dema/miasto-3d.html`); test `tests/hullDesignCity*.test.mjs`, `tests/hullDesignTowers.test.mjs`, `tests/hullBody3D.test.mjs`.
 
 ## Klasy okrętów i gniazda broni (etap 2)
 
