@@ -105,6 +105,27 @@ test('bryła: spód z wcięciami — strop wcięć ciemny i wyżej, zabudowa pod
   assert.ok(banded > 5000, `pasmo płyt ${banded}`);
 });
 
+test('bryła: bank silników na rufie — dysza w osi każdej gondoli MAIN, małe między nimi, żar za rufową ścianą', () => {
+  const loops = hullBodyLoopsFromField(field);
+  const engines = field.expanded.modules.filter((m) => m.type === 'engine').map((m) => ({ x: m.x, y: -m.y, w: m.w, h: m.h, rot: -(m.rot || 0) }));
+  assert.equal(engines.length, 8);
+  const g = buildHullBodyGeometry(loops, { top: { image: field.image }, engines, district: false });
+  // 4 gondole na burtę → 4 duże + 3 małe dysze na burtę
+  assert.equal(g.stats.nozzles, 14);
+  const ys = new Set();
+  let glow = 0;
+  for (let i = 0; i < g.vertexCount; i++) {
+    const m = g.mat[i];
+    if (m !== SHIP3D_MAT.E_ENGINE && m !== SHIP3D_MAT.E_WHITE) continue;
+    glow++;
+    assert.ok(g.position[i * 3] < -2550, `żar za rufową ścianą (x ${g.position[i * 3]})`);
+    if (m === SHIP3D_MAT.E_WHITE) ys.add(Math.round(g.position[i * 3 + 1] / 54));
+  }
+  assert.ok(glow > 100, `żar dysz ${glow}`);
+  // rdzenie dużych dysz w osiach gondol (|y| 452 … 776, krok 108 j.)
+  for (const e of engines) assert.ok(ys.has(Math.round(e.y / 54)), `dysza w osi gondoli y ${e.y}`);
+});
+
 test('bryła: materiał modeli floty z wypełnieniem buduje WGSL w Node; moduł nie czyta window / DOM', () => {
   const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
   const renderer = new THREE.WebGPURenderer({ canvas });

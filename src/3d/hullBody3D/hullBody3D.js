@@ -13,7 +13,20 @@ import {
 } from 'three/tsl';
 import { MeshBuilder3D, SHIP3D_MAT as M } from '../ships3d/meshBuilder3D.js';
 import { createShipMaterial } from '../ships3d/shipMaterials3D.tsl.js';
+import { MAIN_EXHAUST_PALETTES } from '../../data/engineFx.js';
 import { buildHullBodyGeometry, hullBodyLoopsFromField } from './hullBodyGeometry.js';
+
+/** Barwa emisji z rampy strugi MAIN gry (liniowa HDR) → { emissive sRGB, power }. */
+function rampEmissive(rgb, gain = 1) {
+  const m = Math.max(rgb[0], rgb[1], rgb[2], 1e-6);
+  const c = new THREE.Color().setRGB(rgb[0] / m, rgb[1] / m, rgb[2] / m, THREE.LinearSRGBColorSpace);
+  return { emissive: `#${c.getHexString()}`, power: m * gain };
+}
+// żar dysz: paleta strugi MAIN „plazma” (src/data/engineFx.js) — pas przy gardzieli z drugiego stopnia rampy, rdzeń
+// z trzeciego; moc przycięta (świeci jak emitery gry, nie zalewa kadru bloomem)
+const MAIN_PAL = MAIN_EXHAUST_PALETTES.find((p) => p.id === 'plazma') || MAIN_EXHAUST_PALETTES[0];
+const ENGINE_GLOW = rampEmissive(MAIN_PAL.ramp[1], 1.1);
+const ENGINE_CORE = rampEmissive(MAIN_PAL.ramp[2], 0.7);
 
 /**
  * Paleta bryły (nadpisania SHIP3D_MAT): burta jasnoszara jak płyty Terra Novy, rów ciemny, światła rowu ciepłe
@@ -25,7 +38,10 @@ export const HULL_BODY_PALETTE = Object.freeze({
   [M.DARK]: { color: '#16191e', rough: 0.6, metal: 0.4, seams: 0.5 },
   [M.BRIGHT]: { color: '#c9ced5', rough: 0.45, metal: 0.4, seams: 0.2 },
   [M.E_WINDOW]: { color: '#2b2518', rough: 0.3, metal: 0.1, emissive: '#ffd7a0', power: 2.4, seams: 0 },
-  [M.E_ICE]: { color: '#10262b', rough: 0.4, metal: 0.2, emissive: '#9fd6ff', power: 2.6, seams: 0 }
+  [M.E_ICE]: { color: '#10262b', rough: 0.4, metal: 0.2, emissive: '#9fd6ff', power: 2.6, seams: 0 },
+  [M.METAL]: { color: '#4d535c', rough: 0.4, metal: 0.75, seams: 0.25 },
+  [M.E_ENGINE]: { color: '#0b1424', rough: 0.4, metal: 0.2, emissive: ENGINE_GLOW.emissive, power: ENGINE_GLOW.power, seams: 0 },
+  [M.E_WHITE]: { color: '#2a2a2a', rough: 0.4, metal: 0.2, emissive: ENGINE_CORE.emissive, power: ENGINE_CORE.power, seams: 0 }
 });
 
 /** Zastępcza tekstura pokładu (jak tekstura skóry kadłuba: sRGB, filtr z mipmapami) — ten sam shader przed i po. */
@@ -141,7 +157,10 @@ export function createHullBody3D({ scene } = {}) {
       .filter((m) => (m.type === 'bridge' || m.type === 'reactor') && (m.v ?? 0) >= 2)
       .map((m) => ({ x: m.x, y: -m.y, r: m.type === 'reactor' ? (m.r || 40) : Math.max(m.w || 40, m.h || 40) }));
     const top = { drop: opts.drop, plateau: opts.plateau, pins, image: field?.image || null };
-    return setOutline(loops, { ...opts, top });
+    // gondole MAIN projektu → bank dysz na rufie (kierunek wylotu: −x modułu)
+    const engines = (field?.expanded?.modules || []).filter((m) => m.type === 'engine')
+      .map((m) => ({ x: m.x, y: -m.y, w: m.w, h: m.h, rot: -(m.rot || 0) }));
+    return setOutline(loops, { ...opts, top, engines });
   }
 
   /** Tekstura wierzchu (obraz kompozytora na GPU — tekstura skóry kadłuba) albo null. */

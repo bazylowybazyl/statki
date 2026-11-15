@@ -46,6 +46,9 @@ export const HULL_BODY_TUNE = Object.freeze({
     depth: 90, ramp: 26, edgeIn: 150, edgeRamp: 90
   }),
   district: Object.freeze({ cell: 30, fill: 0.82, foot: [0.5, 0.92], h: [10, 70], tower: 0.05, towerH: 1.15, lights: 0.16, light: [3, 2.2] }),
+  // SILNIKI (etap 3): promień dużej dyszy = h gondoli × r, długość dyszy, głębokość bloku, środek dysz pod krawędzią
+  // wierzchu, blok poniżej dysz (× R), małe dysze (× R) wyżej o smallUp × R
+  engines: Object.freeze({ r: 0.92, length: 1.15, blockDepth: 1.2, drop: 1.35, below: 0.45, small: 0.36, smallUp: 0.62, seg: 20 }),
   // WIERZCH jako płytki dach (etap 1b — „góra kompletnie płaska, musi opuścić górę w dół”): spadek przy burcie [j.],
   // plateau (z = 0) od tej odległości od burty w głąb, pas pierścieni przy krawędzi, siatka dalej (brzeg pod pasem,
   // uniesiona o lift), cokoły pod modelami gry (mostki, rdzenie): z = 0 do r + pinIn, potem zbocze pinSlope
@@ -228,6 +231,113 @@ function edgeDistance(segs, px, py) {
   return Math.sqrt(best);
 }
 
+/**
+ * Pierścień ścian wewnątrz dyszy: od c0 (promień r0) do c1 (r1) wzdłuż osi `ax` (bazy `u`, `v`), ściany zwrócone DO osi
+ * (widać je od wylotu, patrząc w dyszę).
+ */
+function innerCone(B, c0, c1, r0, r1, u, v, seg, mat) {
+  for (let s = 0; s < seg; s++) {
+    const a0 = (s / seg) * Math.PI * 2, a1 = ((s + 1) / seg) * Math.PI * 2, am = (a0 + a1) / 2;
+    const P = (c, r, a) => [c[0] + r * (u[0] * Math.cos(a) + v[0] * Math.sin(a)), c[1] + r * (u[1] * Math.cos(a) + v[1] * Math.sin(a)), c[2] + r * (u[2] * Math.cos(a) + v[2] * Math.sin(a))];
+    const hint = [-(u[0] * Math.cos(am) + v[0] * Math.sin(am)), -(u[1] * Math.cos(am) + v[1] * Math.sin(am)), -(u[2] * Math.cos(am) + v[2] * Math.sin(am))];
+    B.face([P(c0, r0, a0), P(c0, r0, a1), P(c1, r1, a1), P(c1, r1, a0)], mat, hint);
+  }
+}
+/** Płaski pierścień (r0 … r1) w punkcie c, zwrócony w stronę `n`; r0 = 0 — tarcza. */
+function annulus(B, c, r0, r1, u, v, n, seg, mat) {
+  const P = (r, a) => [c[0] + r * (u[0] * Math.cos(a) + v[0] * Math.sin(a)), c[1] + r * (u[1] * Math.cos(a) + v[1] * Math.sin(a)), c[2] + r * (u[2] * Math.cos(a) + v[2] * Math.sin(a))];
+  if (r0 <= 1e-6) {
+    const ring = [];
+    for (let s = 0; s < seg; s++) ring.push(P(r1, (s / seg) * Math.PI * 2));
+    B.face(ring, mat, n);
+    return;
+  }
+  for (let s = 0; s < seg; s++) {
+    const a0 = (s / seg) * Math.PI * 2, a1 = ((s + 1) / seg) * Math.PI * 2;
+    B.face([P(r0, a0), P(r1, a0), P(r1, a1), P(r0, a1)], mat, n);
+  }
+}
+/**
+ * Dysza MAIN osadzona w bloku: oś od c (tylna ściana bloku) w kierunku d (na zewnątrz), promień R, długość L —
+ * obudowa (METAL), kołnierz wylotu (BRIGHT), ciemny stożek, żarzący się pas przy gardzieli (E_ENGINE), gorący rdzeń
+ * (E_WHITE — barwy z palety strugi MAIN gry, HULL_BODY_PALETTE).
+ */
+function nozzle(B, c, d, R, L, seg) {
+  const ref = Math.abs(d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const u = [d[1] * ref[2] - d[2] * ref[1], d[2] * ref[0] - d[0] * ref[2], d[0] * ref[1] - d[1] * ref[0]];
+  const ul = Math.hypot(u[0], u[1], u[2]) || 1;
+  u[0] /= ul; u[1] /= ul; u[2] /= ul;
+  const v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+  const at = (t) => [c[0] + d[0] * t, c[1] + d[1] * t, c[2] + d[2] * t];
+  B.cylinder(at(-2), at(L), R, R * 1.04, { seg, mat: M.METAL, capA: false, capB: false });
+  annulus(B, at(L), R * 0.86, R * 1.04, u, v, d, seg, M.BRIGHT);
+  innerCone(B, at(L * 0.42), at(L), R * 0.6, R * 0.86, u, v, seg, M.DARK);
+  innerCone(B, at(6), at(L * 0.42), R * 0.36, R * 0.6, u, v, seg, M.E_ENGINE);
+  annulus(B, at(6), 0, R * 0.36, u, v, d, seg, M.E_WHITE);
+}
+
+/**
+ * BANK SILNIKÓW na rufie (etap 3): gondole MAIN projektu (`engines`: { x, y, w, h, rot } w układzie sceny) — za każdą
+ * promień w stronę wylotu do burty; gondole na jednym odcinku burty dzielą BLOK (wystaje z rufy, sięga trochę poniżej
+ * burty), w nim duże dysze w osiach gondol, małe dysze między nimi, żebra i otwory na tylnej ścianie bloku.
+ */
+function buildEngineBank(B, engines, poly, zEdgeAt, k, T) {
+  const E = T.engines;
+  const exits = [];
+  for (const e of engines) {
+    const dx = -Math.cos(e.rot || 0), dy = -Math.sin(e.rot || 0);
+    const t = rayHit(poly, e.x, e.y, dx, dy, -1, -1);
+    if (!Number.isFinite(t)) continue;
+    exits.push({ x: e.x + dx * t, y: e.y + dy * t, dx, dy, R: Math.max(8 * k, (e.h || 40) * E.r), z: zEdgeAt(e.x + dx * t, e.y + dy * t) });
+  }
+  // bloki: wyloty o tym samym kierunku na jednej linii, blisko siebie
+  exits.sort((a, b) => (a.dx - b.dx) || (a.dy - b.dy) || ((a.x * -a.dy + a.y * a.dx) - (b.x * -b.dy + b.y * b.dx)));
+  const blocks = [];
+  for (const ex of exits) {
+    const b = blocks[blocks.length - 1];
+    const along = ex.x * -ex.dy + ex.y * ex.dx;
+    const depth = ex.x * ex.dx + ex.y * ex.dy;
+    if (b && Math.abs(b.dx - ex.dx) < 1e-3 && Math.abs(b.dy - ex.dy) < 1e-3 && Math.abs(b.depth - depth) < 4 * k && along - b.a1 < ex.R * 3.2) {
+      b.list.push(ex); b.a1 = along; b.R = Math.max(b.R, ex.R); b.z = Math.max(b.z, ex.z);
+    } else blocks.push({ dx: ex.dx, dy: ex.dy, depth, a0: along, a1: along, R: ex.R, z: ex.z, list: [ex] });
+  }
+  let nNoz = 0;
+  for (const b of blocks) {
+    const R = b.R, D = E.blockDepth * R, L = E.length * R;
+    const zTopB = b.z - 4 * k, zc = b.z - E.drop * R, zBot = zc - R - E.below * R;
+    const pad = R * 1.25;
+    // blok: w lokalnym układzie (x — na zewnątrz, y — wzdłuż burty)
+    const e0 = b.list[0];
+    const ang = Math.atan2(b.dy, b.dx);
+    const cAlong = (b.a0 + b.a1) / 2, half = (b.a1 - b.a0) / 2 + pad;
+    // środek bloku na burcie
+    const bx = b.dx * b.depth + -b.dy * cAlong, by = b.dy * b.depth + b.dx * cAlong;
+    B.push(); B.translate(bx, by, 0); B.rotateZ(ang);
+    B.box(D / 2 - 3 * k, 0, (zTopB + zBot) / 2, D + 6 * k, half * 2, zTopB - zBot, { mat: M.PANEL });
+    // żebra między dyszami i na końcach, otwory u dołu tylnej ściany
+    const locs = b.list.map((ex) => (ex.x * -b.dy + ex.y * b.dx) - cAlong);
+    const ribs = [-half + R * 0.25, half - R * 0.25];
+    for (let i = 0; i < locs.length - 1; i++) ribs.push((locs[i] + locs[i + 1]) / 2);
+    for (const ry of ribs) B.box(D + 3 * k, ry, (zTopB + zBot) / 2, 6 * k, 5 * k, zTopB - zBot - 4 * k, { mat: M.STEEL });
+    for (let vy = -half + 14 * k; vy < half - 14 * k; vy += 22 * k) B.box(D + 1.5 * k, vy, zBot + 9 * k, 3 * k, 12 * k, 8 * k, { mat: M.DARK });
+    B.pop();
+    // dysze: duże w osiach gondol, małe między nimi (wyżej)
+    const seg = E.seg;
+    for (const ex of b.list) {
+      const ox = ex.x + ex.dx * D, oy = ex.y + ex.dy * D;
+      nozzle(B, [ox, oy, zc], [ex.dx, ex.dy, 0], ex.R, L, seg);
+      nNoz++;
+    }
+    for (let i = 0; i < b.list.length - 1; i++) {
+      const p = b.list[i], q = b.list[i + 1];
+      const mx = (p.x + q.x) / 2 + p.dx * D, my = (p.y + q.y) / 2 + p.dy * D;
+      nozzle(B, [mx, my, zc + R * E.smallUp], [p.dx, p.dy, 0], R * E.small, L * 0.6, 12);
+      nNoz++;
+    }
+  }
+  return nNoz;
+}
+
 /** Zagęszczenie łamanej zamkniętej: boki dłuższe niż `step` dzielone równo (wysokość wierzchu zmienia się wzdłuż burty). */
 function densify(poly, step) {
   const out = [];
@@ -405,6 +515,9 @@ export function buildHullBodyGeometry(loops0, opts = {}) {
     }
     topGrid = { x0: G.x0, y0: G.y0, cell: G.cell, nx: G.nx, ny: G.ny, data: H, drop: Math.round(drop) };
   }
+  // ── SILNIKI: bank dysz na rufie za gondolami MAIN ─────────────────────────────────────────────────────────────
+  let nNozzles = 0;
+  if (opts.engines?.length) nNozzles = buildEngineBank(B, opts.engines, poly0, (x, y) => zTop(x, y, 0), k, T);
   const side = B.build();
   // ── SPÓD: siatka wysokości z odległości od burty, od poziomu krawędzi ─────────────────────────────────────────
   let cells = 0, deepest = 0, nBlocks = 0, nBlockLights = 0;
@@ -522,6 +635,7 @@ export function buildHullBodyGeometry(loops0, opts = {}) {
   out.stats = {
     scale: Math.round(k * 1000) / 1000, outline: poly.length, rings: rings.length, lights: nLights, bottomCells: cells,
     topCells, drop: Math.round(drop), plateau: Math.round(plateau), pins: pins.length, blocks: nBlocks, blockLights: nBlockLights,
+    nozzles: nNozzles,
     edgeDepth: Math.round(-(rings[rings.length - 1].z - drop)), depth: Math.round(-deepest), triangles: out.triangleCount,
     box: [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)]
   };

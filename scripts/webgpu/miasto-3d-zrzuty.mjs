@@ -61,7 +61,9 @@ const KADRY_BRYLA = [
   { id: 'b7-grzbiet', view: 'grzbiet', opis: 'grzbiet ku dziobowi — miasto schodzi z pochyłym wierzchem' },
   { id: 'b8-przod-plasko', view: 'przod', drop: 0, opis: 'od przodu nisko, spadek wierzchu 0 (płasko — dawny wygląd) — A/B' },
   { id: 'c1-spod-ukos', view: 'spodUkos', opis: 'od spodu z ukosa — wcięcia z zabudową, płyty spodu' },
-  { id: 'c2-spod-blisko', view: { orbit: { tx: -1500, ty: -300, dist: 1500, yaw: -2.2, pitch: -0.35 } }, opis: 'od spodu z bliska — niecka rufowa z zabudową i światłami' }
+  { id: 'c2-spod-blisko', view: { orbit: { tx: -1500, ty: -300, dist: 1500, yaw: -2.2, pitch: -0.35 } }, opis: 'od spodu z bliska — niecka rufowa z zabudową i światłami' },
+  { id: 'd1-silniki-ukos', view: 'silniki', opis: 'silniki z ukosa — bank dysz za gondolami MAIN' },
+  { id: 'd2-silniki-blisko', view: { orbit: { tx: -2600, ty: -610, tz: -285, dist: 430, yaw: Math.PI - 0.42, pitch: 0.08 } }, opis: 'dysze z bliska — kołnierze, żar, rdzeń' }
 ];
 /** Kadry: widok (nazwa z dema albo obiekt), parametry miasta, słońce, światła. */
 const KADRY_V3 = [

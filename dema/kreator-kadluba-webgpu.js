@@ -2859,6 +2859,7 @@ const ORBIT_VIEWS = Object.freeze({
   tyl: { tx: -0.075, yaw: Math.PI, pitch: 0.06, dist: 0.7 },
   spod: { tx: 0, yaw: -Math.PI / 2, pitch: -1.42, dist: 1.1 },
   spodUkos: { tx: -0.075, yaw: -2.5, pitch: -0.42, dist: 0.58 },
+  silniki: { tx: -0.32, yaw: Math.PI - 0.55, pitch: 0.14, dist: 0.16, ty: -0.16 },
   bok: { tx: 0, yaw: -Math.PI / 2, pitch: 0.07, dist: 1.03 }
 });
 const _oUp = new THREE.Vector3(0, 0, 1);
@@ -2867,9 +2868,9 @@ function orbitCamera() {
   const o = ORBIT_VIEWS[S.orbitView];
   const box = cityDemo.body3D?.stats?.box || [-500, -200, 500, 200];
   const L = Math.max(100, box[2] - box[0]);
-  const tx = (box[0] + box[2]) / 2 + L * o.tx, dist = L * o.dist, cp = Math.cos(o.pitch);
-  _vTgt.set(tx, 0, 0);
-  _vEye.set(tx + dist * cp * Math.cos(o.yaw), dist * cp * Math.sin(o.yaw), dist * Math.sin(o.pitch));
+  const tx = (box[0] + box[2]) / 2 + L * o.tx, ty = L * (o.ty || 0), dist = L * o.dist, cp = Math.cos(o.pitch);
+  _vTgt.set(tx, ty, -0.035 * L * (o.ty ? 1 : 0));
+  _vEye.set(tx + dist * cp * Math.cos(o.yaw), ty + dist * cp * Math.sin(o.yaw), _vTgt.z + dist * Math.sin(o.pitch));
   _vM.lookAt(_vEye, _vTgt, _oUp);
   _vQ.setFromRotationMatrix(_vM);
   orbitCam.position.x = _vEye.x; orbitCam.position.y = _vEye.y; orbitCam.position.z = _vEye.z;

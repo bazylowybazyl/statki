@@ -1490,7 +1490,7 @@ export function installShipyard(api) {
       <div class="ychips"><button class="ychip${S.camMode === 'plaska' ? ' on' : ''}" data-cam="plaska">Płaska</button><button class="ychip${S.camMode === 'gra' ? ' on' : ''}" data-cam="gra">Widok gry</button><button class="ychip${S.camMode === 'perspektywa' ? ' on' : ''}" data-cam="perspektywa">Perspektywa</button><button class="ychip${S.lean.byZoom ? ' on' : ''}" data-leanzoom="1" title="przesada rośnie z oddaleniem: 1× w zbliżeniu (~1 200 j.), pełna przy całym okręcie; wyłączone — stała">Przesada z oddaleniem</button></div>
       <label class="yslider"><span>Pochylenie ścian <b data-v="view:lean">${S.lean.gain.toFixed(2)}×</b></span><input type="range" data-k="view:lean" min="0" max="8" step="0.25" value="${S.lean.gain}"></label>
       <div class="yoptl">Bryła 3D <span class="ydim">· ujęcia kamerą 3D; klik w okręt — z powrotem z góry</span></div>
-      <div class="ychips">${[['przod', 'Przód'], ['tyl', 'Tył'], ['spod', 'Spód'], ['spodUkos', 'Spód z ukosa'], ['bok', 'Bok']].map(([k, l]) => `<button class="ychip${S.orbitView === k ? ' on' : ''}" data-orbit="${k}">${l}</button>`).join('')}</div>
+      <div class="ychips">${[['przod', 'Przód'], ['tyl', 'Tył'], ['spod', 'Spód'], ['spodUkos', 'Spód z ukosa'], ['bok', 'Bok'], ['silniki', 'Silniki']].map(([k, l]) => `<button class="ychip${S.orbitView === k ? ' on' : ''}" data-orbit="${k}">${l}</button>`).join('')}</div>
       <label class="yslider"><span>Spadek wierzchu <b data-v="view:drop">${S.topDrop} j.</b></span><input type="range" data-k="view:drop" min="0" max="400" step="5" value="${S.topDrop}"></label>`;
   }
   function renderOpts() {

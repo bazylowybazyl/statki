@@ -356,8 +356,10 @@ function cameraForFrame() {
   }
   const o = S.orbit;
   const cp = Math.cos(o.pitch);
-  _tgt.set(o.tx, -o.ty, 0);
-  _eye.set(o.tx + o.dist * cp * Math.cos(o.yaw), -o.ty + o.dist * cp * Math.sin(o.yaw), o.dist * Math.sin(o.pitch));
+  // cel orbity: x, y świata gry i wysokość tz (domyślnie płaszczyzna okrętu; silniki leżą ~280 j. niżej)
+  const tz = o.tz || 0;
+  _tgt.set(o.tx, -o.ty, tz);
+  _eye.set(o.tx + o.dist * cp * Math.cos(o.yaw), -o.ty + o.dist * cp * Math.sin(o.yaw), tz + o.dist * Math.sin(o.pitch));
   _m.lookAt(_eye, _tgt, _up);
   _q.setFromRotationMatrix(_m);
   freeCam.position.x = _eye.x; freeCam.position.y = _eye.y; freeCam.position.z = _eye.z;
@@ -380,6 +382,8 @@ const VIEWS = {
   spod: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8800, yaw: -Math.PI / 2, pitch: -1.42 }; },
   bok: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8200, yaw: -Math.PI / 2, pitch: 0.07 }; },
   burta: () => { S.view = 'ukos'; S.orbit = { tx: 1500, ty: 560, dist: 820, yaw: -Math.PI / 2 + 0.35, pitch: 0.12 }; },
+  // SILNIKI: rufa z ukosa (bank dysz za gondolami MAIN, x ≈ −2 550)
+  silniki: () => { S.view = 'ukos'; S.orbit = { tx: -2620, ty: -620, tz: -250, dist: 1150, yaw: Math.PI - 0.55, pitch: 0.12 }; },
   // od spodu z ukosa (wcięcia spodu i zabudowa w nich)
   spodUkos: () => { S.view = 'ukos'; S.orbit = { tx: -600, ty: 0, dist: 4600, yaw: -2.5, pitch: -0.42 }; },
   // grzbiet ku dziobowi: miasto schodzi z wierzchem po stoku
@@ -393,7 +397,7 @@ const CATALOG_VIEWS = {
 function setView(name) {
   if (KATALOG && typeof name === 'string' && CATALOG_VIEWS[name]) { CATALOG_VIEWS[name](); S.viewName = name; placeSun(); return; }
   if (typeof name === 'object' && name) {
-    if (name.orbit) { S.view = 'ukos'; Object.assign(S.orbit, name.orbit); } else { S.view = 'gra'; Object.assign(S.cam, name); }
+    if (name.orbit) { S.view = 'ukos'; Object.assign(S.orbit, { tz: 0 }, name.orbit); } else { S.view = 'gra'; Object.assign(S.cam, name); }
   } else if (VIEWS[name]) { VIEWS[name](); S.viewName = name; }
   for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('on', b.dataset.view === S.viewName);
   placeSun();
@@ -520,7 +524,7 @@ canvas2d.addEventListener('wheel', (e) => {
 }, { passive: false });
 addEventListener('keydown', (e) => {
   if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return;
-  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta', '=': 'grzbiet', '[': 'spodUkos' }[e.key];
+  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta', '=': 'grzbiet', '[': 'spodUkos', ']': 'silniki' }[e.key];
   if (v) setView(v);
   else if (e.key === 'm' || e.key === 'M') toggleCity();
   else if (e.key === 'b' || e.key === 'B') toggleBody();

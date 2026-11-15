@@ -560,3 +560,26 @@ spodzie).
   0 błędów konsoli; z góry bez zmian.
 - Odstaje: zabudowa wcięć to proste pudła (bez detalu dachów i świateł okien jak miasto na grzbiecie); przy czubkach
   zębów (mostki skrzydłowe blisko burty) spód lekko unosi się z cokołem.
+
+### Etap 3 — silniki: bank dysz na rufie (2026-11-15)
+
+Kadr `.tmp/drednot-wzor/bryla-od-tylu-silniki.png` (rząd dysz różnej średnicy na rufie).
+
+- Z GONDOL MAIN projektu (moduły `engine` — drednot: 8, x = −2 470, |y| = 452 / 560 / 668 / 776): za każdą promień w stronę
+  wylotu (−x modułu) do burty — u drednota prosta rufowa ściana x = −2 550 w wycięciach między zębami. Gondole na
+  jednym odcinku burty dzielą BLOK silnikowy (wystaje z rufy o 1,2 R, od krawędzi wierzchu do ~0,45 R poniżej dysz),
+  w nim duże dysze w osiach gondol (R = 0,92 · h gondoli, ~42 j.) i małe między nimi (0,36 R, wyżej): drednot 8 + 6.
+  Z góry (widok gry) bryły nie ma, a dysze leżą dokładnie za gondolami z obrazu kompozytora (te same y).
+- DYSZA (`hullBodyGeometry.js`, `nozzle`): obudowa (METAL), kołnierz wylotu (BRIGHT), ciemny stożek, żarzący się pas
+  przy gardzieli (E_ENGINE) i gorący rdzeń (E_WHITE). Barwy żaru z palety strugi MAIN gry „plazma”
+  (`MAIN_EXHAUST_PALETTES`, src/data/engineFx.js — dane, moduły gry bez zmian): pas z drugiego stopnia rampy (moc ~2,2),
+  rdzeń z trzeciego (moc ~2,5) — HDR ponad progiem bloomu jak emitery gry, kadru nie zalewa. Rufa między dyszami:
+  żebra (STEEL) i rząd otworów u dołu bloku (DARK).
+- Strugi MAIN gry (efekt ognia za dyszami) tu nie ma — w grze rysuje ją system silników z ciągu okrętu; w demie bryła
+  stoi (do decyzji: struga w demie przez moduł efektów gry albo sam żar).
+- Ujęcia: demo — 8 od tyłu, `]` silniki z ukosa (nowe; orbita ma teraz wysokość celu `tz`); generator — „silniki”
+  (Warsztat „Miasto 3D”, Stocznia „Bryła 3D”). Zrzuty `.tmp/kreator/bryla-3d/etap3/` (`d1-silniki-ukos`,
+  `d2-silniki-blisko`, `b2-tyl`, a1 / a2 z góry).
+- Koszt: +2,7 tys. trójkątów (bryła 131 tys.), nadal 1 rysunek; 0 pipeline'ów synchronicznych, 0 błędów konsoli.
+- Odstaje: blok silnikowy to prosta skrzynia z płytami (bez fazy i rozbudowanej rzeźby jak na kadrze); dysze bez strugi;
+  średnice tylko dwie (duże w osiach gondol, małe między nimi).
