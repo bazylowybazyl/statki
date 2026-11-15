@@ -532,3 +532,31 @@ krawędziom, miasto siedzi w grzbiecie).
 - Odstaje: wierzch w 3D nie ma reliefu skóry gry (mapa powierzchni HullSurface — sam obraz albedo, światło z materiału
   floty); cokoły to gładkie kopce (do decyzji: ostrzejsza wieża pod mostkiem albo mostek bez cokołu, gdy gra dostanie
   wysokość per gniazdo); plateau przy szerokości 900 j. jest dla drednota — inny okręt może potrzebować innej wartości.
+
+### Etap 2 — spód: wcięcia z zabudową, płyty (2026-11-15)
+
+Użytkownik po etapie 1b: „Dalej: spód i silniki” (kadr `.tmp/drednot-wzor/bryla-od-dolu.png` — ciemne wcięcia w jasnym
+spodzie).
+
+- WCIĘCIA (`HULL_BODY_TUNE.recess`): trzy kształty w lustrze w ułamkach pudła sylwetki — niecka rufowa (u 0,07–0,31,
+  zwężająca się ku dziobowi), rów wzdłuż kila w przedniej połowie (u 0,40–0,80) i para wcięć w skrzydłach; 90 j. w górę
+  (w kadłub), zbocze 26 j., co najmniej 150 j. (+ 90 j. przejścia) od burty. Strop ciemny (DARK), na siatce spodu
+  (wysokość z maski wcięć, normalne z różnic).
+- ZABUDOWA we wcięciach (`HULL_BODY_TUNE.district`): bryły na siatce 30 j. podwieszone pod stropem (82% komórek,
+  podstawa 0,5–0,9 komórki, 10–70 j. w dół, 5% wież do 1,15 głębokości wcięcia — wystają tylko trochę pod spód), ciemne
+  (3/4 DARK, 1/4 PANEL), światła na ścianach rzadkie (16% brył, po dwa — ciepłe i chłodne): drednot 2 391 brył, 760
+  świateł.
+- PŁYTY SPODU (materiał bryły, mnożnik barwy farby na ścianach w dół): rzędy wzdłuż sylwetki z odległości od burty
+  (atrybut `aBand`, co 170 j.), styki poprzeczne co 360 j. (rząd przesunięty), ton ±8%, ~8% płyt ciemniejszych, pas kila
+  (|y| < 30 j.); szwy gasną z oddaleniem.
+- Spód nie unosi się już pod cokołami (mostki, rdzenie): poziom odniesienia spodu bierze krawędź wierzchu z cokołami
+  tylko do ~160–360 j. od burty (w 1b pod rdzeniami i mostkiem głównym wychodziły kopuły).
+- „Okrągłe wypukłości pod rdzeniami” z etapu 1 to były CIENIE na kadłubie (rdzenie, mostki, miasto — prostokąty pod
+  wierzchem z testem głębi GREATER: od spodu test przechodzi przez całą bryłę). Dema przy kamerze pod płaszczyzną okrętu
+  ukrywają takie odbiorniki na czas rysunku (`hideGreaterReceivers`), modułów gry bez zmian.
+- Ujęcia: demo — 9 od spodu, `[` od spodu z ukosa (nowe); generator — „spód z ukosa” (Warsztat „Miasto 3D”, Stocznia
+  „Bryła 3D”). Zrzuty `.tmp/kreator/bryla-3d/etap2/` (`b3-spod`, `c1-spod-ukos`, `c2-spod-blisko`, a1 / a2 z góry).
+- Koszt: 128 tys. trójkątów (+30 tys. za zabudowę i światła), budowa ~0,2 s, 1 rysunek; 0 pipeline'ów synchronicznych,
+  0 błędów konsoli; z góry bez zmian.
+- Odstaje: zabudowa wcięć to proste pudła (bez detalu dachów i świateł okien jak miasto na grzbiecie); przy czubkach
+  zębów (mostki skrzydłowe blisko burty) spód lekko unosi się z cokołem.

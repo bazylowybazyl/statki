@@ -937,7 +937,9 @@ function render(realDt, list) {
   reactorDemoSync(cam);
   bridgeDemoSync(cam);
   cityDemoSync();
+  hideGreaterReceivers(Core3D.scene, !!S.orbitView && ORBIT_VIEWS[S.orbitView].pitch < 0);
   drawHexShips3D(ctx2d, W, H);
+  restoreGreaterReceivers();
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
   if (!document.body.classList.contains('clean') && !S.orbitView) {
@@ -2837,11 +2839,26 @@ function cityDemoSync() {
 const VIEW_FOV = 35;
 const _vEye = new THREE.Vector3(), _vTgt = new THREE.Vector3(), _vUp = new THREE.Vector3(0, 1, 0), _vM = new THREE.Matrix4(), _vQ = new THREE.Quaternion();
 const perspCam = { x: 0, y: 0, zoom: 1, mode: 'free3d', position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 }, fov: VIEW_FOV, near: 10, far: 400000 };
+// Cienie na kadłubie (miasto, mostki, rdzenie) to prostokąty POD wierzchem z testem głębi GREATER — rysują się tam,
+// gdzie z góry stoi kadłub. Od SPODU ten test przechodzi przez całą bryłę (kadłub jest dalej niż spód), więc przy kamerze
+// pod płaszczyzną okrętu takie odbiorniki są na czas rysunku ukryte (inaczej „okrągłe wypukłości” pod rdzeniami).
+const _greaterHidden = [];
+function hideGreaterReceivers(scene, below) {
+  if (!below) return;
+  scene.traverse((o) => {
+    if (o.isMesh && o.visible && o.material?.depthFunc === THREE.GreaterDepth) { o.visible = false; _greaterHidden.push(o); }
+  });
+}
+function restoreGreaterReceivers() {
+  for (const o of _greaterHidden) o.visible = true;
+  _greaterHidden.length = 0;
+}
 // UJĘCIA BRYŁY (kamera 3D wokół okrętu, w ułamkach długości kadłuba; jak kadry odniesienia w demie miasta)
 const ORBIT_VIEWS = Object.freeze({
   przod: { tx: 0.025, yaw: 0.5, pitch: 0.05, dist: 0.78 },
   tyl: { tx: -0.075, yaw: Math.PI, pitch: 0.06, dist: 0.7 },
   spod: { tx: 0, yaw: -Math.PI / 2, pitch: -1.42, dist: 1.1 },
+  spodUkos: { tx: -0.075, yaw: -2.5, pitch: -0.42, dist: 0.58 },
   bok: { tx: 0, yaw: -Math.PI / 2, pitch: 0.07, dist: 1.03 }
 });
 const _oUp = new THREE.Vector3(0, 0, 1);

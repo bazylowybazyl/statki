@@ -7,7 +7,10 @@
 // Nie czyta `window`, DOM ani stanu gry: wołający podaje obrys (pole kreatora), pozę i widoczność.
 
 import * as THREE from 'three/webgpu';
-import { diffuseColor, dot, max, normalWorld, texture, uniform, uv } from 'three/tsl';
+import {
+  abs, attribute, diffuseColor, dot, float, floor, fract, fwidth, max, min, mix, normalLocal, normalWorld, positionLocal, sin,
+  smoothstep, step, texture, uniform, uv, vec2
+} from 'three/tsl';
 import { MeshBuilder3D, SHIP3D_MAT as M } from '../ships3d/meshBuilder3D.js';
 import { createShipMaterial } from '../ships3d/shipMaterials3D.tsl.js';
 import { buildHullBodyGeometry, hullBodyLoopsFromField } from './hullBodyGeometry.js';
@@ -40,7 +43,9 @@ function placeholderDeck() {
 function placeholderGeometry() {
   const B = new MeshBuilder3D();
   B.box(0, 0, -10, 10, 10, 10, { mat: M.PAINT });
-  return B.toGeometry(THREE);
+  const g = B.toGeometry(THREE);
+  g.setAttribute('aBand', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count), 1));
+  return g;
 }
 
 function geometryOf(d) {
@@ -49,6 +54,7 @@ function geometryOf(d) {
   g.setAttribute('normal', new THREE.BufferAttribute(d.normal, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(d.uv, 2));
   g.setAttribute('aMat', new THREE.BufferAttribute(d.mat, 1));
+  g.setAttribute('aBand', new THREE.BufferAttribute(d.band || new Float32Array(d.mat.length), 1));
   g.setIndex(new THREE.BufferAttribute(d.index, 1));
   g.computeBoundingSphere();
   return g;
@@ -73,6 +79,28 @@ export function createHullBody3D({ scene } = {}) {
     name: 'bryła kadłuba (hullBody3D)', palette: HULL_BODY_PALETTE, panelW: 46, panelH: 12, rim: 0.7,
     deckMapNode: deckNode, emissiveAdd: diffuseColor.rgb.mul(fill).mul(uFill.w)
   });
+  // PŁYTY SPODU (etap 2): jasny spód nie jest jednolity — rzędy płyt wzdłuż sylwetki (pasmo = odległość od burty
+  // `aBand`, co 170 j.), styki poprzeczne co 360 j. (rząd przesunięty), ton płyty ±8%, ~8% płyt ciemniejszych (akcenty),
+  // pas kila (|y| < 30 j.); tylko farba (PAINT) na ścianach w dół. Szwy gasną z oddaleniem (bez mory).
+  {
+    const aBand = attribute('aBand', 'float');
+    const aMatN = attribute('aMat', 'float');
+    const isPaint = step(0.5, aMatN).mul(step(aMatN, 1.5));
+    const down = step(normalLocal.z, -0.5);
+    const r = aBand.div(170.0);
+    const row = floor(r);
+    const c = positionLocal.x.add(fract(sin(row.mul(12.9898)).mul(43758.5453)).mul(360.0)).div(360.0);
+    const col = floor(c);
+    const h = fract(sin(dot(vec2(row, col), vec2(12.9898, 78.233))).mul(43758.5453));
+    const tone = h.sub(0.5).mul(0.16).add(1.0).mul(mix(float(1.0), float(0.8), step(h, 0.08)));
+    const fr = fract(r), fc = fract(c);
+    const edge = min(min(fr, fr.oneMinus()).mul(170.0), min(fc, fc.oneMinus()).mul(360.0));
+    const aa = fwidth(aBand).add(fwidth(positionLocal.x)).mul(0.5).add(1e-3);
+    const seam = smoothstep(float(0.6), aa.mul(1.5).add(0.6), edge).oneMinus().mul(smoothstep(4.0, 1.5, aa));
+    const keel = smoothstep(float(30.0), aa.add(30.0), abs(positionLocal.y)).oneMinus();
+    const plates = tone.mul(seam.mul(0.35).oneMinus()).mul(keel.mul(0.22).oneMinus());
+    mat.colorNode = mat.colorNode.mul(mix(float(1.0), plates, isPaint.mul(down)));
+  }
   const mesh = new THREE.Mesh(placeholderGeometry(), mat);
   mesh.name = 'HullBody3D';
   mesh.frustumCulled = false;

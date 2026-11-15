@@ -68,7 +68,7 @@ try {
   if (String(args.bryla ?? '0') === '1') {
     raport.bryla = await ev('JSON.stringify(window.__kreator.body)').then(JSON.parse);
     console.log('bryła', JSON.stringify(raport.bryla));
-    for (const k of ['przod', 'tyl', 'spod', 'bok']) {
+    for (const k of String(args.ujecia || 'przod,tyl,spod,bok').split(',')) {
       await ev(`window.__kreator.setOrbitView(${JSON.stringify(k)})`);
       await shot(`b-bryla-${k}`, `bryła kadłuba, ujęcie: ${k}`);
     }

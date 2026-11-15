@@ -25,7 +25,8 @@ test('bryła: obrys ramy drednota z izolinii pola poziomu 0 — jedna zamknięta
 
 test('bryła: pod płaszczyzną i w sylwetce, spód w dół, światła w rowie, wynik powtarzalny', () => {
   const loops = hullBodyLoopsFromField(field);
-  const g = buildHullBodyGeometry(loops);
+  // burta i spód bez zabudowy wcięć (jej światła — osobny test)
+  const g = buildHullBodyGeometry(loops, { district: false, recess: false });
   const poly = hullBodyOutline(loops);
   assert.ok(g.triangleCount > 10000 && g.triangleCount < 120000, `trójkąty ${g.triangleCount}`);
   assert.ok(g.stats.lights > 100, `światła ${g.stats.lights}`);
@@ -49,7 +50,7 @@ test('bryła: pod płaszczyzną i w sylwetce, spód w dół, światła w rowie, 
   assert.ok(lights >= g.stats.lights * 4);
   assert.ok(bottom > g.stats.bottomCells, 'spód z siatki wysokości skierowany w dół');
   assert.ok(down > 0);
-  const g2 = buildHullBodyGeometry(loops);
+  const g2 = buildHullBodyGeometry(loops, { district: false, recess: false });
   assert.deepEqual(Array.from(g2.position.subarray(0, 600)), Array.from(g.position.subarray(0, 600)));
   assert.equal(g2.triangleCount, g.triangleCount);
 });
@@ -81,6 +82,27 @@ test('bryła: wierzch jako płytki dach — z ≤ 0, krawędź o spadek niżej, 
   assert.ok(Math.abs(at(-1900, 0)) < 1, `cokół mostka ${at(-1900, 0)}`);
   assert.ok(at(3000, 0) < -100, `dziób niżej ${at(3000, 0)}`);
   assert.ok(Math.abs(flat.stats.drop) === 0 && flat.topGrid.data.every((v) => Math.abs(v) < 1e-6), 'spadek 0 — płasko');
+});
+
+test('bryła: spód z wcięciami — strop wcięć ciemny i wyżej, zabudowa pod stropem w sylwetce, rzadkie światła', () => {
+  const loops = hullBodyLoopsFromField(field);
+  const g = buildHullBodyGeometry(loops);
+  const flat = buildHullBodyGeometry(loops, { recess: false });
+  const poly = hullBodyOutline(loops);
+  assert.ok(g.stats.blocks > 500, `bryły we wcięciach ${g.stats.blocks}`);
+  assert.ok(g.stats.blockLights > 50 && g.stats.blockLights < g.stats.blocks, `światła zabudowy ${g.stats.blockLights}`);
+  assert.equal(flat.stats.blocks, 0);
+  let dark = 0, outside = 0;
+  for (let i = 0; i < g.vertexCount; i++) {
+    if (g.mat[i] === SHIP3D_MAT.DARK && g.normal[i * 3 + 2] < -0.5) dark++;
+    if (g.position[i * 3 + 2] < -1 && !pointInPoly(g.position[i * 3], g.position[i * 3 + 1], poly)) outside++;
+  }
+  assert.ok(dark > 1000, `strop wcięć ${dark}`);
+  assert.equal(outside, 0, 'zabudowa i wcięcia w sylwetce');
+  // pasmo płyt spodu (odległość od burty) na wierzchołkach spodu
+  let banded = 0;
+  for (let i = 0; i < g.vertexCount; i++) if (g.band[i] > 100) banded++;
+  assert.ok(banded > 5000, `pasmo płyt ${banded}`);
 });
 
 test('bryła: materiał modeli floty z wypełnieniem buduje WGSL w Node; moduł nie czyta window / DOM', () => {

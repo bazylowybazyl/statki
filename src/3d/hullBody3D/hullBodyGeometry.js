@@ -34,6 +34,18 @@ export const HULL_BODY_TUNE = Object.freeze({
   grooveRing: 4,            // pierścień tylnej ściany rowu (światła)
   lights: Object.freeze({ step: 9, w: 4, h: 3, z: -50, z2: -43, group: 12, groupOn: 0.34, slotOn: 0.62, blue: 0.3, row2: 0.18 }),
   bottom: Object.freeze({ cell: 24, dMin: 60, dFlat: 100, zFlat: -110, slope: 0.28, depth: 560 }),
+  // SPÓD (etap 2): WCIĘCIA w lustrze — w ułamkach pudła sylwetki (u = 0 rufa … 1 dziób, v = |y| / pół szerokości):
+  // [u0, u1, v wewnętrzne, v zewnętrzne przy u0, przy u1]; głębokość (w górę, w kadłub), rampa ściany, odstęp od burty;
+  // ZABUDOWA we wcięciach (bryły podwieszone pod stropem, rzadkie światła na ścianach)
+  recess: Object.freeze({
+    shapes: Object.freeze([
+      [0.07, 0.31, 0, 0.44, 0.30],     // niecka rufowa
+      [0.40, 0.80, 0, 0.15, 0.04],     // rów wzdłuż kila (przednia połowa)
+      [0.21, 0.40, 0.50, 0.70, 0.62]   // para wcięć w skrzydłach
+    ]),
+    depth: 90, ramp: 26, edgeIn: 150, edgeRamp: 90
+  }),
+  district: Object.freeze({ cell: 30, fill: 0.82, foot: [0.5, 0.92], h: [10, 70], tower: 0.05, towerH: 1.15, lights: 0.16, light: [3, 2.2] }),
   // WIERZCH jako płytki dach (etap 1b — „góra kompletnie płaska, musi opuścić górę w dół”): spadek przy burcie [j.],
   // plateau (z = 0) od tej odległości od burty w głąb, pas pierścieni przy krawędzi, siatka dalej (brzeg pod pasem,
   // uniesiona o lift), cokoły pod modelami gry (mostki, rdzenie): z = 0 do r + pinIn, potem zbocze pinSlope
@@ -228,7 +240,7 @@ function densify(poly, step) {
 }
 
 /** Siatka wysokości (z, normalne, wierzchołki wspólne) w pudle; `zAt(x, y, d)`, `inc(d)` — czy wierzchołek należy. */
-function heightGrid(box, cell, segs, poly, inc, zAt, down) {
+function heightGrid(box, cell, segs, poly, inc, zAt, down, matAt = null) {
   const [x0, y0, x1, y1] = box;
   const nx = Math.max(2, Math.ceil((x1 - x0) / cell) + 1), ny = Math.max(2, Math.ceil((y1 - y0) / cell) + 1);
   const D = new Float32Array(nx * ny).fill(-1);
@@ -242,7 +254,7 @@ function heightGrid(box, cell, segs, poly, inc, zAt, down) {
       Z[j * nx + i] = zAt(x, y, d);
     }
   }
-  const pos = [], nrm = [], idx = [];
+  const pos = [], nrm = [], idx = [], mats = [], bands = [];
   const vid = new Int32Array(nx * ny).fill(-1);
   const ok = (q) => D[q] >= 0 && inc(D[q]);
   const vertex = (i, j) => {
@@ -256,6 +268,8 @@ function heightGrid(box, cell, segs, poly, inc, zAt, down) {
     vid[q] = pos.length / 3;
     pos.push(x, y, z);
     if (down) nrm.push(fx / l, fy / l, -1 / l); else nrm.push(-fx / l, -fy / l, 1 / l);
+    if (matAt) mats.push(matAt(x, y, D[q]));
+    bands.push(D[q]);
     return vid[q];
   };
   let cells = 0;
@@ -269,7 +283,7 @@ function heightGrid(box, cell, segs, poly, inc, zAt, down) {
       cells++;
     }
   }
-  return { pos, nrm, idx, cells, grid: { x0, y0, cell, nx, ny, D, Z } };
+  return { pos, nrm, idx, mats: matAt ? mats : null, bands, cells, grid: { x0, y0, cell, nx, ny, D, Z } };
 }
 
 /**
@@ -393,22 +407,88 @@ export function buildHullBodyGeometry(loops0, opts = {}) {
   }
   const side = B.build();
   // ── SPÓD: siatka wysokości z odległości od burty, od poziomu krawędzi ─────────────────────────────────────────
-  let cells = 0, deepest = 0;
+  let cells = 0, deepest = 0, nBlocks = 0, nBlockLights = 0;
   if (opts.bottom !== false) {
-    const Bt = T.bottom;
+    const Bt = T.bottom, R = T.recess, Dt = T.district;
     const dFlat = Bt.dFlat * k, zFlat = Bt.zFlat * k, depth = Bt.depth * k;
-    const zOf = (x, y, d) => zTop(x, y, 0) + (d < dFlat ? zFlat : Math.max(-depth, zFlat - Bt.slope * (d - dFlat)));
-    const bg = heightGrid([x0, y0, x1, y1], Bt.cell * k, segs, poly0, (d) => d >= Bt.dMin * k, zOf, true);
+    // poziom odniesienia spodu: krawędź wierzchu (z cokołami) tylko przy burcie — dalej stały spadek (cokoły pod
+    // mostkami i rdzeniami nie mogą unosić spodu kopułą)
+    const edgeRef = (x, y, d) => {
+      const t = Math.max(0, Math.min(1, (d - 160 * k) / (200 * k)));
+      return zTop(x, y, 0) * (1 - t) - drop * t;
+    };
+    const zBase = (x, y, d) => edgeRef(x, y, d) + (d < dFlat ? zFlat : Math.max(-depth, zFlat - Bt.slope * (d - dFlat)));
+    // wcięcia: 1 w środku, 0 poza; zbocze `ramp` j., z dala od burty
+    const L = x1 - x0, hw = (y1 - y0) / 2, ramp = R.ramp * k;
+    const recessAt = (x, y, d) => {
+      if (opts.recess === false) return 0;
+      const u = (x - x0) / L, v = Math.abs(y) / hw;
+      let m = 0;
+      for (const [u0, u1, vi, va, vb] of R.shapes) {
+        const t = Math.max(0, Math.min(1, (u - u0) / (u1 - u0)));
+        const vo = va + (vb - va) * t;
+        // odległość ze znakiem [j.] od brzegu kształtu (wnętrze < 0)
+        const sd = Math.max((u0 - u) * L, (u - u1) * L, (v - vo) * hw, vi > 0 ? (vi - v) * hw : -1e9);
+        m = Math.max(m, Math.max(0, Math.min(1, -sd / ramp)));
+      }
+      return m * Math.max(0, Math.min(1, (d - R.edgeIn * k) / (R.edgeRamp * k)));
+    };
+    const zOf = (x, y, d) => zBase(x, y, d) + R.depth * k * recessAt(x, y, d);
+    const matOf = (x, y, d) => (recessAt(x, y, d) > 0.5 ? M.DARK : M.PAINT);
+    const bg = heightGrid([x0, y0, x1, y1], Bt.cell * k, segs, poly0, (d) => d >= Bt.dMin * k, zOf, true, matOf);
     cells = bg.cells;
     for (let i = 2; i < bg.pos.length; i += 3) if (bg.pos[i] < deepest) deepest = bg.pos[i];
-    extra.push({ pos: bg.pos, nrm: bg.nrm, idx: bg.idx, mat: M.PAINT });
+    extra.push({ pos: bg.pos, nrm: bg.nrm, idx: bg.idx, mats: bg.mats, bands: bg.bands });
+    // ZABUDOWA we wcięciach: bryły podwieszone pod stropem wcięcia (z sufitu w dół), rzadkie światła na ścianach
+    if (opts.district !== false && opts.recess !== false) {
+      const Bd = new MeshBuilder3D();
+      const cellD = Dt.cell * k;
+      let n = 0;
+      for (let y = 0; y <= hw; y += cellD) {
+        for (let x = x0; x <= x1; x += cellD) {
+          const cx = x + cellD / 2, cy = y + cellD / 2;
+          if (!pointInPoly(cx, cy, poly0)) continue;
+          const d = edgeDistance(segs, cx, cy);
+          if (recessAt(cx, cy, d) < 0.97) continue;
+          const h0 = hash1(Math.floor(cx / cellD) * 7.13 + Math.floor(cy / cellD) * 3.71);
+          if (h0 > Dt.fill) continue;
+          const fx = cellD * (Dt.foot[0] + (Dt.foot[1] - Dt.foot[0]) * hash1(h0 * 91.7));
+          const fy = cellD * (Dt.foot[0] + (Dt.foot[1] - Dt.foot[0]) * hash1(h0 * 53.3));
+          const tower = hash1(h0 * 17.9) < Dt.tower;
+          const hb = tower ? R.depth * Dt.towerH * k * (0.85 + 0.15 * hash1(h0 * 29.1))
+            : (Dt.h[0] + (Dt.h[1] - Dt.h[0]) * hash1(h0 * 29.1) ** 1.6) * k;
+          const ceil = zOf(cx, cy, d);
+          // zabudowa ciemna (wcięcia mają czytać się z daleka jako ciemne), rzadkie jaśniejsze bryły
+          const mat = [M.DARK, M.DARK, M.DARK, M.PANEL][Math.floor(hash1(h0 * 7.7) * 4)];
+          for (const sy of cy > cellD * 0.5 ? [1, -1] : [1]) {
+            // pudło: od sufitu (+2 j. w strop) w dół o wysokość bryły
+            Bd.box(cx, cy * sy, ceil + 2 - hb / 2, fx, fy, hb + 2, { mat });
+            n++;
+            if (hash1(h0 * 61.3 + sy) < Dt.lights) {
+              // światło na ścianie zwróconej ku osi wcięcia (+x lub −x), niżej połowy wysokości
+              const lw = Dt.light[0] * k, lh = Dt.light[1] * k, side = hash1(h0 * 3.3) < 0.5 ? 1 : -1;
+              const lx = cx + side * (fx / 2 + 0.3 * k), lz = ceil - hb * (0.35 + 0.4 * hash1(h0 * 8.1));
+              const lmat = hash1(h0 * 4.4) < 0.35 ? M.E_ICE : M.E_WINDOW;
+              for (let q = -1; q <= 1; q += 2) {
+                const ly = cy * sy + q * fy * 0.22;
+                Bd.face([[lx, ly - lw / 2, lz - lh / 2], [lx, ly + lw / 2, lz - lh / 2], [lx, ly + lw / 2, lz + lh / 2], [lx, ly - lw / 2, lz + lh / 2]], lmat, [side, 0, 0]);
+                nBlockLights++;
+              }
+            }
+          }
+        }
+      }
+      nBlocks = n;
+      const bd = Bd.build();
+      extra.push({ pos: Array.from(bd.position), nrm: Array.from(bd.normal), idx: Array.from(bd.index), mats: Array.from(bd.mat), uvs: Array.from(bd.uv) });
+    }
   }
   // ── złożenie ─────────────────────────────────────────────────────────────────────────────────────────────────
   let nv = side.vertexCount, ni = side.index.length;
   for (const e of extra) { nv += e.pos.length / 3; ni += e.idx.length; }
   const out = {
     position: new Float32Array(nv * 3), normal: new Float32Array(nv * 3), uv: new Float32Array(nv * 2),
-    mat: new Float32Array(nv), index: new Uint32Array(ni)
+    mat: new Float32Array(nv), band: new Float32Array(nv), index: new Uint32Array(ni)
   };
   out.position.set(side.position); out.normal.set(side.normal); out.uv.set(side.uv); out.mat.set(side.mat);
   out.index.set(side.index);
@@ -416,7 +496,12 @@ export function buildHullBodyGeometry(loops0, opts = {}) {
   for (const e of extra) {
     const n = e.pos.length / 3;
     out.position.set(e.pos, vo * 3); out.normal.set(e.nrm, vo * 3);
-    for (let i = 0; i < n; i++) { out.mat[vo + i] = e.mat; out.uv[(vo + i) * 2] = e.pos[i * 3]; out.uv[(vo + i) * 2 + 1] = e.pos[i * 3 + 1]; }
+    for (let i = 0; i < n; i++) {
+      out.mat[vo + i] = e.mats ? e.mats[i] : e.mat;
+      out.band[vo + i] = e.bands ? e.bands[i] : 0;
+      out.uv[(vo + i) * 2] = e.uvs ? e.uvs[i * 2] : e.pos[i * 3];
+      out.uv[(vo + i) * 2 + 1] = e.uvs ? e.uvs[i * 2 + 1] : e.pos[i * 3 + 1];
+    }
     for (let i = 0; i < e.idx.length; i++) out.index[io + i] = e.idx[i] + vo;
     vo += n; io += e.idx.length;
   }
@@ -436,7 +521,7 @@ export function buildHullBodyGeometry(loops0, opts = {}) {
   out.topGrid = topGrid;
   out.stats = {
     scale: Math.round(k * 1000) / 1000, outline: poly.length, rings: rings.length, lights: nLights, bottomCells: cells,
-    topCells, drop: Math.round(drop), plateau: Math.round(plateau), pins: pins.length,
+    topCells, drop: Math.round(drop), plateau: Math.round(plateau), pins: pins.length, blocks: nBlocks, blockLights: nBlockLights,
     edgeDepth: Math.round(-(rings[rings.length - 1].z - drop)), depth: Math.round(-deepest), triangles: out.triangleCount,
     box: [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)]
   };

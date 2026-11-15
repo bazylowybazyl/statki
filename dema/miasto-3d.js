@@ -216,6 +216,20 @@ cityWorker.onmessage = (e) => {
   cityWaiters.delete(e.data.id);
   if (w) w(e.data);
 };
+// Cienie na kadłubie (miasto, mostki, rdzenie) to prostokąty POD wierzchem z testem głębi GREATER — rysują się tam,
+// gdzie z góry stoi kadłub. Od SPODU ten test przechodzi przez całą bryłę (kadłub jest dalej niż spód), więc przy kamerze
+// pod płaszczyzną okrętu takie odbiorniki są na czas rysunku ukryte (inaczej „okrągłe wypukłości” pod rdzeniami).
+const _greaterHidden = [];
+function hideGreaterReceivers(scene, below) {
+  if (!below) return;
+  scene.traverse((o) => {
+    if (o.isMesh && o.visible && o.material?.depthFunc === THREE.GreaterDepth) { o.visible = false; _greaterHidden.push(o); }
+  });
+}
+function restoreGreaterReceivers() {
+  for (const o of _greaterHidden) o.visible = true;
+  _greaterHidden.length = 0;
+}
 // Bryła kadłuba pod wierzchem (src/3d/hullBody3D/, docs/OPIS-miasto-3d.md § 11) — obrys z pola kreatora.
 let body3D = null;
 function bodyInit() {
@@ -366,6 +380,8 @@ const VIEWS = {
   spod: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8800, yaw: -Math.PI / 2, pitch: -1.42 }; },
   bok: () => { S.view = 'ukos'; S.orbit = { tx: 0, ty: 0, dist: 8200, yaw: -Math.PI / 2, pitch: 0.07 }; },
   burta: () => { S.view = 'ukos'; S.orbit = { tx: 1500, ty: 560, dist: 820, yaw: -Math.PI / 2 + 0.35, pitch: 0.12 }; },
+  // od spodu z ukosa (wcięcia spodu i zabudowa w nich)
+  spodUkos: () => { S.view = 'ukos'; S.orbit = { tx: -600, ty: 0, dist: 4600, yaw: -2.5, pitch: -0.42 }; },
   // grzbiet ku dziobowi: miasto schodzi z wierzchem po stoku
   grzbiet: () => { S.view = 'ukos'; S.orbit = { tx: 1300, ty: 0, dist: 2600, yaw: 0.62, pitch: 0.16 }; }
 };
@@ -441,7 +457,9 @@ function render() {
   if (ship.entity?.bridgeState) bridgeList.push(ship.entity);
   bridgeOpts.nowSec = S.frame * PHYS_DT; bridgeOpts.zoom = cam.zoom; bridgeOpts.cull = cullInfo; bridgeOpts.camera = cam;
   Bridge3D.update(bridgeList, bridgeOpts);
+  hideGreaterReceivers(Core3D.scene, S.view === 'ukos' && S.orbit.pitch < 0);
   drawHexShips3D(ctx2d, W, H);
+  restoreGreaterReceivers();
   drawCatalogLabels();
   if (S.info) updateInfo();
 }
@@ -502,7 +520,7 @@ canvas2d.addEventListener('wheel', (e) => {
 }, { passive: false });
 addEventListener('keydown', (e) => {
   if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return;
-  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta', '=': 'grzbiet' }[e.key];
+  const v = { 1: 'caly', 2: 'row', 3: 'blisko', 4: 'ukos', 5: 'nisko', 6: 'rufa', 7: 'przod', 8: 'tyl', 9: 'spod', 0: 'bok', '-': 'burta', '=': 'grzbiet', '[': 'spodUkos' }[e.key];
   if (v) setView(v);
   else if (e.key === 'm' || e.key === 'M') toggleCity();
   else if (e.key === 'b' || e.key === 'B') toggleBody();
