@@ -39,6 +39,8 @@ export const BIT_ZOSTAW = 1 << 16;
 /** Bit flagi węzła: reszta kuli krateru rozrywa go przez S = 3. Bez bitu węzeł poza rS zostaje nietknięty (scena z szwami). */
 export const BIT_PAS = 1 << 17;
 const POMIJANY_CEL = 0xffffffff;
+// Oddanie wątku zadaniem (nie mikrozadaniem) między kompilacjami kerneli w rozgrzewce — klatki workera idą pomiędzy.
+const oddajWatek = () => new Promise((ok) => setTimeout(ok, 0));
 export const GINIE_BOK = 104;  // kubełki węzłów, które doleciały do skały w grze: siatka GINIE_BOK² w rzucie XY
 /** Bok mapy kształtu skały w tekselach. */
 export const WYS_BOK = 64;
@@ -1602,9 +1604,13 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
   /** Sam kI: kopia stanu i całkowanie (test vMax, § 1.6). */
   function calkuj(renderer) { renderer.compute(listaCalkowania); }
 
-  /** Rozgrzewka: puste dispatche każdego kernela (zasada 5). Pipeline compute three r183 powstaje synchronicznie, więc tylko przed pierwszą klatką. */
+  /**
+   * Rozgrzewka: puste dispatche każdego kernela (zasada 5). Pipeline compute three r183 powstaje synchronicznie, więc tylko przed pierwszą klatką.
+   * Po każdym kernelu oddanie wątku ZADANIEM (`computeAsync` po init kończy się mikrozadaniem): w grze worker rysuje klatki między
+   * kompilacjami — wszystkie kernele w jednym zadaniu to ~0,2–0,3 s stania obrazu (pomiar 2026-11-15, misja1-trasa-gra.mjs).
+   */
   async function rozgrzej(renderer) {
-    for (const k of Object.values(kernele)) await renderer.computeAsync(k, [0, 1, 1]);
+    for (const k of Object.values(kernele)) { await renderer.computeAsync(k, [0, 1, 1]); await oddajWatek(); }
   }
 
   /**

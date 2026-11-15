@@ -1212,8 +1212,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   }
 
   /** Samo rozgrzanie kerneli (test i tryb pomiarowy nie rysują). */
+  // Po każdym kernelu oddanie wątku ZADANIEM (wzór `rozgrzej` solvera): w grze worker rysuje klatki między kompilacjami.
   async function rozgrzejKernele(renderer) {
-    for (const k of listaObrazu) await renderer.computeAsync(k, [0, 1, 1]);
+    for (const k of listaObrazu) { await renderer.computeAsync(k, [0, 1, 1]); await new Promise((ok) => setTimeout(ok, 0)); }
   }
 
   /** Rozgrzewka: kernele, pass sceny, pass cienia, głębia, GTAO, wyjście. Przed pierwszą klatką, 0 pipeline'ów synchronicznych (zasada 5, pułapki 20, 30, 31, 32). */

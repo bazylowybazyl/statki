@@ -440,15 +440,59 @@ if (isWorker) {
     } catch (e) { report(e, 'komety'); }
   }
 
-  async function pirateBaseEvent(m) {
-    try {
-      if (!st.pbg) {
-        const [pbg, site, lay, blk] = await Promise.all([import('../3d/pirateBaseGame.js'), import('../game/story/pirateBaseSite.js'),
-          import('../3d/portBuildings/pirateBaseLayout.js'), import('./blocks/pirateBaseBlock.js')]);
+  // moduły bazy piratów — raz (zdarzenie bazy albo przygotowanie sceny kampanii, co pierwsze)
+  function ensurePirateBaseMods() {
+    if (!st.pbModsP) {
+      st.pbModsP = Promise.all([import('../3d/pirateBaseGame.js'), import('../game/story/pirateBaseSite.js'),
+        import('../3d/portBuildings/pirateBaseLayout.js'), import('./blocks/pirateBaseBlock.js')]).then(([pbg, site, lay, blk]) => {
         st.pbMods = { site, lay, blk };
         st.pbMirror = blk.createPirateBaseMirror();
         st.pbg = pbg;
+        return pbg;
+      });
+    }
+    return st.pbModsP;
+  }
+  function ensureWorldBodiesMods() {
+    if (!st.wbModsP) {
+      st.wbModsP = Promise.all([import('../game/story/pirateBaseBodies.js'), import('../3d/worldBodies3D.js'),
+        import('./blocks/worldBodiesBlock.js')]).then(([bodies, w3d, blk]) => (st.wbMods = { bodies, w3d, blk }));
+    }
+    return st.wbModsP;
+  }
+
+  // BAZA PIRATÓW PRZED GRĄ (kampania — flaga `pirateBase` przygotowania sceny; pomiar 2026-11-15,
+  // scripts/webgpu/misja1-trasa-gra.mjs): misja tworzy bazę przy wylocie z hali K-7 (StoryGame._spawnSite), a worker
+  // robił wtedy wszystko naraz — bryłę bazy, kratownice 52 kawałków (prebuildPirateBaseBodies, ~0,55 s jednym zadaniem)
+  // i woksele (468 MB buforów, 27 kerneli compute, siatki): obraz stał ~0,6 s zaraz po wylocie i ~0,3 + 0,2 s kilka
+  // sekund później. Tu, pod kurtyną ładowania: bryła (wpis rozgrzewki 'loading' modułu) i kratownice (te same obiekty
+  // weźmie attach — pamięć po układzie bazy), a budowa wokseli rusza w tle (wypiek węzłów w osobnym wątku); przygotowanie
+  // po klatce zero czeka na nią z limitem. Strona liczy swoje kratownice sama (prebuildPirateBaseWorld).
+  function startPirateBasePrep() {
+    if (st.pbPrepP) return st.pbPrepP;
+    st.pbPrepP = (async () => {
+      const t0 = performance.now();
+      const pbg = await ensurePirateBaseMods();
+      const base = typeof pbg.pirateBasePrebuilt === 'function' ? pbg.pirateBasePrebuilt() : null;
+      if (!base) return false;
+      const tBase = performance.now();
+      const mods = await ensureWorldBodiesMods();
+      try { mods.bodies.prebuildPirateBaseBodies(base.layout, base.scene, base.style?.palette || null); } catch (e) { report(e, 'ciała świata: prebuild'); }
+      const tBodies = performance.now();
+      st.pbVoxP = typeof pbg.preparePirateBaseVoxels === 'function' ? pbg.preparePirateBaseVoxels() : null;
+      if (st.pbVoxP) {
+        const tv = performance.now();
+        st.pbVoxP.then((ok) => console.log(`[render.worker] woksele bazy przed grą: ${ok ? 'gotowe' : 'bez wokseli'} po ${Math.round(performance.now() - tv)} ms`));
       }
+      console.log(`[render.worker] baza piratów przed grą: bryła ${Math.round(tBase - t0)} ms, kratownice ${Math.round(tBodies - tBase)} ms, woksele w tle`);
+      return true;
+    })().catch((e) => { report(e, 'baza piratów: przygotowanie'); return false; });
+    return st.pbPrepP;
+  }
+
+  async function pirateBaseEvent(m) {
+    try {
+      await ensurePirateBaseMods();
       if (m.ev === 'attach') {
         const l = st.pbMods.lay.createPirateBaseLayout();
         const ux = Math.cos(m.axis), uy = Math.sin(m.axis), nx = -uy, ny = ux;
@@ -467,14 +511,11 @@ if (isWorker) {
   async function attachWorldBodies() {
     const base = st.pbg && st.pbg.pirateBase3D ? st.pbg.pirateBase3D() : null;
     if (!base || !st.pbPlace) return;
-    if (!st.wbMods) {
-      const [bodies, w3d, blk] = await Promise.all([import('../game/story/pirateBaseBodies.js'), import('../3d/worldBodies3D.js'),
-        import('./blocks/worldBodiesBlock.js')]);
-      st.wbMods = { bodies, w3d, blk };
-    }
+    await ensureWorldBodiesMods();
     detachWorldBodies();
     const t0 = performance.now();
-    // rastry i szablony kratownic (strona: ekran ładowania) — raz, przed pierwszym kawałkiem ciałem
+    // rastry i szablony kratownic (strona: ekran ładowania; worker w kampanii: przygotowanie sceny — startPirateBasePrep,
+    // wtedy tu z pamięci) — raz, przed pierwszym kawałkiem ciałem
     try { st.wbMods.bodies.prebuildPirateBaseBodies(base.layout, base.scene, base.style?.palette || null); } catch (e) { report(e, 'ciała świata: prebuild'); }
     const sitesObj = st.wbMods.bodies.createPirateBaseSites({}, base, st.pbPlace);
     const keys = Object.keys(base.layout.structures);
@@ -1265,6 +1306,8 @@ if (isWorker) {
   async function prepareScene(m) {
     const t0 = performance.now();
     if (st.gamePrewarm) st.gamePrewarm();
+    // kampania: baza piratów misji 1 pod kurtyną (bryła, kratownice, woksele w tle) — nie przy wylocie z hali K-7
+    if (m.pirateBase && !m.afterFrame) await startPirateBasePrep();
     const waits = [];
     if (st.haloRings) {
       st.haloRings.syncEntries?.();
@@ -1298,6 +1341,9 @@ if (isWorker) {
       try { await st.mods.stations.warmStationTemplates3D(st.rm.stations, { timeoutMs: 8000 }); } catch (e) { console.warn('[render.worker] stacje:', e); }
       st.tStations = performance.now() - t0;
     }
+    // woksele bazy (kampania): budowa ruszyła w pierwszym przygotowaniu — kończy się pod kurtyną, jeśli zdąży (wypiek
+    // węzłów ~4–6 s w osobnym wątku); po limicie dokończy się w tle, kernele po jednym na zadanie
+    if (m.pirateBase && m.afterFrame && st.pbVoxP) await Promise.race([st.pbVoxP, limit(m.pirateBaseMs || 6000)]);
     const tF = performance.now();
     await Promise.race([st.Core3D.warmup.flush({ timeoutMs: 4000 }), limit(6000)]);
     console.log(`[render.worker] przygotowanie (afterFrame ${!!m.afterFrame}): od init ${Math.round(t0 - st.t0)} ms, klatka 0 po ${Math.round(st.tFrame0 || 0)} ms, passy do ${Math.round(st.tPasses || 0)} ms, stacje do ${Math.round(st.tStations || 0)} ms, flush ${Math.round(performance.now() - tF)} ms`);

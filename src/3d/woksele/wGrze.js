@@ -86,6 +86,9 @@ export function createWokseleGry({ Core3D }) {
   let zNajnizej = null; // najniższy węzeł wypieku: wyżej budowla stoi w polu, w którym ją wypieczono
   const wysCpu = new Float32Array(WYS_BOK * WYS_BOK); // r − R skały, kopia mapy kształtu z solvera: miejsce kraterów
   let zbudowane = null;
+  // Stan węzłów wczytany przez budowę, a jeszcze nieużyty przez start: pierwszy attach bez ponownego zaladuj (także gdy
+  // budowa ruszyła wcześniej — przygotuj(), kurtyna ładowania kampanii). Kolejny start (nowa gra) wczytuje od nowa.
+  let swieze = false;
   let s = null;
 
   async function zbuduj() {
@@ -241,6 +244,7 @@ export function createWokseleGry({ Core3D }) {
     await naCelu(obraz.pyl.rt, obraz.pyl.scena, kamLok);
     await Core3D.warmup.now([meshFg, gruzFg], { name: 'woksele: bryły FG', layer: WARSTWA_FG });
     await Core3D.warmup.now([meshTlo, gruzTlo, kwadPyl, meshLiny], { name: 'woksele: bryły tła', layer: WARSTWA_TLO });
+    swieze = true;
     return s;
   }
 
@@ -519,6 +523,16 @@ export function createWokseleGry({ Core3D }) {
     get gotowe() { return stan.gotowe; },
 
     /** Baza w miejscu z planu misji. skala: { center: [x, h, z] układu bazy, R }. Kończy się, gdy można schować starą bazę. Ponowny attach (nowa gra): reset buforów, bez nowych pipeline'ów. */
+    /**
+     * Budowa PRZED attach (worker: kurtyna ładowania kampanii — pirateBaseGame.preparePirateBaseVoxels): wypiek węzłów,
+     * bufory, kernele i rozgrzewka siatek raz, jak w start(); siatki schowane, krok efektów bez pracy do gotowości.
+     * Ta sama obietnica co w start(), więc attach tylko ustawia ramkę i czeka na wypiek skóry.
+     */
+    przygotuj() {
+      if (!zbudowane) zbudowane = zbuduj().catch((e) => { zbudowane = null; throw e; });
+      return zbudowane;
+    },
+
     async start({ place, base, skala = null }) {
       const proba = ++stan.proba;
       stan.gotowe = false;
@@ -537,7 +551,6 @@ export function createWokseleGry({ Core3D }) {
       stan.krateryN = 0;
       hity.length = 0;
       slabe.clear();
-      const pierwszy = !zbudowane;
       if (!zbudowane) zbudowane = zbuduj().catch((e) => { zbudowane = null; throw e; });
       await zbudowane;
       if (proba !== stan.proba) return false;
@@ -553,7 +566,8 @@ export function createWokseleGry({ Core3D }) {
       const [cx, cy] = s.skoraUklad.srodek;
       stan.srodekX = o.x + stan.cOs * cx + stan.sOs * cy;
       stan.srodekY = -o.y - stan.sOs * cx + stan.cOs * cy;
-      if (!pierwszy) s.zaladuj();
+      if (!swieze) s.zaladuj();
+      swieze = false;
       stan.krok = 0; stan.akum = 0;
       // Skała w układzie węzłów: X = x bazy, Y = −z bazy, Z = z sceny (środek skały ma w polu h gotową głębokość sceny, pirateBaseGame.js: attachPirateRock).
       stan.skalaOk = !!skala;

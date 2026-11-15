@@ -408,7 +408,8 @@ const powershell = (cmd) => new Promise((ok) => execFile('powershell.exe', ['-No
 
 /** Gry użytkownika na tej maszynie (LoL, RuneScape…) — pomiar GPU przy grze pomijać (pamięć: perf-measurement-coordination). */
 export async function gryUzytkownika() {
-  const out = await powershell(`Get-Process | Where-Object { $_.ProcessName -match 'League|RuneScape|Dragonwilds|RSDragon|Jagex|osclient' } | ForEach-Object { $_.ProcessName }`);
+  // rs2client — klient RuneScape uruchamiany z JagexLaunchera (2026-11-15: nazwa bez „RuneScape”, filtr go nie widział)
+  const out = await powershell(`Get-Process | Where-Object { $_.ProcessName -match 'League|RuneScape|Dragonwilds|RSDragon|Jagex|osclient|rs2client' } | ForEach-Object { $_.ProcessName }`);
   return [...new Set(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
 }
 

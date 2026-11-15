@@ -162,6 +162,25 @@ function ensurePrebuilt() {
 
 Core3D.warmup?.add({ name: 'baza piratów: bryła', objects: () => ensurePrebuilt()?.root || null, phase: 'loading' });
 
+/** Bryła bazy z ekranu ładowania (tę samą weźmie attach) — worker liczy z niej kratownice ciał świata przed grą. */
+export function pirateBasePrebuilt() { return ensurePrebuilt(); }
+
+/**
+ * Woksele PRZED misją (worker: przygotowanie sceny pod kurtyną ładowania kampanii — render.worker.js, flaga `pirateBase`):
+ * budowa raz, bez miejsca bazy (wypiek węzłów w osobnym wątku, bufory solvera, kernele, rozgrzewka siatek). Przy attach
+ * (wylot z hali K-7 — misja tworzy wtedy bazę) zostaje ramka i wypiek skóry; dawniej cała budowa szła tam i obraz stał
+ * ~0,3 + 0,2 s kilka sekund po wylocie (pomiar 2026-11-15, scripts/webgpu/misja1-trasa-gra.mjs). Promise → true / false.
+ */
+export function preparePirateBaseVoxels() {
+  if (VOX_WYL || !Core3D.scene) return Promise.resolve(false);
+  return (async () => {
+    const m = await import('./woksele/wGrze.js');
+    if (!vox) vox = m.createWokseleGry({ Core3D });
+    await vox.przygotuj();
+    return true;
+  })().catch((e) => { console.error('[woksele] przygotowanie przed misją nie wyszło — budowa przy attach', e); return false; });
+}
+
 // ---- planetoida pod bazą: skała, osada, winda (pass tła, warstwa BG)
 let rock = null;
 let rockSite = null;

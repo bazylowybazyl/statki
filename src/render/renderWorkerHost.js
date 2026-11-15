@@ -455,12 +455,13 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   // Ekran ładowania (RW-41): worker buduje ringi przy (x, y) i dokańcza rozgrzewkę — strona czeka (z limitem).
   host._prep = new Map();
   host._prepSeq = 0;
-  host.prepare = (x, y, timeoutMs = 25000, afterFrame = false, idle = false) => new Promise((resolve) => {
+  // extra — pola przygotowania (np. { pirateBase: true } — kampania: baza piratów misji 1 pod kurtyną, render.worker.js)
+  host.prepare = (x, y, timeoutMs = 25000, afterFrame = false, idle = false, extra = null) => new Promise((resolve) => {
     const id = ++host._prepSeq;
     host._prep.set(id, resolve);
     // afterFrame: po wiadomości ostatniej strony (łańcuch wiadomości) — worker czeka na jej rysunek, potem rozgrzewa passy
-    if (afterFrame) { const k = host.lastPostedK; host._chain = host._chain.then(() => worker.postMessage({ type: 'prepare', id, x, y, afterFrame: true, k })); }
-    else worker.postMessage({ type: 'prepare', id, x, y, idle });
+    if (afterFrame) { const k = host.lastPostedK; host._chain = host._chain.then(() => worker.postMessage({ ...extra, type: 'prepare', id, x, y, afterFrame: true, k })); }
+    else worker.postMessage({ ...extra, type: 'prepare', id, x, y, idle });
     setTimeout(() => { if (host._prep.delete(id)) resolve(false); }, timeoutMs);
   });
   // Narzędzia (RW-44, harness): operacja dla workera stosowana PRZED stroną, po której ją zgłoszono —

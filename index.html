@@ -37871,8 +37871,11 @@
       // kroki startu (ms od kliknięcia) — narzędzia: start-gry.mjs / render-worker-gra.mjs
       const startSteps = window.__startSteps = {};
       const stepMark = (k) => { startSteps[k] = Math.round(performance.now() - launchT0); };
-      // RW-41: worker przygotowuje scenę (ringi przy statku, rozgrzewka) równolegle z ekranem ładowania strony
-      const rwPrepare = rwHost ? rwHost.prepare(ship.pos.x, ship.pos.y) : null;
+      // RW-41: worker przygotowuje scenę (ringi przy statku, rozgrzewka) równolegle z ekranem ładowania strony.
+      // Kampania: także bazę piratów misji 1 (bryła, kratownice, woksele) — dawniej worker budował ją przy wylocie z hali
+      // K-7 i obraz stał ~0,6 s, potem jeszcze raz ~0,3 s (2026-11-15, render.worker.js: startPirateBasePrep).
+      const rwPrepareExtra = storyCampaign ? { pirateBase: true } : null;
+      const rwPrepare = rwHost ? rwHost.prepare(ship.pos.x, ship.pos.y, 25000, false, false, rwPrepareExtra) : null;
       // Kampania z lotem intro w tle menu: kamera tła NIE dojeżdża do Ziemi (tylko planeta na środek kadru) — tor intro
       // leci jednym najazdem z tej pozy prosto na dok K-7 (dawniej: dojazd tu + tor „do Ziemi, odjazd, dok”).
       const storyFlightPlanned = storyCampaign && !!menuBackdrop && !storyStartPhase;
@@ -38016,7 +38019,7 @@
         stepMark('workerScena');
         // klatka zero pod kurtyną: worker buduje lustra i rysuje świat startu, potem rozgrzewa passy z tym, co w scenie
         try { render(1, 0); } catch (err) { console.warn('[render worker] klatka zero:', err); }
-        await rwHost.prepare(ship.pos.x, ship.pos.y, 15000, true);
+        await rwHost.prepare(ship.pos.x, ship.pos.y, 15000, true, false, rwPrepareExtra);
         stepMark('workerKlatkaZero');
       }
 
