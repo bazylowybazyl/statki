@@ -11,6 +11,11 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 - Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–46) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
 - Notatka dla kolejnych agentów w kodzie: komentarz z prefiksem `AGENT:`.
 
+## Pytania do użytkownika — w rozmowie, nie w plikach
+
+- Pytanie albo decyzja, która należy do użytkownika, trafia do ROZMOWY z nim: krótko, z rekomendacją. Raport, `docs/`, reguła, komentarz ani notatka nie są miejscem na pytanie — w plikach zostaje zapis decyzji podjętych i kopia pytań już zadanych w rozmowie.
+- Pyta ta sesja, z którą użytkownik rozmawia. Podagent i etap workflow oddają pytania w wyniku dla zlecającego (osobna lista, nie tylko plik raportu), a zlecający przepisuje je do rozmowy; co rozstrzyga sam — mówi o tym jednym zdaniem. Sesja poboczna, z którą użytkownik pracuje wprost, pyta jego u siebie.
+
 ## Zasady żelazne
 
 1. Rozgrywka (fizyka, kolizje, obrażenia, wejście, AI) liczy się w 2D i jest źródłem prawdy. 3D to wyłącznie obraz: model, kamera 3D ani ścieżka rysowania (np. czy pocisk rysuje `WeaponFx`) nie zmieniają wyniku gry.
@@ -184,6 +189,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `autostrada` | Autostrada wokół Ziemi (demo, niewpięte): sieć węzłów, ruch IDM i sygnalizacja K-7, Atlas na czerwonym, style wyglądu pasów, ślady z historii pozycji, układ „rama” pod stocznię K-7 (geometria pasów przez `geo`) |
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
 | `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
+| `transport-ladunku` | Standard ładunku (materiał wstępny, niewpięty; standaryzacja odłożona — liczby robocze do przeliczenia po wyrobach zakładów): kontener → moduł → sekcja, odmiany nośnika, sprzęg i gniazdo sekcji w kadłubie, kruszarka, plansza wymiarów, poprzeczka jakości transportu |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `zlomowanie` | Złomowanie jako proces: komputer złomiarski (plan cięć z komórek kadłuba), podawanie wraku do dziobu, wysięgniki z laserami tnącymi, sekcje jako ciała belek, paszcza; decyzje użytkownika i etapy do zrobienia |

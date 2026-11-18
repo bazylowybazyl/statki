@@ -17,15 +17,22 @@
 //   ze sceny (Δ GPU render) i każdy krok Core3D.fx wyjęty z listy (Δ compute); okna bazowe przeplatane co 5 wariantów.
 // Etap „baza”: skok dev ?story=<faza> (domyślnie shipyard), Atlas 3,5 km od habitatu, mgła wojny wyłączona, kamera
 //   statku przy zoomach --zoomy (zgłoszenie: ZOOM X0.04); okna sondy; --ab 1 — jak w hali + czujniki wył. (strona:
-//   Czujka.input.off) i siatki wokseli (Wok*) zdjęte.
+//   Czujka.input.off) i siatki wokseli (Wok*) zdjęte. --trafienie 1: jedno voxHit w habitat i okna w stanie aktywnym
+//   wokseli (jak w walce); --abPoTrafieniu 1: warianty --abBaza jeszcze raz po trafieniu.
+// Własne warianty A/B (plik JSON: [{ nazwa, kod: [włącz, przywróć] }] — wyrażenia w workerze, np.
+//   "globalThis.__ST.hallDust.layer.setHazeLoops('osobne')", "(globalThis.__wokGra.ab.gruzOdZdarzenia = false, true)"):
+//   --abHala / --abBaza <plik> (Δ GPU, --abPowt N powtórzeń, --abScena 0 — bez przeglądu korzeni i kroków fx),
+//   --zrzutyHala / --zrzutyBaza <plik> — zrzuty WYGLĄDU w pauzie, przedziały wartości pikseli z 4 zrzutów na wariant
+//   (zrzutyAB; wariant bez zmiany obrazu ma wynik kontroli zerowej ['true', 'true']). --wylot 0: etap hala bez wylotu.
 // Tryb gracza: render w workerze, headless w takcie monitora (--takt 1, jak gracz z VSync; --takt 0 — bez limitu klatek,
 // kl/s to przepustowość). Raport: <out>/raport.json (zapisywany po każdym oknie), profile <out>/*.cpuprofile, zrzuty PNG.
 // Pomiar tylko przy wolnej maszynie: gra użytkownika na starcie albo w trakcie (sprawdzana co 15 s) — koniec przebiegu;
 // cudze harnessy — w raporcie `obce`.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
+import { readPng } from './png.mjs';
 import { sondaInstaluj, sondaOkno, SONDA_CZYTAJ, SONDA_GPU_OKNA, startNvidiaSmi, stanMaszyny, gryUzytkownika, obceProcesy } from './sondaGpuWorkera.mjs';
 
 const args = parseArgs();
@@ -39,6 +46,23 @@ const AB = String(args.ab ?? '1') === '1';
 const FAZA = String(args.faza || 'shipyard');
 const ZOOMY = String(args.zoomy || '0.04,0.14').split(',').map(Number).filter((z) => z > 0);
 const PO_WYLOCIE = Number(args.poWylocie || 16);
+// --abScena 0: A/B bez przeglądu korzeni sceny i kroków fx (same warianty z --abHala / --abBaza);
+// --abHala / --abBaza <plik.json>: dodatkowe warianty [{ nazwa, kod: [zastosuj, przywróć] } | { nazwa, strona: [...] }]
+// (kod w workerze: globalThis.__C3 = Core3D, __ST = stan workera); --abPowt N: warianty dodatkowe N razy na przemian;
+// --wylot 0: etap hali bez wylotu (sam dok i A/B)
+const AB_SCENA = String(args.abScena ?? '1') === '1';
+const WYLOT = String(args.wylot ?? '1') === '1';
+const AB_POWT = Math.max(1, Number(args.abPowt || 1));
+const czytajWarianty = (p) => (p ? JSON.parse(readFileSync(resolve(repo, String(p)), 'utf8')) : []);
+const AB_HALA = czytajWarianty(args.abHala);
+const AB_BAZA = czytajWarianty(args.abBaza);
+// --zrzutyHala / --zrzutyBaza <plik json z wariantami jak --abHala>: zrzuty A/B WYGLĄDU w pauzie (zrzutyAB niżej)
+const ZRZUTY_HALA = czytajWarianty(args.zrzutyHala);
+const ZRZUTY_BAZA = czytajWarianty(args.zrzutyBaza);
+// Listy węzłów na pass (obraz.js): liczby instancji tła i FG z argumentów rysunku pośredniego (odczyt z GPU w workerze).
+const LISTY_STAT = `(async () => { const o = globalThis.__wokGra?.obraz; if (!o?.geoTlo?.indirect) return null;
+  const a = new Uint32Array(await globalThis.__C3.renderer.getArrayBufferAsync(o.geoTlo.indirect));
+  return { tlo: a[1], fg: a[6], instancji: o.lod.instRysunek }; })()`;
 const tStart = Date.now();
 const sek = () => +((Date.now() - tStart) / 1000).toFixed(1);
 
@@ -346,12 +370,14 @@ async function abPauza(etap, extra = []) {
   const spis = await wkEval(SCENA_SPIS);
   report.etapy[etap].scena = spis;
   console.log(`[${sek()}] scena workera: ${spis.n} korzeni, kroki fx: ${spis.fx.map((f) => f.nazwa).join(', ')}`);
-  for (const r of spis.rows.filter((q) => q.widoczne > 0)) console.log(`     #${r.i} ${r.nazwa.slice(0, 60)} (${r.typ}) siatki ${r.widoczne}/${r.siatki} ktris ${r.ktris} warstwy ${r.warstwy}${r.swiatla ? ` ŚWIATŁA ${r.swiatla} — bez A/B` : ''}`);
+  if (AB_SCENA) for (const r of spis.rows.filter((q) => q.widoczne > 0)) console.log(`     #${r.i} ${r.nazwa.slice(0, 60)} (${r.typ}) siatki ${r.widoczne}/${r.siatki} ktris ${r.ktris} warstwy ${r.warstwy}${r.swiatla ? ` ŚWIATŁA ${r.swiatla} — bez A/B` : ''}`);
   // korzeń ze światłami poza A/B: zestaw świateł jest w kluczu każdego materiału — zdjęcie przebudowałoby wszystkie pipeline'y
+  const dodatkowe = [];
+  for (let r = 0; r < AB_POWT; r++) for (const v of extra) dodatkowe.push(AB_POWT > 1 ? { ...v, nazwa: `${v.nazwa} #${r + 1}` } : v);
   const warianty = [
-    ...extra,
-    ...spis.rows.filter((q) => q.widoczne > 0 && !q.swiatla).map((q) => ({ nazwa: `scena#${q.i} ${q.nazwa.slice(0, 40)}`, kod: AB_KOD.korzen(q.uuid) })),
-    ...spis.fx.map((f) => ({ nazwa: `fx:${f.nazwa}`, kod: AB_KOD.krok(f.nazwa) }))
+    ...dodatkowe,
+    ...(AB_SCENA ? spis.rows.filter((q) => q.widoczne > 0 && !q.swiatla).map((q) => ({ nazwa: `scena#${q.i} ${q.nazwa.slice(0, 40)}`, kod: AB_KOD.korzen(q.uuid) })) : []),
+    ...(AB_SCENA ? spis.fx.map((f) => ({ nazwa: `fx:${f.nazwa}`, kod: AB_KOD.krok(f.nazwa) })) : [])
   ];
   const wyniki = [];
   let nBaz = 0;
@@ -398,6 +424,63 @@ async function abPauza(etap, extra = []) {
   for (const t of tabela.slice(0, 25)) console.log(`     Δ R ${String(t.dR).padStart(7)} Δ C ${String(t.dC).padStart(7)}  ${t.nazwa}  (${t.zastosowano})`);
   report.etapy[etap].ab = { bazy, tabela, okna };
   return tabela;
+}
+
+// Zrzuty A/B wyglądu w pauzie: dla każdego wariantu ZRZUTY_N par baza → wariant w NIERÓWNYCH odstępach (wariant budowany
+// przy pierwszym użyciu ma czas na pipeline). Na piksel i kanał przedział wartości w czasie [min, maks] bazy i wariantu;
+// wariant zmienia piksel tylko wtedy, gdy przedziały się ROZCHODZĄ (odstęp > 2/255). Miganie soczewek i świateł, ruch
+// nakładek i HUD dają w obu wariantach oba stany, więc przedziały się pokrywają. Dawna maska „stoi” (dwie pary, piksel
+// ≤ 2/255 między zrzutami jednego wariantu) przepuszczała światła migające w fazie z odstępem par — kontrola zerowa
+// (kod ['true', 'true']) miała w hali 3% różnych pikseli do 26/255. Wariant „bez zmiany wyglądu” ma wynik kontroli zerowej.
+const ZRZUTY_N = 4;
+const ZRZUTY_ODSTEPY = [1300, 1700, 1100, 2100, 1500, 1900, 1200, 2300];
+async function zrzutyAB(etap, warianty) {
+  if (!warianty.length) return null;
+  await ev('(window.__setGamePaused(true), true)');
+  await sleep(1500);
+  const wyniki = [];
+  for (let i = 0; i < warianty.length; i++) {
+    const v = warianty[i];
+    const plik = (k) => join(out, `zab-${etap}-${i}-${k}.png`);
+    let ok = null, lo = null;
+    for (let k = 0; k < ZRZUTY_N; k++) {
+      for (const strona of [0, 1]) {
+        if (strona) ok = await wkEval(v.kod[0]).catch((e) => e.message); else await wkEval(v.kod[1]).catch(() => {});
+        await sleep(ZRZUTY_ODSTEPY[(2 * k + strona) % ZRZUTY_ODSTEPY.length]);
+        const p = plik(`${strona ? 'b' : 'a'}${k + 1}`);
+        await screenshotPng(cdp, p);
+        const img = readPng(p);
+        const n4 = img.width * img.height * 4;
+        // przedziały: lo/hi[strona][kanał piksela]
+        if (!lo) lo = { w: img.width, h: img.height, mn: [new Uint8Array(n4).fill(255), new Uint8Array(n4).fill(255)], mx: [new Uint8Array(n4), new Uint8Array(n4)] };
+        const mn = lo.mn[strona], mx = lo.mx[strona], d = img.data;
+        for (let j = 0; j < n4; j++) { const x = d[j]; if (x < mn[j]) mn[j] = x; if (x > mx[j]) mx[j] = x; }
+      }
+    }
+    await wkEval(v.kod[1]).catch(() => {});
+    const n = lo.w * lo.h;
+    let rozne2 = 0, rozne8 = 0, maks = 0, zmienne = 0;
+    const [mnA, mnB] = lo.mn, [mxA, mxB] = lo.mx;
+    for (let j = 0; j < n; j++) {
+      let g = 0, z = 0;
+      for (let c = 0; c < 3; c++) {
+        const o = j * 4 + c;
+        g = Math.max(g, mnA[o] - mxB[o], mnB[o] - mxA[o]);
+        z = Math.max(z, mxA[o] - mnA[o], mxB[o] - mnB[o]);
+      }
+      if (g > 2) rozne2++;
+      if (g > 8) rozne8++;
+      if (g > maks) maks = g;
+      if (z > 2) zmienne++;
+    }
+    const pct = (k) => +(100 * k / n).toFixed(4);
+    const w = { nazwa: v.nazwa, zastosowano: ok, zrzutow: ZRZUTY_N, zmienneWCzasiePct: pct(zmienne), rozne2Pct: pct(rozne2), rozne8Pct: pct(rozne8), rozne2Px: rozne2, maks };
+    wyniki.push(w);
+    console.log(`[${sek()}] zrzuty A/B ${etap} „${v.nazwa}” (${ok}): przedziały rozchodzą się o >2/255 w ${w.rozne2Pct}% kadru (${rozne2} px), >8/255 w ${w.rozne8Pct}%, maks ${maks}; piksele zmienne w czasie ${w.zmienneWCzasiePct}%`);
+  }
+  await ev('(window.__setGamePaused(false), true)');
+  report.etapy[etap].zrzutyAB = wyniki;
+  return wyniki;
 }
 
 async function startWorker() {
@@ -459,8 +542,12 @@ try {
     await zeruj();
     await okno(E, 'dok', 5);
     await screenshotPng(cdp, join(out, '10-dok.png'));
-    if (AB) await abPauza(E);
+    if (AB) await abPauza(E, AB_HALA);
+    await zrzutyAB(E, ZRZUTY_HALA);
     await zeruj();
+  }
+  if ((ETAP === 'hala' || ETAP === 'oba') && WYLOT) {
+    const E = 'hala';
     // ODDOKOWANIE (F) — sekwencja obsługi, potem stery wracają (kadr samouczka STEROWANIE)
     await ev(`window.StoryGame.triggerAction('undock')`);
     const tu = Date.now();
@@ -549,14 +636,46 @@ try {
       await screenshotPng(cdp, join(out, `40-baza-z${z}.png`));
       await zeruj();
     }
+    report.etapy[E].listy = await wkEval(LISTY_STAT).catch((e) => ({ err: e.message }));
+    console.log(`[${sek()}] listy węzłów na pass (spoczynek): ${JSON.stringify(report.etapy[E].listy)}`);
     if (AB) {
       const z = ZOOMY[0];
       await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${z}; return true; })()`);
       await sleep(2000);
       await abPauza(E, [
         { nazwa: 'czujniki wył. (strona)', strona: ['(() => { window.Czujka.input.off = true; return true; })()', '(() => { window.Czujka.input.off = false; return true; })()'] },
-        { nazwa: 'woksele: siatki Wok* zdjęte', kod: AB_KOD.siatki('^Wok') }
+        { nazwa: 'woksele: siatki Wok* zdjęte', kod: AB_KOD.siatki('^Wok') },
+        ...AB_BAZA
       ]);
+    }
+    await zrzutyAB(E, ZRZUTY_BAZA);
+    // --trafienie 1: jedno trafienie w habitat (zdarzenie voxHit wprost w workerze — sam obraz) i okna w biegu: po pierwszym
+    // zdarzeniu woksele zostają aktywne (pełny obraz: 2 sloty na węzeł, solver co klatkę, póki baza w kadrze — jak w walce)
+    if (String(args.trafienie || '0') === '1') {
+      const z = ZOOMY[0];
+      await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${z}; return true; })()`);
+      const hab = await ev(`(() => { const d = window.StoryGame.site.dock, l = d.layout; let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        for (const id of l.structures.habitat) { const q = l.chunkById.get(id); if (q.ghost) continue; x0 = Math.min(x0, q.box.x0); x1 = Math.max(x1, q.box.x1); z0 = Math.min(z0, q.box.z0); z1 = Math.max(z1, q.box.z1); }
+        const p = d.toGame((x0 + x1) / 2 + 900, (z0 + z1) / 2 + 900); return { x: p.x, y: p.y }; })()`);
+      const st0 = await wkEval(`(globalThis.__wokGra.zdarzenie('voxHit', ${hab.x}, ${hab.y}, 900), globalThis.__wokGra.stan())`).catch((e) => ({ err: e.message }));
+      console.log(`[${sek()}] trafienie w habitat (voxHit): aktywny ${st0.aktywny}, lod ${JSON.stringify(st0.lod)}`);
+      await sleep(1500);
+      await zeruj();
+      for (let k = 1; k <= 3; k++) await okno(E, `po-trafieniu-${k}`, 4);
+      report.etapy[E].poTrafieniu = await wkEval(WOK_STAN).catch(() => null);
+      await screenshotPng(cdp, join(out, '50-baza-po-trafieniu.png'));
+      report.etapy[E].listyPoTrafieniu = await wkEval(LISTY_STAT).catch((e) => ({ err: e.message }));
+      console.log(`[${sek()}] listy węzłów na pass (po trafieniu): ${JSON.stringify(report.etapy[E].listyPoTrafieniu)}`);
+      // --abPoTrafieniu 1: te same warianty --abBaza w stanie aktywnym (pełny obraz wokseli — dwa sloty na węzeł);
+      // --zrzutyPoTrafieniu 1: zrzuty wyglądu --zrzutyBaza w tym stanie (kawałki uszkodzonych węzłów)
+      if (String(args.abPoTrafieniu || '0') === '1' && AB_BAZA.length) {
+        report.etapy['baza-po'] = { okna: [] };
+        await abPauza('baza-po', AB_BAZA);
+      }
+      if (String(args.zrzutyPoTrafieniu || '0') === '1' && ZRZUTY_BAZA.length) {
+        report.etapy['baza-po'] = report.etapy['baza-po'] || { okna: [] };
+        await zrzutyAB('baza-po', ZRZUTY_BAZA);
+      }
     }
     await noteObce('koniec');
   }

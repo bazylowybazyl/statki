@@ -292,3 +292,13 @@ Pamięć: siatka kawałków S1 to 339 tys. trójkątów (9 MB), S5 540 tys. (15 
 - `src/3d/woksele/budowa.worker.js`: pole `kawalki` wiadomości.
 - `dema/woksele-zawalenia/pokaz.js`, `glowny.js`: `?kawalki=1`, panel, klawisz K, API harnessu (`pokaz.tryb`, `pokaz.statKawalki`).
 - `scripts/webgpu/woksele-kawalki.mjs`: kadry, koszt, arkusze. `tests/wokseleKawalki.test.mjs`: testy w Node.
+
+## Gra: barwa i kształt kawałków gruzu, wieża (2026-11-15)
+
+Zgłoszenie użytkownika (misja 1): „niszczenie budowli sprawia, że leci gruz — dużo kwadratów, nie podoba mi się różnica koloru”, „popraw też geometrię wieży”, potem „mniej kostek”. Kadry z gry w workerze (headless, 2560 × 1440, ostrzał wieżowca B-16 z zoomem 0,4 / 0,6 i B-03 z 0,8 / 1,2, po 4 strzałach Yamato pęka i przewraca się), warianty jako uniformy `wyglad` obrazu ustawiane w pauzie, więc każdy wariant to ta sama klatka.
+
+- Przyczyna różnicy koloru: kawałek po rozpadzie (d > 0, LOD K = 2) miał przełom na każdej ścianie, więc cały pokazywał wnętrze (`POKOJ`: łosoś, płowy, ceglasty) z liniami grodzi i szwów płyt. Rozpadający się wieżowiec był stertą jasnych kafelków na tle ciemnych dachów. Średnia barwa w wycinku kawałków 0,9 s po pęknięciu: 115, 74, 54 (jasność 81), stojący wieżowiec w tym miejscu 86, 65, 51 (68).
+- Poprawka (`WYG` w `obraz.js`): ściana z brzegu komórki bez sąsiada w spoczynku zostaje dachem ze skóry albo poszyciem (`kawZewn`, `kawPoszycie`), przełom kawałka w barwie ściany, × 0,75, bez linii (`kawWnMix` 0,7, `kawWnJasn`, `kawBezLinii`), światło „z góry” × 0,5 (`kawSwiatlo`). Ten sam wycinek: 83, 54, 39 (59). Po 1,8 s (chmura kostek z pyłem) średnia jasność kadru prawie się nie zmienia, bo przeważa pył i błysk wybuchu; zmienia się barwa (bez czerwieni i łososia). Drobiny z puli gruzu (kształt, światło, barwa pomieszczenia) nie dały widocznej różnicy przy zoomie 0,4–0,8 — bez zmian.
+- Kształt („mniej kostek”): 60 % komórek pęka po przekątnej na dwa kliny (`kawKlin`, z góry trójkąty), szum rogów 0,65 zamiast 0,4 (`kawRogi`), rozrzut rozmiaru 0,4 (`kawRozmiar`). Same kliny (1,0) wyglądały jak odłamki szkła. Bryły nienaruszone (lecący w całości fragment) zostają kostkami.
+- Wieża: koła habitatu z pasami wysokości (głowica r 320 bez zębatki z kołem 340), cztery anteny po jednej komórce zamiast słupa 3 × 3 w osi; na kadrach z czterech stron głowica okrągła, anteny w miejscach starej bryły.
+- Historia przeniesiona z reguły: kąt drobiny gruzu liczony z samej drogi rósł z prędkością spadku (pod koniec lotu na skałę 2–3 tys. j./s: 50–100 rad/s), stąd stała prędkość kątowa z hasza slotu. Koszt kroku B1 przy sztywności × 1 / × 2 / × 3: 0,69 / 1,0 / 1,4 ms.

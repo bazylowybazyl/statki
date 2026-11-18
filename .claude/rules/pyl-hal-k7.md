@@ -91,8 +91,10 @@ paths:
   ułamek NAD nimi (`front` 0,25, renderOrder 26); światło: wnętrze hali (lampy — także po nocnej stronie planety),
   słońce przez maskę cienia, światła siatki `Core3D.fx.grid` z kolanem (dysze, błyski); zanik przy oddaleniu.
   Rozgrzewka: wpis `pył hal K-7` (siatki) + `warm` kroku (kernele compute); pipeline'y w klatce gry — 0. Koszt (RTX klasy
-  Blackwell): symulacja ~0,2–0,3 ms GPU na podkrok 1/60 s (2026-10-12: 0,17 ms z modelem strumienia i bilansem pyłu),
-  warstwy ~0,04 ms; po 25 s bez dysz i ruchu kadłubów usypia (w praktyce nie — źródła gazu hali trzymają ją obudzoną).
+  Blackwell): symulacja ~0,2–0,3 ms GPU na podkrok 1/60 s (2026-10-12: 0,17 ms z modelem strumienia i bilansem pyłu);
+  warstwy skalują się z pikselami i liczbą świateł w komórce siatki (hala: kilkanaście na komórkę) — przy Ultra
+  (6400 × 1800) to większość passa gry w hali (`docs/AUDYT-misja1-hala-baza-2026-11-15.md` § 1, § 6); po 25 s bez dysz
+  i ruchu kadłubów usypia (w praktyce nie — źródła gazu hali trzymają ją obudzoną).
 
 - Narzędzia: `node scripts/webgpu/hala-pyl-gra.mjs [--zoom 0.32] [--trzymaj 1]` (Atlas na C-01 rufą do ściany, ciąg,
   seria zrzutów w pauzie, A/B bez pyłu, koszt GPU, pipeline'y w klatce), testy `tests/hallDust.test.mjs`; konsola:
@@ -158,7 +160,11 @@ paths:
     (świat gry w double; poziom lamp dzień / noc z `uHallLights.x`) — oświetlają pył, parę i kadłuby w hali.
   - SNOPY: w warstwie tylnej mgiełka hali widoczna tylko w świetle siatki (rozpraszanie `L1.w` zbierane na trzech
     wysokościach: warstwa, +90, +180 — pionowy promień kamery przez objętość hali), addytywnie, z kolanem; lampy dookólne
-    prawie bez rozpraszania (`lampScatter`), więc snopy dają reflektory, koguty i dysze. Strojenie `HallDust.layer.look`
+    prawie bez rozpraszania (`lampScatter`), więc snopy dają reflektory, koguty i dysze. Światło warstwy i obie
+    wysokości mgiełki idą JEDNĄ pętlą po światłach komórki (`grid.loopHeights(P, [dz1, dz2], cb)`, `lightGrid.js` — ta
+    sama komórka siatki, tłumienie, stożek i cień osobno na wysokość); A/B kosztu `HallDust.layer.setHazeLoops('osobne')`
+    (dawne trzy pętle — ten sam obraz, drożej) / `'brak'` (bez mgiełki — dolna granica), wariant buduje się przy pierwszym
+    przełączeniu i kompiluje w klatce — tylko do pomiarów. Strojenie `HallDust.layer.look`
     (`haze`, `hazeKnee`, `hazeGrain`, `vapor*`, `lightKnee`), źródła `HallDustTune.gas`, światła `HallDustTune.lampGain /
     spotGain / beaconGain / hallLights`.
   - Koszt (RTX): hala z gazem, źródłami, światłami i snopami +0,24 ms GPU na klatkę; z aktywnymi źródłami symulacja hali

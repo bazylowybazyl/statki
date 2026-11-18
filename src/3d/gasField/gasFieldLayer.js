@@ -116,7 +116,10 @@ export class GasFieldLayer {
     const nx = sim.nx;
     const ny = sim.ny;
     const h = sim.h;
-    const makeLayer = (back) => {
+    // hazeLoops (warstwa tylna): 'jedna' — światło i obie wysokości mgiełki snopów w JEDNEJ pętli po światłach komórki
+    // (grid.loopHeights, domyślnie), 'osobne' — dawne trzy pętle, 'brak' — bez pętli mgiełki (A/B kosztu: setHazeLoops).
+    // Warstwa przednia ma jedną pętlę (bez mgiełki) we wszystkich wariantach.
+    const makeMaterial = (back, hazeLoops = 'jedna') => {
       const mat = new THREE.NodeMaterial();
       mat.name = `${name}${back ? 'Back' : 'Front'}`;
       mat.transparent = !back;          // tył: kolejka nieprzezroczysta (przed kadłubami), przód: po nich
@@ -167,17 +170,31 @@ export class GasFieldLayer {
           const P = grid.localPosition('view').toVar();
           const g = vec3(0.0).toVar();
           const hz = vec3(0.0).toVar();
-          grid.loop(P, ({ att, col, scatter }) => {
-            const c = col.mul(att).toVar();
-            g.addAssign(c.mul(scatter.mul(L.scatter).add(0.5)));
-            if (back) hz.addAssign(c.mul(scatter));
-          });
+          if (back && hazeLoops === 'jedna') {
+            // światło warstwy i snopy (mgiełka zbiera rozpraszanie na wyższych próbkach — ta sama komórka siatki, xy bez
+            // zmian) w jednej pętli: przy Ultra w hali K-7 trzy pętle po kilkunastu światłach na piksel to ~1,5 ms GPU
+            grid.loopHeights(P, [L.hazeZ1, L.hazeZ2], ({ att, col, scatter }) => {
+              const c = col.mul(att[0]).toVar();
+              g.addAssign(c.mul(scatter.mul(L.scatter).add(0.5)));
+              hz.addAssign(c.mul(scatter));
+              hz.addAssign(col.mul(att[1]).mul(scatter));
+              hz.addAssign(col.mul(att[2]).mul(scatter));
+            });
+          } else {
+            grid.loop(P, ({ att, col, scatter }) => {
+              const c = col.mul(att).toVar();
+              g.addAssign(c.mul(scatter.mul(L.scatter).add(0.5)));
+              if (back) hz.addAssign(c.mul(scatter));
+            });
+          }
           const gl = g.mul(L.grid).toVar();
           light.addAssign(gl.div(gl.x.add(gl.y).add(gl.z).mul(L.gridKnee).add(1.0)));
           if (back) {
-            // snopy: mgiełka hali zbiera rozpraszanie na wyższych próbkach (ta sama komórka siatki — xy bez zmian)
-            for (const dz of [L.hazeZ1, L.hazeZ2]) {
-              grid.loop(P.add(vec3(0.0, 0.0, dz)), ({ att, col, scatter }) => { hz.addAssign(col.mul(att).mul(scatter)); });
+            // snopy (dawny wariant A/B): mgiełka zbiera rozpraszanie na wyższych próbkach osobnymi pętlami
+            if (hazeLoops === 'osobne') {
+              for (const dz of [L.hazeZ1, L.hazeZ2]) {
+                grid.loop(P.add(vec3(0.0, 0.0, dz)), ({ att, col, scatter }) => { hz.addAssign(col.mul(att).mul(scatter)); });
+              }
             }
             const hs = hz.mul(L.haze).mul(info.z).mul(mix(float(1.0), n2.mul(1.4).add(0.3), L.hazeGrain)).toVar();
             hazeGlow.assign(hs.div(hs.x.add(hs.y).add(hs.z).mul(L.hazeKnee).add(1.0)).mul(L.hazeColor).mul(L.fade));
@@ -194,6 +211,10 @@ export class GasFieldLayer {
         if (F && back) hazeGlow.addAssign(L.fieldColor.mul(L.fieldGlow.mul(F.narrow).mul(F.energy).mul(L.fade)));
         return vec4(col.mul(alpha).add(hazeGlow), alpha);
       })();
+      return mat;
+    };
+    const makeLayer = (back) => {
+      const mat = makeMaterial(back);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = mat.name;
       mesh.frustumCulled = false;
@@ -205,6 +226,9 @@ export class GasFieldLayer {
     };
     this.back = makeLayer(true);
     this.front = makeLayer(false);
+    this._makeMaterial = makeMaterial;
+    this._backMats = { jedna: this.back.material };
+    this.hazeLoops = 'jedna';
     this.group = new THREE.Group();
     this.group.name = name;
     this.group.add(this.back, this.front);
@@ -324,6 +348,19 @@ export class GasFieldLayer {
   setVisible(on) {
     this.back.visible = on;
     this.front.visible = on;
+  }
+
+  /**
+   * A/B kosztu (narzędzia — `misja1-trasa-gra.mjs`, 2026-11-15): pętle świateł warstwy tylnej — 'jedna' (domyślnie,
+   * grid.loopHeights), 'osobne' (dawne trzy pętle, ten sam obraz z dokładnością do kolejności sumowania), 'brak' (bez
+   * pętli mgiełki — inny obraz, dolna granica kosztu). Wariant spoza domyślnego buduje się przy pierwszym przełączeniu
+   * i kompiluje w klatce — tylko do pomiarów.
+   */
+  setHazeLoops(mode = 'jedna') {
+    if (!this._backMats[mode]) this._backMats[mode] = this._makeMaterial(true, mode);
+    this.back.material = this._backMats[mode];
+    this.hazeLoops = mode;
+    return mode;
   }
 
   /** Siatki do rozgrzewki (Core3D.warmup). */

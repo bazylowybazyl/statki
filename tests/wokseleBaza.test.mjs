@@ -1,7 +1,7 @@
 // Scena B1 „Baza piratów” dema wiązanych wokseli (src/3d/woksele/scenaBazy.js, plan LOD § 5c). Bez GPU. Wypisuje tabelę węzłów na część i na dx.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scenaB1, POJEMNOSC_BAZY } from '../src/3d/woksele/scenaBazy.js';
+import { scenaB1, POJEMNOSC_BAZY, kolaHabitatu, pasmaKolHabitatu, antenaWiezy } from '../src/3d/woksele/scenaBazy.js';
 import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
 import { KIND } from '../src/3d/woksele/scena.js';
 import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
@@ -112,6 +112,73 @@ test('miasto: 24 wieżowce jako osobne części na siatce układu; bezMiasta zos
   assert.equal(gruba.kola[0], 320);
   assert.equal(gra.kola[0], L0.habitat.neckR);
   assert.ok(gra.kola.length <= 12, 'obraz mieści najwyżej 12 kół');
+});
+
+test('koła habitatu z pasami wysokości (obraz.js, ustawKola): obrys każdej warstwy wieży łapie jedno koło — głowica bez zębatki 320 / 340', () => {
+  // Wzór obrazu (obraz.js, gałąź BIT_KOLO): róg bloku (zakładka 0,51 dx) idzie na OSTATNIE koło z listy w pasie ± 0,8 dx, o ile z węzła leży w pasie wysokości koła.
+  const plan = plany[40], dx = 40, kola = kolaHabitatu(L0.habitat), pasma = pasmaKolHabitatu(L0.habitat);
+  assert.equal(pasma.length, kola.length);
+  const wPasie = (q, z) => !pasma[q] || (z >= pasma[q][0] && z <= pasma[q][1]);
+  // Koła o wspólnym pasie dociągania (różnica < 1,6 dx) nie dzielą wysokości (styk na granicy pasów wolno: środek węzła leży w połowie komórki).
+  for (let a = 0; a < kola.length; a++) for (let b = a + 1; b < kola.length; b++) {
+    if (kola[a] === kola[b] || Math.abs(kola[a] - kola[b]) >= 1.6 * dx) continue;
+    const pa = pasma[a] ?? [-Infinity, Infinity], pb = pasma[b] ?? [-Infinity, Infinity];
+    assert.ok(pa[1] <= pb[0] || pb[1] <= pa[0], `koła ${kola[a]} i ${kola[b]}: pasy ${pa} i ${pb} zachodzą`);
+  }
+  const kolo = (x, y, z) => {
+    const r = Math.hypot(x, y);
+    let cel = 0;
+    kola.forEach((R, q) => { if (Math.abs(r - R) < 0.8 * dx && wPasie(q, z)) cel = R; });
+    return cel;
+  };
+  const c = plan.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T'), p = plan.scena.pos, h = 0.51 * dx;
+  const warstwy = new Map();
+  for (let i = c.start; i < c.start + c.n; i++) {
+    const z = p[3 * i + 2];
+    if (!warstwy.has(z)) warstwy.set(z, []);
+    warstwy.get(z).push(i);
+  }
+  let sprawdzone = 0;
+  const zGlowicy = k7HeightToZ(L0.habitat.headTop);
+  for (const [z, ids] of warstwy) {
+    if (z > zGlowicy) continue; // anteny: osobne komórki, bez koła
+    let rMax = 0;
+    for (const i of ids) rMax = Math.max(rMax, Math.hypot(p[3 * i], p[3 * i + 1]));
+    // Rogi zewnętrzne: róg bloku dalej od osi niż środek najdalszego bloku warstwy.
+    const zlapane = new Set();
+    for (const i of ids) for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const x = p[3 * i] + sx * h, y = p[3 * i + 1] + sy * h;
+      if (Math.hypot(x, y) > rMax) zlapane.add(kolo(x, y, z));
+    }
+    assert.equal(zlapane.size, 1, `warstwa z = ${z} (r ${rMax.toFixed(0)}): rogi obrysu na kołach ${[...zlapane]}`);
+    const R = [...zlapane][0];
+    assert.ok(Math.abs(R - rMax) <= dx, `warstwa z = ${z}: obrys r ${rMax.toFixed(0)} na kole ${R}`);
+    sprawdzone++;
+  }
+  assert.ok(sprawdzone >= 40, `sprawdzone warstwy: ${sprawdzone}`);
+  assert.deepEqual(plan.miasto.kolaPasma, pasma);
+});
+
+test('szczyt wieży jak w starej bryle: cztery anteny po jednej komórce, każda niższa, nic w osi nad głowicą (dawny słup 3 × 3)', () => {
+  const plan = plany[40], dx = 40, Hs = L0.habitat, zGlowicy = k7HeightToZ(Hs.headTop);
+  const c = plan.miasto.budynki.find((b) => b.nazwa === 'H-C + H-T'), p = plan.scena.pos;
+  const nad = new Map();
+  for (let i = c.start; i < c.start + c.n; i++) {
+    if (p[3 * i + 2] <= zGlowicy) continue;
+    const k = `${p[3 * i]},${p[3 * i + 1]}`;
+    nad.set(k, Math.max(nad.get(k) ?? -Infinity, p[3 * i + 2]));
+  }
+  assert.equal(nad.size, 4, `kolumny nad głowicą: ${[...nad.keys()]}`);
+  const szczyty = [];
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = antenaWiezy(Hs, i);
+    const k = `${Math.round(ax / dx) * dx},${Math.round(ay / dx) * dx}`;
+    assert.ok(nad.has(k), `antena ${i} (${ax.toFixed(0)}, ${ay.toFixed(0)}) bez komórki ${k}`);
+    szczyty.push(nad.get(k));
+    assert.ok(Math.abs(nad.get(k) - k7HeightToZ(Hs.mastTop - 260 * i)) <= dx, `antena ${i}: szczyt ${nad.get(k)}`);
+  }
+  for (let i = 1; i < 4; i++) assert.ok(szczyty[i] < szczyty[i - 1], `anteny coraz niższe: ${szczyty}`);
+  assert.ok(!nad.has('0,0'), 'słup w osi wieży');
 });
 
 test('wnętrze szyi i szybu (szyjaWnetrze): 0 pusta rura, 1 stropy, 2 pełne — więcej węzłów tylko w wieży', () => {

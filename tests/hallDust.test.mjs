@@ -444,6 +444,29 @@ test('kernele pola gazu: WGSL buduje się, ≤ 4 tekstury storage i ≤ 12 bufor
   assert.match(wgsl.gasFieldAdvect, /break;/, 'marsz zasłaniania');
 });
 
+test('warstwy pyłu: tylna przechodzi listę świateł komórki JEDNĄ pętlą (światło i dwie wysokości mgiełki — grid.loopHeights), dawny wariant A/B trzema', () => {
+  // 2026-11-15 (docs/AUDYT-misja1-hala-baza-2026-11-15.md): w hali K-7 przy Ultra trzy pętle po kilkunastu światłach na
+  // piksel to ~1,5 ms GPU; komórka siatki jest ta sama dla trzech wysokości, więc lista świateł idzie raz.
+  const layer = new GasFieldLayer(sim, { domain: DOM, detailTex: fxNoise.cloud2D(), grid: new LightGrid({ name: 'fxGrid' }), fields: k7ForceFieldList(L) });
+  const frag = (mesh) => {
+    const b = renderer.backend.createNodeBuilder(mesh, renderer);
+    b.material = mesh.material;
+    b.scene = new THREE.Scene();
+    b.camera = new THREE.OrthographicCamera();
+    b.context.material = mesh.material;
+    b.build();
+    return b.fragmentShader;
+  };
+  const petle = (f) => [(f.match(/for \( var gridItemH\b/g) || []).length, (f.match(/for \( var gridItem\b/g) || []).length];
+  assert.deepEqual(petle(frag(layer.back)), [1, 0], 'tylna domyślnie: jedna pętla (loopHeights)');
+  assert.deepEqual(petle(frag(layer.front)), [0, 1], 'przednia: jedna pętla bez mgiełki');
+  assert.equal(layer.setHazeLoops('osobne'), 'osobne');
+  assert.deepEqual(petle(frag(layer.back)), [0, 3], 'dawny wariant A/B: trzy pętle');
+  layer.setHazeLoops('jedna');
+  assert.equal(layer.hazeLoops, 'jedna');
+  assert.deepEqual(petle(frag(layer.back)), [1, 0], 'powrót do jednej pętli');
+});
+
 test('warstwy pyłu: WGSL buduje się, macierz hala → scena ma wyznacznik +1 (klucz pipeline\'u = rozgrzewka)', () => {
   const layer = new GasFieldLayer(sim, {
     domain: DOM, detailTex: fxNoise.cloud2D(), grid: new LightGrid({ name: 'fxGrid' }), fields: k7ForceFieldList(L)

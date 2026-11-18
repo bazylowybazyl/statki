@@ -21,6 +21,7 @@ paths:
 
 ## Rozmiar
 
+- Naczepa i jej 30 t to środkowy stopień ROBOCZEGO standardu ładunku (kontener → moduł → sekcja, reguła `transport-ladunku`); standaryzacja jest odłożona do czasu, gdy zakłady dadzą rozmiary wyrobów, więc tych liczb nie zmieniać pod standard. Test `tests/cargoStandard.test.mjs` porównuje liczby robocze z `TRUCK_MODULE`, `TRUCK_TRAILER` i `TRUCK_TRAILER_TONNES`.
 - Naczepa wozi MODUŁ 2 × 2 kontenery gry (`TRUCK_MODULE`, 32,25 × 16,25 j. = chwyt płaski drona L), nie pojedynczy kontener 16 × 8 j. Skala 1 × 1 zostaje jako A/B (`TRUCK_SCALES.container`, ta sama grafika × 0,5; `createTruckTrain(…, { scale })`). Liczby: `docs/PROPOZYCJA-ciagniki.md` § 1.
 
 ## Kinematyka
@@ -39,6 +40,7 @@ paths:
 
 ## Wygląd
 
+- PRÓBA KIERUNKU Z GENERATORA (decyzja użytkownika, 2026-11-17: „najpierw mi daj prompty, wygenerujemy sprite'y. Może sieć neuronowa pokaże nam drogę graficzną”): prompty ciągników i naczep w `assets/ships/trucks/gen/` (kadr kierunku całego zestawu w trzech stylach, trzy ciągniki, pusta rama, pięć naczep z ładunkiem). Do czasu jego oceny obrazów nie zaczynać elementu „zestaw w ruchu” ani nowego wyglądu z malarza; sprite'y malarza zostają i rysują demo.
 - Kreator kadłubów odpadł po próbie: daje płyty Terra Novy, kratownicę i „mały okręt”, bez kabiny i malowania na instancję. Malarz `scripts/ciagniki-sprite.mjs` (pola odległości → wysokość → normalne, wnęki, kontur, brud) rysuje z tych samych liczb co dane. Zmiana wyglądu: funkcja części w malarzu, potem `node scripts/ciagniki-sprite.mjs --podglad .tmp/ciagniki/podglad.png` (arkusz bez przeglądarki).
 - Cechy sylwetki, które trzymają „ciężarówkę” przy małym zoomie: gondole dysz za szeroką kabiną, siodło, dyszel z okiem, kominy, lusterka, pięć lampek na daszku, długa maska ciężkiego ciągnika. Bez napisów i logo (konwencja `assets/ships/README.md`); linie fikcyjne.
 

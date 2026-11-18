@@ -196,3 +196,133 @@ test('gra: kGruz liczy obrót drobin w osobnym buforze, materiał gruzu czyta go
   assert.ok((b.vertexShader.match(/var<storage/g) || []).length <= 8);
   assert.deepEqual(nieprzypisane(b.vertexShader), [], 'wierzchołek gruzu');
 });
+
+// Wygląd kawałków po rozpadzie (zgłoszenie użytkownika 2026-11-15: „dużo kwadratów, różnica koloru”): wartości w uniformach jednego grafu, A/B w biegu.
+test('gra: wygląd kawałków po rozpadzie przez uniformy wyglad jednego grafu (nowy wygląd domyślnie), demo bez skóry ich nie ma', () => {
+  const g = createWokseleObraz({ solver: createWokseleSolver(), camera, wGrze: true });
+  const w = g.wyglad;
+  assert.deepEqual(Object.keys(w).sort(), ['kawBezLinii', 'kawKlin', 'kawPoszycie', 'kawRogi', 'kawRozmiar', 'kawSwiatlo', 'kawWnJasn', 'kawWnMix', 'kawZewn']);
+  // Domyślnie nowy wygląd, każda wartość niezerowa (dawny: kawZewn, kawPoszycie, kawWnMix, kawBezLinii, kawKlin, kawRozmiar 0, kawWnJasn i kawSwiatlo 1, kawRogi 0,4).
+  assert.deepEqual(Object.fromEntries(Object.entries(w).map(([k, u]) => [k, u.value])), { kawZewn: 1, kawPoszycie: 1, kawWnMix: 0.7, kawWnJasn: 0.75, kawBezLinii: 1, kawSwiatlo: 0.5, kawRogi: 0.65, kawKlin: 0.6, kawRozmiar: 0.4 });
+  const zbuduj = (o, m) => {
+    const b = renderer.backend.createNodeBuilder(m, renderer);
+    b.scene = o.scene;
+    b.camera = camera;
+    b.material = m.material;
+    b.lightsNode = renderer.lighting.getNode(o.scene);
+    b.build();
+    return b;
+  };
+  const br = zbuduj(g, g.mesh);
+  for (const n of ['uWokKawZewn', 'uWokKawKlin', 'uWokKawRogi', 'uWokKawRozmiar']) assert.match(br.vertexShader, new RegExp(n), n);
+  for (const n of ['uWokKawPoszycie', 'uWokKawWnMix', 'uWokKawWnJasn', 'uWokKawBezLinii', 'uWokKawSwiatlo']) assert.match(br.fragmentShader, new RegExp(n), n);
+  // Gruz (drobiny z puli) bez zmian, demo bez skóry: graf bez tych uniformów.
+  const gr = zbuduj(g, g.meshGruz);
+  assert.doesNotMatch(gr.vertexShader + gr.fragmentShader, /uWokKaw/);
+  const db = zbuduj(obraz, obraz.mesh);
+  assert.doesNotMatch(db.vertexShader + db.fragmentShader, /uWokKaw/);
+});
+
+// ── Gra: listy węzłów na pass (prośba użytkownika 2026-11-15 „zrób listy”: instancje zwinięte w złym passie i nieaktywne
+// sloty kosztowały ~0,4 ms w spoczynku i ~0,8 ms po pierwszym trafieniu, docs/AUDYT-misja1-hala-baza-2026-11-15.md § 6) ──
+const zbudujMat = (o, m) => {
+  const b = renderer.backend.createNodeBuilder(m, renderer);
+  b.scene = o.scene;
+  b.camera = camera;
+  b.material = m.material;
+  b.lightsNode = renderer.lighting.getNode(o.scene);
+  b.build();
+  return b;
+};
+
+test('gra: bryły tła i FG oraz głębia celu AO rysują pośrednio z list, wierzchołek czyta listę tylko do odczytu; cień i demo bez listy', () => {
+  const g = createWokseleObraz({ solver: createWokseleSolver(), camera, wGrze: true });
+  const br = zbudujMat(g, g.mesh);
+  assert.match(br.vertexShader, /var<storage, read> \w*[wW]okPassLista/);
+  assert.doesNotMatch(br.vertexShader, /var<storage, read_write>/);
+  assert.ok((br.vertexShader.match(/var<storage/g) || []).length <= 8, 'wierzchołek brył w grze');
+  assert.deepEqual(nieprzypisane(br.vertexShader), [], 'wierzchołek brył w grze');
+  // Jeden bufor argumentów drawIndexedIndirect (5 słów na rysunek): tło od 0, FG od 20 B, głębia celu AO (lista sumy) od 40 B; te same atrybuty
+  // i indeks (jeden pipeline).
+  const a = g.mesh.geometry.indirect;
+  assert.ok(a && a.isIndirectStorageBufferAttribute);
+  assert.equal(g.geoTlo.indirect, a);
+  assert.equal(g.geoTlo.indirectOffset, 0);
+  assert.equal(g.mesh.geometry.indirectOffset, 20);
+  assert.deepEqual([...a.array], [36, 0, 0, 0, 0, 36, 0, 0, 0, 0, 36, 0, 0, 0, 0]);
+  assert.equal(g.geoTlo.index, g.mesh.geometry.index);
+  assert.equal(g.geoTlo.getAttribute('position'), g.mesh.geometry.getAttribute('position'));
+  assert.equal(g.geoTlo.getAttribute('normal'), g.mesh.geometry.getAttribute('normal'));
+  // Pass cienia liczy id z instancji (bez listy): haki zdejmują rysunek pośredni na czas cienia i go oddają.
+  g.mesh.onBeforeShadow();
+  assert.equal(g.mesh.geometry.indirect, null);
+  g.mesh.onAfterShadow();
+  assert.equal(g.mesh.geometry.indirect, a);
+  // Głębia celu AO (bez przekroju): lista sumy obu stron, od 2 · CAP_L.
+  const mg = g.sceneGleb.children.find((m) => m.name === 'WokGleb');
+  assert.equal(mg.geometry.indirect, a);
+  assert.equal(mg.geometry.indirectOffset, 40);
+  const gv = zbudujMat({ scene: g.sceneGleb }, mg).vertexShader;
+  assert.match(gv, /var<storage, read> \w*[wW]okPassLista/);
+  assert.ok((gv.match(/var<storage/g) || []).length <= 8, 'wierzchołek głębi');
+  assert.deepEqual(nieprzypisane(gv), [], 'wierzchołek głębi');
+  // Demo: bez list, bez rysunku pośredniego, WGSL brył bez nowego bufora.
+  assert.doesNotMatch(zbudujMat(obraz, obraz.mesh).vertexShader, /[wW]okPass/);
+  assert.equal(obraz.mesh.geometry.indirect, null);
+  assert.equal(obraz.geoTlo ?? null, null);
+  assert.equal(obraz.kernele.kListyLicz, undefined);
+});
+
+test('gra: kernele list — po 256 wątków z pamięcią grupy i barierami, najwyżej 8 buforów storage, bez nieprzypisanych zmiennych', () => {
+  const g = createWokseleObraz({ solver: createWokseleSolver(), camera, wGrze: true });
+  for (const nazwa of ['kListyLicz', 'kListySkan', 'kListyZapis']) {
+    const kod = wgsl(g.kernele[nazwa]);
+    assert.ok((kod.match(/var<storage/g) || []).length <= 8, nazwa);
+    assert.match(kod, /var<workgroup>/, nazwa);
+    assert.match(kod, /workgroupBarrier\(\)/, nazwa);
+    assert.match(kod, /@workgroup_size\( 256, 1, 1 \)/, nazwa);
+    assert.doesNotMatch(kod, /Infinity|NaN/, nazwa);
+    assert.deepEqual(nieprzypisane(kod), [], nazwa);
+  }
+  // Bariera w jednolitym przepływie: przed nią w kernelu nie ma wyjścia (return) — wątki poza zakresem liczą flagę 0.
+  for (const nazwa of ['kListyLicz', 'kListySkan', 'kListyZapis']) {
+    const kod = wgsl(g.kernele[nazwa]);
+    assert.ok(!/return;/.test(kod.slice(kod.indexOf('fn main'), kod.lastIndexOf('workgroupBarrier'))), `${nazwa}: return przed barierą`);
+  }
+  assert.match(wgsl(g.kernele.kListyZapis), /var<storage, read_write> \w*[wW]okPassLista/);
+  assert.match(wgsl(g.kernele.kListySkan), /var<storage, read_write> \w*[wW]okPassArgs/);
+  // Skan Hillisa–Steele'a: w każdym kroku oba składniki z TEGO SAMEGO bufora grupy (callback If buduje się po pętli JS — bufor z zamienianej
+  // zmiennej dawał od drugiego kroku składnik z bufora ostatniej zamiany), kroki na przemian w dwóch buforach, 8 kroków w każdym skanie.
+  for (const nazwa of ['kListyLicz', 'kListySkan', 'kListyZapis']) {
+    const kod = wgsl(g.kernele[nazwa]);
+    const kroki = [...kod.matchAll(/(nodeVar\d+) = (WorkgroupArray_\d+)\[ (nodeVar\d+) \];\s*if \( \( \3 >= (\d+)u \) \) \{\s*\1 = \( \1 \+ (WorkgroupArray_\d+)\[ \( \3 - \4u \) \] \);/g)];
+    assert.equal(kroki.length % 8, 0, `${nazwa}: kroków ${kroki.length}`);
+    assert.ok(kroki.length >= 8, nazwa);
+    for (const k of kroki) assert.equal(k[5], k[2], `${nazwa}: krok o ${k[4]} czyta ${k[2]} i ${k[5]}`);
+  }
+});
+
+test('gra: odświeżenie list — po wczytaniu i zmianie LOD, kroku obrazu albo przekroju; w stanie aktywnym co klatkę; wątków po 256 na instancje rysunku', () => {
+  const g = createWokseleObraz({ solver: createWokseleSolver(), camera, wGrze: true });
+  const wolania = [];
+  const r = { compute: (l) => wolania.push(l.map((k) => k.name).join(',')) };
+  const ileList = () => wolania.filter((w) => w.includes('wokListyLicz')).length;
+  assert.equal(g.odswiezListy(r, false), true, 'pierwsze: listy brudne od utworzenia');
+  assert.equal(wolania.at(-1), 'wokListyLicz,wokListySkan,wokListyZapis');
+  assert.equal(g.odswiezListy(r, false), false, 'bez zmian nic');
+  g.uCiecieZ.value = 1e9;
+  assert.equal(g.odswiezListy(r, false), true, 'przekrój');
+  g.uCiecieZ.value = 150;
+  assert.equal(g.odswiezListy(r, false), true, 'przekrój z powrotem');
+  g.pelnyObraz(true);
+  assert.equal(g.odswiezListy(r, false), true, 'pełny obraz');
+  g.krok(r);
+  assert.equal(g.odswiezListy(r, false), true, 'krok obrazu');
+  assert.equal(g.odswiezListy(r, true), true, 'stan aktywny: zawsze');
+  assert.equal(ileList(), 6);
+  // n = 0 w teście: rysunek ma max(n, 2) · sloty instancji, wątki liczenia i zapisu w pełnych grupach po 256.
+  assert.equal(g.lod.instRysunek, 14);
+  assert.equal(g.kernele.kListyLicz.count, 256);
+  assert.equal(g.kernele.kListyZapis.count, 256);
+  assert.equal(g.kernele.kListySkan.count, 256);
+});

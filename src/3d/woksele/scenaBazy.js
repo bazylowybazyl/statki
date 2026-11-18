@@ -119,7 +119,13 @@ function budujReaktory(b, l) {
   }
 }
 
-/** H-C i H-T jako jedna część: szyb, płyta na szybie, szyja, głowa (talerz, piasta), maszt. Jedna część, bo szyja stoi na szybie wiązaniami: cięcie szybu kraterami to zerwanie „kotwic” szyi z gry. */
+/** Antena i (0–3) na piaście głowicy w układzie węzłów (X = x, Y = −z bazy): kąt i promień jak maszty anten w habitatHead (pirateBaseScene.js). */
+export const antenaWiezy = (Hs, i) => {
+  const a = (i / 4) * TAU + 0.35, r = 0.82 * Hs.headR;
+  return [Math.cos(a) * r, -Math.sin(a) * r];
+};
+
+/** H-C i H-T jako jedna część: szyb, płyta na szybie, szyja, głowa (talerz, piasta), anteny. Jedna część, bo szyja stoi na szybie wiązaniami: cięcie szybu kraterami to zerwanie „kotwic” szyi z gry. */
 function budujWieze(b, Hs, wnetrzeTyp = 0) {
   const dx = b.dx;
   // Wnętrze szybu i szyi: 0 pusta rura (gra), 1 stropy jak w wieżowcu (dwie warstwy na trzy), 2 pełne. Pytanie użytkownika 2026-11-09: wieżowiec
@@ -157,7 +163,14 @@ function budujWieze(b, Hs, wnetrzeTyp = 0) {
       if (r > Hs.headR) return -1;
       return r > Hs.headR - plyta || z > zHead - plyta ? KIND.STROP : -1;
     }
-    return r < 1.1 * dx ? KIND.KOLUMNA : -1; // maszt, cieńszego nie ma: węzeł
+    // Szczyt jak w bryle starej bazy (habitatHead, pirateBaseScene.js): cztery anteny na piaście, każda o 260 (wysokość K-7) niższa od poprzedniej,
+    // po jednej komórce (cieńszych węzłów nie ma). Do 2026-11-15 stał tu słup 3 × 3 komórki w osi na całą wysokość iglic, którego stara baza
+    // nie ma: z kamery gry gruby klocek wystający z wieży (zgłoszenie użytkownika 2026-11-15: „popraw geometrię wieży”).
+    for (let i = 0; i < 4; i++) {
+      const [ax, ay] = antenaWiezy(Hs, i);
+      if (Math.abs(x - ax) <= 0.5 * dx && Math.abs(y - ay) <= 0.5 * dx) return z <= k7HeightToZ(Hs.mastTop - 260 * i) ? KIND.KOLUMNA : -1;
+    }
+    return -1;
   });
   return c;
 }
@@ -277,6 +290,15 @@ const CZESCI_KOL = new Set(['H-C + H-T', 'trzon', 'dysk D-1…8']);
 
 /** Promienie kół habitatu dla obrazu (ustawKola, najwyżej 12): rogi bloków części z bitem koła trafiają w te okręgi. */
 export const kolaHabitatu = (Hs) => [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.ringR1, Hs.stemR, Hs.tier2R, Hs.tier1R, Hs.discR];
+/**
+ * Pasy wysokości kół (te same miejsca co kolaHabitatu): [z0, z1] po z węzła w spoczynku albo null (koło na każdej wysokości).
+ * Szyb (r 340), szyja (r 240), wnętrze korony (r 340) i głowica (r 320) leżą jedno nad drugim, a 320 i 340 dzielą pas dociągania
+ * (0,8 dx): bez pasów rogi głowicy skakały między nimi i jej brzeg wychodził jak zębatka (zgłoszenie użytkownika 2026-11-15, „geometria wieży”).
+ */
+export const pasmaKolHabitatu = (Hs) => {
+  const zCore = k7HeightToZ(Hs.coreTop), zR0 = k7HeightToZ(Hs.ringY0), zR1 = k7HeightToZ(Hs.ringY1);
+  return [[zCore, zR0], [-1e9, zCore], [zR1, 1e9], [zR0, zR1], null, null, null, null, null];
+};
 
 /**
  * Składa części w scenę: pola ijk na półce, grupa „wieza” z meta.budynki i grupa „dysk”.
@@ -809,6 +831,7 @@ export function scenaB1(oo = {}) {
       // Skóra w demie (dema/woksele-zawalenia/skoraDema.js): wypiek starej bryły bez ćwiartek miasta, gdy woksele nie mają wieżowców; koła habitatu dla obrazu brył.
       bezMiasta: !!o.bezMiasta,
       kola: kolaHabitatu(Hs),
+      kolaPasma: pasmaKolHabitatu(Hs),
     },
     czasy: { indeksy: new Int32Array(0), t: new Float64Array(0), rozerwij: new Uint8Array(0), zostawZiarna: false },
   };

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Standard ładunku — plansza wymiarów</title>
+<style>
+  :root { --ink: #e4ebf0; --muted: #8a9aa6; --line: #2a3a4a; --panel: #0d131ae8; --accent: #f0a020; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #080b0f; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; cursor: grab; }
+  #c.drag { cursor: grabbing; }
+  #bar { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: 4px; padding: 5px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; white-space: nowrap; }
+  #bar button { background: #141c25; color: var(--ink); border: 1px solid #2f4152; border-radius: 4px; padding: 4px 9px; font: inherit; cursor: pointer; }
+  #bar button:hover { border-color: var(--accent); }
+  #bar button.on { background: #3a2a10; border-color: var(--accent); color: #fff; }
+  #bar .hint { color: var(--muted); margin-left: 8px; }
+  #errors { position: fixed; left: 10px; top: 10px; z-index: 20; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  body.shot #bar { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0" aria-label="Plansza standardu ładunku: kontener, moduł, sekcja, zestawy ciągników i statki w jednej skali"></canvas>
+<div id="bar"></div>
+<div id="errors"></div>
+<script type="module" src="./standard-ladunku.js"></script>
+</body>
+</html>

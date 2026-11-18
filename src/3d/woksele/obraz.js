@@ -9,7 +9,7 @@ import {
   Fn, If, Return, Loop, Continue, instanceIndex, storage, uniform, uint, float, vec2, vec3, vec4,
   countOneBits, floatBitsToUint, sqrt, max, min, dot, length, cross, normalize, clamp, smoothstep, sin, cos, abs, step, fract, fwidth, mix, pow,
   atomicAdd, positionGeometry, normalGeometry, varyingProperty, cameraViewMatrix, screenUV, texture, uv, output, positionView, positionWorld, getShadowMaterial,
-  dFdx, dFdy, cameraPosition, select,
+  dFdx, dFdy, cameraPosition, select, workgroupArray, workgroupBarrier,
 } from 'three/tsl';
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { BIT_KOLO, STRONA } from './budowa.js';
@@ -111,6 +111,23 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const wKatGW = wGrze ? storage(aKatG, 'vec2', CAP_G).setName('wokKatGruzu') : null;
   const wKatGR = wGrze ? storage(aKatG, 'vec2', CAP_G).setName('wokKatGruzu').toReadOnly() : null;
   const wZarR = storage(A.zar, 'float', MAX).setName('wokZar').toReadOnly();
+  // Gra: LISTY WĘZŁÓW NA PASS (prośba użytkownika 2026-11-15 „zrób listy”; pomiar: docs/AUDYT-misja1-hala-baza-2026-11-15.md § 6). Bryły tła i FG rysują
+  // pośrednio tylko instancje, które coś rysują po swojej stronie przekroju (kListy* niżej, ten sam warunek co budujPozycje). Lista zachowuje kolejność id,
+  // więc rozstrzyganie remisów głębi (kolejność prymitywów) jest jak przy pełnym rysunku: obraz bit w bit ten sam. Lista tła [0, CAP_L), FG [CAP_L, 2 · CAP_L),
+  // SUMA [2 · CAP_L, 3 · CAP_L) — wszystko, co rysuje, bez przekroju: głębia celu AO (prośba użytkownika „dorób”, ten sam dzień). aBloki: liczby flag na
+  // grupę 256 instancji (trzy pola po 10 bitów), od BMAX przesunięcia grup (tło, FG, suma); aArgs: trzy rekordy drawIndexedIndirect (0, 20, 40 B).
+  const LISTY = wGrze;
+  const CAP_L = 7 * MAX; // id instancji: najwyżej 7 slotów na węzeł
+  const BMAX = Math.ceil(CAP_L / 256);
+  const aLista = LISTY ? new THREE.StorageInstancedBufferAttribute(new Uint32Array(3 * CAP_L), 1) : null;
+  const aBloki = LISTY ? new THREE.StorageInstancedBufferAttribute(new Uint32Array(4 * BMAX), 1) : null;
+  const aArgs = LISTY ? new THREE.IndirectStorageBufferAttribute(new Uint32Array(15), 1) : null;
+  const wListaW = LISTY ? storage(aLista, 'uint', 3 * CAP_L).setName('wokPassLista') : null;
+  const wListaR = LISTY ? storage(aLista, 'uint', 3 * CAP_L).setName('wokPassLista').toReadOnly() : null;
+  const wBlokiW = LISTY ? storage(aBloki, 'uint', 4 * BMAX).setName('wokPassBloki') : null;
+  const wArgsW = LISTY ? storage(aArgs, 'uint', 15).setName('wokPassArgs') : null;
+  const uIleId = LISTY ? uniform(0, 'uint').setName('uWokIleId') : null; // instancje rysunku (instRysunek): zakres id, z którego idą listy
+  const uListyPelne = LISTY ? uniform(0, 'uint').setName('uWokListyPelne') : null; // A/B (narzędzia, listyPelne): 1 — wszystkie id we wszystkich listach, jak dawny rysunek
 
   const uKlatka = uniform(0).setName('uObrKlatka'); // numer następnej klatki fizyki: wiek żaru i błysku
   const uZarMoc = uniform(0.7).setName('uZarMoc');
@@ -121,6 +138,11 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const uRDysk = uniform(0).setName('uRDysk');
   // Gra: promienie kół habitatu (ustawKola). Bez koła uniform = 0, odległość od zera nie trafi w pas dociągania.
   const uKola = [0, 1, 2].map((k) => uniform(new THREE.Vector4()).setName(`uWokKola${k}`));
+  // Pas wysokości koła [z0, z1] po z węzła w spoczynku (zgłoszenie użytkownika 2026-11-15: „popraw geometrię wieży”). Bez pasa koło łapało rogi na każdej
+  // wysokości, a głowica wieży (r 320) leży między kołem szybu i wnętrza korony (r 340): jej rogi skakały między 320 i 340 i brzeg wychodził jak zębatka.
+  // Wartości startowe niezerowe (pułapka 46): bez pasa ±1e9.
+  const uKolaZ0 = [0, 1, 2].map((k) => uniform(new THREE.Vector4(-1e9, -1e9, -1e9, -1e9)).setName(`uWokKolaZ0${k}`));
+  const uKolaZ1 = [0, 1, 2].map((k) => uniform(new THREE.Vector4(1e9, 1e9, 1e9, 1e9)).setName(`uWokKolaZ1${k}`));
   const uKolaMoc = uniform(1).setName('uWokKolaMoc');
   const uPokladZ = uniform(-1e30).setName('uPokladZ');
   const uOtworR2 = uniform(0).setName('uOtworR2');
@@ -155,6 +177,23 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const uAoMoc = uniform(1).setName('uWokAoMoc');
   const uBetonSwiatlo = uniform(1.1).setName('uWokBetonSwiatlo');
   const uSkalaSlonce = uniform(new THREE.Vector3(0, 0, 1)).setName('uWokSkalaSlonce');
+  // Wygląd kawałków po rozpadzie (gra i demo ze skórą; zgłoszenie użytkownika 2026-11-15: „leci gruz — dużo kwadratów, nie podoba mi się różnica koloru”: rozpadający się
+  // wieżowiec rysował każdą kostkę jak wnętrze, stertą jasnych, łososiowych i ceglastych kafelków na tle ciemnych dachów). Wartości z A/B na tej samej klatce w grze
+  // (2026-11-15: przełom w barwach budynku 83, 54, 39 zamiast 115, 74, 54 przy 86, 65, 51 stojącego wieżowca). Dawny wygląd: kawZewn 0, kawPoszycie 0, kawWnMix 0,
+  // kawWnJasn 1, kawBezLinii 0, kawSwiatlo 1 (`wyglad` w API, w biegu, bez nowego pipeline'u).
+  const WYG = {
+    kawZewn: uniform(1).setName('uWokKawZewn'), // ściany kawałka z brzegu komórki bez sąsiada w spoczynku: dach ze skóry, poszycie i okna, nie przełom (kawalekLod)
+    kawPoszycie: uniform(1).setName('uWokKawPoszycie'), // samo uszkodzenie nie zamienia ściany w pomieszczenie (budujWnetrze)
+    kawWnMix: uniform(0.7).setName('uWokKawWnMix'), // przełom kawałka: pomieszczenie zmieszane z barwą ściany budynku
+    kawWnJasn: uniform(0.75).setName('uWokKawWnJasn'), // … i przyciemnione
+    kawBezLinii: uniform(1).setName('uWokKawBezLinii'), // … bez grodzi, szwów płyt i rur (linie robiły z każdej kostki kafelek)
+    kawSwiatlo: uniform(0.5).setName('uWokKawSwiatlo'), // światło „z góry” na kawałku: obracająca się kostka nie zapala się jak dach
+    // Kształt (prośba użytkownika 2026-11-15: „mniej kostek”; kawalekLod, zlozKawalek; wybór z A/B w grze na tej samej klatce, zoom 0,6 i 1,2).
+    // Dawny: kawRogi 0,4, kawKlin i kawRozmiar 0. Wszystkie kliny (kawKlin 1) wyglądały jak szkło.
+    kawRogi: uniform(0.65).setName('uWokKawRogi'), // szum rogów przy d = 1 (w połowach boku kawałka)
+    kawKlin: uniform(0.6).setName('uWokKawKlin'), // udział komórek ciętych po przekątnej na dwa kliny (z góry trójkąty) zamiast płasko w osi
+    kawRozmiar: uniform(0.4).setName('uWokKawRozmiar'), // rozrzut rozmiaru kawałków przy d = 1: część kurczy się bardziej
+  };
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
   const v3 = (e) => { const v = vec3(0).toVar(); v.assign(e); return v; };
@@ -338,6 +377,125 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const kernele = { kObraz, kGruz };
   const listaObrazu = [kObraz, kGruz];
 
+  // ── Gra: kompakcja list na pass (LISTY wyżej) ── Trzy kernele w jednym renderer.compute (odswiezListy): kListyLicz — flagi instancji i suma na grupę 256,
+  // kListySkan — jedna grupa: przesunięcia grup (prefiks) i liczby instancji do argumentów rysunku, kListyZapis — id na miejsce z prefiksu w grupie.
+  // Bez atomików: kolejność id w liście jak w pełnym rysunku. Wątki poza zakresem liczą flagę 0, bez wyjścia przed barierą (jednolity przepływ).
+  const listaList = [];
+  let kListyLicz = null, kListySkan = null, kListyZapis = null;
+  if (LISTY) {
+    // Flaga instancji t, trzy pola po 10 bitów (w grupie 256 sumy nie przekraczają 256): 1 — rysuje w passie tła, 1024 — w FG, 2^20 — w ogóle (głębia
+    // celu AO, bez przekroju). Warunek jak w budujPozycje: żywy węzeł, aktywny slot (blok, który ma ścianę bez sąsiada; kawałek uszkodzonego przy LOD K < 7;
+    // przy K = 7 odłamki i pręt z zapasem — resztę zwija wierzchołek) i strona przekroju (pw.z − cięcie) · znak ≥ 0.
+    const POLE_FG = 1024, POLE_SUMA = 1 << 20;
+    const flagaInstancji = (t) => {
+      const f = uv_(uint(0));
+      If(t.lessThan(uIleId).and(uListyPelne.equal(uint(1))), () => { f.assign(uint(1 + POLE_FG + POLE_SUMA)); });
+      If(t.lessThan(uIleId).and(uListyPelne.equal(uint(0))), () => {
+        const i = uv_(t);
+        const s = uv_(uint(0));
+        If(t.greaterThanEqual(uN), () => {
+          const r = uv_(t.sub(uN));
+          const kPoza = uv_(max(uSloty, uint(2)).sub(uint(1)));
+          i.assign(r.div(kPoza));
+          s.assign(uint(1).add(r.sub(i.mul(kPoza))));
+        });
+        const i3 = uv_(uint(3).mul(i));
+        const pw = v4(wWezR.element(i3));
+        If(pw.w.greaterThanEqual(0), () => {
+          const d = fv(wRamaR.element(i3).w);
+          const mA = uv_(wMaskaR.element(i).bitAnd(uint(63)));
+          const akt = uv_(uint(0));
+          If(s.equal(uint(0)), () => {
+            If(d.lessThanEqual(FAZA_D).and(mA.notEqual(uint(63))), () => { akt.assign(uint(1)); })
+              .ElseIf(d.greaterThan(FAZA_D).and(uSloty.lessThan(uint(7))), () => { akt.assign(uint(1)); });
+          }).ElseIf(s.equal(uint(6)), () => {
+            If(d.greaterThan(0.3).and(mA.notEqual(uint(0))), () => { akt.assign(uint(1)); });
+          }).Else(() => {
+            If(d.greaterThan(FAZA_D), () => { akt.assign(uint(1)); });
+          });
+          If(akt.equal(uint(1)), () => {
+            const dz = fv(pw.z.sub(uCiecieZ));
+            f.addAssign(uint(POLE_SUMA));
+            If(dz.mul(-1).greaterThanEqual(0), () => { f.addAssign(uint(1)); });
+            If(dz.mul(1).greaterThanEqual(0), () => { f.addAssign(uint(POLE_FG)); });
+          });
+        });
+      });
+      return f;
+    };
+    // Prefiks włącznie po 256 wątkach grupy (Hillis–Steele, dwa bufory grupy, 8 kroków z barierą). Wywoływane w jednolitym przepływie.
+    // AGENT: callback If buduje się PÓŹNIEJ niż pętla JS — bufor kroku musi być stałą kroku (`zrodlo`), nie zmienną zamienianą w pętli
+    // (z `src` w callbacku każdy krok dodawał wartość z bufora ostatniej zamiany; strażnik w tests/wokseleObrazWgsl.test.mjs).
+    const skanGrupy = (A, B, lane, v) => {
+      A.element(lane).assign(v);
+      workgroupBarrier();
+      for (let k = 0; k < 8; k++) {
+        const zrodlo = k % 2 === 0 ? A : B, cel = k % 2 === 0 ? B : A, o = 1 << k;
+        const x = uv_(zrodlo.element(lane));
+        If(lane.greaterThanEqual(uint(o)), () => { x.addAssign(zrodlo.element(lane.sub(uint(o)))); });
+        cel.element(lane).assign(x);
+        workgroupBarrier();
+      }
+      return uv_(A.element(lane)); // 8 kroków: ostatni pisze do A
+    };
+    const LA = workgroupArray('uint', 256), LB = workgroupArray('uint', 256);
+    kListyLicz = Fn(() => {
+      const t = uv_(instanceIndex);
+      const lane = uv_(t.bitAnd(uint(255)));
+      const inc = skanGrupy(LA, LB, lane, flagaInstancji(t));
+      If(lane.equal(uint(255)), () => { wBlokiW.element(t.shiftRight(uint(8))).assign(inc); });
+    })().compute(256, [256]).setName('wokListyLicz');
+    // Pole k (0 — tło, 1 — FG, 2 — suma) z liczby spakowanej po 10 bitów.
+    const pole = (v, k) => (k === 2 ? v.shiftRight(uint(20)) : k === 1 ? v.shiftRight(uint(10)).bitAnd(uint(1023)) : v.bitAnd(uint(1023)));
+    // Jedna grupa: wątek bierze ciągły kawałek grup (najwyżej BMAX / 256), sumy osobno na listę (pełna suma nie mieści się w 10 bitach pola).
+    const SS = [0, 1, 2, 3, 4, 5].map(() => workgroupArray('uint', 256));
+    kListySkan = Fn(() => {
+      const lane = uv_(instanceIndex.bitAnd(uint(255)));
+      const nB = uv_(uIleId.add(uint(255)).shiftRight(uint(8)));
+      const naW = uv_(nB.add(uint(255)).shiftRight(uint(8)));
+      const b0 = uv_(lane.mul(naW));
+      const sumy = [0, 1, 2].map(() => uv_(uint(0)));
+      Loop({ start: uint(0), end: naW, type: 'uint', condition: '<', name: 'lsA' }, ({ lsA }) => {
+        const b = uv_(b0.add(lsA));
+        If(b.lessThan(nB), () => {
+          const v = uv_(wBlokiW.element(b));
+          for (let k = 0; k < 3; k++) sumy[k].addAssign(pole(v, k));
+        });
+      });
+      const inc = [0, 1, 2].map((k) => skanGrupy(SS[2 * k], SS[2 * k + 1], lane, sumy[k]));
+      const r = [0, 1, 2].map((k) => uv_(inc[k].sub(sumy[k])));
+      Loop({ start: uint(0), end: naW, type: 'uint', condition: '<', name: 'lsB' }, ({ lsB }) => {
+        const b = uv_(b0.add(lsB));
+        If(b.lessThan(nB), () => {
+          const v = uv_(wBlokiW.element(b));
+          const o = uv_(uint(BMAX).add(b.mul(uint(3))));
+          for (let k = 0; k < 3; k++) {
+            wBlokiW.element(o.add(uint(k))).assign(r[k]);
+            r[k].addAssign(pole(v, k));
+          }
+        });
+      });
+      If(lane.equal(uint(255)), () => {
+        for (let k = 0; k < 3; k++) wArgsW.element(uint(5 * k + 1)).assign(inc[k]);
+      });
+    })().compute(256, [256]).setName('wokListySkan');
+    const ZA = workgroupArray('uint', 256), ZB = workgroupArray('uint', 256);
+    kListyZapis = Fn(() => {
+      const t = uv_(instanceIndex);
+      const lane = uv_(t.bitAnd(uint(255)));
+      const f = flagaInstancji(t);
+      const ex = uv_(skanGrupy(ZA, ZB, lane, f).sub(f));
+      const o = uv_(uint(BMAX).add(t.shiftRight(uint(8)).mul(uint(3))));
+      for (let k = 0; k < 3; k++) {
+        If(pole(f, k).notEqual(uint(0)), () => {
+          wListaW.element(uint(k * CAP_L).add(wBlokiW.element(o.add(uint(k)))).add(pole(ex, k))).assign(t);
+        });
+      }
+    })().compute(256, [256]).setName('wokListyZapis');
+    Object.assign(kernele, { kListyLicz, kListySkan, kListyZapis });
+    listaList.push(kListyLicz, kListySkan, kListyZapis);
+  }
+
   // ── Geometria ── Sześcian o 24 wierzchołkach z indeksem, każda ściana z własną normalną (§ 4). InstancedBufferGeometry, nie InstancedMesh (pułapka 24).
   const box = new THREE.BoxGeometry(2, 2, 2);
   const geo = new THREE.InstancedBufferGeometry();
@@ -355,6 +513,20 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   geoGleb.setAttribute('position', box.attributes.position);
   geoGleb.setAttribute('normal', box.attributes.normal);
   geoGleb.instanceCount = 2;
+  // Gra: tło na drugiej geometrii z tymi samymi atrybutami i indeksem (jeden pipeline); obie rysują pośrednio z aArgs — tło od 0 B, FG od 20 B
+  // (indeksy, instancje, pierwszy indeks, przesunięcie wierzchołka, pierwsza instancja). Liczby instancji pisze kListySkan; instanceCount geometrii
+  // zostaje > 0 (three pomija rysunek z zerem), ale rysunek pośredni go nie czyta.
+  const geoTlo = LISTY ? new THREE.InstancedBufferGeometry() : null;
+  if (LISTY) {
+    geoTlo.index = box.index;
+    geoTlo.setAttribute('position', box.attributes.position);
+    geoTlo.setAttribute('normal', box.attributes.normal);
+    geoTlo.instanceCount = 2;
+    aArgs.array[0] = aArgs.array[5] = aArgs.array[10] = box.index.count;
+    geoTlo.setIndirect(aArgs, 0);
+    geo.setIndirect(aArgs, 20);
+    geoGleb.setIndirect(aArgs, 40); // głębia celu AO: lista sumy (wszystko, co rysuje, bez przekroju)
+  }
 
   // Szum rogu z hasza odłamka i numeru rogu: róg dzielony przez trzy ściany ma ten sam szum, więc bryła jest zamknięta. Wklejane, woła się tylko w Fn.
   const numerRogu = (k) => uv_(uint(step(0, k.x)).add(uint(step(0, k.y)).mul(uint(2))).add(uint(step(0, k.z)).mul(uint(4))));
@@ -380,8 +552,11 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
 
   // ── Wierzchołek, § 4.2 ── Najpierw odczyt d, maski i flag, reszta w gałęzi aktywnego slotu. Zmienne przypisane przed rozgałęzieniem (pułapka 39), varyingi na końcu.
   // uK: sloty na węzeł tego przebiegu. Układ id z § 4 przy każdym K: id < n to slot 0 węzła id, dalej i = (id − n) / (K − 1), s = 1 + (id − n) % (K − 1). Przy K = 7 to SLOTY = 6 jak dotąd.
-  const budujPozycje = ({ varyingi, prety, uK = uSloty }) => Fn(() => {
-    const id = uv_(instanceIndex);
+  // lista (gra, LISTY): 'pass' — id z listy passa (tło od 0, FG od CAP_L — znak obiektu), 'suma' — z listy sumy (głębia celu AO, od 2 · CAP_L),
+  // null — id po instancji (cień, demo).
+  const budujPozycje = ({ varyingi, prety, uK = uSloty, lista = null }) => Fn(() => {
+    const id = uv_(lista === 'pass' ? wListaR.element(instanceIndex.add(uZnakZ.greaterThan(0).select(uint(CAP_L), uint(0))))
+      : lista === 'suma' ? wListaR.element(instanceIndex.add(uint(2 * CAP_L))) : instanceIndex);
     const i = uv_(id);
     const s = uv_(uint(0));
     If(id.greaterThanEqual(uN), () => {
@@ -403,6 +578,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     const Fasada = fv(0);
     const naPassie = wGrze && varyingi ? pw.z.sub(uCiecieZ).mul(uZnakZ).greaterThanEqual(0) : pw.w.greaterThanEqual(0);
 
+    // AGENT: warunki rysunku niżej (żywy węzeł, strona przekroju, aktywny slot: blok bez kompletu sąsiadów, kawałek uszkodzonego, odłamek, pręt) mają
+    // w grze LUSTRO we `flagaInstancji` (listy węzłów na pass): instancji spoza listy pass w ogóle nie rysuje. Nowy przypadek, który rysuje — dopisz tam.
     If(pw.w.greaterThanEqual(0).and(naPassie), () => {
       const f0 = v4(wRamaR.element(i3));
       const d = fv(f0.w);
@@ -417,15 +594,17 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       const Fx = v3(f0.xyz);
 
       // Wspólny koniec kawałka: środek z rozjazdem, obrót, szum rogów, a w rysunku normalna ściany z przekątnych (§ 4.2, nie normalFlat: każdy trójkąt inną dałby „złożoną kartkę”) i barwa. O0 i h w komórkach, hl: hasz kawałka.
-      const zlozKawalek = (O0, h, rozj, katK, hl, Fy, Fz, f1, d0, d1) => {
+      // ksztalt (kawałki LOD przy WYGLAD): { mapa: róg jednostkowy → róg kawałka (klin), jit: szum rogów przy d = 1 }. Bez niego jak dawniej (wzór odłamków, demo bez skóry).
+      const zlozKawalek = (O0, h, rozj, katK, hl, Fy, Fz, f1, d0, d1, ksztalt = null) => {
         const O = v3(O0.mul(uDx).mul(rozj).add(vec3(u1(hl, 0), u1(hl, 10), u1(hl, 20)).mul(d.mul(uDx).mul(0.08))));
         const os = v3(normalize(vec3(u1(hl, 1), u1(hl, 11), u1(hl, 21).add(1e-3))));
         const c = fv(cos(katK));
         const sn = fv(sin(katK));
         const obroc = (w) => w.mul(c).add(cross(os, w).mul(sn)).add(os.mul(dot(os, w).mul(float(1).sub(c))));
         const sc2 = fv(uDx.mul(float(1).sub(d.mul(0.1))));
-        const jit = fv(d.mul(0.4));
-        const rog = (k) => k.add(szumRogu(hl, k, jit)).mul(h).mul(sc2);
+        const jit = fv(d.mul(ksztalt ? ksztalt.jit : 0.4));
+        // Szum z numeru rogu jednostkowego (wspólny dla trzech ścian), więc bryła zostaje zamknięta także po mapie klina.
+        const rog = ksztalt ? (k) => ksztalt.mapa(k).add(szumRogu(hl, k, jit)).mul(h).mul(sc2) : (k) => k.add(szumRogu(hl, k, jit)).mul(h).mul(sc2);
         const q = v3(obroc(rog(C)));
         P.assign(x.add(naRame(Fx, Fy, Fz, O.add(q))));
         if (varyingi) {
@@ -458,20 +637,62 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
         const hl = haszT(uint(L_ODLAMKI).mul(i).add(uint(nr)).add(uint(991)));
         const h = v3(vec3(ZAKLADKA));
         const O0 = v3(vec3(0));
+        const osCiecia = uv_(uint(3)); // 3: bez cięcia (K = 1)
+        // KLIN (WYGLAD, kawKlin; prośba użytkownika 2026-11-15: „mniej kostek”): komórka cięta po przekątnej w płaszczyźnie prostopadłej do osi osC. Kawałek 0 traci
+        // krawędź rogu (znU, znV) w osiach (eU, eV), kawałek 1 przeciwną: dwa kliny wypełniają komórkę (przy d = 0 dalej blok, wejście w uszkodzenie nie skacze),
+        // a pod kamerą z góry dają trójkąty zamiast kwadratów. Kształt także w cieniu i głębi (bez varyingi), żeby obrys był jeden. Kiedy kawałek się rysuje — bez zmian.
+        const klin = fv(0);
+        const eU = v3(vec3(0)), eV = v3(vec3(0));
+        const znU = fv(nr === 0 ? 1 : -1), znV = fv(nr === 0 ? 1 : -1);
         If(uK.greaterThan(uint(1)), () => {
           const t5 = uv_(hN.shiftRight(uint(5)));
           const osC = uv_(t5.sub(t5.div(uint(3)).mul(uint(3))));
-          const fr = fv(float(0.35).add(czesc(hN, 8, 255).mul(0.3)));
-          const pol = fv(nr === 0 ? fr.mul(0.5) : float(1).sub(fr).mul(0.5));
-          const sr = fv(nr === 0 ? fr.sub(1).mul(0.5) : fr.mul(0.5));
-          If(osC.equal(uint(0)), () => { h.x.assign(pol.add(0.01)); O0.x.assign(sr); })
-            .ElseIf(osC.equal(uint(1)), () => { h.y.assign(pol.add(0.01)); O0.y.assign(sr); })
-            .Else(() => { h.z.assign(pol.add(0.01)); O0.z.assign(sr); });
+          osCiecia.assign(osC);
+          if (WYGLAD) {
+            const hK = uv_(haszT(hN.add(uint(4099))));
+            klin.assign(step(float(hK.bitAnd(uint(255))).add(0.5).div(256), WYG.kawKlin));
+            const fC = fv(float(osC));
+            const eA = v3(vec3(float(1).sub(step(0.5, fC)), step(0.5, fC).mul(float(1).sub(step(1.5, fC))), step(1.5, fC)));
+            eU.assign(eA.zxy);
+            eV.assign(eA.yzx);
+            znV.mulAssign(float(hK.shiftRight(uint(8)).bitAnd(uint(1))).mul(2).sub(1));
+          }
+          If(klin.lessThan(0.5), () => {
+            const fr = fv(float(0.35).add(czesc(hN, 8, 255).mul(0.3)));
+            const pol = fv(nr === 0 ? fr.mul(0.5) : float(1).sub(fr).mul(0.5));
+            const sr = fv(nr === 0 ? fr.sub(1).mul(0.5) : fr.mul(0.5));
+            If(osC.equal(uint(0)), () => { h.x.assign(pol.add(0.01)); O0.x.assign(sr); })
+              .ElseIf(osC.equal(uint(1)), () => { h.y.assign(pol.add(0.01)); O0.y.assign(sr); })
+              .Else(() => { h.z.assign(pol.add(0.01)); O0.z.assign(sr); });
+          });
         });
+        if (WYGLAD && varyingi) {
+          // Ściany kawałka (kawZewn, zgłoszenie użytkownika 2026-11-15 o barwie gruzu): ściana na brzegu komórki bez sąsiada w spoczynku zostaje poszyciem albo dachem ze skóry,
+          // przełom to ściana przy sąsiedzie w spoczynku i ściana cięcia: przy cięciu płaskim +oś w kawałku 0, −oś w kawałku 1, w klinie dwie ściany przy zabranej krawędzi.
+          // Przy kawZewn ≈ 0 każda ściana jest przełomem, jak dawniej.
+          const m0F = uv_(uint(d1.w).shiftRight(uint(5)).bitAnd(uint(63)));
+          const osF = uv_(uint(step(0.5, abs(nf.y))).add(uint(step(0.5, abs(nf.z))).mul(uint(2))));
+          const ujem = uv_(uint(step(nf.x.add(nf.y).add(nf.z), 0)));
+          const sasiad = fv(float(m0F.shiftRight(osF.mul(uint(2)).add(ujem)).bitAnd(uint(1))));
+          const ciecieOs = fv(osF.equal(osCiecia).and(ujem.equal(uint(nr === 0 ? 0 : 1))).select(float(1), float(0)));
+          const ciecieKlin = fv(min(step(0.5, dot(nf, eU).mul(znU)).add(step(0.5, dot(nf, eV).mul(znV))), 1));
+          const ciecie = fv(mix(ciecieOs, ciecieKlin, klin));
+          Przelom.assign(mix(float(1), max(sasiad, ciecie), step(0.5, WYG.kawZewn)));
+        }
         h.mulAssign(float(1).sub(d.mul(vec3(float(0.1).add(czesc(hl, 2, 63).mul(0.2)), float(0.1).add(czesc(hl, 8, 63).mul(0.2)), float(0.1).add(czesc(hl, 14, 63).mul(0.2))))));
+        // Rozrzut rozmiaru (kawRozmiar): część kawałków kurczy się mocniej, bo równe kostki układały się w siatkę.
+        if (WYGLAD) h.mulAssign(float(1).sub(WYG.kawRozmiar.mul(d).mul(czesc(haszT(hl.add(uint(77))), 0, 255))));
+        // Mapa klina: róg jednostkowy po stronie zabranej krawędzi (ku · znU > 0 i kv · znV > 0) idzie na przekątną, z zakładką 0,02 jak cięcie płaskie.
+        const mapa = (k) => {
+          const ku = fv(dot(k, eU));
+          const kv = fv(dot(k, eV));
+          const war = fv(klin.mul(step(0, ku.mul(znU))).mul(step(0, kv.mul(znV))));
+          return k.sub(eU.mul(ku.sub(znU.mul(0.02))).add(eV.mul(kv.sub(znV.mul(0.02)))).mul(war));
+        };
+        const ksztalt = WYGLAD ? { mapa, jit: WYG.kawRogi } : null;
         const rozj = fv(float(1).add(d.mul(0.5)));
         const katK = fv(d.mul(float(0.12).add(czesc(hl, 20, 255).mul(0.55))));
-        zlozKawalek(O0, h, rozj, katK, hl, Fy, Fz, f1, d0, d1);
+        zlozKawalek(O0, h, rozj, katK, hl, Fy, Fz, f1, d0, d1, ksztalt);
       };
 
       If(s.equal(uint(0)), () => {
@@ -510,10 +731,13 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
               const pr = vec2(0).toVar();
               pr.assign(d0.xy.add(off.xy));
               const rr = fv(max(length(pr), 1));
+              const zK = fv(d0.z);
               const cel = fv(0);
-              for (const u of uKola) for (const os of ['x', 'y', 'z', 'w']) {
-                If(abs(rr.sub(u[os])).lessThan(uDx.mul(0.8)), () => { cel.assign(u[os]); });
-              }
+              uKola.forEach((u, k) => {
+                for (const os of ['x', 'y', 'z', 'w']) {
+                  If(abs(rr.sub(u[os])).lessThan(uDx.mul(0.8)).and(zK.greaterThanEqual(uKolaZ0[k][os])).and(zK.lessThanEqual(uKolaZ1[k][os])), () => { cel.assign(u[os]); });
+                }
+              });
               If(cel.greaterThan(0), () => {
                 const skK = fv(cel.div(rr).sub(1));
                 off.assign(vec3(off.x.add(pr.x.mul(skK)), off.y.add(pr.y.mul(skK)), off.z));
@@ -744,7 +968,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   mat.name = 'WokBryly';
   mat.map = null;
   if (wGrze) applySunShadowToBuiltinMaterial(mat); // słońce bezpośrednie czyta maskę: cień okrętu kładzie się też na ścianach i przełomach
-  mat.positionNode = budujPozycje({ varyingi: true, prety: true });
+  mat.positionNode = budujPozycje({ varyingi: true, prety: true, lista: LISTY ? 'pass' : null });
   mat.castShadowPositionNode = budujPozycje({ varyingi: false, prety: false, uK: uSlotyCien });
   mat.normalNode = normalize(vN);
   const aoM = wGrze ? mix(float(1), aoCzytaj(), uAoMoc).toVar('wokAo') : aoCzytaj().toVar('wokAo');
@@ -808,21 +1032,28 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     const qa = vec2(0).toVar();
     qa.assign(abs(fract(q2.div(21)).sub(0.5)).mul(21));
     const szew = fv(float(1).sub(smoothstep(0.6, 1.6, min(qa.x, qa.y))));
+    // Kawałek po rozpadzie (uszk, d > 0): przełom w barwie ściany budynku, ciemniej i bez linii (kawWnMix, kawWnJasn, kawBezLinii; WYG wyżej).
+    // Stojący blok (d = 0) bez zmian: jego przełom pokazuje pomieszczenia z liniami i lampami („coś tam w środku było”, decyzja użytkownika 2026-11-06).
+    const uszk = fv(smoothstep(0, 0.05, wej.d()));
+    const zanP = fv(zan.mul(float(1).sub(uszk.mul(WYG.kawBezLinii))));
     // Rury: ściana, dwa pasy pod sufitem w połowie pomieszczeń.
     const rura = fv(smoothstep(0.2, 0.22, f.z).mul(float(1).sub(smoothstep(0.27, 0.29, f.z))).add(smoothstep(0.34, 0.355, f.z).mul(float(1).sub(smoothstep(0.385, 0.4, f.z)))).mul(b4).mul(float(1).sub(gora)));
     const kolRury = v3(mix(vec3(0.5, 0.17, 0.035), vec3(0.2, 0.2, 0.19), b5));
-    pokoj.assign(mix(pokoj, kolRury, rura.mul(zan)));
-    pokoj.mulAssign(float(1).sub(szew.mul(0.45).mul(zan)));
-    pokoj.mulAssign(float(1).sub(grodz.mul(0.8).mul(zan)));
+    pokoj.assign(mix(pokoj, kolRury, rura.mul(zanP)));
+    pokoj.mulAssign(float(1).sub(szew.mul(0.45).mul(zanP)));
+    pokoj.mulAssign(float(1).sub(grodz.mul(0.8).mul(zanP)));
+    const sciana = v3(barwaZP0());
+    pokoj.assign(mix(pokoj, sciana, uszk.mul(WYG.kawWnMix)).mul(mix(float(1), WYG.kawWnJasn, uszk)));
     // Lampy w co drugim pomieszczeniu: pas pod sufitem na ścianie, kropka na środku podłogi z góry.
     const pas = fv(smoothstep(0.8, 0.82, f.z).mul(float(1).sub(smoothstep(0.87, 0.89, f.z))).mul(float(1).sub(gora)));
     const dx = v3(vec3(f.x.sub(0.5), f.y.sub(0.5), 0));
     const kropka = fv(float(1).sub(smoothstep(0.05, 0.1, length(dx))).mul(gora));
     const lampa = fv(pas.add(kropka).mul(b5).mul(zan));
     // Poszycie albo pomieszczenie: pomieszczenie na przełomie, na kawałku po rozpadzie i na górnej ścianie bez wypieku.
-    const dmg = fv(smoothstep(0, 0.05, wej.d()));
+    // kawPoszycie 1: pomieszczenie tylko na przełomie, ściana zewnętrzna kawałka zostaje poszyciem (kawZewn); 0: samo uszkodzenie zamienia każdą ścianę w pomieszczenie (dawniej).
+    const dmg = fv(uszk.mul(float(1).sub(WYG.kawPoszycie)));
     const m = fv(max(max(wej.przelom(), dmg), wej.gora().mul(float(1).sub(skoraW.a))));
-    const poszycie = v3(mix(barwaZP0(), min(kN.rgb, vec3(0.42)), kN.a.mul(0.35)));
+    const poszycie = v3(mix(sciana, min(kN.rgb, vec3(0.42)), kN.a.mul(0.35)));
     poszycie.mulAssign(float(1).sub(szew.mul(0.3).mul(zan)));
     // Okna na ścianach wieżowców: wypiek z góry ich nie widzi, a z kamery gry przy brzegu kadru to właśnie ściana jest widoczna (w starej bazie pasy okien M.warm, piętro co ~50 j. po ścisku wysokości). Co któreś okno ciemne, jak w highriseTower.
     const pietroF = fv(p.z.div(50));
@@ -853,7 +1084,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       e.addAssign(sk.rgb.mul(sk.a).mul(aoM).mul(vNaSkale));
       // Światło od góry: słońce gry leży prawie w płaszczyźnie, więc z kamery z góry gruz i wnętrza dostają samo otoczenie i wychodzą czarne (zrzut t1). Odbite od góry, jak uniesione słońce starej bazy.
       const zGory = fv(clamp(wej.nz(), 0, 1).mul(0.9).add(0.35));
-      e.addAssign(wn.rgb.mul(float(1).sub(sk.a)).mul(zGory).mul(aoM).mul(uBetonSwiatlo).mul(sunFill(visM)).mul(vNaSkale));
+      // kawSwiatlo: to światło na kawałku po rozpadzie (d > 0); obracający się kawałek zapala ścianę zwróconą ku górze jak dach.
+      const swK = fv(mix(float(1), WYG.kawSwiatlo, smoothstep(0, 0.05, wej.d())));
+      e.addAssign(wn.rgb.mul(float(1).sub(sk.a)).mul(zGory).mul(swK).mul(aoM).mul(uBetonSwiatlo).mul(sunFill(visM)).mul(vNaSkale));
     } else if (skora) {
       // Demo: słońce dema stoi wysoko (44°), więc bez światła od góry. Skóra jak w grze: światło z wypieku.
       e.addAssign(sk.rgb.mul(sk.a).mul(aoM));
@@ -885,8 +1118,10 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   mesh.receiveShadow = true;
   // Pass cienia ma własny licznik instancji: three woła te haki tuż wokół rysunku w mapie cienia, a licznik czyta przy rysunku (RenderObject.getDrawParameters). Bez nowego pipeline'u.
   let instRysunek = 2, instCien = 2;
-  mesh.onBeforeShadow = () => { geo.instanceCount = instCien; };
-  mesh.onAfterShadow = () => { geo.instanceCount = instRysunek; };
+  // Gra: pass cienia liczy id z instancji (castShadowPositionNode bez listy), więc na jego czas bez rysunku pośredniego. Listy odświeża odswiezListy.
+  let listyBrudne = true, listyCiecie = NaN;
+  mesh.onBeforeShadow = () => { geo.instanceCount = instCien; if (LISTY) geo.indirect = null; };
+  mesh.onAfterShadow = () => { geo.instanceCount = instRysunek; if (LISTY) geo.indirect = aArgs; };
 
   // ── Gruz, § 4.5 ── Osobny rysunek, bez cienia. Kąt zależy od drogi, więc staje razem z bryłą.
   const vKG = varyingProperty('vec3', 'vWokGK');
@@ -991,7 +1226,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const matGleb = new THREE.NodeMaterial();
   matGleb.name = 'WokGleb';
   matGleb.map = null;
-  matGleb.positionNode = budujPozycje({ varyingi: false, prety: false });
+  matGleb.positionNode = budujPozycje({ varyingi: false, prety: false, lista: LISTY ? 'suma' : null });
   matGleb.colorNode = vec3(0);
   matGleb.lights = false;
   const meshGleb = new THREE.Mesh(geoGleb, matGleb);
@@ -1153,6 +1388,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     instCien = (pelny ? Math.max(1, kCien) : 1) * m;
     geo.instanceCount = instRysunek;
     geoGleb.instanceCount = instRysunek;
+    if (LISTY) { geoTlo.instanceCount = instRysunek; listyBrudne = true; }
   }
 
   /** LOD obrazu w biegu (metoda G planu): { sloty: 1 | 2 | 7, cien: 0 | 1 | 2 | 7 }. Zmiana wartości i liczników, bez nowego pipeline'u. */
@@ -1202,6 +1438,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   function krok(renderer) {
     uKlatka.value = solver.fKlatka;
     renderer.compute(listaObrazu);
+    listyBrudne = true;
   }
   function krokBezLimitu(renderer) {
     const l = uLimD.value;
@@ -1209,12 +1446,39 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     uLimD.value = 1;
     renderer.compute(listaObrazu);
     uLimD.value = l;
+    listyBrudne = true;
+  }
+
+  /**
+   * Gra: listy węzłów na pass (LISTY) przed passami klatki — krok efektów `woksele` na końcu (wGrze.js), po wszystkim, co w tej klatce zmienia węzły.
+   * Liczy po wczytaniu, zmianie LOD, kroku obrazu i zmianie przekroju; `zawsze` (stan aktywny wokseli): co klatkę, bo kratery, puszczanie części i fala
+   * zmieniają węzły także poza krokiem obrazu. W spoczynku bez zmian nic. Zwraca, czy liczyło. Bez alokacji.
+   */
+  function odswiezListy(renderer, zawsze = false) {
+    if (!LISTY) return false;
+    const c = uCiecieZ.value;
+    if (!zawsze && !listyBrudne && c === listyCiecie) return false;
+    listyBrudne = false;
+    listyCiecie = c;
+    uIleId.value = instRysunek;
+    const w = Math.max(256, Math.ceil(instRysunek / 256) * 256);
+    kListyLicz.setCount(w);
+    kListyZapis.setCount(w);
+    renderer.compute(listaList);
+    return true;
+  }
+  /** A/B kosztu i wyglądu (narzędzia): true — listy ze wszystkich id (dawny pełny rysunek, zwija wierzchołek), false — listy z warunku. */
+  function listyPelne(b) {
+    if (!LISTY) return false;
+    uListyPelne.value = b ? 1 : 0;
+    listyBrudne = true;
+    return b;
   }
 
   /** Samo rozgrzanie kerneli (test i tryb pomiarowy nie rysują). */
   // Po każdym kernelu oddanie wątku ZADANIEM (wzór `rozgrzej` solvera): w grze worker rysuje klatki między kompilacjami.
   async function rozgrzejKernele(renderer) {
-    for (const k of listaObrazu) { await renderer.computeAsync(k, [0, 1, 1]); await new Promise((ok) => setTimeout(ok, 0)); }
+    for (const k of [...listaObrazu, ...listaList]) { await renderer.computeAsync(k, [0, 1, 1]); await new Promise((ok) => setTimeout(ok, 0)); }
   }
 
   /** Rozgrzewka: kernele, pass sceny, pass cienia, głębia, GTAO, wyjście. Przed pierwszą klatką, 0 pipeline'ów synchronicznych (zasada 5, pułapki 20, 30, 31, 32). */
@@ -1340,9 +1604,12 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     renderer.autoClear = ac;
   }
   /** W grze: obrót siatek bazy wokół z (macierz świata), ten sam w normalnych. */
-  /** Promienie kół habitatu [j.], najwyżej 12. */
-  function ustawKola(promienie) {
+  /** Promienie kół habitatu [j.], najwyżej 12. pasma: [z0, z1] na koło (z węzła w spoczynku) albo null — koło na każdej wysokości. */
+  function ustawKola(promienie, pasma = null) {
     uKola.forEach((u, k) => u.value.set(promienie[4 * k] ?? 0, promienie[4 * k + 1] ?? 0, promienie[4 * k + 2] ?? 0, promienie[4 * k + 3] ?? 0));
+    const z = (q, s) => (pasma && pasma[q] ? pasma[q][s] : s ? 1e9 : -1e9);
+    uKolaZ0.forEach((u, k) => u.value.set(z(4 * k, 0), z(4 * k + 1, 0), z(4 * k + 2, 0), z(4 * k + 3, 0)));
+    uKolaZ1.forEach((u, k) => u.value.set(z(4 * k, 1), z(4 * k + 1, 1), z(4 * k + 2, 1), z(4 * k + 3, 1)));
   }
   function ustawObrotNormalnych(kat) { uObrC.value = Math.cos(kat); uObrS.value = -Math.sin(kat); }
   /** Kierunek do słońca przy skale, w układzie węzłów (jednostkowy, w płaszczyźnie gry). */
@@ -1362,8 +1629,12 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     kernele, listaObrazu, scene, sceneGleb, cienieDodatkowe, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, rtSsao, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki, liczGruzu: aLicz },
     kawalki: kaw, ustawTryb, get tryb() { return trybObrazu; },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
+    /** Wygląd kawałków po rozpadzie (uniformy { value }): kawZewn, kawPoszycie, kawWnMix, kawWnJasn, kawBezLinii, kawSwiatlo. */
+    wyglad: WYG,
     wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
     get lod() { return { sloty: slotyWez, cien: slotyCien, instRysunek, instCien }; },
+    /** Gra: listy węzłów na pass — odświeżenie przed passami, geometria tła z rysunkiem pośrednim (liczby instancji: geoTlo.indirect, słowa 1 i 6). */
+    odswiezListy, listyPelne, geoTlo,
     /** Pomiar: światło błysku na bryłach wł./wył. na tej samej klatce. */
     swiatlaWlacz(b) { swiatlaWl = b; },
     get n() { return n; },

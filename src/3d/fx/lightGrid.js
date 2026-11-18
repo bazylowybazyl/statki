@@ -44,7 +44,7 @@
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, int, uint, vec4, uniform, attributeArray, Loop, If,
+  Fn, float, int, uint, vec3, vec4, uniform, attributeArray, Loop, If,
   floor, max, abs, length, smoothstep, dot, normalize,
   positionView, positionWorld, cameraViewMatrix, cameraWorldMatrix, renderGroup
 } from 'three/tsl';
@@ -465,6 +465,65 @@ export class LightGrid {
             });
           }
           cb({ toL, att, col: L1.xyz.mul(this.gain), scatter: L1.w, dist, flare: L3.y, owner: L3.w, x, range: L0.w });
+        });
+      });
+    });
+  }
+
+  /**
+   * TSL: jak `loop`, ale dla punktów NAD SOBĄ — P i P + (0, 0, dz) dla każdego dz z `dzs` (węzły float). Ta sama komórka
+   * siatki (xy bez zmian), więc JEDNA pętla po liście świateł komórki zamiast osobnej na punkt: odczyt indeksu i świateł
+   * raz na światło, tłumienie, stożek i cień jak w `loop`, osobno dla każdego punktu. Woła cb({ att: [att_P, att_1, …],
+   * col, scatter }) dla każdego światła w zasięgu KTÓREGOKOLWIEK punktu — att punktu poza zasięgiem = 0. Bez skipOwner.
+   * Pył hal (gasFieldLayer.js): światło warstwy tylnej i dwie wysokości mgiełki snopów — w hali K-7 przy Ultra trzy
+   * osobne pętle kosztowały ~1,5 ms GPU na klatkę (2026-11-15, docs/AUDYT-misja1-hala-baza-2026-11-15.md).
+   */
+  loopHeights(P, dzs, cb) {
+    const idx = this.indexNode;
+    const lights = this.lightNode;
+    const c = floor(P.xy.sub(this.rect).mul(this.invCell)).toVar();
+    If(c.x.greaterThanEqual(0.0).and(c.y.greaterThanEqual(0.0)).and(c.x.lessThan(GRID_NX)).and(c.y.lessThan(GRID_NY)), () => {
+      const cell = uint(int(c.y).mul(GRID_NX).add(int(c.x))).mul(uint(2)).toVar();
+      const start = idx.element(cell).toVar();
+      const end = start.add(idx.element(cell.add(uint(1)))).toVar();
+      const pts = [P, ...dzs.map((dz) => P.add(vec3(0.0, 0.0, dz)).toVar())];
+      Loop({ start, end, type: 'uint', condition: '<', name: 'gridItemH' }, ({ gridItemH }) => {
+        const li = idx.element(gridItemH).mul(uint(4)).toVar();
+        const L0 = lights.element(li).toVar();
+        const ds = [], dists = [], xs = [];
+        for (const Pk of pts) {
+          const d = L0.xyz.sub(Pk).toVar();
+          const dist = length(d).toVar();
+          ds.push(d); dists.push(dist); xs.push(dist.div(max(L0.w, 1.0)).toVar());
+        }
+        let any = xs[0].lessThan(1.0);
+        for (let k = 1; k < xs.length; k++) any = any.or(xs[k].lessThan(1.0));
+        If(any, () => {
+          const L1 = lights.element(li.add(uint(1))).toVar();
+          const L2 = lights.element(li.add(uint(2))).toVar();
+          const L3 = lights.element(li.add(uint(3))).toVar();
+          const atts = [];
+          for (let k = 0; k < pts.length; k++) {
+            const x = xs[k];
+            const att = float(0.0).toVar();
+            If(x.lessThan(1.0), () => {
+              const x2 = x.mul(x);
+              const win = float(1.0).sub(x2);
+              att.assign(win.mul(win).div(x2.mul(4.0).add(1.0)));
+              const toL = ds[k].div(max(dists[k], 1e-3)).toVar();
+              If(L2.w.greaterThan(-1.5), () => {
+                const cone = smoothstep(L2.w, L3.x, dot(toL.negate(), L2.xyz));
+                att.mulAssign(cone.mul(cone));
+              });
+              if (this.shadows) {
+                If(L3.z.greaterThan(0.5).and(att.greaterThan(1e-4)), () => {
+                  att.mulAssign(this.shadows.visibility(L3.z, pts[k]));
+                });
+              }
+            });
+            atts.push(att);
+          }
+          cb({ att: atts, col: L1.xyz.mul(this.gain), scatter: L1.w });
         });
       });
     });

@@ -9,6 +9,7 @@ angielsku — kopiować cały akapit od „Use case:” (najdłuższy ma 3 349 z
 
 Podkatalog `trucks/` nie pochodzi z generatora: rysuje go `node scripts/ciagniki-sprite.mjs` z liczb `src/data/spaceTrucks.js`
 (atlas + normalne + maski malowania i pojedyncze płótna). Opis: `docs/PROPOZYCJA-ciagniki.md`, reguła `ciagniki`.
+Próba kierunku graficznego z generatora (2026-11-17): prompty ciągników i naczep w `trucks/gen/` (`README.md` tam — kolejność).
 
 ## Konwencje (wszystkie sprite'y)
 

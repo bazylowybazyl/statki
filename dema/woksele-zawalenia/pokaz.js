@@ -263,7 +263,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (SKORA) {
       // Koła habitatu jak w grze (wGrze.js ustawKola), promień szyi z opcji sceny. Inne sceny: bez kół i bez skóry (wnętrza zostają).
-      obraz.ustawKola(opis.baza && miasto?.kola ? miasto.kola : []);
+      obraz.ustawKola(opis.baza && miasto?.kola ? miasto.kola : [], opis.baza ? miasto?.kolaPasma ?? null : null);
       if (!opis.baza) obraz.ustawSkore({ x0: 0, y0: 0, w: 1, h: 1, gora: 0, zakres: 1, wl: 0 });
       // Wypiek do tej bazy (z bębnem albo bez): pierwszy przy starcie przed rozgrzewką, kolejne w tle (pipeline'y już są), do tego czasu zostaje poprzednia skóra.
       else if (stan.rozgrzane && stan.skoraBezMiasta !== !!miasto?.bezMiasta) wypieczSkore(w, !!miasto?.bezMiasta);

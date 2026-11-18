@@ -112,7 +112,9 @@ paths:
   Strażnik: `tests/sceneMatrixSync.test.mjs` (nowy krok przestawiający siatki — dopisz go tam).
   **Siatka świateł** (`Core3D.fx.grid`): `renderer.lighting = GridLighting` w trybie „optIn”, ustawiony PRZED
   `renderer.init()` (three r183 łapie `lighting` w init — podmiana później nic nie zmienia); czytają ją tylko materiały z
-  `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian. Światła efektów:
+  `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian. Kilka punktów NAD SOBĄ (ta
+  sama komórka siatki — xy bez zmian) → `grid.loopHeights(P, dzs, cb)`: jedna pętla po liście świateł komórki zamiast
+  osobnej na punkt (wzór: snopy pyłu hal, `gasFieldLayer.js`; reguła `pyl-hal-k7`). Światła efektów:
   `Core3D.fx.lights.flash(...)` / `.point(...)` (świat gry, nośnik z `ActiveCarrier`), własne światła kroku przez
   `ctx.grid.addWorld(...)`. Światło przypięte do okrętu (`addShipLights`, pas) stoi w pozie, w której rysuje się kadłub —
   gracz: `opts.pose` = poza renderu (`RenderWorld.playerPose`), nie poza encji (koniec kroku fizyki: przy 240 Hz obrazu

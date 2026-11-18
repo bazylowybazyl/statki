@@ -13,7 +13,7 @@ import { WYS_BOK, createWokseleSolver, GINIE_BOK } from './solver.js';
 import { createWokseleObraz } from './obraz.js';
 import { OPCJE_PYLU } from './pyl.js';
 import { PARAMETRY } from './budowa.js';
-import { POJEMNOSC_BAZY, kolaHabitatu } from './scenaBazy.js';
+import { POJEMNOSC_BAZY, kolaHabitatu, pasmaKolHabitatu } from './scenaBazy.js';
 import { createGrupyGry, UPADEK_FALA } from './grupyGry.js';
 import { createLinyObraz, ileWidocznych } from './linyObraz.js';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
@@ -53,6 +53,9 @@ const WYS_POL_J = 16000; // połowa boku mapy kształtu skały [j.]: dalej kszta
 const ROZB_L = 20000;
 const ROZB_PAS_J = 6000;
 const WIEZA_OM = 0.3; // [rad/s] obrót startowy wieży przy zerwaniu szyi, ku stronie upadku: bez przegubu wieża wsuwała się w szyb zamiast się przechylić
+// A/B kosztu w biegu (narzędzia: globalThis.__wokGra.ab): gruzOdZdarzenia — siatki gruzu rysują się od pierwszego zdarzenia
+// (false: także w spoczynku, jak przed 2026-11-15).
+const AB = { gruzOdZdarzenia: true };
 
 function wypiekB1(dx) {
   return new Promise((ok, nie) => {
@@ -140,7 +143,8 @@ export function createWokseleGry({ Core3D }) {
     meshFg.castShadow = false;
     meshFg.receiveShadow = false;
     gruzFg.receiveShadow = false;
-    const meshTlo = new THREE.Mesh(meshFg.geometry, meshFg.material);
+    // Tło: druga geometria obrazu na tych samych atrybutach, z własnym rekordem rysunku pośredniego (listy węzłów na pass, obraz.js — LISTY).
+    const meshTlo = new THREE.Mesh(obraz.geoTlo ?? meshFg.geometry, meshFg.material);
     const gruzTlo = new THREE.Mesh(gruzFg.geometry, gruzFg.material);
     meshTlo.name = 'WokBrylyTlo';
     gruzTlo.name = 'WokGruzTlo';
@@ -199,7 +203,7 @@ export function createWokseleGry({ Core3D }) {
       const uU = solver.uniformy;
       if (uU.uFalaV2.value < 1e29) uU.uLepV2.value = Math.max(uU.uLepV2.value, uU.uFalaV2.value);
       obraz.wczytaj(w, { rDysk, poklad, pyl: OPCJE_PYLU.B1, lod: LOD, budynki: miasto?.budynki ?? null });
-      obraz.ustawKola(kolaHabitatu(l.habitat));
+      obraz.ustawKola(kolaHabitatu(l.habitat), pasmaKolHabitatu(l.habitat));
       solver.ustawPlan({ ...g, kratery: [], puscKotwiceF: -1 });
       obraz.uAoMoc.value = 0;
       ginieStare.fill(0);
@@ -418,7 +422,23 @@ export function createWokseleGry({ Core3D }) {
     stan.zegarKrok += H;
   }
 
+  // Listy węzłów na pass i lista głębi celu AO (obraz.js, LISTY): po wszystkim, co w tej klatce zmienia węzły (kroki solvera i obrazu, kratery, puszczanie
+  // części, fala), przed celami głębi i AO (rysujCele) i przed passami — raz na klatkę. W stanie aktywnym co klatkę, w spoczynku tylko po zmianie
+  // (wczytanie, LOD, przekrój). `cele`: rysujCele czyta listę sumy także przy schowanych siatkach.
+  let listyKlatki = false;
+  function odswiezListy(cele = false) {
+    if (listyKlatki) return;
+    listyKlatki = true;
+    if (s && stan.gotowe && (cele || s.meshFg.visible || s.meshTlo.visible)) s.obraz.odswiezListy(s.renderer, stan.aktywny);
+  }
+
   function krokFx() {
+    listyKlatki = false;
+    krokFxCialo();
+    odswiezListy();
+  }
+
+  function krokFxCialo() {
     if (!s) return;
     // Wypiek nie w skoku: stara baza jedzie wtedy z obrazem skały, a kamera wypieku stoi na prawdziwym miejscu, więc cel wyszedłby pusty, a skóra szara na stałe.
     if (stan.skoraCzeka && stan.slonce && !stan.soczewka) wypalSkore();
@@ -430,7 +450,10 @@ export function createWokseleGry({ Core3D }) {
     stan.kadr = kadr;
     // Ruiny po zamrożeniu leżą na skale: pass FG nie ma co rysować, a odłamki dawno zgasły. Dwa rysunki po 85 tys. węzłów mniej przez resztę misji.
     const zywe = kadr && !stan.zgaszony;
-    meshFg.visible = zywe; gruzFg.visible = zywe; meshTlo.visible = kadr; gruzTlo.visible = zywe;
+    // Gruz powstaje dopiero po pierwszym zdarzeniu (aktywuj): w spoczynku dwa rysunki po CAP_G (40 000) instancji, które
+    // shader i tak zwija — tylko praca wierzchołków (2026-11-15). A/B: __wokGra.ab.gruzOdZdarzenia = false.
+    const gruz = zywe && (stan.aktywny || !AB.gruzOdZdarzenia);
+    meshFg.visible = zywe; gruzFg.visible = gruz; meshTlo.visible = kadr; gruzTlo.visible = gruz;
     s.meshLiny.visible = kadr && s.linyObraz.n > 0;
     // Upadek liczy się do końca także poza kadrem, najwyżej ZGAS_PO_S raz na grę: gracz, który odleciał, wraca do ruin na skale, a nie do bazy wiszącej bez kolizji.
     const liczy = (blisko || stan.upadekT >= 0) && !stan.zgaszony;
@@ -472,6 +495,7 @@ export function createWokseleGry({ Core3D }) {
     if (!blisko) return;
     ustawKamere();
     obraz.ustawRozmiar(renderer, Core3D.composerTarget.width, Core3D.composerTarget.height);
+    odswiezListy(true); // głębia celu AO rysuje z listy sumy tej klatki
     obraz.rysujCele(renderer, kamLok, stan.akum);
   }
 
@@ -723,5 +747,7 @@ export function createWokseleGry({ Core3D }) {
     },
     get obraz() { return s?.obraz ?? null; },
     get solver() { return s?.solver ?? null; },
+    /** Przełączniki A/B kosztu (narzędzia): { gruzOdZdarzenia }. */
+    ab: AB,
   };
 }

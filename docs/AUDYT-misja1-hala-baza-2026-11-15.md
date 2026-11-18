@@ -121,9 +121,109 @@ U gracza w walce (39 NPC, wraki, tarcze, efekty) dochodzi reszta sceny — GPU 7
 
 1. Render 125 % (Ultra = nadpróbkowanie) — 1,56 × pikseli względem 100 %; największa pojedyncza dźwignia (pył, ring,
    maska słońca, bloom skalują się z pikselami).
-2. Pył hali bez zmiany obrazu: trzy pętle świateł warstwy tylnej w jednej (ta sama lista komórki, trzy wysokości) —
-   mniej odczytów bufora świateł; ze zmianą obrazu: warstwy w połowie rozdzielczości.
+2. Pył hali: trzy pętle świateł warstwy tylnej w jednej — ZROBIONE (§ 6); ze zmianą obrazu zostaje: warstwy w połowie
+   rozdzielczości.
 3. Maska słońca w połowie rozdzielczości (miększe brzegi cieni).
-4. Woksele: osobne listy węzłów dla passa tła i FG (połowa pracy wierzchołków) albo LOD przy dalekim zoomie.
+4. Woksele: gruz od pierwszego zdarzenia, listy węzłów na pass i lista głębi celu AO — ZROBIONE (§ 6, § 7); zostaje
+   LOD przy dalekim zoomie.
 5. Kadłuby piratów przy wylocie — przygotowanie pod kurtyną (§ 3).
 6. Aplikacja ChatGPT zabiera ~25 % silnika 3D karty — gra jest ograniczona przez kartę.
+
+## 6. Optymalizacje bez zmiany obrazu (wieczór 2026-11-15)
+
+Przebiegi `.tmp/misja1-trasa/ab-oba` i `ab-oba2`: ta sama trasa i ustawienia co w § 1–4, ale karta bez obcych
+obciążeń (liczniki silnika 3D: żaden proces poza przeglądarką narzędzia; aplikacja ChatGPT nie brała karty). Dlatego
+liczby bezwzględne są niższe niż w § 1–4 (hala: GPU 4,44 + 0,41 ms zamiast 7,47 + 0,57; baza 2,26 + 0,35 ms zamiast
+4,67 + 0,42) — porównuj tylko A/B z tego samego przebiegu. Przebieg z harnessem innej sesji w tle (compute pyłu w oknie
+`dok` 32 ms, A/B rozjechane) odrzucony. A/B: okna 1,5 s w pauzie na zmianę z oknami bazowymi, każdy wariant 3–4 razy;
+okna bazowe różniły się o ±0,01–0,05 ms. Narzędzie: `misja1-trasa-gra.mjs --abHala / --abBaza <plik wariantów>
+--abPowt N`, `--abPoTrafieniu 1` (te same warianty po trafieniu), `--zrzutyHala / --zrzutyBaza <plik>` (zrzuty wyglądu).
+
+**Pył hali — jedna pętla świateł** (`grid.loopHeights`, `lightGrid.js`; warstwa tylna: światło warstwy i dwie wysokości
+mgiełki snopów z JEDNEGO przejścia listy świateł komórki — dawniej trzy przejścia; tłumienie, stożek i cień liczone
+osobno na wysokość, więc wynik ten sam z dokładnością do kolejności sumowania). Hala K-7, dok C-01, okna bazowe
+4,332–4,345 ms:
+
+| wariant (`HallDust.layer.setHazeLoops`) | Δ GPU render (4 powtórzenia) |
+|---|---|
+| `'osobne'` — dawne trzy pętle | +0,347 / +0,369 / +0,384 / +0,397 ms |
+| `'brak'` — bez mgiełki snopów (inny obraz) | −0,196 / −0,207 / −0,210 / −0,220 ms |
+
+Mgiełka snopów kosztuje teraz ~0,21 ms zamiast ~0,58 ms: **−0,37 ms GPU na klatkę w hali** (~8 % klatki karty).
+
+**Woksele — gruz od pierwszego zdarzenia** (`wGrze.js`: siatki gruzu tła i FG po `CAP_G` = 40 000 instancji
+rysowały się w spoczynku, choć pula jest pusta do pierwszego kroku solvera — shader zwijał wszystkie). Baza, zoom 0,04,
+okna bazowe 2,162–2,167 ms: gruz rysowany także w spoczynku (dawniej) +0,243 / +0,245 / +0,247 / +0,244 ms —
+**−0,25 ms w spoczynku**. Woksele w spoczynku kosztują teraz 0,75 ms (zdjęte wszystkie siatki `Wok*`).
+
+**Po pierwszym trafieniu** (`--trafienie 1`: `voxHit` w habitat — pełny obraz, 2 sloty na węzeł, 247 094 instancji
+w każdym passie, solver co klatkę): GPU 4,19–4,43 + 0,73–0,97 ms (spoczynek 2,26 + 0,35): pass tła 1,6 ms (0,94),
+FG 0,88 (0,39), cele głębi i AO 0,79 ms, solver 0,37–0,44 ms compute.
+
+**Ile kosztują węzły zwinięte w drugim passie** (`ab-oba2`; przekrój `uCiecieZ` przestawiony tak, żeby jeden pass
+rysował wszystko, a drugi zwijał wszystko, i ta sama siatka zdjęta — różnica = koszt passa samych zwiniętych instancji):
+
+| stan | wariant | Δ GPU (3 powtórzenia) | koszt zwiniętego passa |
+|---|---|---|---|
+| spoczynek (123 547 instancji) | C: przekrój −1e9 (tło zwija wszystko) | −0,272 / −0,276 / −0,286 | |
+| | D: C + siatka tła zdjęta | −0,628 / −0,648 / −0,658 | **~0,37 ms** |
+| | A: przekrój +1e9 (FG zwija wszystko) | +0,317 / +0,428 / +0,493 | |
+| | B: A + siatka FG zdjęta | −0,065 / −0,299 / −0,641 | ~0,4–1,1 ms (rozrzut) |
+| po trafieniu (247 094) | C | −0,074 / −0,252 / −0,266 | |
+| | D | −1,007 / −1,025 / −1,041 | **~0,75–0,95 ms** |
+| | A | +0,039 / +0,296 / +0,487 | |
+| | B | −0,524 / −0,613 / −0,699 | ~0,6–1,2 ms |
+
+W zwykłym przekroju tło zwija węzły nad płaszczyzną gry, a FG — pod nią; razem to tyle instancji, ile ma jeden pass,
+więc **osobne listy węzłów dla passa tła i FG** zdjęłyby ~0,4 ms w spoczynku i ~0,8 ms w walce. Zwinięta instancja
+robi w wierzchołku tylko dekodowanie id, jeden odczyt pozycji i porównanie (`naPassie` w `obraz.js`), ale razy 24
+wierzchołki i 124–247 tys. instancji. Lista musi nadążać za ruchem węzłów po pierwszym zdarzeniu (węzły spadają przez
+przekrój): kompakcja na GPU co klatkę i rysunek pośredni z licznikiem instancji z GPU, indeks z listy w wierzchołku
+(szósty bufor storage etapu wierzchołków, limit 8). Sama lista statyczna (do pierwszego zdarzenia) dałaby tylko te
+~0,4 ms w spoczynku.
+
+**Wygląd** (zrzuty strony w pauzie, 5120 × 1440). Hala ma dużo pikseli zmiennych w czasie (soczewki, stroboskopy
+podejścia, światła ramion), więc porównanie „baza ↔ wariant” musi je odróżnić od zmiany. Pierwsza metoda (dwie pary,
+maska pikseli stojących między zrzutami jednego wariantu) przepuszczała światła migające w fazie z odstępem par:
+kontrola zerowa (wariant, który nic nie zmienia) dawała w hali 3 % pikseli do 26/255. Narzędzie porównuje więc
+przedziały wartości piksela z czterech zrzutów każdego wariantu (różnica tylko tam, gdzie przedziały się rozchodzą).
+Baza: gruz w spoczynku — 0,004–0,013 % pikseli > 2/255 na stojących pikselach, tyle co kontrola zerowa (0,009–0,014 %;
+różnice leżą na poruszającej się linii nakładki czujników), czyli bez zmiany. Hala, metoda przedziałów
+(`.tmp/misja1-trasa/zab-hala3`, piksele zmienne w czasie: 50–60 % kadru): kontrola zerowa — 0 pikseli; trzy pętle ↔
+jedna — 0 pikseli > 2/255, maks 1/255 (kolejność sumowania); kontrola „bez mgiełki” — 52,7 % kadru, maks 85.
+
+## 7. Woksele: listy węzłów na pass (prośba użytkownika „zrób listy”, 2026-11-15)
+
+Bryły bazy rysowały się dwa razy (pass tła i FG) przez WSZYSTKIE instancje: 123 547 w spoczynku, 247 094 po pierwszym
+zdarzeniu (dwa sloty na węzeł), a wierzchołek zwijał to, co nie leży po stronie passa, węzły wewnątrz bryły (komplet
+sąsiadów) i puste sloty kawałków. Teraz krok `woksele` na końcu klatki robi kompakcję na GPU (`obraz.js`: `kListyLicz`
+— flagi instancji i suma na grupę 256, `kListySkan` — prefiks grup w jednej grupie i liczby instancji do argumentów,
+`kListyZapis` — id na miejsce z prefiksu), a pass rysuje pośrednio tylko swoją listę (`geoTlo` / `geo.setIndirect`,
+`drawIndexedIndirect`). Warunek flagi = warunek rysunku z `budujPozycje` (`flagaInstancji`). Bez atomików: listy idą
+w kolejności id, więc remisy głębi rozstrzygają się jak przy pełnym rysunku. W spoczynku lista liczy się tylko po
+zmianie (wczytanie, LOD, przekrój), w stanie aktywnym co klatkę. Wierzchołek: 6 buforów storage (limit 8). Demo bez
+zmian. A/B `obraz.listyPelne(true)` — listy ze wszystkich id (dawny rysunek).
+
+Przebieg `.tmp/misja1-trasa/listy` (baza, zoom 0,04, karta bez obcych obciążeń):
+
+| stan | rysowane instancje tło + FG | dawny rysunek względem list (4 powtórzenia) |
+|---|---|---|
+| spoczynek | 79 312 + 29 528 (było 2 × 123 547) | +0,411 / +0,347 / +0,346 / +0,350 ms |
+| po trafieniu | 80 055 + 29 528 (było 2 × 247 094) | +1,284 / +1,288 / +1,289 / +1,285 ms |
+
+**Listy: −0,35 ms w spoczynku, −1,29 ms po pierwszym trafieniu (w walce).** Woksele w spoczynku kosztują teraz
+~0,4 ms (zdjęte siatki `Wok*`), GPU bazy po trafieniu 3,0–3,2 + 0,65–0,92 ms. Wygląd (metoda przedziałów, cztery zrzuty
+na wariant): listy ↔ dawny rysunek — 0 pikseli > 2/255 w spoczynku (maks 1) i po trafieniu (maks 2), kontrola zerowa
+0 i 4 piksele. Pipeline'y synchroniczne 0.
+
+**Trzecia lista — głębia celu AO** (prośba użytkownika „dorób”): głębia (`rysujCele`, cel AO po pierwszym trafieniu)
+rysowała wszystkie 247 094 instancje bez przekroju. Kompakcja liczy teraz trzy listy naraz (pola po 10 bitów: tło,
+FG, suma), głębia rysuje pośrednio listę sumy (`geoGleb`, rekord od 40 B, `budujPozycje({ lista: 'suma' })`), a krok
+`woksele` liczy listy raz na klatkę PRZED `rysujCele` (inaczej głębia brałaby listę z poprzedniej klatki). Przebieg
+`.tmp/misja1-trasa/listy3` (Chrome użytkownika brał ~7–22 % karty — liczby bezwzględne z zapasem, A/B na przemian):
+po trafieniu dawny rysunek względem list **+1,588 / +1,588 / +1,590 / +1,590 ms** (przy dwóch listach +1,29), wiersz
+`fx:woksele` render ~0,39 ms (było ~0,80); GPU bazy po trafieniu 2,67–2,69 + 0,61–0,66 ms. Zrzuty (spoczynek i po
+trafieniu): 0 pikseli > 2/255, maks 1 — jak kontrola zerowa. Pipeline'y synchroniczne 0.
+
+Razem w tym audycie (§ 3, § 6, § 7), bez zmiany obrazu: w hali −0,37 ms (pył), w bazie w spoczynku −0,6 ms (gruz
+i listy), w bazie po pierwszym trafieniu ~−1,6 ms (listy) — wszystko na klatkę GPU przy Ultra 5120 × 1440.
